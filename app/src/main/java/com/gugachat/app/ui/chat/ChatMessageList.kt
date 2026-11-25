@@ -101,8 +101,10 @@ import com.gugachat.app.domain.chat.NovelConfig
 import com.gugachat.app.domain.chat.NovelExport
 import com.gugachat.app.domain.chat.RpChoice
 import com.gugachat.app.domain.chat.RpConfig
+import com.gugachat.app.domain.chat.RpEngine
 import com.gugachat.app.domain.chat.RpInputKind
 import com.gugachat.app.domain.chat.TimelineReconciler
+import com.gugachat.app.domain.chat.activeVariant
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -118,17 +120,24 @@ fun ChatMessageList(
     rpConfig: RpConfig? = null,
     novelConfig: NovelConfig? = null,
     isStreaming: Boolean,
+    isRefreshingChoices: Boolean = false,
     attachmentPathResolver: (String) -> File,
     onOpenModelSheet: () -> Unit = {},
     onStarterPrompt: (String) -> Unit,
     onSelectNovelChoice: (String) -> Unit,
-    onSelectRpChoice: (RpChoice) -> Unit,
+    onSelectRpChoice: (RpChoice, Boolean) -> Unit,
+    onRefreshRpChoices: () -> Unit = {},
+    onContinueRp: () -> Unit = {},
     onRegenerate: (String) -> Unit,
     onEditUserMessage: (String, String) -> Unit,
+    onEditAssistantMessage: (String, String) -> Unit = { _, _ -> },
     onBranchFromMessage: (String) -> Unit,
     onDeleteMessage: (String) -> Unit,
     onSwitchVariant: (String, Int) -> Unit,
     onToast: (String) -> Unit,
+    onFrontendAction: (String) -> Unit = {},
+    onFrontendSetFlag: (String, String) -> Unit = { _, _ -> },
+    onFrontendAdjustAffinity: (String, Int) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier,
 ) {
     val strings = LocalAppStrings.current
@@ -139,6 +148,8 @@ fun ChatMessageList(
     val listState = rememberLazyListState()
     var editTarget by remember { mutableStateOf<ChatMessage?>(null) }
     var editBuffer by remember { mutableStateOf("") }
+    var editAssistantTarget by remember { mutableStateOf<ChatMessage?>(null) }
+    var editAssistantBuffer by remember { mutableStateOf("") }
     var deleteTarget by remember { mutableStateOf<ChatMessage?>(null) }
 
     val lastMsg = active.lastOrNull()
@@ -205,6 +216,46 @@ fun ChatMessageList(
         )
     }
 
+    if (editAssistantTarget != null) {
+        AlertDialog(
+            onDismissRequest = { editAssistantTarget = null },
+            containerColor = c.surfaceElevated,
+            title = {
+                Text(
+                    text = if (mode == ConversationMode.rp) strings.rp.editReplyTitle else strings.common.edit,
+                    color = c.ink,
+                    fontWeight = FontWeight.ExtraBold,
+                )
+            },
+            text = {
+                GuTextField(
+                    value = editAssistantBuffer,
+                    onValueChange = { editAssistantBuffer = it },
+                    singleLine = false,
+                    minLines = 4,
+                    maxLines = 10,
+                )
+            },
+            confirmButton = {
+                GuButton(
+                    onClick = {
+                        onEditAssistantMessage(editAssistantTarget!!.id, editAssistantBuffer)
+                        editAssistantTarget = null
+                    },
+                    enabled = editAssistantBuffer.isNotBlank(),
+                    compact = true,
+                ) {
+                    Text(strings.common.save, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { editAssistantTarget = null }) {
+                    Text(strings.common.cancel, color = c.muted)
+                }
+            },
+        )
+    }
+
     if (active.isEmpty()) {
         ChatEmptyWelcomeCanvas(
             mode = mode,
@@ -261,8 +312,15 @@ fun ChatMessageList(
                         rpConfig = rpConfig,
                         isLatestAssistant = isLatestAssistant,
                         isStreaming = isStreaming,
+                        isRefreshingChoices = isRefreshingChoices,
                         onSelectNovelChoice = onSelectNovelChoice,
                         onSelectRpChoice = onSelectRpChoice,
+                        onRefreshRpChoices = onRefreshRpChoices,
+                        onContinueRp = onContinueRp,
+                        onEditAssistant = { clean ->
+                            editAssistantBuffer = clean
+                            editAssistantTarget = msg
+                        },
                         onRegenerate = { onRegenerate(msg.id) },
                         onBranch = { onBranchFromMessage(msg.id) },
                         onDelete = { deleteTarget = msg },
@@ -272,6 +330,9 @@ fun ChatMessageList(
                             cm.setPrimaryClip(ClipData.newPlainText("reply", body))
                             onToast(strings.common.copied)
                         },
+                        onFrontendAction = onFrontendAction,
+                        onFrontendSetFlag = onFrontendSetFlag,
+                        onFrontendAdjustAffinity = onFrontendAdjustAffinity,
                         onToast = onToast,
                     )
                 }
@@ -759,24 +820,39 @@ private fun AssistantMessageBlock(
     rpConfig: RpConfig?,
     isLatestAssistant: Boolean,
     isStreaming: Boolean,
+    isRefreshingChoices: Boolean,
     onSelectNovelChoice: (String) -> Unit,
-    onSelectRpChoice: (RpChoice) -> Unit,
+    onSelectRpChoice: (RpChoice, Boolean) -> Unit,
+    onRefreshRpChoices: () -> Unit,
+    onContinueRp: () -> Unit,
+    onEditAssistant: (String) -> Unit,
     onRegenerate: () -> Unit,
     onBranch: () -> Unit,
     onDelete: () -> Unit,
     onSwitchVariant: (Int) -> Unit,
     onCopyText: (String) -> Unit,
+    onFrontendAction: (String) -> Unit,
+    onFrontendSetFlag: (String, String) -> Unit,
+    onFrontendAdjustAffinity: (String, Int) -> Unit,
     onToast: (String) -> Unit,
 ) {
     val strings = LocalAppStrings.current
     val c = LocalAppTheme.current.colors
+    val isZh = strings.language == AppLanguage.ZH
     val (parsedReasoning, cleanBody) = remember(msg.content, msg.reasoning, mode) {
-        extractThinkBlock(msg.reasoning, msg.content, stripNovelTags = mode == ConversationMode.novel)
+        extractMessageThinkAndBody(msg.reasoning, msg.content, mode)
     }
 
     when (mode) {
         ConversationMode.rp -> {
-            val leadNpc = rpConfig?.cast?.firstOrNull { !it.isPlayer }
+            val (speakerName, speakerNpc) = remember(msg.id, msg.activeVariantIndex, rpConfig?.cast, rpConfig?.title) {
+                resolveRpSpeaker(msg, rpConfig, strings.rp.badge)
+            }
+            val activeVar = msg.activeVariant()
+            val deltas = activeVar?.rpDeltas.orEmpty()
+            val unlockedEnding = activeVar?.rpEndingUnlocked
+            val affinityTier = speakerNpc?.let { RpEngine.affinityTier(it.affinity) }
+
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(16.dp),
@@ -792,74 +868,92 @@ private fun AssistantMessageBlock(
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(9.dp),
                     ) {
-                        val speakerName = leadNpc?.name ?: rpConfig?.title ?: strings.rp.badge
-                        Box(
-                            modifier = Modifier
-                                .size(28.dp)
-                                .clip(CircleShape)
-                                .background(c.tag)
-                                .border(1.dp, c.accent.copy(alpha = 0.45f), CircleShape),
-                            contentAlignment = Alignment.Center,
+                        RpNpcPortraitAvatar(
+                            character = speakerNpc,
+                            fallbackName = speakerName,
+                            size = 34.dp,
+                        )
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(1.dp),
                         ) {
                             Text(
-                                text = speakerName.firstOrNull()?.toString() ?: "✦",
-                                color = c.tagInk,
-                                fontSize = 12.5.sp,
+                                text = speakerName,
+                                color = c.ink,
+                                fontSize = 13.5.sp,
                                 fontWeight = FontWeight.ExtraBold,
-                            )
-                        }
-                        Text(
-                            text = speakerName,
-                            color = c.ink,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f),
-                        )
-                        if (leadNpc != null && leadNpc.mood.isNotBlank()) {
-                            Text(
-                                text = leadNpc.mood,
-                                color = c.muted,
-                                fontSize = 11.sp,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
+                            if (speakerNpc != null && speakerNpc.mood.isNotBlank()) {
+                                Text(
+                                    text = speakerNpc.mood,
+                                    color = c.muted,
+                                    fontSize = 11.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                        if (speakerNpc != null && affinityTier != null) {
+                            val tierLabel = strings.rp.affinityTiers[affinityTier.code]
+                                ?: if (isZh) affinityTier.zhLabel else affinityTier.enLabel
+                            GuBadge(
+                                text = "♥ ${speakerNpc.affinity} · $tierLabel",
+                                variant = if (speakerNpc.affinity < 0) GuBadgeVariant.DANGER else GuBadgeVariant.HONEY,
+                            )
                         }
                     }
+
+                    val rpTheme = rpConfig?.visualTheme
+                    val rpFontSizeSp = (rpTheme?.fontSizeSp ?: 15f).coerceIn(12f, 22f)
 
                     AssistantBodyAndNotices(
                         parsedReasoning = parsedReasoning,
                         cleanBody = cleanBody,
                         msg = msg,
                         isStreaming = isStreaming,
-                        useSerif = false,
-                        fontSize = 15.sp,
-                        lineHeight = 24.sp,
+                        useSerif = rpTheme?.useSerif ?: false,
+                        fontSize = rpFontSizeSp.sp,
+                        lineHeight = (rpFontSizeSp * 1.6f).sp,
+                        rpConfig = rpConfig,
+                        isRpMode = true,
                         onRetry = onRegenerate,
+                        onFrontendAction = onFrontendAction,
+                        onFrontendSetFlag = onFrontendSetFlag,
+                        onFrontendAdjustAffinity = onFrontendAdjustAffinity,
                         onToast = onToast,
                     )
 
-                    if (isLatestAssistant && msg.rpChoices.isNotEmpty() && !isStreaming) {
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            msg.rpChoices.forEachIndexed { idx, choice ->
-                                val badgeLabel = choice.skillCheck?.let { "🎲 $it DC${choice.difficulty ?: 12}" }
-                                DramaticChoiceCard(
-                                    index = idx + 1,
-                                    label = choice.label,
-                                    metaBadge = badgeLabel,
-                                    onClick = { onSelectRpChoice(choice) },
-                                )
-                            }
-                        }
+                    if (deltas.isNotEmpty() && !isStreaming && rpTheme?.showTurnDeltas != false) {
+                        RpTurnDeltaStrip(deltas = deltas)
+                    }
+
+                    if (unlockedEnding != null) {
+                        RpEndingCard(ending = unlockedEnding)
+                    }
+
+                    if (isLatestAssistant && !isStreaming && (msg.rpChoices.isNotEmpty() || isRefreshingChoices || rpConfig?.enableChoices == true)) {
+                        RpChoiceDeck(
+                            choices = msg.rpChoices,
+                            rp = rpConfig,
+                            isRefreshing = isRefreshingChoices,
+                            onSelectChoice = onSelectRpChoice,
+                            onRefreshChoices = onRefreshRpChoices,
+                            onDarkStage = false,
+                            enabled = !isStreaming,
+                        )
                     }
 
                     AssistantFooterRow(
                         msg = msg,
                         showVariantBar = msg.variants.size > 1,
                         isStreaming = isStreaming,
+                        showContinue = isLatestAssistant && !isStreaming,
+                        onContinue = onContinueRp,
+                        onEdit = { onEditAssistant(cleanBody.ifBlank { msg.content }) },
                         onCopy = { onCopyText(cleanBody) },
                         onRegenerate = onRegenerate,
                         onBranch = onBranch,
@@ -930,6 +1024,7 @@ private fun AssistantMessageBlock(
                         msg = msg,
                         showVariantBar = msg.variants.size > 1,
                         isStreaming = isStreaming,
+                        onEdit = { onEditAssistant(cleanBody.ifBlank { msg.content }) },
                         onCopy = { onCopyText(cleanBody) },
                         onRegenerate = onRegenerate,
                         onBranch = onBranch,
@@ -986,6 +1081,7 @@ private fun AssistantMessageBlock(
                     msg = msg,
                     showVariantBar = msg.variants.size > 1,
                     isStreaming = isStreaming,
+                    onEdit = { onEditAssistant(cleanBody.ifBlank { msg.content }) },
                     onCopy = { onCopyText(cleanBody) },
                     onRegenerate = onRegenerate,
                     onBranch = onBranch,
@@ -1008,6 +1104,11 @@ private fun AssistantBodyAndNotices(
     lineHeight: androidx.compose.ui.unit.TextUnit,
     onRetry: () -> Unit,
     onToast: (String) -> Unit,
+    rpConfig: RpConfig? = null,
+    isRpMode: Boolean = false,
+    onFrontendAction: (String) -> Unit = {},
+    onFrontendSetFlag: (String, String) -> Unit = { _, _ -> },
+    onFrontendAdjustAffinity: (String, Int) -> Unit = { _, _ -> },
 ) {
     val strings = LocalAppStrings.current
     val c = LocalAppTheme.current.colors
@@ -1020,13 +1121,27 @@ private fun AssistantBodyAndNotices(
     }
 
     if (cleanBody.isNotBlank()) {
-        MarkdownMessageText(
-            markdown = cleanBody,
-            fontSize = fontSize,
-            lineHeight = lineHeight,
-            useSerif = useSerif,
-            onCopyToast = onToast,
-        )
+        if (isRpMode) {
+            RpRichMessageContent(
+                rawMarkdown = cleanBody,
+                rp = rpConfig,
+                fontSize = fontSize,
+                lineHeight = lineHeight,
+                useSerif = useSerif,
+                onCopyToast = onToast,
+                onFrontendAction = onFrontendAction,
+                onFrontendSetFlag = onFrontendSetFlag,
+                onFrontendAdjustAffinity = onFrontendAdjustAffinity,
+            )
+        } else {
+            MarkdownMessageText(
+                markdown = cleanBody,
+                fontSize = fontSize,
+                lineHeight = lineHeight,
+                useSerif = useSerif,
+                onCopyToast = onToast,
+            )
+        }
     } else if (msg.status == "streaming") {
         Text(strings.chat.streamingWriting, color = c.muted, fontSize = 13.sp)
     }
@@ -1176,50 +1291,95 @@ private fun AssistantFooterRow(
     msg: ChatMessage,
     showVariantBar: Boolean,
     isStreaming: Boolean,
+    onEdit: () -> Unit,
     onCopy: () -> Unit,
     onRegenerate: () -> Unit,
     onBranch: () -> Unit,
     onDelete: () -> Unit,
     onSwitchVariant: (Int) -> Unit,
+    showContinue: Boolean = false,
+    onContinue: () -> Unit = {},
 ) {
     val strings = LocalAppStrings.current
     val c = LocalAppTheme.current.colors
-    Row(
+    Column(
         modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        IconButton(onClick = onCopy, modifier = Modifier.size(36.dp)) {
-            Icon(Icons.Default.ContentCopy, contentDescription = strings.common.copy, tint = c.muted, modifier = Modifier.size(16.dp))
+        if (showContinue) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Start,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Surface(
+                    onClick = onContinue,
+                    enabled = !isStreaming,
+                    shape = RoundedCornerShape(999.dp),
+                    color = c.primarySoft,
+                    border = BorderStroke(1.dp, c.primary.copy(alpha = 0.4f)),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 11.dp, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PlayArrow,
+                            contentDescription = null,
+                            tint = c.primarySoftInk,
+                            modifier = Modifier.size(14.dp),
+                        )
+                        Text(
+                            text = strings.rp.continueBtn,
+                            color = c.primarySoftInk,
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                }
+            }
         }
-        IconButton(onClick = onRegenerate, enabled = !isStreaming, modifier = Modifier.size(36.dp)) {
-            Icon(Icons.Default.Refresh, contentDescription = strings.chat.regenerate, tint = c.muted, modifier = Modifier.size(16.dp))
-        }
-        IconButton(onClick = onBranch, modifier = Modifier.size(36.dp)) {
-            Icon(Icons.Default.AccountTree, contentDescription = strings.novel.branchBtn, tint = c.muted, modifier = Modifier.size(16.dp))
-        }
-        IconButton(onClick = onDelete, enabled = !isStreaming, modifier = Modifier.size(36.dp)) {
-            Icon(Icons.Default.Delete, contentDescription = strings.common.delete, tint = c.muted, modifier = Modifier.size(16.dp))
-        }
-        Spacer(Modifier.weight(1f))
-        if (showVariantBar && msg.variants.size > 1) {
-            VariantSwipePill(
-                index = msg.activeVariantIndex,
-                total = msg.variants.size,
-                onSwitch = onSwitchVariant,
-            )
-            Spacer(Modifier.width(6.dp))
-        }
-        msg.usage?.totalTokens?.let { tok ->
-            GuBadge("${tok}t", variant = GuBadgeVariant.NEUTRAL)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            IconButton(onClick = onCopy, modifier = Modifier.size(34.dp)) {
+                Icon(Icons.Default.ContentCopy, contentDescription = strings.common.copy, tint = c.muted, modifier = Modifier.size(16.dp))
+            }
+            IconButton(onClick = onEdit, enabled = !isStreaming, modifier = Modifier.size(34.dp)) {
+                Icon(Icons.Default.Edit, contentDescription = strings.common.edit, tint = c.muted, modifier = Modifier.size(16.dp))
+            }
+            IconButton(onClick = onRegenerate, enabled = !isStreaming, modifier = Modifier.size(34.dp)) {
+                Icon(Icons.Default.Refresh, contentDescription = strings.chat.regenerate, tint = c.muted, modifier = Modifier.size(16.dp))
+            }
+            IconButton(onClick = onBranch, modifier = Modifier.size(34.dp)) {
+                Icon(Icons.Default.AccountTree, contentDescription = strings.novel.branchBtn, tint = c.muted, modifier = Modifier.size(16.dp))
+            }
+            IconButton(onClick = onDelete, enabled = !isStreaming, modifier = Modifier.size(34.dp)) {
+                Icon(Icons.Default.Delete, contentDescription = strings.common.delete, tint = c.muted, modifier = Modifier.size(16.dp))
+            }
+            Spacer(Modifier.weight(1f))
+            if (showVariantBar && msg.variants.size > 1) {
+                VariantSwipePill(
+                    index = msg.activeVariantIndex,
+                    total = msg.variants.size,
+                    onSwitch = onSwitchVariant,
+                )
+                Spacer(Modifier.width(6.dp))
+            }
+            msg.usage?.totalTokens?.let { tok ->
+                GuBadge("${tok}t", variant = GuBadgeVariant.NEUTRAL)
+            }
         }
     }
 }
 
-private fun extractThinkBlock(
+internal fun extractMessageThinkAndBody(
     explicitReasoning: String,
     rawContent: String,
-    stripNovelTags: Boolean,
+    mode: ConversationMode,
 ): Pair<String, String> {
     var reasoning = explicitReasoning
     var body = rawContent
@@ -1236,8 +1396,10 @@ private fun extractThinkBlock(
         if (inner.isNotEmpty()) reasoning = inner
         body = ""
     }
-    if (stripNovelTags) {
-        body = NovelExport.stripInternalTags(body)
+    when (mode) {
+        ConversationMode.novel -> body = NovelExport.stripInternalTags(body)
+        ConversationMode.rp -> body = RpEngine.stripRpInternalTags(body)
+        ConversationMode.chat -> Unit
     }
     return reasoning to body.trim()
 }

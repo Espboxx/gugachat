@@ -84,6 +84,72 @@ data class NovelStatusHud(
 )
 
 @Serializable
+enum class RpPlayStyle {
+    chengguang,
+    tavern,
+    trpg,
+}
+
+@Serializable
+data class RpEndingRecord(
+    val id: String,
+    val code: String = "NE",
+    val title: String,
+    val summary: String = "",
+    val unlockedAt: Long = 0L,
+    val turnSeq: Int = 0,
+)
+
+@Serializable
+data class RpTurnDelta(
+    val label: String,
+    val kind: String = "stat", // hp | mp | gold | affinity | item_add | item_remove | stat | quest | flag | chapter | ending
+    val positive: Boolean = true,
+)
+
+@Serializable
+data class RpRegexScript(
+    val id: String,
+    val name: String,
+    val enabled: Boolean = true,
+    val findRegex: String = "",
+    val replaceString: String = "",
+    val placement: String = "ai_output", // "ai_output" | "user_input" | "both"
+    val markdownOnly: Boolean = true,
+    val promptOnly: Boolean = false,
+    val flags: String = "gms",
+)
+
+@Serializable
+data class RpCgRecord(
+    val id: String,
+    val title: String,
+    val caption: String = "",
+    val imagePath: String,
+    val scene: String = "",
+    val characterNames: List<String> = emptyList(),
+    val unlockedAt: Long = 0L,
+    val turnSeq: Int = 0,
+)
+
+@Serializable
+data class RpVisualTheme(
+    val dialogStyle: String = "glass", // "glass" | "classic_vn" | "minimal" | "cyber" | "parchment"
+    val dialogOpacity: Float = 0.86f,
+    val backdropDim: Float = 0.35f,
+    val fontSizeSp: Float = 15.5f,
+    val useSerif: Boolean = false,
+    val accentHex: String = "",
+    val spriteLayout: String = "stage", // "stage" | "portrait_card" | "hidden"
+    val spriteHeightRatio: Float = 0.44f,
+    val showNameplate: Boolean = true,
+    val showTurnDeltas: Boolean = true,
+    val showCustomStatusWidget: Boolean = false,
+    val customStatusHtml: String = "",
+    val customCss: String = "",
+)
+
+@Serializable
 data class RpCharacter(
     val id: String,
     val name: String,
@@ -99,6 +165,16 @@ data class RpCharacter(
     val avatar: String? = null,
     val aliases: List<String> = emptyList(),
     val isPlayer: Boolean = false,
+    val speakingStyle: String = "",
+    val secret: String = "",
+    val avatarPath: String? = null,
+    val inScene: Boolean = true,
+    val spritePath: String? = null,
+    val expressionSprites: Map<String, String> = emptyMap(),
+    val stageSlot: String = "auto", // "left" | "center" | "right" | "auto"
+    val spriteScale: Float = 1.0f,
+    val spriteOffsetY: Float = 0f,
+    val appearancePrompt: String = "",
 )
 
 @Serializable
@@ -116,6 +192,14 @@ data class RpGameState(
     val quests: List<String> = emptyList(),
     val flags: Map<String, String> = emptyMap(),
     val stats: Map<String, Int> = emptyMap(),
+    val chapterTitle: String = "",
+    val actNumber: Int = 1,
+    val mood: String = "",
+    val sceneImagePath: String? = null,
+    val turnDeltas: List<RpTurnDelta> = emptyList(),
+    val unlockedEndings: List<RpEndingRecord> = emptyList(),
+    val unlockedCgs: List<RpCgRecord> = emptyList(),
+    val activeCgId: String? = null,
 )
 
 @Serializable
@@ -140,6 +224,16 @@ data class RpChoice(
     val inputKind: RpInputKind = RpInputKind.action,
     val skillCheck: String? = null,
     val difficulty: Int? = null,
+    val tone: String? = null,
+    val conditionText: String? = null,
+    val requiresStat: String? = null,
+    val requiresStatMin: Int? = null,
+    val requiresAffinityNpc: String? = null,
+    val requiresAffinityMin: Int? = null,
+    val requiresItem: String? = null,
+    val requiresFlag: String? = null,
+    val costGold: Int? = null,
+    val consequenceHint: String? = null,
 )
 
 @Serializable
@@ -154,6 +248,10 @@ data class MessageVariant(
     val rpChoices: List<RpChoice> = emptyList(),
     val novelStatusSnapshot: NovelStatusHud? = null,
     val novelChoices: List<String> = emptyList(),
+    val rpCastSnapshot: List<RpCharacter>? = null,
+    val rpDeltas: List<RpTurnDelta> = emptyList(),
+    val rpSpeakerName: String? = null,
+    val rpEndingUnlocked: RpEndingRecord? = null,
 )
 
 @Serializable
@@ -182,6 +280,9 @@ data class ChatMessage(
     val supersededAtSeq: Int? = null,
     val deletedAt: Long? = null,
 )
+
+fun ChatMessage.activeVariant(): MessageVariant? =
+    variants.getOrNull(activeVariantIndex) ?: variants.lastOrNull()
 
 @Serializable
 data class UserMemory(
@@ -315,6 +416,18 @@ data class RpConfig(
     val pendingChoices: List<RpChoice> = emptyList(),
     val greeting: String = "",
     val cardSource: String? = null,
+    val playStyle: RpPlayStyle = RpPlayStyle.chengguang,
+    val theaterMode: Boolean = false,
+    val alternateGreetings: List<String> = emptyList(),
+    val mesExample: String = "",
+    val postHistoryInstructions: String = "",
+    val authorNoteDepth: Int = 1,
+    val loreTokenBudget: Int = 1600,
+    val autoDiceSkillBonus: Boolean = true,
+    val quickActions: List<String> = emptyList(),
+    val visualTheme: RpVisualTheme = RpVisualTheme(),
+    val regexScripts: List<RpRegexScript> = emptyList(),
+    val enableHtmlCards: Boolean = true,
 )
 
 @Serializable

@@ -30,12 +30,15 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.Bookmarks
 import androidx.compose.material.icons.filled.Casino
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -48,6 +51,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -59,6 +63,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.rememberAsyncImagePainter
+import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.i18n.LocalAppStrings
 import com.gugachat.app.core.i18n.fmt
 import com.gugachat.app.core.theme.GuPopupMenu
@@ -97,6 +102,9 @@ fun ChatComposerBar(
     onOpenRecallInspector: () -> Unit,
     onSend: () -> Unit,
     onStop: () -> Unit,
+    isImpersonating: Boolean = false,
+    onImpersonate: () -> Unit = {},
+    onContinueRp: () -> Unit = {},
 ) {
     val strings = LocalAppStrings.current
     val theme = LocalAppTheme.current
@@ -485,6 +493,48 @@ fun ChatComposerBar(
                                     onOpenDiceDialog()
                                 },
                             )
+                            ComposerChip(
+                                label = if (isImpersonating) strings.rp.impersonating else strings.rp.impersonateBtn,
+                                icon = Icons.Default.AutoFixHigh,
+                                active = isImpersonating,
+                                loading = isImpersonating,
+                                enabled = !isStreaming && !isImpersonating,
+                                tone = ComposerChipTone.PRIMARY,
+                                onClick = {
+                                    showToolsPanel = false
+                                    onImpersonate()
+                                },
+                            )
+                            ComposerChip(
+                                label = strings.rp.continueBtn,
+                                icon = Icons.Default.PlayArrow,
+                                active = false,
+                                enabled = !isStreaming,
+                                tone = ComposerChipTone.PRIMARY,
+                                onClick = {
+                                    showToolsPanel = false
+                                    onContinueRp()
+                                },
+                            )
+                            ComposerChip(
+                                label = strings.rp.insertActionFmt,
+                                icon = null,
+                                active = false,
+                                tone = ComposerChipTone.NEUTRAL,
+                                onClick = {
+                                    onDraftChange(insertRpFormatting(draftText, "*", "*"))
+                                },
+                            )
+                            ComposerChip(
+                                label = strings.rp.insertSpeechFmt,
+                                icon = null,
+                                active = false,
+                                tone = ComposerChipTone.NEUTRAL,
+                                onClick = {
+                                    val (openQ, closeQ) = if (strings.language == AppLanguage.ZH) "“" to "”" else "\"" to "\""
+                                    onDraftChange(insertRpFormatting(draftText, openQ, closeQ))
+                                },
+                            )
                         }
                         if (waterline.retrievedMemoryCount > 0) {
                             ComposerChip(
@@ -529,6 +579,8 @@ private fun ComposerChip(
     active: Boolean,
     onClick: () -> Unit,
     tone: ComposerChipTone = ComposerChipTone.PRIMARY,
+    enabled: Boolean = true,
+    loading: Boolean = false,
 ) {
     val c = LocalAppTheme.current.colors
     val bg = when {
@@ -553,15 +605,22 @@ private fun ComposerChip(
     Row(
         modifier = Modifier
             .height(34.dp)
+            .alpha(if (enabled || loading) 1f else 0.48f)
             .clip(RoundedCornerShape(999.dp))
             .background(bg)
             .border(1.dp, border, RoundedCornerShape(999.dp))
-            .clickable(onClick = onClick)
+            .clickable(enabled = enabled && !loading, onClick = onClick)
             .padding(horizontal = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(5.dp),
     ) {
-        if (icon != null) {
+        if (loading) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(13.dp),
+                strokeWidth = 1.8.dp,
+                color = fg,
+            )
+        } else if (icon != null) {
             Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(14.dp))
         }
         Text(
@@ -572,5 +631,23 @@ private fun ComposerChip(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
+    }
+}
+
+private fun insertRpFormatting(draft: String, open: String, close: String): String {
+    val trimmed = draft.trim()
+    if (trimmed.isEmpty()) return "$open$close"
+    if (!trimmed.contains(open) && !trimmed.contains(close)) {
+        return "$open$trimmed$close"
+    }
+    val hasUnclosed = if (open == close) {
+        trimmed.count { it.toString() == open } % 2 == 1
+    } else {
+        trimmed.count { it.toString() == open } > trimmed.count { it.toString() == close }
+    }
+    return if (hasUnclosed) {
+        "${draft.trimEnd()}$close"
+    } else {
+        "${draft.trimEnd()} $open$close"
     }
 }

@@ -25,12 +25,16 @@ import androidx.compose.material.icons.filled.Book
 import androidx.compose.material.icons.filled.Bookmarks
 import androidx.compose.material.icons.filled.Casino
 import androidx.compose.material.icons.filled.FolderZip
+import androidx.compose.material.icons.filled.Forum
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Theaters
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -88,6 +92,7 @@ fun ChatWorkspaceScreen(
     var showNovelStudio by remember { mutableStateOf(false) }
     var showRpWizard by remember { mutableStateOf(false) }
     var showRpStudio by remember { mutableStateOf(false) }
+    var rpStudioInitialTab by remember { mutableIntStateOf(0) }
     var showDiceDialog by remember { mutableStateOf(false) }
     var showMoreMenu by remember { mutableStateOf(false) }
     var showDeepSeekImport by remember { mutableStateOf(false) }
@@ -222,13 +227,22 @@ fun ChatWorkspaceScreen(
     if (showRpWizard) {
         RpWizardDialog(
             onDismiss = { showRpWizard = false },
-            onCreateFromPreset = viewModel::createRpSessionFromPreset,
+            onCreateFromPreset = { presetId, title, playStyle, playerName, playerPersona ->
+                viewModel.createRpSessionFromPreset(
+                    presetId = presetId,
+                    customTitle = title,
+                    playStyle = playStyle,
+                    playerName = playerName,
+                    playerPersona = playerPersona,
+                )
+            },
             onImportCardUri = { uri -> viewModel.importSillyTavernCardUri(uri, ctx.contentResolver) },
         )
     }
 
     if (showDiceDialog) {
         RpDiceDialog(
+            rp = activeConv?.rp,
             onDismiss = { showDiceDialog = false },
             onRoll = viewModel::rollDiceForDraft,
         )
@@ -237,13 +251,56 @@ fun ChatWorkspaceScreen(
     if (showRpStudio && activeConv?.rp != null) {
         RpStudioSheet(
             rp = activeConv.rp,
+            lore = state.novelLore,
+            triggeredLoreIds = state.waterline.triggeredLoreIds.toSet(),
             saveSlots = state.rpSaveSlots,
+            initialTab = rpStudioInitialTab,
+            isGeneratingArt = state.isGeneratingRpArt,
+            artStatusLabel = state.rpArtStatusLabel,
             onAdjustAffinity = viewModel::updateRpCharacterAffinity,
-            onAddNpc = viewModel::addRpNpc,
-            onCreateSaveSlot = viewModel::createRpSaveSlot,
+            onUpsertNpc = viewModel::upsertRpNpc,
+            onDeleteNpc = viewModel::deleteRpNpc,
+            onBindNpcAvatar = { charId, uri -> viewModel.bindRpCharacterAvatar(charId, uri, ctx.contentResolver) },
+            onBindNpcSprite = { charId, exprKey, uri ->
+                viewModel.bindRpCharacterSprite(charId, exprKey, uri, ctx.contentResolver)
+            },
+            onClearNpcSprite = viewModel::clearRpCharacterSprite,
+            onGenerateNpcSprite = { charId, exprKey, hint ->
+                viewModel.generateRpCharacterSprite(charId, exprKey, hint)
+            },
+            onUpdateState = viewModel::updateRpState,
+            onBindSceneImage = { uri -> viewModel.bindRpSceneImage(uri, ctx.contentResolver) },
+            onClearSceneImage = viewModel::clearRpSceneImage,
+            onGenerateSceneCg = { hint, saveToGallery ->
+                viewModel.generateRpSceneCg(hint, saveToGallery)
+            },
+            onAddCgFromUri = { title, caption, uri ->
+                viewModel.addRpCgFromUri(title, caption, uri, ctx.contentResolver)
+            },
+            onSaveCurrentSceneAsCg = viewModel::saveCurrentSceneAsCg,
+            onApplyCgAsScene = viewModel::applyCgAsScene,
+            onDeleteCg = viewModel::deleteRpCg,
+            onUpdateVisualTheme = viewModel::updateRpVisualTheme,
+            onResetVisualTheme = viewModel::resetRpVisualTheme,
+            onUpsertRegexScript = viewModel::upsertRpRegexScript,
+            onToggleRegexScript = viewModel::toggleRpRegexScript,
+            onDeleteRegexScript = viewModel::deleteRpRegexScript,
+            onApplyRegexPreset = viewModel::applyRpRegexPreset,
+            onApplyStatusWidgetTemplate = viewModel::applyRpStatusWidgetTemplate,
+            onAddLore = viewModel::upsertNovelLore,
+            onUpdateLore = viewModel::updateNovelLore,
+            onToggleLoreEnabled = viewModel::toggleNovelLoreEnabled,
+            onToggleLoreAlwaysActive = viewModel::toggleNovelLoreAlwaysActive,
+            onDeleteLore = viewModel::deleteNovelLore,
+            onCreateSaveSlot = { name, note -> viewModel.createRpSaveSlot(name, note) },
+            onOverwriteSaveSlot = viewModel::overwriteRpSaveSlot,
+            onDeleteSaveSlot = viewModel::deleteRpSaveSlot,
             onLoadSaveSlot = viewModel::loadRpSaveSlotRewind,
+            onBranchSaveSlot = viewModel::branchFromRpSaveSlot,
             onUpdateConfig = viewModel::updateRpConfig,
+            onSetPlayStyle = viewModel::setRpPlayStyle,
             onExportCardJson = { uri -> viewModel.exportRpCardJsonToUri(uri, ctx.contentResolver) },
+            onExportCardPng = { uri -> viewModel.exportRpCardPngToUri(uri, ctx.contentResolver) },
             onDismiss = { showRpStudio = false },
         )
     }
@@ -441,10 +498,42 @@ fun ChatWorkspaceScreen(
                                 } else if (mode == ConversationMode.rp && activeConv?.rp != null) {
                                     HorizontalDivider(color = c.border)
                                     DropdownMenuItem(
+                                        leadingIcon = {
+                                            Icon(
+                                                imageVector = if (activeConv.rp.theaterMode) Icons.Default.Forum else Icons.Default.Theaters,
+                                                contentDescription = null,
+                                                tint = c.primary,
+                                                modifier = Modifier.size(18.dp),
+                                            )
+                                        },
+                                        text = {
+                                            Text(
+                                                text = if (activeConv.rp.theaterMode) strings.rp.chatModeBtn else strings.rp.theaterModeBtn,
+                                                color = c.ink,
+                                                fontSize = 13.5.sp,
+                                                fontWeight = FontWeight.Medium,
+                                            )
+                                        },
+                                        onClick = {
+                                            showMoreMenu = false
+                                            viewModel.toggleRpTheaterMode()
+                                        },
+                                    )
+                                    DropdownMenuItem(
                                         leadingIcon = { Icon(Icons.Default.Casino, contentDescription = null, tint = c.accent, modifier = Modifier.size(18.dp)) },
                                         text = { Text(strings.rp.studioBtn, color = c.ink, fontSize = 13.5.sp, fontWeight = FontWeight.Medium) },
                                         onClick = {
                                             showMoreMenu = false
+                                            rpStudioInitialTab = 0
+                                            showRpStudio = true
+                                        },
+                                    )
+                                    DropdownMenuItem(
+                                        leadingIcon = { Icon(Icons.Default.Palette, contentDescription = null, tint = c.primary, modifier = Modifier.size(18.dp)) },
+                                        text = { Text(strings.rp.frontendTab, color = c.ink, fontSize = 13.5.sp, fontWeight = FontWeight.Medium) },
+                                        onClick = {
+                                            showMoreMenu = false
+                                            rpStudioInitialTab = 3
                                             showRpStudio = true
                                         },
                                     )
@@ -470,39 +559,138 @@ fun ChatWorkspaceScreen(
                     onOpenStudio = { showNovelStudio = true },
                     onEnterPureReading = { viewModel.setPureReadingMode(true) },
                 )
-            } else if (mode == ConversationMode.rp && activeConv?.rp != null && activeConv.rp.enableStateHud) {
-                RpStatusHudBar(
-                    rp = activeConv.rp,
-                    onQuickSave = { viewModel.createRpSaveSlot(strings.rp.quickSaveBtn) },
-                    onOpenStudio = { showRpStudio = true },
-                )
+            } else if (mode == ConversationMode.rp && activeConv?.rp != null && !activeConv.rp.theaterMode) {
+                if (activeConv.rp.enableStateHud) {
+                    RpStatusHudBar(
+                        rp = activeConv.rp,
+                        triggeredLoreCount = state.waterline.triggeredLoreIds.size,
+                        onToggleTheaterMode = viewModel::toggleRpTheaterMode,
+                        onQuickSave = { viewModel.createRpSaveSlot(strings.rp.quickSaveBtn) },
+                        onOpenStudio = {
+                            rpStudioInitialTab = 0
+                            showRpStudio = true
+                        },
+                        onUpdateAuthorNote = { note -> viewModel.updateRpConfig { it.copy(authorNote = note) } },
+                    )
+                }
+                if (state.isGeneratingRpArt) {
+                    Surface(
+                        color = c.primarySoft,
+                        border = BorderStroke(1.dp, c.primary.copy(alpha = 0.3f)),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 4.dp),
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(14.dp),
+                                strokeWidth = 2.dp,
+                                color = c.primary,
+                            )
+                            Text(
+                                text = "✨ ${state.rpArtStatusLabel.ifBlank { strings.rp.aiGeneratingArt }}",
+                                color = c.primarySoftInk,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                }
+                val rpTheme = activeConv.rp.visualTheme
+                if (rpTheme.showCustomStatusWidget && rpTheme.customStatusHtml.isNotBlank()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                    ) {
+                        RpHtmlCardSandbox(
+                            htmlFragment = rpTheme.customStatusHtml,
+                            rp = activeConv.rp,
+                            customCss = rpTheme.customCss,
+                            minHeightDp = 52,
+                            maxHeightDp = 220,
+                            onFrontendAction = viewModel::handleRpFrontendAction,
+                            onFrontendSetFlag = viewModel::handleRpFrontendSetFlag,
+                            onFrontendAdjustAffinity = viewModel::handleRpFrontendAdjustAffinity,
+                        )
+                    }
+                }
             }
 
             val activeGroupName = state.groups.firstOrNull { it.id == state.selectedGroupId }?.name.orEmpty()
-            ChatMessageList(
-                mode = mode,
-                messages = state.messages,
-                waterline = state.waterline,
-                hasModelSelected = !state.selectedModelId.isNullOrBlank(),
-                selectedModelLabel = state.selectedModelId.orEmpty(),
-                selectedGroupLabel = activeGroupName,
-                memoryEnabled = activeConv?.params?.enableAutoMemory ?: true,
-                rpConfig = activeConv?.rp,
-                novelConfig = activeConv?.novel,
-                isStreaming = state.isStreaming,
-                attachmentPathResolver = { id -> File(ctx.filesDir, "chat_attachments/$id.jpg") },
-                onOpenModelSheet = { showModelSheet = true },
-                onStarterPrompt = viewModel::applyStarterPrompt,
-                onSelectNovelChoice = { viewModel.sendMessage(overrideText = it) },
-                onSelectRpChoice = viewModel::triggerRpChoice,
-                onRegenerate = viewModel::regenerateFromAssistant,
-                onEditUserMessage = viewModel::editAndResendUserMessage,
-                onBranchFromMessage = viewModel::branchFromMessage,
-                onDeleteMessage = viewModel::deleteMessage,
-                onSwitchVariant = viewModel::switchMessageVariant,
-                onToast = { container.toastController.show(it) },
-                modifier = Modifier.weight(1f),
-            )
+            if (mode == ConversationMode.rp && activeConv?.rp != null && activeConv.rp.theaterMode) {
+                RpTheaterStageView(
+                    rp = activeConv.rp,
+                    messages = state.messages,
+                    isStreaming = state.isStreaming,
+                    isRefreshingChoices = state.isRefreshingChoices,
+                    hasModelSelected = !state.selectedModelId.isNullOrBlank(),
+                    isGeneratingArt = state.isGeneratingRpArt,
+                    artStatusLabel = state.rpArtStatusLabel,
+                    onOpenModelSheet = { showModelSheet = true },
+                    onExitTheater = { viewModel.setRpTheaterMode(false) },
+                    onOpenStudio = {
+                        rpStudioInitialTab = 0
+                        showRpStudio = true
+                    },
+                    onOpenFrontendEditor = {
+                        rpStudioInitialTab = 3
+                        showRpStudio = true
+                    },
+                    onQuickSave = { viewModel.createRpSaveSlot(strings.rp.quickSaveBtn) },
+                    onStarterPrompt = viewModel::applyStarterPrompt,
+                    onSelectChoice = { choice, bypassLock -> viewModel.triggerRpChoice(choice, bypassLock) },
+                    onRefreshChoices = viewModel::refreshRpChoices,
+                    onContinue = { viewModel.continueLastAssistantMessage() },
+                    onRegenerate = viewModel::regenerateFromAssistant,
+                    onEditAssistantMessage = viewModel::editAssistantMessage,
+                    onSwitchVariant = viewModel::switchMessageVariant,
+                    onFrontendAction = viewModel::handleRpFrontendAction,
+                    onFrontendSetFlag = viewModel::handleRpFrontendSetFlag,
+                    onFrontendAdjustAffinity = viewModel::handleRpFrontendAdjustAffinity,
+                    onToast = { container.toastController.show(it) },
+                    modifier = Modifier.weight(1f),
+                )
+            } else {
+                ChatMessageList(
+                    mode = mode,
+                    messages = state.messages,
+                    waterline = state.waterline,
+                    hasModelSelected = !state.selectedModelId.isNullOrBlank(),
+                    selectedModelLabel = state.selectedModelId.orEmpty(),
+                    selectedGroupLabel = activeGroupName,
+                    memoryEnabled = activeConv?.params?.enableAutoMemory ?: true,
+                    rpConfig = activeConv?.rp,
+                    novelConfig = activeConv?.novel,
+                    isStreaming = state.isStreaming,
+                    isRefreshingChoices = state.isRefreshingChoices,
+                    attachmentPathResolver = { id -> File(ctx.filesDir, "chat_attachments/$id.jpg") },
+                    onOpenModelSheet = { showModelSheet = true },
+                    onStarterPrompt = viewModel::applyStarterPrompt,
+                    onSelectNovelChoice = { viewModel.sendMessage(overrideText = it) },
+                    onSelectRpChoice = { choice, bypassLock -> viewModel.triggerRpChoice(choice, bypassLock) },
+                    onRefreshRpChoices = viewModel::refreshRpChoices,
+                    onContinueRp = { viewModel.continueLastAssistantMessage() },
+                    onRegenerate = viewModel::regenerateFromAssistant,
+                    onEditUserMessage = viewModel::editAndResendUserMessage,
+                    onEditAssistantMessage = viewModel::editAssistantMessage,
+                    onBranchFromMessage = viewModel::branchFromMessage,
+                    onDeleteMessage = viewModel::deleteMessage,
+                    onSwitchVariant = viewModel::switchMessageVariant,
+                    onToast = { container.toastController.show(it) },
+                    onFrontendAction = viewModel::handleRpFrontendAction,
+                    onFrontendSetFlag = viewModel::handleRpFrontendSetFlag,
+                    onFrontendAdjustAffinity = viewModel::handleRpFrontendAdjustAffinity,
+                    modifier = Modifier.weight(1f),
+                )
+            }
 
             ChatComposerBar(
                 mode = mode,
@@ -530,6 +718,9 @@ fun ChatWorkspaceScreen(
                 onOpenRecallInspector = { memorySheetInitialTab = 3; showMemorySheet = true },
                 onSend = { viewModel.sendMessage() },
                 onStop = viewModel::stopStreaming,
+                isImpersonating = state.isImpersonating,
+                onImpersonate = viewModel::impersonatePlayerDraft,
+                onContinueRp = { viewModel.continueLastAssistantMessage() },
             )
         }
     }

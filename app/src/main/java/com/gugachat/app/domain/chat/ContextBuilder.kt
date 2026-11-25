@@ -233,6 +233,7 @@ object ContextBuilder {
             )
             isRp -> RpEngine.buildRpSystemPrompt(
                 rp = conversation.rp!!,
+                constantLore = constantLore,
                 chronicleSummary = chronicleText,
             )
             else -> buildString {
@@ -291,7 +292,7 @@ object ContextBuilder {
         val tailBudget = floor(effectiveLimitTokens * tailRecallShare(memoryBudget)).toInt()
         val presentNames = when {
             isNovel -> conversation.novel?.currentStatus?.present.orEmpty()
-            isRp -> conversation.rp?.cast?.map { it.name }.orEmpty()
+            isRp -> conversation.rp?.cast?.filter { it.inScene }?.map { it.name }.orEmpty()
             else -> emptyList()
         }
         val querySeed = buildList {
@@ -549,8 +550,8 @@ object ContextBuilder {
         val isRp = conv.mode == ConversationMode.rp && conv.rp != null
         val scorer = if (allowScorer) input.semanticScorer else null
 
-        val loreMatch = if (isNovel) {
-            NovelEngine.matchNovelLore(
+        val loreMatch = when {
+            isNovel -> NovelEngine.matchNovelLore(
                 lore = input.novelLore,
                 recentMessages = slice.active,
                 draftText = input.draftText,
@@ -561,8 +562,21 @@ object ContextBuilder {
                 sceneTitle = conv.novel.currentStatus?.location,
                 semanticScorer = scorer,
             )
-        } else {
-            LoreMatchResult(emptyList(), emptyList(), 0, 0)
+            isRp -> {
+                val rpCfg = conv.rp!!
+                NovelEngine.matchNovelLore(
+                    lore = input.novelLore,
+                    recentMessages = slice.active,
+                    draftText = input.draftText,
+                    chapterOutline = rpCfg.state.chapterTitle,
+                    loreTokenBudget = rpCfg.loreTokenBudget,
+                    activeTipSeq = slice.effectiveTipSeq,
+                    presentEntities = rpCfg.cast.filter { it.inScene }.map { it.name },
+                    sceneTitle = rpCfg.state.scene,
+                    semanticScorer = scorer,
+                )
+            }
+            else -> LoreMatchResult(emptyList(), emptyList(), 0, 0)
         }
 
         val prefix = buildSystemPrefix(
@@ -606,7 +620,9 @@ object ContextBuilder {
             isRp -> {
                 val rpCfg = conv.rp!!
                 180 + min(280, rpCfg.state.inventory.size * 12 + rpCfg.state.quests.size * 16 + rpCfg.cast.size * 20) +
+                    loreMatch.triggeredTokens +
                     estimateTextTokens(rpCfg.authorNote) +
+                    estimateTextTokens(rpCfg.postHistoryInstructions) +
                     tailBundle.tailRecallTokens
             }
             else -> tailBundle.tailRecallTokens
@@ -740,7 +756,11 @@ object ContextBuilder {
         for (idx in selected.indices) {
             val msg = selected[idx]
             val rawContent = if (msg.role == "assistant") {
-                if (pipe.isNovel) NovelExport.stripInternalTags(msg.content) else msg.content
+                when {
+                    pipe.isNovel -> NovelExport.stripInternalTags(msg.content)
+                    pipe.isRp -> RpEngine.stripRpInternalTags(msg.content)
+                    else -> msg.content
+                }
             } else {
                 msg.content
             }
@@ -774,6 +794,7 @@ object ContextBuilder {
                     activeLedgerLines = pipe.tailBundle.rpActiveLedgerLines,
                     recalledMemoryLines = pipe.tailBundle.rpRecalledMemoryLines,
                     archivedEpisodeLines = pipe.tailBundle.rpArchivedEpisodeLines,
+                    triggeredLore = pipe.loreMatch.triggered,
                 )
                 isFinalChatUser && pipe.tailBundle.chatTailRecallBlock.isNotBlank() -> {
                     if (rawContent.isNotBlank()) "${pipe.tailBundle.chatTailRecallBlock}\n\n$rawContent"
@@ -845,6 +866,7 @@ object ContextBuilder {
                         activeLedgerLines = pipe.tailBundle.rpActiveLedgerLines,
                         recalledMemoryLines = pipe.tailBundle.rpRecalledMemoryLines,
                         archivedEpisodeLines = pipe.tailBundle.rpArchivedEpisodeLines,
+                        triggeredLore = pipe.loreMatch.triggered,
                     )
                     wireMessages.add(WireChatMessage(role = "user", textContent = openingRp))
                 }
