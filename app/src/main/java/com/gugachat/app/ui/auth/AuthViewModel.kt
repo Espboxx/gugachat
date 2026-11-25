@@ -308,13 +308,10 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
 
     fun setShowWebLogin(show: Boolean) {
         if (show) {
-            val normalized = ServerUrlUtils.normalizeServerUrl(_ui.value.serverUrlInput)
-            if (normalized.isEmpty()) {
-                _ui.update { it.copy(serverError = "Server URL required", errorMsg = null) }
-                return
-            }
+            val resolved = resolveSelectedHostUrl()
+            _ui.update { it.copy(serverUrlInput = resolved, serverError = null, errorMsg = null) }
             viewModelScope.launch {
-                container.settingsStore.setServerUrl(normalized)
+                container.settingsStore.setServerUrl(resolved)
             }
         }
         _ui.update { it.copy(showWebLoginDialog = show) }
@@ -489,12 +486,15 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
         container.setThemeStyle(if (cur == ThemeStyle.GUGUGA) ThemeStyle.CLASSIC else ThemeStyle.GUGUGA)
     }
 
+    private fun resolveSelectedHostUrl(): String {
+        val current = ServerUrlUtils.normalizeServerUrl(_ui.value.serverUrlInput)
+        if (current.isNotEmpty()) return current
+        return GugagaHosts.pickFastestReachable(_ui.value.hostProbes)?.host?.url
+            ?: GugagaHosts.PRESETS.first().url
+    }
+
     private suspend fun ensureServerConfigured(): Boolean {
-        val normalized = ServerUrlUtils.normalizeServerUrl(_ui.value.serverUrlInput)
-        if (normalized.isEmpty()) {
-            _ui.update { it.copy(serverError = "Server URL required") }
-            return false
-        }
+        val normalized = resolveSelectedHostUrl()
         container.settingsStore.setServerUrl(normalized)
         _ui.update { it.copy(serverUrlInput = normalized) }
         if (_ui.value.publicSettings == null) {

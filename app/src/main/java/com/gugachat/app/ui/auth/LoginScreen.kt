@@ -20,7 +20,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -28,17 +27,14 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Palette
-import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -246,117 +242,78 @@ fun LoginScreen(
                     }
                 }
             } else if (state.entryMode == LoginEntryMode.SUB2API) {
-                // Server URL Card
+                // GuGuGa Preset Host Selector Card
                 GuCard(modifier = Modifier.fillMaxWidth()) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = strings.auth.serverUrlLabel,
-                        color = c.ink,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                    )
-                    if (state.serverConnected) {
-                        GuBadge(
-                            text = strings.auth.serverConnected.fmt(
-                                "site" to (state.publicSettings?.site_name?.ifBlank { "sub2api" } ?: "sub2api"),
-                            ),
-                            variant = GuBadgeVariant.EMERALD,
-                        )
-                    } else if (state.serverError != null) {
-                        GuBadge(
-                            text = strings.auth.serverFailed,
-                            variant = GuBadgeVariant.DANGER,
-                        )
-                    }
-                }
-                Spacer(Modifier.height(10.dp))
-                // GuGuGa Preset Hosts with Live Latency Probe
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = strings.auth.hostPickerTitle,
-                        color = c.muted,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    GuButton(
-                        onClick = { viewModel.probePresetHosts(autoSelectFastest = true) },
-                        loading = state.isProbingHosts,
-                        compact = true,
-                        variant = GuButtonVariant.HONEY,
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Icon(Icons.Default.Speed, contentDescription = null, modifier = Modifier.size(14.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text(strings.auth.hostSpeedTestBtn, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                    }
-                }
-                Spacer(Modifier.height(8.dp))
-
-                val fastestHostId = remember(state.hostProbes) {
-                    GugagaHosts.pickFastestReachable(state.hostProbes)?.host?.id
-                }
-                val normalizedCurrentUrl = ServerUrlUtils.normalizeServerUrl(state.serverUrlInput)
-
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    state.hostProbes.forEach { item ->
-                        PresetHostRow(
-                            item = item,
-                            selected = normalizedCurrentUrl.equals(item.host.url, ignoreCase = true),
-                            isFastest = item.status == HostProbeStatus.REACHABLE && item.host.id == fastestHostId,
-                            onClick = { viewModel.selectPresetHost(item.host) },
-                        )
-                    }
-                }
-
-                Spacer(Modifier.height(10.dp))
-                HorizontalDivider(color = c.border)
-                Spacer(Modifier.height(10.dp))
-
-                GuTextField(
-                    value = state.serverUrlInput,
-                    onValueChange = viewModel::updateServerUrlInput,
-                    label = strings.auth.hostCustomUrlHint,
-                    placeholder = strings.auth.serverUrlPlaceholder,
-                    leadingIcon = { Icon(Icons.Default.Public, contentDescription = null, tint = c.muted) },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done),
-                    keyboardActions = KeyboardActions(onDone = { viewModel.probeServer() }),
-                )
-                if (!state.serverError.isNullOrBlank()) {
-                    Spacer(Modifier.height(6.dp))
-                    Text(state.serverError!!, color = c.danger, fontSize = 12.sp)
-                }
-                Spacer(Modifier.height(10.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    GuButton(
-                        onClick = { viewModel.probeServer() },
-                        loading = state.isProbing,
-                        compact = true,
-                        variant = GuButtonVariant.SECONDARY,
-                    ) {
-                        Icon(Icons.Default.CloudDone, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(6.dp))
                         Text(
-                            if (state.isProbing) strings.auth.connecting else strings.auth.testConnection,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
+                            text = strings.auth.hostPickerTitle,
+                            color = c.ink,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.ExtraBold,
                         )
+                        GuButton(
+                            onClick = { viewModel.probePresetHosts(autoSelectFastest = true) },
+                            loading = state.isProbingHosts,
+                            compact = true,
+                            variant = GuButtonVariant.HONEY,
+                        ) {
+                            Icon(Icons.Default.Speed, contentDescription = null, modifier = Modifier.size(14.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text(strings.auth.hostSpeedTestBtn, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
                     }
-                    state.publicSettings?.version?.takeIf { it.isNotBlank() }?.let { v ->
-                        GuBadge("v$v", variant = GuBadgeVariant.BLUE)
+
+                    if (state.serverConnected || state.serverError != null || !state.publicSettings?.version.isNullOrBlank()) {
+                        Spacer(Modifier.height(6.dp))
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            if (state.serverConnected) {
+                                GuBadge(
+                                    text = strings.auth.serverConnected.fmt(
+                                        "site" to (state.publicSettings?.site_name?.ifBlank { "sub2api" } ?: "sub2api"),
+                                    ),
+                                    variant = GuBadgeVariant.EMERALD,
+                                )
+                            } else if (state.serverError != null) {
+                                GuBadge(
+                                    text = strings.auth.serverFailed,
+                                    variant = GuBadgeVariant.DANGER,
+                                )
+                            }
+                            state.publicSettings?.version?.takeIf { it.isNotBlank() }?.let { v ->
+                                GuBadge("v$v", variant = GuBadgeVariant.BLUE)
+                            }
+                        }
+                    }
+
+                    Spacer(Modifier.height(10.dp))
+                    val fastestHostId = remember(state.hostProbes) {
+                        GugagaHosts.pickFastestReachable(state.hostProbes)?.host?.id
+                    }
+                    val normalizedCurrentUrl = ServerUrlUtils.normalizeServerUrl(state.serverUrlInput)
+
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        state.hostProbes.forEach { item ->
+                            PresetHostRow(
+                                item = item,
+                                selected = normalizedCurrentUrl.equals(item.host.url, ignoreCase = true),
+                                isFastest = item.status == HostProbeStatus.REACHABLE && item.host.id == fastestHostId,
+                                onClick = { viewModel.selectPresetHost(item.host) },
+                            )
+                        }
+                    }
+
+                    if (!state.serverError.isNullOrBlank()) {
+                        Spacer(Modifier.height(6.dp))
+                        Text(state.serverError!!, color = c.danger, fontSize = 12.sp)
                     }
                 }
-            }
 
             // Auth Card
             GuCard(modifier = Modifier.fillMaxWidth()) {
