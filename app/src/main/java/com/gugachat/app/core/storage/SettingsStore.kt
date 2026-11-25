@@ -29,6 +29,8 @@ data class AppSettings(
     val lastImageKeyId: Long = 0L,
     val lastImageModel: String = "",
     val directModeActive: Boolean = false,
+    val hasChosenEntryMode: Boolean = false,
+    val preferredEntryMode: String = "",
 )
 
 class SettingsStore(private val context: Context) {
@@ -43,6 +45,8 @@ class SettingsStore(private val context: Context) {
         val LAST_IMAGE_KEY_ID = longPreferencesKey("last_image_key_id")
         val LAST_IMAGE_MODEL = stringPreferencesKey("last_image_model")
         val DIRECT_MODE_ACTIVE = booleanPreferencesKey("direct_mode_active")
+        val HAS_CHOSEN_ENTRY_MODE = booleanPreferencesKey("has_chosen_entry_mode")
+        val PREFERRED_ENTRY_MODE = stringPreferencesKey("preferred_entry_mode")
     }
 
     val settingsFlow: Flow<AppSettings> = context.settingsDataStore.data.map { prefs ->
@@ -57,6 +61,8 @@ class SettingsStore(private val context: Context) {
             lastImageKeyId = prefs[Keys.LAST_IMAGE_KEY_ID] ?: 0L,
             lastImageModel = prefs[Keys.LAST_IMAGE_MODEL].orEmpty(),
             directModeActive = prefs[Keys.DIRECT_MODE_ACTIVE] ?: false,
+            hasChosenEntryMode = prefs[Keys.HAS_CHOSEN_ENTRY_MODE] ?: false,
+            preferredEntryMode = prefs[Keys.PREFERRED_ENTRY_MODE].orEmpty(),
         )
     }
 
@@ -100,5 +106,12 @@ class SettingsStore(private val context: Context) {
 
     suspend fun setDirectModeActive(active: Boolean) {
         context.settingsDataStore.edit { it[Keys.DIRECT_MODE_ACTIVE] = active }
+    }
+
+    suspend fun setPreferredEntryMode(mode: String) {
+        context.settingsDataStore.edit {
+            it[Keys.HAS_CHOSEN_ENTRY_MODE] = true
+            it[Keys.PREFERRED_ENTRY_MODE] = mode
+        }
     }
 }

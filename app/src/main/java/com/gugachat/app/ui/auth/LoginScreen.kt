@@ -22,7 +22,11 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.CloudDone
+import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Palette
@@ -137,21 +141,45 @@ fun LoginScreen(
                 .padding(horizontal = 16.dp, vertical = 14.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                GuPill(
-                    label = strings.providers.entrySub2api,
-                    selected = state.entryMode == LoginEntryMode.SUB2API,
-                    onClick = { viewModel.setEntryMode(LoginEntryMode.SUB2API) },
+            if (state.entryMode == LoginEntryMode.CHOOSER) {
+                FirstLaunchModeChooser(
+                    onChooseGugaga = { viewModel.chooseEntryMode(LoginEntryMode.SUB2API) },
+                    onChooseCustomApi = { viewModel.chooseEntryMode(LoginEntryMode.DIRECT_API) },
                 )
-                GuPill(
-                    label = strings.providers.entryDirectApi,
-                    selected = state.entryMode == LoginEntryMode.DIRECT_API,
-                    onClick = { viewModel.setEntryMode(LoginEntryMode.DIRECT_API) },
-                    useHoneySelected = true,
-                )
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    IconButton(
+                        onClick = { viewModel.chooseEntryMode(LoginEntryMode.CHOOSER) },
+                        modifier = Modifier.size(34.dp),
+                    ) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = strings.providers.chooserBackBtn,
+                            tint = c.muted,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        GuPill(
+                            label = strings.providers.entrySub2api,
+                            selected = state.entryMode == LoginEntryMode.SUB2API,
+                            onClick = { viewModel.chooseEntryMode(LoginEntryMode.SUB2API) },
+                        )
+                        GuPill(
+                            label = strings.providers.entryDirectApi,
+                            selected = state.entryMode == LoginEntryMode.DIRECT_API,
+                            onClick = { viewModel.chooseEntryMode(LoginEntryMode.DIRECT_API) },
+                            useHoneySelected = true,
+                        )
+                    }
+                }
             }
 
             if (state.entryMode == LoginEntryMode.DIRECT_API) {
@@ -207,7 +235,7 @@ fun LoginScreen(
                         Text(strings.providers.saveAndEnterBtn, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                     }
                 }
-            } else {
+            } else if (state.entryMode == LoginEntryMode.SUB2API) {
                 // Server URL Card
                 GuCard(modifier = Modifier.fillMaxWidth()) {
                 Row(
@@ -479,6 +507,157 @@ fun LoginScreen(
                 }
             }
             }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun FirstLaunchModeChooser(
+    onChooseGugaga: () -> Unit,
+    onChooseCustomApi: () -> Unit,
+) {
+    val strings = LocalAppStrings.current
+    val theme = LocalAppTheme.current
+    val c = theme.colors
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Image(
+            painter = painterResource(id = R.drawable.img_splash),
+            contentDescription = strings.common.appName,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .size(84.dp)
+                .clip(RoundedCornerShape(22.dp)),
+        )
+        Text(
+            text = strings.providers.chooserWelcomeTitle,
+            color = c.ink,
+            fontSize = 20.sp,
+            fontWeight = FontWeight.ExtraBold,
+        )
+        Text(
+            text = strings.providers.chooserWelcomeSubtitle,
+            color = c.muted,
+            fontSize = 12.sp,
+        )
+
+        Spacer(Modifier.height(4.dp))
+
+        GuCard(
+            modifier = Modifier.fillMaxWidth(),
+            borderColor = c.primary,
+            onClick = onChooseGugaga,
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Default.AccountCircle,
+                    contentDescription = null,
+                    tint = c.primary,
+                    modifier = Modifier.size(34.dp),
+                )
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text(
+                            text = strings.providers.chooserGugagaTitle,
+                            color = c.ink,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                        )
+                        GuBadge(
+                            text = strings.providers.chooserGugagaBadge,
+                            variant = GuBadgeVariant.BLUE,
+                        )
+                    }
+                    Text(
+                        text = strings.providers.chooserGugagaDesc,
+                        color = c.muted,
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp,
+                    )
+                }
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                    contentDescription = null,
+                    tint = c.primary,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+        }
+
+        GuCard(
+            modifier = Modifier.fillMaxWidth(),
+            borderColor = c.accent,
+            onClick = onChooseCustomApi,
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Key,
+                    contentDescription = null,
+                    tint = c.accent,
+                    modifier = Modifier.size(34.dp),
+                )
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text(
+                            text = strings.providers.chooserDirectTitle,
+                            color = c.ink,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                        )
+                        GuBadge(
+                            text = strings.providers.chooserDirectBadge,
+                            variant = GuBadgeVariant.HONEY,
+                        )
+                    }
+                    Text(
+                        text = strings.providers.chooserDirectDesc,
+                        color = c.muted,
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp,
+                    )
+                }
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                    contentDescription = null,
+                    tint = c.ink,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+        }
+
+        FlowRow(
+            modifier = Modifier.padding(top = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            GuBadge(
+                text = if (strings.language == AppLanguage.ZH) "简体中文" else "English",
+                variant = GuBadgeVariant.NEUTRAL,
+            )
+            GuBadge(
+                text = if (theme.style.wireValue == "guguga") strings.profile.themeGuguga else strings.profile.themeClassic,
+                variant = GuBadgeVariant.BLUE,
+            )
         }
     }
 }

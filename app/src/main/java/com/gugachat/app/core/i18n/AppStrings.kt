@@ -720,6 +720,15 @@ data class ImageStrings(
 
 @Immutable
 data class ApiProviderStrings(
+    val chooserWelcomeTitle: String,
+    val chooserWelcomeSubtitle: String,
+    val chooserGugagaTitle: String,
+    val chooserGugagaBadge: String,
+    val chooserGugagaDesc: String,
+    val chooserDirectTitle: String,
+    val chooserDirectBadge: String,
+    val chooserDirectDesc: String,
+    val chooserBackBtn: String,
     val entrySub2api: String,
     val entryDirectApi: String,
     val directSubtitle: String,

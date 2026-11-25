@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 enum class LoginEntryMode {
+    CHOOSER,
     SUB2API,
     DIRECT_API,
 }
@@ -31,7 +32,7 @@ enum class AuthFormTab {
 }
 
 data class AuthUiState(
-    val entryMode: LoginEntryMode = LoginEntryMode.SUB2API,
+    val entryMode: LoginEntryMode = LoginEntryMode.CHOOSER,
     val serverUrlInput: String = "",
     val isProbing: Boolean = false,
     val serverConnected: Boolean = false,
@@ -61,6 +62,10 @@ data class AuthUiState(
 class AuthViewModel(private val container: AppContainer) : ViewModel() {
     private val _ui = MutableStateFlow(
         AuthUiState(
+            entryMode = computeInitialEntryMode(
+                settings = container.settingsState.value,
+                hasSavedProviders = container.apiProviderStore.currentProviders().isNotEmpty(),
+            ),
             serverUrlInput = container.settingsState.value.serverUrl,
             publicSettings = container.publicSettings.value,
             serverConnected = container.publicSettings.value != null,
@@ -77,17 +82,52 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
             }
         }
         viewModelScope.launch {
-            val savedUrl = container.settingsStore.currentSettings().serverUrl
-            if (savedUrl.isNotBlank() && _ui.value.serverUrlInput.isBlank()) {
-                _ui.update { it.copy(serverUrlInput = savedUrl) }
-                probeServer(savedUrl, silent = true)
+            val saved = container.settingsStore.currentSettings()
+            val resolvedMode = computeInitialEntryMode(
+                settings = saved,
+                hasSavedProviders = container.apiProviderStore.currentProviders().isNotEmpty(),
+            )
+            _ui.update { cur ->
+                cur.copy(
+                    entryMode = resolvedMode,
+                    serverUrlInput = cur.serverUrlInput.ifBlank { saved.serverUrl },
+                )
+            }
+            if (saved.serverUrl.isNotBlank()) {
+                probeServer(saved.serverUrl, silent = true)
             }
         }
     }
 
-    fun setEntryMode(mode: LoginEntryMode) {
-        _ui.update { it.copy(entryMode = mode, errorMsg = null, directTestError = null) }
+    private fun computeInitialEntryMode(
+        settings: com.gugachat.app.core.storage.AppSettings,
+        hasSavedProviders: Boolean,
+    ): LoginEntryMode {
+        if (!settings.hasChosenEntryMode && settings.serverUrl.isBlank() && !hasSavedProviders) {
+            return LoginEntryMode.CHOOSER
+        }
+        return when (settings.preferredEntryMode) {
+            "direct" -> LoginEntryMode.DIRECT_API
+            "gugaga" -> LoginEntryMode.SUB2API
+            else -> if (hasSavedProviders && settings.serverUrl.isBlank()) {
+                LoginEntryMode.DIRECT_API
+            } else if (settings.serverUrl.isNotBlank()) {
+                LoginEntryMode.SUB2API
+            } else {
+                LoginEntryMode.CHOOSER
+            }
+        }
     }
+
+    fun chooseEntryMode(mode: LoginEntryMode) {
+        _ui.update { it.copy(entryMode = mode, errorMsg = null, directTestError = null) }
+        if (mode != LoginEntryMode.CHOOSER) {
+            val wire = if (mode == LoginEntryMode.DIRECT_API) "direct" else "gugaga"
+            viewModelScope.launch { container.settingsStore.setPreferredEntryMode(wire) }
+        }
+    }
+
+    fun setEntryMode(mode: LoginEntryMode) = chooseEntryMode(mode)
 
     fun updateDirectProtocol(protocol: ApiProtocol) {
         _ui.update { state ->
