@@ -849,6 +849,33 @@ data class ApiProviderStrings(
 )
 
 @Immutable
+data class UpdateStrings(
+    val dialogTitle: String,
+    val versionCompare: String,
+    val releaseNotesLabel: String,
+    val noReleaseNotes: String,
+    val apkSizeBadge: String,
+    val confirmUpdateBtn: String,
+    val installNowBtn: String,
+    val retryDownloadBtn: String,
+    val manualDownloadBtn: String,
+    val cancelBtn: String,
+    val downloadingProgress: String,
+    val downloadingUnknownSize: String,
+    val downloadReadyHint: String,
+    val installPermHint: String,
+    val downloadFailedPrefix: String,
+    val aboutCardTitle: String,
+    val currentVersionLabel: String,
+    val checkUpdateBtn: String,
+    val checkingUpdate: String,
+    val alreadyLatestToast: String,
+    val checkFailedToast: String,
+    val qqGroupLabel: String,
+    val openReleasesBtn: String,
+)
+
+@Immutable
 data class AppStrings(
     val language: AppLanguage,
     val common: CommonStrings,
@@ -860,6 +887,7 @@ data class AppStrings(
     val rp: RpStrings,
     val images: ImageStrings,
     val providers: ApiProviderStrings,
+    val update: UpdateStrings,
 )
 
 val LocalAppStrings = staticCompositionLocalOf<AppStrings> { ZhStrings }

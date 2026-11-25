@@ -34,6 +34,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
@@ -77,6 +78,7 @@ import com.gugachat.app.ui.images.ImagePresetSheet
 import com.gugachat.app.ui.images.ImageViewModel
 import com.gugachat.app.ui.profile.ProfileScreen
 import com.gugachat.app.ui.profile.ProfileViewModel
+import com.gugachat.app.ui.update.AppUpdateDialog
 
 private enum class MainTab {
     CHAT,
@@ -88,8 +90,14 @@ private enum class MainTab {
 fun GuGuChatRoot(container: AppContainer) {
     val settings by container.settingsState.collectAsStateWithLifecycle()
     val session by container.authSession.collectAsStateWithLifecycle()
+    val updateState by container.updateController.ui.collectAsStateWithLifecycle()
+    val ctx = LocalContext.current
     val strings = remember(settings.language) {
         if (settings.language == AppLanguage.EN) EnStrings else ZhStrings
+    }
+
+    LaunchedEffect(container) {
+        container.updateController.checkForUpdate(silent = true)
     }
 
     CompositionLocalProvider(LocalAppStrings provides strings) {
@@ -119,6 +127,17 @@ fun GuGuChatRoot(container: AppContainer) {
                         .statusBarsPadding()
                         .padding(top = 60.dp),
                 )
+
+                val updateInfo = updateState.availableUpdate
+                if (updateState.showDialog && updateInfo != null) {
+                    AppUpdateDialog(
+                        info = updateInfo,
+                        downloadState = updateState.downloadState,
+                        onConfirmUpdate = { container.updateController.startDownloadOrInstall(ctx) },
+                        onOpenDownloadPage = { container.updateController.openManualDownloadPage(ctx) },
+                        onDismiss = { container.updateController.dismissDialog() },
+                    )
+                }
             }
         }
     }

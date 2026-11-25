@@ -13,6 +13,7 @@ import com.gugachat.app.core.theme.ToastController
 import com.gugachat.app.data.api.ApiClient
 import com.gugachat.app.data.api.ApiException
 import com.gugachat.app.data.api.AppJson
+import com.gugachat.app.data.api.AppUpdateController
 import com.gugachat.app.data.api.AuthApi
 import com.gugachat.app.data.api.DirectApiClient
 import com.gugachat.app.data.api.OnlineChatApi
@@ -97,6 +98,11 @@ class AppContainer(context: Context) {
         isDirectOnlyProvider = { (_authSession.value as? AuthSessionState.LoggedIn)?.isDirectApiOnly == true },
     )
     val imageLoader: ImageLoader = apiClient.createAuthenticatedImageLoader(appContext)
+    val updateController = AppUpdateController(
+        appContext = appContext,
+        scope = scope,
+        httpClient = apiClient.streamingClient,
+    )
 
     init {
         scope.launch {

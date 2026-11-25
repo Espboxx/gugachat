@@ -32,7 +32,9 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FolderZip
 import androidx.compose.material.icons.filled.Public
+import androidx.compose.material.icons.filled.OpenInBrowser
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
@@ -57,9 +59,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.gugachat.app.AppContainer
+import com.gugachat.app.BuildConfig
 import com.gugachat.app.R
+import com.gugachat.app.data.api.AppUpdateService
 import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.i18n.LocalAppStrings
+import com.gugachat.app.core.i18n.fmt
 import com.gugachat.app.core.theme.ColorMode
 import com.gugachat.app.core.theme.GuAwningHeader
 import com.gugachat.app.core.theme.GuBadge
@@ -490,6 +495,70 @@ fun ProfileScreen(
                     Icon(Icons.Default.FolderZip, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
                     Text(strings.chat.importExternalTitle, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+
+            // About & Auto-Update Card
+            val updateUi by container.updateController.ui.collectAsStateWithLifecycle()
+            GuCard(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            text = strings.update.aboutCardTitle,
+                            color = c.ink,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                        )
+                        Text(
+                            text = "${strings.update.currentVersionLabel.fmt("version" to BuildConfig.VERSION_NAME)} · ${strings.update.qqGroupLabel}",
+                            color = c.muted,
+                            fontSize = 11.5.sp,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    GuButton(
+                        onClick = {
+                            container.updateController.checkForUpdate(
+                                silent = false,
+                                onUpToDate = { ver ->
+                                    container.toastController.show(strings.update.alreadyLatestToast.fmt("version" to ver))
+                                },
+                                onError = {
+                                    container.toastController.show(strings.update.checkFailedToast, isError = true)
+                                },
+                            )
+                        },
+                        enabled = !updateUi.isChecking,
+                        loading = updateUi.isChecking,
+                        compact = true,
+                        variant = GuButtonVariant.SUBTLE,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Icon(Icons.Default.SystemUpdate, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(5.dp))
+                        Text(
+                            text = if (updateUi.isChecking) strings.update.checkingUpdate else strings.update.checkUpdateBtn,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                        )
+                    }
+                    GuButton(
+                        onClick = { AppUpdateService.openDownloadPage(ctx) },
+                        compact = true,
+                        variant = GuButtonVariant.SECONDARY,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Icon(Icons.Default.OpenInBrowser, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(5.dp))
+                        Text(strings.update.openReleasesBtn, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                    }
                 }
             }
 
