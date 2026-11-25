@@ -3,11 +3,13 @@ package com.gugachat.app.ui.chat
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -31,6 +33,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountTree
@@ -43,8 +46,10 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.ImageSearch
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
@@ -56,9 +61,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -77,11 +84,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.rememberAsyncImagePainter
 import com.gugachat.app.R
+import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.i18n.LocalAppStrings
 import com.gugachat.app.core.theme.GuBadge
 import com.gugachat.app.core.theme.GuBadgeVariant
 import com.gugachat.app.core.theme.GuButton
+import com.gugachat.app.core.theme.GuButtonVariant
 import com.gugachat.app.core.theme.GuCard
+import com.gugachat.app.core.theme.GuConfirmDialog
 import com.gugachat.app.core.theme.GuTextField
 import com.gugachat.app.core.theme.LocalAppTheme
 import com.gugachat.app.domain.chat.ChatMessage
@@ -93,6 +103,7 @@ import com.gugachat.app.domain.chat.RpChoice
 import com.gugachat.app.domain.chat.RpConfig
 import com.gugachat.app.domain.chat.RpInputKind
 import com.gugachat.app.domain.chat.TimelineReconciler
+import kotlinx.coroutines.launch
 import java.io.File
 
 @Composable
@@ -123,15 +134,16 @@ fun ChatMessageList(
     val strings = LocalAppStrings.current
     val c = LocalAppTheme.current.colors
     val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
     val active = remember(messages) { TimelineReconciler.activeMessages(messages) }
     val listState = rememberLazyListState()
     var editTarget by remember { mutableStateOf<ChatMessage?>(null) }
     var editBuffer by remember { mutableStateOf("") }
+    var deleteTarget by remember { mutableStateOf<ChatMessage?>(null) }
 
     val lastMsg = active.lastOrNull()
     LaunchedEffect(active.size, lastMsg?.content?.length, lastMsg?.reasoning?.length) {
         if (active.isEmpty()) return@LaunchedEffect
-        // LazyColumn has a leading top spacer (index 0), messages (1..active.size), and a trailing bottom spacer (active.size + 1).
         val bottomIndex = active.size + 1
         if (isStreaming) {
             val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: bottomIndex
@@ -139,14 +151,30 @@ fun ChatMessageList(
                 listState.scrollToItem(bottomIndex)
             }
         } else {
-            listState.animateScrollToItem(bottomIndex)
+            listState.scrollToItem(bottomIndex)
         }
+    }
+
+    if (deleteTarget != null) {
+        val isZh = strings.language == AppLanguage.ZH
+        GuConfirmDialog(
+            title = strings.common.delete,
+            message = if (isZh) "确定删除这条消息？删除后无法恢复。" else "Delete this message permanently?",
+            confirmText = strings.common.delete,
+            cancelText = strings.common.cancel,
+            isDestructive = true,
+            onConfirm = {
+                onDeleteMessage(deleteTarget!!.id)
+                deleteTarget = null
+            },
+            onDismiss = { deleteTarget = null },
+        )
     }
 
     if (editTarget != null) {
         AlertDialog(
             onDismissRequest = { editTarget = null },
-            containerColor = c.surface,
+            containerColor = c.surfaceElevated,
             title = { Text(strings.chat.editResend, color = c.ink, fontWeight = FontWeight.ExtraBold) },
             text = {
                 GuTextField(
@@ -163,6 +191,7 @@ fun ChatMessageList(
                         onEditUserMessage(editTarget!!.id, editBuffer)
                         editTarget = null
                     },
+                    enabled = editBuffer.isNotBlank(),
                     compact = true,
                 ) {
                     Text(strings.chat.send, fontWeight = FontWeight.Bold)
@@ -192,54 +221,96 @@ fun ChatMessageList(
         return
     }
 
-    LazyColumn(
-        state = listState,
-        modifier = modifier
-            .fillMaxSize()
-            .padding(horizontal = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        item { Spacer(Modifier.height(4.dp)) }
+    val showScrollToBottom by remember(active.size) {
+        derivedStateOf {
+            val totalItems = listState.layoutInfo.totalItemsCount
+            val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+            totalItems > 2 && lastVisible < totalItems - 2
+        }
+    }
 
-        items(active, key = { it.id }) { msg ->
-            val isUser = msg.role == "user"
-            val isDecayed = msg.id in waterline.decayedImageMessageIds
-            val isLatestAssistant = !isUser && msg.id == active.lastOrNull { it.role == "assistant" }?.id
+    Box(modifier = modifier.fillMaxSize()) {
+        LazyColumn(
+            state = listState,
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            item { Spacer(Modifier.height(4.dp)) }
 
-            if (isUser) {
-                UserMessageBlock(
-                    msg = msg,
-                    isDecayed = isDecayed,
-                    isStreaming = isStreaming,
-                    attachmentPathResolver = attachmentPathResolver,
-                    onEdit = { editBuffer = msg.content; editTarget = msg },
-                    onBranch = { onBranchFromMessage(msg.id) },
-                    onDelete = { onDeleteMessage(msg.id) },
-                )
-            } else {
-                AssistantMessageBlock(
-                    mode = mode,
-                    msg = msg,
-                    rpConfig = rpConfig,
-                    isLatestAssistant = isLatestAssistant,
-                    isStreaming = isStreaming,
-                    onSelectNovelChoice = onSelectNovelChoice,
-                    onSelectRpChoice = onSelectRpChoice,
-                    onRegenerate = { onRegenerate(msg.id) },
-                    onBranch = { onBranchFromMessage(msg.id) },
-                    onDelete = { onDeleteMessage(msg.id) },
-                    onSwitchVariant = { idx -> onSwitchVariant(msg.id, idx) },
-                    onCopyText = { body ->
-                        val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                        cm.setPrimaryClip(ClipData.newPlainText("reply", body))
-                        onToast(strings.common.copied)
-                    },
-                    onToast = onToast,
-                )
+            items(active, key = { it.id }) { msg ->
+                val isUser = msg.role == "user"
+                val isDecayed = msg.id in waterline.decayedImageMessageIds
+                val isLatestAssistant = !isUser && msg.id == active.lastOrNull { it.role == "assistant" }?.id
+
+                if (isUser) {
+                    UserMessageBlock(
+                        msg = msg,
+                        isDecayed = isDecayed,
+                        isStreaming = isStreaming,
+                        attachmentPathResolver = attachmentPathResolver,
+                        onEdit = { editBuffer = msg.content; editTarget = msg },
+                        onBranch = { onBranchFromMessage(msg.id) },
+                        onDelete = { deleteTarget = msg },
+                    )
+                } else {
+                    AssistantMessageBlock(
+                        mode = mode,
+                        msg = msg,
+                        rpConfig = rpConfig,
+                        isLatestAssistant = isLatestAssistant,
+                        isStreaming = isStreaming,
+                        onSelectNovelChoice = onSelectNovelChoice,
+                        onSelectRpChoice = onSelectRpChoice,
+                        onRegenerate = { onRegenerate(msg.id) },
+                        onBranch = { onBranchFromMessage(msg.id) },
+                        onDelete = { deleteTarget = msg },
+                        onSwitchVariant = { idx -> onSwitchVariant(msg.id, idx) },
+                        onCopyText = { body ->
+                            val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            cm.setPrimaryClip(ClipData.newPlainText("reply", body))
+                            onToast(strings.common.copied)
+                        },
+                        onToast = onToast,
+                    )
+                }
             }
+
+            item { Spacer(Modifier.height(8.dp)) }
         }
 
-        item { Spacer(Modifier.height(6.dp)) }
+        AnimatedVisibility(
+            visible = showScrollToBottom,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = 14.dp, bottom = 10.dp),
+        ) {
+            Surface(
+                onClick = {
+                    scope.launch {
+                        val bottomIndex = (active.size + 1).coerceAtLeast(0)
+                        listState.animateScrollToItem(bottomIndex)
+                    }
+                },
+                shape = CircleShape,
+                color = c.surfaceElevated,
+                border = BorderStroke(1.dp, c.outline),
+                shadowElevation = 4.dp,
+                modifier = Modifier.size(40.dp),
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Default.KeyboardArrowDown,
+                        contentDescription = null,
+                        tint = c.ink,
+                        modifier = Modifier.size(22.dp),
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -259,6 +330,7 @@ private fun ChatEmptyWelcomeCanvas(
 ) {
     val strings = LocalAppStrings.current
     val c = LocalAppTheme.current.colors
+    val isZh = strings.language == AppLanguage.ZH
 
     if ((mode == ConversationMode.rp && rpConfig != null) || (mode == ConversationMode.novel && novelConfig != null)) {
         Column(
@@ -277,7 +349,7 @@ private fun ChatEmptyWelcomeCanvas(
                     border = BorderStroke(1.dp, c.border),
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
@@ -296,14 +368,20 @@ private fun ChatEmptyWelcomeCanvas(
             if (mode == ConversationMode.rp && rpConfig != null) {
                 GuCard(
                     modifier = Modifier.fillMaxWidth(),
-                    borderColor = c.accent.copy(alpha = 0.4f),
+                    borderColor = c.primary.copy(alpha = 0.35f),
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        Icon(Icons.Default.Casino, contentDescription = null, tint = c.accent, modifier = Modifier.size(18.dp))
-                        Text(rpConfig.title, color = c.ink, fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, modifier = Modifier.weight(1f))
+                        Icon(Icons.Default.Casino, contentDescription = null, tint = c.primary, modifier = Modifier.size(20.dp))
+                        Text(
+                            text = rpConfig.title,
+                            color = c.ink,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            modifier = Modifier.weight(1f),
+                        )
                         GuBadge(strings.rp.badge, variant = GuBadgeVariant.BLUE)
                     }
                     if (rpConfig.worldview.isNotBlank()) {
@@ -313,7 +391,7 @@ private fun ChatEmptyWelcomeCanvas(
                             color = c.muted,
                             fontSize = 13.sp,
                             lineHeight = 20.sp,
-                            maxLines = 4,
+                            maxLines = 5,
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
@@ -321,11 +399,27 @@ private fun ChatEmptyWelcomeCanvas(
                     if (npcs.isNotEmpty() || rpConfig.playerName.isNotBlank()) {
                         Spacer(Modifier.height(10.dp))
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            GuBadge("🎭 ${rpConfig.playerName}", variant = GuBadgeVariant.NEUTRAL)
+                            if (rpConfig.playerName.isNotBlank()) {
+                                GuBadge("🎭 ${rpConfig.playerName}", variant = GuBadgeVariant.NEUTRAL)
+                            }
                             npcs.forEach { npc ->
-                                GuBadge("${npc.name} ❤️${npc.affinity}", variant = GuBadgeVariant.HONEY)
+                                GuBadge("${npc.name} ♥${npc.affinity}", variant = GuBadgeVariant.HONEY)
                             }
                         }
+                    }
+                    Spacer(Modifier.height(14.dp))
+                    GuButton(
+                        onClick = {
+                            onStarterPrompt(
+                                if (isZh) "开始第一幕，请描写我身处的初始场景并给出行动选择。"
+                                else "Start Scene 1: describe the opening setting and suggest my first choices.",
+                            )
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(strings.rp.wizardStartBtn, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             } else if (mode == ConversationMode.novel && novelConfig != null) {
@@ -337,8 +431,14 @@ private fun ChatEmptyWelcomeCanvas(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        Icon(Icons.Default.AutoStories, contentDescription = null, tint = c.accent, modifier = Modifier.size(18.dp))
-                        Text(novelConfig.title, color = c.ink, fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, modifier = Modifier.weight(1f))
+                        Icon(Icons.Default.AutoStories, contentDescription = null, tint = c.accent, modifier = Modifier.size(20.dp))
+                        Text(
+                            text = novelConfig.title,
+                            color = c.ink,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            modifier = Modifier.weight(1f),
+                        )
                         if (novelConfig.genre.isNotBlank()) {
                             GuBadge(novelConfig.genre, variant = GuBadgeVariant.HONEY)
                         }
@@ -354,6 +454,21 @@ private fun ChatEmptyWelcomeCanvas(
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
+                    Spacer(Modifier.height(14.dp))
+                    GuButton(
+                        onClick = {
+                            onStarterPrompt(
+                                if (isZh) "请正式开启第一章，以有画面感的场景切入故事。"
+                                else "Begin Chapter 1 with a vivid opening scene.",
+                            )
+                        },
+                        variant = GuButtonVariant.HONEY,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(strings.novel.wizardEmptyBtn, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
+                    }
                 }
             }
         }
@@ -364,25 +479,23 @@ private fun ChatEmptyWelcomeCanvas(
         modifier = modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 18.dp),
+            .padding(horizontal = 16.dp, vertical = 20.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterVertically),
     ) {
-        Spacer(Modifier.height(4.dp))
-
         Box(
             modifier = Modifier
-                .size(52.dp)
-                .clip(RoundedCornerShape(15.dp))
+                .size(56.dp)
+                .clip(RoundedCornerShape(16.dp))
                 .background(c.primarySoft)
-                .border(1.dp, c.primary.copy(alpha = 0.25f), RoundedCornerShape(15.dp)),
+                .border(1.dp, c.primary.copy(alpha = 0.28f), RoundedCornerShape(16.dp)),
             contentAlignment = Alignment.Center,
         ) {
             Image(
                 painter = painterResource(id = R.drawable.img_logo),
                 contentDescription = strings.common.appName,
                 contentScale = ContentScale.Crop,
-                modifier = Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)),
+                modifier = Modifier.size(48.dp).clip(RoundedCornerShape(13.dp)),
             )
         }
 
@@ -394,7 +507,7 @@ private fun ChatEmptyWelcomeCanvas(
         Text(
             text = heading,
             color = c.ink,
-            fontSize = 19.sp,
+            fontSize = 20.sp,
             fontWeight = FontWeight.ExtraBold,
             textAlign = TextAlign.Center,
         )
@@ -407,7 +520,7 @@ private fun ChatEmptyWelcomeCanvas(
                 border = BorderStroke(1.dp, c.border),
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
@@ -423,13 +536,27 @@ private fun ChatEmptyWelcomeCanvas(
                     Icon(Icons.Default.KeyboardArrowDown, contentDescription = null, tint = c.muted, modifier = Modifier.size(15.dp))
                 }
             }
+        } else if (selectedModelLabel.isNotBlank()) {
+            val memLabel = if (memoryEnabled) strings.chat.memoryOn else strings.chat.memoryOff
+            val metaLine = buildString {
+                if (selectedGroupLabel.isNotBlank()) append("$selectedGroupLabel · ")
+                append("${strings.chat.memoryShort}$memLabel")
+            }
+            Text(
+                text = metaLine,
+                color = c.muted,
+                fontSize = 12.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+            )
         }
 
         if (mode == ConversationMode.chat) {
             val starters = listOf(
                 StarterTileSpec(
                     icon = Icons.Default.Code,
-                    tint = c.primary,
+                    tint = c.primarySoftInk,
                     bg = c.primarySoft,
                     title = strings.chat.starterCodeTitle,
                     prompt = strings.chat.starterCodePrompt,
@@ -450,7 +577,7 @@ private fun ChatEmptyWelcomeCanvas(
                 ),
                 StarterTileSpec(
                     icon = Icons.Default.Psychology,
-                    tint = c.primaryDark,
+                    tint = c.primarySoftInk,
                     bg = c.primarySoft,
                     title = strings.chat.starterMemoryTitle,
                     prompt = strings.chat.starterMemoryPrompt,
@@ -517,8 +644,8 @@ private fun StarterGridCard(
         Text(
             text = spec.prompt,
             color = c.muted,
-            fontSize = 11.sp,
-            lineHeight = 15.sp,
+            fontSize = 11.5.sp,
+            lineHeight = 16.sp,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
@@ -537,6 +664,7 @@ private fun UserMessageBlock(
 ) {
     val strings = LocalAppStrings.current
     val c = LocalAppTheme.current.colors
+    val bubbleShape = RoundedCornerShape(topStart = 18.dp, topEnd = 6.dp, bottomStart = 18.dp, bottomEnd = 18.dp)
 
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -544,14 +672,10 @@ private fun UserMessageBlock(
     ) {
         Column(
             modifier = Modifier
-                .widthIn(max = 316.dp)
-                .clip(RoundedCornerShape(topStart = 18.dp, topEnd = 6.dp, bottomStart = 18.dp, bottomEnd = 18.dp))
+                .widthIn(max = 296.dp)
+                .clip(bubbleShape)
                 .background(c.primarySoft)
-                .border(
-                    width = 1.dp,
-                    color = c.primary.copy(alpha = 0.35f),
-                    shape = RoundedCornerShape(topStart = 18.dp, topEnd = 6.dp, bottomStart = 18.dp, bottomEnd = 18.dp),
-                )
+                .border(1.dp, c.primary.copy(alpha = 0.28f), bubbleShape)
                 .padding(horizontal = 14.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
@@ -589,35 +713,40 @@ private fun UserMessageBlock(
                 )
             }
             if (msg.content.isNotBlank()) {
-                Text(
-                    text = msg.content,
-                    color = c.ink,
-                    fontSize = 15.sp,
-                    lineHeight = 22.sp,
-                )
+                SelectionContainer {
+                    Text(
+                        text = msg.content,
+                        color = c.ink,
+                        fontSize = 15.sp,
+                        lineHeight = 22.sp,
+                    )
+                }
             }
         }
 
-        Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+        Row(
+            modifier = Modifier.padding(top = 2.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
             IconButton(
                 onClick = onEdit,
                 enabled = !isStreaming,
-                modifier = Modifier.size(28.dp),
+                modifier = Modifier.size(36.dp),
             ) {
-                Icon(Icons.Default.Edit, contentDescription = strings.chat.editResend, tint = c.muted, modifier = Modifier.size(14.dp))
+                Icon(Icons.Default.Edit, contentDescription = strings.chat.editResend, tint = c.muted, modifier = Modifier.size(16.dp))
             }
             IconButton(
                 onClick = onBranch,
-                modifier = Modifier.size(28.dp),
+                modifier = Modifier.size(36.dp),
             ) {
-                Icon(Icons.Default.AccountTree, contentDescription = null, tint = c.muted, modifier = Modifier.size(14.dp))
+                Icon(Icons.Default.AccountTree, contentDescription = strings.novel.branchBtn, tint = c.muted, modifier = Modifier.size(16.dp))
             }
             IconButton(
                 onClick = onDelete,
                 enabled = !isStreaming,
-                modifier = Modifier.size(28.dp),
+                modifier = Modifier.size(36.dp),
             ) {
-                Icon(Icons.Default.Delete, contentDescription = strings.common.delete, tint = c.muted, modifier = Modifier.size(14.dp))
+                Icon(Icons.Default.Delete, contentDescription = strings.common.delete, tint = c.muted, modifier = Modifier.size(16.dp))
             }
         }
     }
@@ -648,22 +777,16 @@ private fun AssistantMessageBlock(
     when (mode) {
         ConversationMode.rp -> {
             val leadNpc = rpConfig?.cast?.firstOrNull { !it.isPlayer }
-            val shape = RoundedCornerShape(18.dp)
             Surface(
                 modifier = Modifier.fillMaxWidth(),
-                shape = shape,
+                shape = RoundedCornerShape(16.dp),
                 color = c.surface,
-                border = BorderStroke(1.dp, c.accent.copy(alpha = 0.35f)),
+                border = BorderStroke(1.dp, c.border),
             ) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(
-                            Brush.verticalGradient(
-                                listOf(c.primarySoft.copy(alpha = 0.32f), c.surface),
-                            ),
-                        )
-                        .padding(14.dp),
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     Row(
@@ -674,41 +797,35 @@ private fun AssistantMessageBlock(
                         val speakerName = leadNpc?.name ?: rpConfig?.title ?: strings.rp.badge
                         Box(
                             modifier = Modifier
-                                .size(34.dp)
+                                .size(28.dp)
                                 .clip(CircleShape)
                                 .background(c.tag)
-                                .border(1.dp, c.accent.copy(alpha = 0.6f), CircleShape),
+                                .border(1.dp, c.accent.copy(alpha = 0.45f), CircleShape),
                             contentAlignment = Alignment.Center,
                         ) {
                             Text(
                                 text = speakerName.firstOrNull()?.toString() ?: "✦",
                                 color = c.tagInk,
-                                fontSize = 14.sp,
+                                fontSize = 12.5.sp,
                                 fontWeight = FontWeight.ExtraBold,
                             )
                         }
-                        Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = speakerName,
+                            color = c.ink,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        if (leadNpc != null && leadNpc.mood.isNotBlank()) {
                             Text(
-                                text = speakerName,
-                                color = c.ink,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.ExtraBold,
+                                text = leadNpc.mood,
+                                color = c.muted,
+                                fontSize = 11.sp,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
-                            )
-                            if (leadNpc != null) {
-                                Text(
-                                    text = "${leadNpc.mood} · ❤️${leadNpc.affinity}",
-                                    color = c.muted,
-                                    fontSize = 11.sp,
-                                )
-                            }
-                        }
-                        if (msg.variants.size > 1) {
-                            VariantSwipePill(
-                                index = msg.activeVariantIndex,
-                                total = msg.variants.size,
-                                onSwitch = onSwitchVariant,
                             )
                         }
                     }
@@ -717,9 +834,11 @@ private fun AssistantMessageBlock(
                         parsedReasoning = parsedReasoning,
                         cleanBody = cleanBody,
                         msg = msg,
+                        isStreaming = isStreaming,
                         useSerif = false,
                         fontSize = 15.sp,
-                        lineHeight = 23.sp,
+                        lineHeight = 24.sp,
+                        onRetry = onRegenerate,
                         onToast = onToast,
                     )
 
@@ -739,7 +858,7 @@ private fun AssistantMessageBlock(
 
                     AssistantFooterRow(
                         msg = msg,
-                        showVariantBar = false,
+                        showVariantBar = msg.variants.size > 1,
                         isStreaming = isStreaming,
                         onCopy = { onCopyText(cleanBody) },
                         onRegenerate = onRegenerate,
@@ -754,12 +873,14 @@ private fun AssistantMessageBlock(
         ConversationMode.novel -> {
             Surface(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(18.dp),
+                shape = RoundedCornerShape(16.dp),
                 color = c.surface,
-                border = BorderStroke(1.dp, c.accent.copy(alpha = 0.3f)),
+                border = BorderStroke(1.dp, c.border.copy(alpha = 0.75f)),
             ) {
                 Column(
-                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     Row(
@@ -769,14 +890,14 @@ private fun AssistantMessageBlock(
                         Text(
                             text = "✦",
                             color = c.accent,
-                            fontSize = 14.sp,
+                            fontSize = 13.sp,
                             fontWeight = FontWeight.Bold,
                         )
                         Spacer(Modifier.width(8.dp))
-                        HorizontalDivider(modifier = Modifier.weight(1f), color = c.border)
+                        HorizontalDivider(modifier = Modifier.weight(1f), color = c.border.copy(alpha = 0.7f))
                         if (!msg.model.isNullOrBlank()) {
                             Spacer(Modifier.width(8.dp))
-                            Text(msg.model, color = c.muted, fontSize = 10.sp)
+                            Text(msg.model, color = c.muted, fontSize = 10.5.sp)
                         }
                     }
 
@@ -784,9 +905,11 @@ private fun AssistantMessageBlock(
                         parsedReasoning = parsedReasoning,
                         cleanBody = cleanBody,
                         msg = msg,
+                        isStreaming = isStreaming,
                         useSerif = true,
                         fontSize = 15.5.sp,
                         lineHeight = 26.sp,
+                        onRetry = onRegenerate,
                         onToast = onToast,
                     )
 
@@ -818,9 +941,8 @@ private fun AssistantMessageBlock(
         }
 
         ConversationMode.chat -> {
-            // DeepSeek-inspired borderless editorial canvas
             Column(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Row(
@@ -840,7 +962,7 @@ private fun AssistantMessageBlock(
                     Text(
                         text = msg.model?.takeIf { it.isNotBlank() } ?: strings.common.appName,
                         color = c.ink,
-                        fontSize = 12.sp,
+                        fontSize = 12.5.sp,
                         fontWeight = FontWeight.Bold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -852,9 +974,11 @@ private fun AssistantMessageBlock(
                     parsedReasoning = parsedReasoning,
                     cleanBody = cleanBody,
                     msg = msg,
+                    isStreaming = isStreaming,
                     useSerif = false,
                     fontSize = 15.sp,
                     lineHeight = 23.sp,
+                    onRetry = onRegenerate,
                     onToast = onToast,
                 )
 
@@ -878,15 +1002,17 @@ private fun AssistantBodyAndNotices(
     parsedReasoning: String,
     cleanBody: String,
     msg: ChatMessage,
+    isStreaming: Boolean,
     useSerif: Boolean,
     fontSize: androidx.compose.ui.unit.TextUnit,
     lineHeight: androidx.compose.ui.unit.TextUnit,
+    onRetry: () -> Unit,
     onToast: (String) -> Unit,
 ) {
     val strings = LocalAppStrings.current
     val c = LocalAppTheme.current.colors
 
-    if (parsedReasoning.isNotBlank() || msg.status == "streaming") {
+    if (parsedReasoning.isNotBlank()) {
         ReasoningCard(
             reasoning = parsedReasoning,
             isStreaming = msg.status == "streaming" && cleanBody.isEmpty(),
@@ -906,10 +1032,42 @@ private fun AssistantBodyAndNotices(
     }
 
     if (!msg.error.isNullOrBlank()) {
-        GuBadge(msg.error, variant = GuBadgeVariant.DANGER)
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = c.dangerBg,
+            border = BorderStroke(1.dp, c.danger.copy(alpha = 0.45f)),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.Top,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Default.ErrorOutline,
+                    contentDescription = null,
+                    tint = c.danger,
+                    modifier = Modifier.size(18.dp).padding(top = 1.dp),
+                )
+                Text(
+                    text = msg.error,
+                    color = c.danger,
+                    fontSize = 12.5.sp,
+                    lineHeight = 18.sp,
+                    modifier = Modifier.weight(1f),
+                )
+                if (!isStreaming) {
+                    TextButton(onClick = onRetry) {
+                        Text(strings.common.retry, color = c.danger, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
     }
     if (msg.status == "aborted") {
-        Text(strings.chat.stoppedNote, color = c.muted, fontSize = 11.sp)
+        Text(strings.chat.stoppedNote, color = c.muted, fontSize = 11.5.sp)
     }
 }
 
@@ -932,13 +1090,13 @@ private fun DramaticChoiceCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(Brush.horizontalGradient(listOf(c.primarySoft.copy(alpha = 0.65f), c.surfaceSoft)))
-                .padding(horizontal = 12.dp, vertical = 10.dp),
+                .padding(horizontal = 12.dp, vertical = 11.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Box(
                 modifier = Modifier
-                    .size(22.dp)
+                    .size(24.dp)
                     .clip(CircleShape)
                     .background(c.primary),
                 contentAlignment = Alignment.Center,
@@ -946,14 +1104,14 @@ private fun DramaticChoiceCard(
                 Text(
                     text = "$index",
                     color = Color.White,
-                    fontSize = 11.sp,
+                    fontSize = 11.5.sp,
                     fontWeight = FontWeight.ExtraBold,
                 )
             }
             Text(
                 text = label,
                 color = c.ink,
-                fontSize = 13.sp,
+                fontSize = 13.5.sp,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.weight(1f),
             )
@@ -976,29 +1134,39 @@ private fun VariantSwipePill(
             .clip(RoundedCornerShape(999.dp))
             .background(c.surfaceSoft)
             .border(1.dp, c.border, RoundedCornerShape(999.dp))
-            .padding(horizontal = 4.dp, vertical = 2.dp),
+            .padding(horizontal = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         IconButton(
             onClick = { onSwitch((index - 1).coerceAtLeast(0)) },
             enabled = index > 0,
-            modifier = Modifier.size(24.dp),
+            modifier = Modifier.size(32.dp),
         ) {
-            Icon(Icons.Default.ChevronLeft, contentDescription = null, tint = c.ink, modifier = Modifier.size(15.dp))
+            Icon(
+                Icons.Default.ChevronLeft,
+                contentDescription = null,
+                tint = if (index > 0) c.ink else c.muted.copy(alpha = 0.4f),
+                modifier = Modifier.size(16.dp),
+            )
         }
         Text(
             text = "${index + 1}/$total",
             color = c.ink,
-            fontSize = 11.sp,
+            fontSize = 11.5.sp,
             fontWeight = FontWeight.Bold,
             fontFamily = FontFamily.Monospace,
         )
         IconButton(
             onClick = { onSwitch((index + 1).coerceAtMost(total - 1)) },
             enabled = index < total - 1,
-            modifier = Modifier.size(24.dp),
+            modifier = Modifier.size(32.dp),
         ) {
-            Icon(Icons.Default.ChevronRight, contentDescription = null, tint = c.ink, modifier = Modifier.size(15.dp))
+            Icon(
+                Icons.Default.ChevronRight,
+                contentDescription = null,
+                tint = if (index < total - 1) c.ink else c.muted.copy(alpha = 0.4f),
+                modifier = Modifier.size(16.dp),
+            )
         }
     }
 }
@@ -1019,19 +1187,19 @@ private fun AssistantFooterRow(
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        IconButton(onClick = onCopy, modifier = Modifier.size(28.dp)) {
-            Icon(Icons.Default.ContentCopy, contentDescription = strings.common.copy, tint = c.muted, modifier = Modifier.size(14.dp))
+        IconButton(onClick = onCopy, modifier = Modifier.size(36.dp)) {
+            Icon(Icons.Default.ContentCopy, contentDescription = strings.common.copy, tint = c.muted, modifier = Modifier.size(16.dp))
         }
-        IconButton(onClick = onRegenerate, enabled = !isStreaming, modifier = Modifier.size(28.dp)) {
-            Icon(Icons.Default.Refresh, contentDescription = strings.chat.regenerate, tint = c.muted, modifier = Modifier.size(14.dp))
+        IconButton(onClick = onRegenerate, enabled = !isStreaming, modifier = Modifier.size(36.dp)) {
+            Icon(Icons.Default.Refresh, contentDescription = strings.chat.regenerate, tint = c.muted, modifier = Modifier.size(16.dp))
         }
-        IconButton(onClick = onBranch, modifier = Modifier.size(28.dp)) {
-            Icon(Icons.Default.AccountTree, contentDescription = null, tint = c.muted, modifier = Modifier.size(14.dp))
+        IconButton(onClick = onBranch, modifier = Modifier.size(36.dp)) {
+            Icon(Icons.Default.AccountTree, contentDescription = strings.novel.branchBtn, tint = c.muted, modifier = Modifier.size(16.dp))
         }
-        IconButton(onClick = onDelete, enabled = !isStreaming, modifier = Modifier.size(28.dp)) {
-            Icon(Icons.Default.Delete, contentDescription = strings.common.delete, tint = c.muted, modifier = Modifier.size(14.dp))
+        IconButton(onClick = onDelete, enabled = !isStreaming, modifier = Modifier.size(36.dp)) {
+            Icon(Icons.Default.Delete, contentDescription = strings.common.delete, tint = c.muted, modifier = Modifier.size(16.dp))
         }
         Spacer(Modifier.weight(1f))
         if (showVariantBar && msg.variants.size > 1) {

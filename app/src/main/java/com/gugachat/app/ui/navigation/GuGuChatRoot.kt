@@ -2,6 +2,7 @@ package com.gugachat.app.ui.navigation
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -13,13 +14,19 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
+import androidx.compose.material.icons.automirrored.outlined.Chat
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -31,6 +38,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -40,6 +48,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -107,7 +116,8 @@ fun GuGuChatRoot(container: AppContainer) {
                     controller = container.toastController,
                     modifier = Modifier
                         .align(Alignment.TopCenter)
-                        .padding(top = 54.dp),
+                        .statusBarsPadding()
+                        .padding(top = 60.dp),
                 )
             }
         }
@@ -149,8 +159,21 @@ private fun AuthenticatedShell(container: AppContainer) {
     val imageVm = remember(container) { ImageViewModel(container) }
     val profileVm = remember(container) { ProfileViewModel(container) }
 
+    val imageState by imageVm.ui.collectAsStateWithLifecycle()
+    val activeImageTasks = remember(imageState.generations) {
+        imageState.generations.count {
+            it.status.lowercase() in setOf("pending", "queued", "processing", "running")
+        }
+    }
+    val resolvedImageGroupsCount = if (!imageState.isLoadingCapabilities || imageState.keys.isNotEmpty()) {
+        imageState.keys.size
+    } else {
+        null
+    }
+
     var activeTabOrdinal by rememberSaveable { mutableIntStateOf(MainTab.CHAT.ordinal) }
     val activeTab = MainTab.entries.getOrElse(activeTabOrdinal) { MainTab.CHAT }
+    val saveableStateHolder = rememberSaveableStateHolder()
 
     Scaffold(
         containerColor = c.page,
@@ -165,26 +188,30 @@ private fun AuthenticatedShell(container: AppContainer) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(54.dp),
+                        .height(60.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     CompactBottomNavItem(
                         selected = activeTab == MainTab.CHAT,
-                        icon = Icons.AutoMirrored.Filled.Chat,
+                        selectedIcon = Icons.AutoMirrored.Filled.Chat,
+                        unselectedIcon = Icons.AutoMirrored.Outlined.Chat,
                         label = strings.nav.tabChat,
                         onClick = { activeTabOrdinal = MainTab.CHAT.ordinal },
                         modifier = Modifier.weight(1f),
                     )
                     CompactBottomNavItem(
                         selected = activeTab == MainTab.STUDIO,
-                        icon = Icons.Default.AutoAwesome,
+                        selectedIcon = Icons.Filled.AutoAwesome,
+                        unselectedIcon = Icons.Outlined.AutoAwesome,
                         label = strings.nav.tabStudio,
+                        showIndicatorDot = activeImageTasks > 0,
                         onClick = { activeTabOrdinal = MainTab.STUDIO.ordinal },
                         modifier = Modifier.weight(1f),
                     )
                     CompactBottomNavItem(
                         selected = activeTab == MainTab.MINE,
-                        icon = Icons.Default.Person,
+                        selectedIcon = Icons.Filled.Person,
+                        unselectedIcon = Icons.Outlined.Person,
                         label = strings.nav.tabMine,
                         onClick = { activeTabOrdinal = MainTab.MINE.ordinal },
                         modifier = Modifier.weight(1f),
@@ -198,10 +225,16 @@ private fun AuthenticatedShell(container: AppContainer) {
                 .fillMaxSize()
                 .padding(bottom = innerPadding.calculateBottomPadding()),
         ) {
-            when (activeTab) {
-                MainTab.CHAT -> ChatWorkspaceScreen(container = container, viewModel = chatVm)
-                MainTab.STUDIO -> CreativeStudioScreen(container = container, imageViewModel = imageVm)
-                MainTab.MINE -> ProfileScreen(container = container, viewModel = profileVm)
+            saveableStateHolder.SaveableStateProvider(key = activeTab.name) {
+                when (activeTab) {
+                    MainTab.CHAT -> ChatWorkspaceScreen(container = container, viewModel = chatVm)
+                    MainTab.STUDIO -> CreativeStudioScreen(container = container, imageViewModel = imageVm)
+                    MainTab.MINE -> ProfileScreen(
+                        container = container,
+                        viewModel = profileVm,
+                        imageGroupsCount = resolvedImageGroupsCount,
+                    )
+                }
             }
         }
     }
@@ -212,38 +245,53 @@ private fun AuthenticatedShell(container: AppContainer) {
 @Composable
 private fun CompactBottomNavItem(
     selected: Boolean,
-    icon: ImageVector,
+    selectedIcon: ImageVector,
+    unselectedIcon: ImageVector,
     label: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    showIndicatorDot: Boolean = false,
 ) {
     val c = LocalAppTheme.current.colors
     Column(
         modifier = modifier
             .fillMaxHeight()
-            .clickable(onClick = onClick),
+            .clickable(role = Role.Tab, onClick = onClick),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Box(
-            modifier = Modifier
-                .clip(RoundedCornerShape(999.dp))
-                .background(if (selected) c.primarySoft else Color.Transparent)
-                .padding(horizontal = 14.dp, vertical = 2.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = if (selected) c.primary else c.muted,
-                modifier = Modifier.size(20.dp),
-            )
+        Box(contentAlignment = Alignment.Center) {
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(if (selected) c.primarySoft else Color.Transparent)
+                    .padding(horizontal = 18.dp, vertical = 4.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = if (selected) selectedIcon else unselectedIcon,
+                    contentDescription = null,
+                    tint = if (selected) c.primarySoftInk else c.muted,
+                    modifier = Modifier.size(21.dp),
+                )
+            }
+            if (showIndicatorDot) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .offset(x = (-8).dp, y = 2.dp)
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(c.accent)
+                        .border(1.5.dp, c.surface, CircleShape),
+                )
+            }
         }
-        Spacer(Modifier.height(2.dp))
+        Spacer(Modifier.height(3.dp))
         Text(
             text = label,
-            fontSize = 10.sp,
-            lineHeight = 12.sp,
+            fontSize = 11.sp,
+            lineHeight = 13.sp,
             fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
             color = if (selected) c.primary else c.muted,
             maxLines = 1,
@@ -283,6 +331,7 @@ private fun ImageStudioModals(
     if (state.showPresetSheet) {
         ImagePresetSheet(
             presets = state.presets,
+            hasSelectedModel = state.models.any { it.id == state.selectedModelId },
             onApply = { p -> imageVm.applyPreset(p, strings.images.presetsApplied.fmt("name" to p.name)) },
             onCreate = { name, inc -> imageVm.createPreset(name, inc, strings.images.presetsSaved.fmt("name" to name)) },
             onDelete = { id ->

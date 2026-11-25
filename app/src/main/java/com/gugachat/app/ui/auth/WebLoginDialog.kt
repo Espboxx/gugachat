@@ -15,7 +15,10 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
@@ -118,21 +121,27 @@ fun WebLoginDialog(
 
     Dialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false),
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false,
+        ),
     ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .background(c.page),
+                .background(c.page)
+                .navigationBarsPadding()
+                .imePadding(),
         ) {
-            GuAwningHeader(includeStatusBarPadding = false) {
+            GuAwningHeader(includeStatusBarPadding = true) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                        .height(56.dp)
+                        .padding(horizontal = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    IconButton(onClick = onDismiss) {
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(44.dp)) {
                         Icon(Icons.Default.Close, contentDescription = strings.common.close, tint = c.ink)
                     }
                     Column(modifier = Modifier.weight(1f)) {
@@ -152,7 +161,7 @@ fun WebLoginDialog(
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
-                    IconButton(onClick = { webViewRef?.reload() }) {
+                    IconButton(onClick = { webViewRef?.reload() }, modifier = Modifier.size(44.dp)) {
                         Icon(Icons.Default.Refresh, contentDescription = strings.common.refresh, tint = c.ink)
                     }
                     Spacer(Modifier.width(4.dp))

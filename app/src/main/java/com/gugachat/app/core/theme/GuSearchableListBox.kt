@@ -97,12 +97,12 @@ fun <T> GuSearchableListBox(
                     Surface(
                         shape = RoundedCornerShape(theme.pillRadius),
                         color = c.primarySoft,
-                        border = BorderStroke(1.dp, c.primary.copy(alpha = 0.35f)),
+                        border = BorderStroke(1.dp, c.primary.copy(alpha = 0.4f)),
                         modifier = Modifier.weight(1f, fill = false),
                     ) {
                         Text(
                             text = selectedSummary,
-                            color = c.primaryDark,
+                            color = c.primarySoftInk,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             maxLines = 1,
@@ -174,7 +174,7 @@ fun <T> GuSearchableListBox(
                     if (query.isNotEmpty()) {
                         IconButton(
                             onClick = { onQueryChange("") },
-                            modifier = Modifier.size(28.dp),
+                            modifier = Modifier.size(36.dp),
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Close,
@@ -242,15 +242,16 @@ fun GuSelectableListRow(
     highlightFree: Boolean = false,
     badges: (@Composable FlowRowScope.() -> Unit)? = null,
 ) {
-    val c = LocalAppTheme.current.colors
+    val theme = LocalAppTheme.current
+    val c = theme.colors
     val rowBg = when {
         selected -> c.primarySoft
-        highlightFree -> c.accentSoft.copy(alpha = 0.45f)
+        highlightFree -> if (theme.isDark) c.accentSoft.copy(alpha = 0.72f) else c.accentSoft
         else -> c.surface
     }
     val rowBorder = when {
         selected -> c.primary
-        highlightFree -> c.accent.copy(alpha = 0.55f)
+        highlightFree -> c.accent.copy(alpha = 0.45f)
         else -> c.border
     }
 

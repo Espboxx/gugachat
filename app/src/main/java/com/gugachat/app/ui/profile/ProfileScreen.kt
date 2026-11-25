@@ -1,12 +1,14 @@
 package com.gugachat.app.ui.profile
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -16,20 +18,27 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FolderZip
+import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Upload
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -51,7 +60,6 @@ import com.gugachat.app.AppContainer
 import com.gugachat.app.R
 import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.i18n.LocalAppStrings
-import com.gugachat.app.core.i18n.fmt
 import com.gugachat.app.core.theme.ColorMode
 import com.gugachat.app.core.theme.GuAwningHeader
 import com.gugachat.app.core.theme.GuBadge
@@ -64,7 +72,7 @@ import com.gugachat.app.core.theme.GuPill
 import com.gugachat.app.core.theme.LocalAppTheme
 import com.gugachat.app.core.theme.ThemeStyle
 import com.gugachat.app.core.util.FormatUtils
-import com.gugachat.app.ui.chat.DeepSeekImportSheet
+import com.gugachat.app.ui.chat.ExternalImportSheet
 import com.gugachat.app.ui.providers.ApiProviderDraft
 import com.gugachat.app.ui.providers.ApiProviderEditorSheet
 import com.gugachat.app.ui.providers.ApiProviderManagerCard
@@ -74,17 +82,21 @@ import com.gugachat.app.ui.providers.ApiProviderManagerCard
 fun ProfileScreen(
     container: AppContainer,
     viewModel: ProfileViewModel,
+    imageGroupsCount: Int? = null,
 ) {
     val state by viewModel.ui.collectAsStateWithLifecycle()
     val strings = LocalAppStrings.current
     val c = LocalAppTheme.current.colors
     val ctx = LocalContext.current
+    val isZh = strings.language == AppLanguage.ZH
+
     var showLogoutConfirm by remember { mutableStateOf(false) }
     var showDeepSeekImport by remember { mutableStateOf(false) }
     var editingProviderDraft by remember { mutableStateOf<ApiProviderDraft?>(null) }
+    var activeBackupOp by remember { mutableStateOf<String?>(null) }
 
     if (showDeepSeekImport) {
-        DeepSeekImportSheet(
+        ExternalImportSheet(
             container = container,
             onImported = {},
             onDismiss = { showDeepSeekImport = false },
@@ -117,6 +129,7 @@ fun ProfileScreen(
         contract = ActivityResultContracts.CreateDocument("application/json"),
     ) { uri ->
         if (uri != null) {
+            activeBackupOp = "export"
             viewModel.exportBackup(uri, ctx.contentResolver, strings.chat.exportDone)
         }
     }
@@ -125,6 +138,7 @@ fun ProfileScreen(
         contract = ActivityResultContracts.OpenDocument(),
     ) { uri ->
         if (uri != null) {
+            activeBackupOp = "import"
             viewModel.importBackup(
                 uri = uri,
                 contentResolver = ctx.contentResolver,
@@ -137,11 +151,11 @@ fun ProfileScreen(
 
     if (showLogoutConfirm) {
         GuConfirmDialog(
-            title = strings.profile.logoutConfirmTitle,
+            title = if (state.isDirectApiOnly) strings.providers.switchToSub2api else strings.profile.logoutConfirmTitle,
             message = strings.profile.logoutConfirmMsg,
-            confirmText = strings.profile.logout,
+            confirmText = if (state.isDirectApiOnly) strings.common.confirm else strings.profile.logout,
             cancelText = strings.common.cancel,
-            isDestructive = true,
+            isDestructive = !state.isDirectApiOnly,
             onConfirm = {
                 showLogoutConfirm = false
                 viewModel.logout(strings.profile.loggedOut)
@@ -159,7 +173,8 @@ fun ProfileScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                    .height(56.dp)
+                    .padding(horizontal = 16.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
@@ -169,8 +184,27 @@ fun ProfileScreen(
                     fontSize = 18.sp,
                     fontWeight = FontWeight.ExtraBold,
                 )
-                IconButton(onClick = viewModel::refreshProfile, enabled = !state.isRefreshing) {
-                    Icon(Icons.Default.Refresh, contentDescription = strings.profile.refreshProfile, tint = c.ink)
+                if (!state.isDirectApiOnly) {
+                    IconButton(
+                        onClick = viewModel::refreshProfile,
+                        enabled = !state.isRefreshing,
+                        modifier = Modifier.size(44.dp),
+                    ) {
+                        if (state.isRefreshing) {
+                            CircularProgressIndicator(
+                                color = c.primary,
+                                strokeWidth = 2.dp,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        } else {
+                            Icon(
+                                Icons.Default.Refresh,
+                                contentDescription = strings.profile.refreshProfile,
+                                tint = c.ink,
+                                modifier = Modifier.size(21.dp),
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -183,6 +217,12 @@ fun ProfileScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             val user = state.user
+            val displayName = user?.username?.ifBlank { user.email } ?: "GuGuUser"
+            val showEmailSubtitle = !user?.email.isNullOrBlank() &&
+                !user!!.email.equals(displayName, ignoreCase = true)
+            val resolvedGroupsCount = imageGroupsCount ?: state.imageGroupsCount ?: (user?.concurrency ?: 0)
+
+            // Account Hero Card (includes folded Server URL footer)
             GuCard(modifier = Modifier.fillMaxWidth()) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Image(
@@ -194,18 +234,22 @@ fun ProfileScreen(
                             .clip(CircleShape),
                     )
                     Spacer(Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f)) {
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
                             Text(
-                                text = user?.username?.ifBlank { user.email } ?: "GuGuUser",
+                                text = displayName,
                                 color = c.ink,
                                 fontSize = 16.sp,
                                 fontWeight = FontWeight.ExtraBold,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false),
                             )
                             val isDirect = state.isDirectApiOnly
                             val isAdmin = user?.role.equals("admin", ignoreCase = true)
@@ -218,7 +262,7 @@ fun ProfileScreen(
                                 variant = if (isDirect || isAdmin) GuBadgeVariant.HONEY else GuBadgeVariant.BLUE,
                             )
                         }
-                        if (!user?.email.isNullOrBlank()) {
+                        if (showEmailSubtitle) {
                             Text(
                                 text = user!!.email,
                                 color = c.muted,
@@ -227,13 +271,16 @@ fun ProfileScreen(
                                 overflow = TextOverflow.Ellipsis,
                             )
                         }
-                        Text(
-                            text = "${strings.profile.idPrefix} ${user?.id ?: 0L}",
-                            color = c.muted,
-                            fontSize = 11.sp,
-                        )
+                        if (!state.isDirectApiOnly) {
+                            Text(
+                                text = "${strings.profile.idPrefix} ${user?.id ?: 0L}",
+                                color = c.muted,
+                                fontSize = 11.5.sp,
+                            )
+                        }
                     }
                 }
+
                 Spacer(Modifier.height(12.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -241,12 +288,12 @@ fun ProfileScreen(
                 ) {
                     StatCell(
                         label = strings.profile.statKeys,
-                        value = "${user?.concurrency ?: 1}",
+                        value = "$resolvedGroupsCount",
                         modifier = Modifier.weight(1f),
                     )
                     StatCell(
                         label = strings.profile.statBalance,
-                        value = FormatUtils.formatBalance(user?.balance ?: 0.0),
+                        value = if (state.isDirectApiOnly) "—" else FormatUtils.formatBalance(user?.balance ?: 0.0),
                         modifier = Modifier.weight(1f),
                     )
                     StatCell(
@@ -255,25 +302,47 @@ fun ProfileScreen(
                         modifier = Modifier.weight(1f),
                     )
                 }
-            }
 
-            if (!state.isDirectApiOnly) {
-                GuCard(modifier = Modifier.fillMaxWidth()) {
-                    Text(
-                        text = strings.profile.serverLabel,
-                        color = c.muted,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        text = state.settings.serverUrl.ifBlank { "-" },
-                        color = c.ink,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                if (!state.isDirectApiOnly && state.settings.serverUrl.isNotBlank()) {
+                    Spacer(Modifier.height(12.dp))
+                    HorizontalDivider(color = c.border.copy(alpha = 0.6f))
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Icon(
+                            Icons.Default.Public,
+                            contentDescription = null,
+                            tint = c.muted,
+                            modifier = Modifier.size(15.dp),
+                        )
+                        Text(
+                            text = state.settings.serverUrl,
+                            color = c.muted,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        IconButton(
+                            onClick = {
+                                val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                cm.setPrimaryClip(ClipData.newPlainText("server_url", state.settings.serverUrl))
+                                container.toastController.show(strings.common.copied)
+                            },
+                            modifier = Modifier.size(36.dp),
+                        ) {
+                            Icon(
+                                Icons.Default.ContentCopy,
+                                contentDescription = strings.common.copy,
+                                tint = c.muted,
+                                modifier = Modifier.size(15.dp),
+                            )
+                        }
+                    }
                 }
             }
 
@@ -291,16 +360,23 @@ fun ProfileScreen(
                 onDeleteClick = viewModel::deleteProvider,
             )
 
-            // Appearance & Language Card
+            // Appearance & Preferences Card (clean section dividers, unified primary pill selection)
             GuCard(modifier = Modifier.fillMaxWidth()) {
-                Text(strings.profile.themeStyleLabel, color = c.ink, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    text = if (isZh) "外观与偏好" else "Appearance & Preferences",
+                    color = c.ink,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                )
+                Spacer(Modifier.height(12.dp))
+
+                Text(strings.profile.themeStyleLabel, color = c.muted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(6.dp))
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     GuPill(
                         label = strings.profile.themeGuguga,
                         selected = state.settings.themeStyle == ThemeStyle.GUGUGA,
                         onClick = { viewModel.setThemeStyle(ThemeStyle.GUGUGA) },
-                        useHoneySelected = true,
                     )
                     GuPill(
                         label = strings.profile.themeClassic,
@@ -310,7 +386,10 @@ fun ProfileScreen(
                 }
 
                 Spacer(Modifier.height(12.dp))
-                Text(strings.profile.colorModeLabel, color = c.ink, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                HorizontalDivider(color = c.border.copy(alpha = 0.6f))
+                Spacer(Modifier.height(12.dp))
+
+                Text(strings.profile.colorModeLabel, color = c.muted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(6.dp))
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     GuPill(
@@ -331,7 +410,10 @@ fun ProfileScreen(
                 }
 
                 Spacer(Modifier.height(12.dp))
-                Text(strings.profile.languageLabel, color = c.ink, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                HorizontalDivider(color = c.border.copy(alpha = 0.6f))
+                Spacer(Modifier.height(12.dp))
+
+                Text(strings.profile.languageLabel, color = c.muted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(6.dp))
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     GuPill(
@@ -347,14 +429,17 @@ fun ProfileScreen(
                 }
 
                 Spacer(Modifier.height(12.dp))
-                Text(strings.chat.memoryBudgetLabel, color = c.ink, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                HorizontalDivider(color = c.border.copy(alpha = 0.6f))
+                Spacer(Modifier.height(12.dp))
+
+                Text(strings.chat.memoryBudgetLabel, color = c.muted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(6.dp))
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     listOf("low", "standard", "high").forEach { preset ->
                         val label = when (preset) {
-                            "low" -> "Low (2K)"
-                            "high" -> "High (8K)"
-                            else -> "Standard (4K)"
+                            "low" -> if (isZh) "精简 (2K)" else "Low (2K)"
+                            "high" -> if (isZh) "高配 (8K)" else "High (8K)"
+                            else -> if (isZh) "标准 (4K)" else "Standard (4K)"
                         }
                         GuPill(
                             label = label,
@@ -365,7 +450,7 @@ fun ProfileScreen(
                 }
             }
 
-            // Backup & Restore Card
+            // Backup & Restore Card (harmonized sibling actions + loading state)
             GuCard(modifier = Modifier.fillMaxWidth()) {
                 Text(strings.profile.backupSectionTitle, color = c.ink, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold)
                 Spacer(Modifier.height(10.dp))
@@ -373,51 +458,84 @@ fun ProfileScreen(
                     GuButton(
                         onClick = { exportLauncher.launch("gugachat-backup-${System.currentTimeMillis()}.json") },
                         enabled = !state.isBackupBusy,
+                        loading = state.isBackupBusy && activeBackupOp == "export",
                         compact = true,
                         variant = GuButtonVariant.SECONDARY,
                         modifier = Modifier.weight(1f),
                     ) {
                         Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text(strings.profile.exportBackup, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Text(strings.profile.exportBackup, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     GuButton(
                         onClick = { importLauncher.launch(arrayOf("application/json", "text/*")) },
                         enabled = !state.isBackupBusy,
+                        loading = state.isBackupBusy && activeBackupOp == "import",
                         compact = true,
-                        variant = GuButtonVariant.SUBTLE,
+                        variant = GuButtonVariant.SECONDARY,
                         modifier = Modifier.weight(1f),
                     ) {
                         Icon(Icons.Default.Upload, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text(strings.profile.importBackup, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Text(strings.profile.importBackup, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
                 Spacer(Modifier.height(8.dp))
                 GuButton(
                     onClick = { showDeepSeekImport = true },
                     compact = true,
-                    variant = GuButtonVariant.HONEY,
+                    variant = GuButtonVariant.SUBTLE,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Icon(Icons.Default.FolderZip, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text(strings.chat.importDeepSeekTitle, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Text(strings.chat.importExternalTitle, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
             }
 
-            GuButton(
-                onClick = { showLogoutConfirm = true },
-                variant = GuButtonVariant.DANGER,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    if (state.isDirectApiOnly) strings.providers.switchToSub2api else strings.profile.logout,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold,
-                )
+            // Softened Sign Out / Switch Account action
+            if (state.isDirectApiOnly) {
+                GuButton(
+                    onClick = { showLogoutConfirm = true },
+                    variant = GuButtonVariant.SECONDARY,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(strings.providers.switchToSub2api, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                }
+            } else {
+                Surface(
+                    onClick = { showLogoutConfirm = true },
+                    shape = RoundedCornerShape(999.dp),
+                    color = c.dangerBg.copy(alpha = 0.35f),
+                    border = BorderStroke(1.dp, c.danger.copy(alpha = 0.45f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 46.dp),
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 11.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.Logout,
+                            contentDescription = null,
+                            tint = c.danger,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = strings.profile.logout,
+                            color = c.danger,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                }
             }
 
             Spacer(Modifier.height(12.dp))
@@ -437,13 +555,12 @@ private fun StatCell(
         modifier = modifier
             .clip(shape)
             .background(c.surfaceSoft)
-            .border(1.dp, c.border, shape)
-            .padding(horizontal = 10.dp, vertical = 8.dp),
+            .padding(horizontal = 10.dp, vertical = 9.dp),
     ) {
         Column {
             Text(label, color = c.muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Spacer(Modifier.height(2.dp))
-            Text(value, color = c.ink, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1)
+            Spacer(Modifier.height(3.dp))
+            Text(value, color = c.ink, fontSize = 15.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1)
         }
     }
 }

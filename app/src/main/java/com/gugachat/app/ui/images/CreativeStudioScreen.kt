@@ -15,19 +15,20 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Bookmarks
 import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
@@ -36,7 +37,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -45,6 +45,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -78,6 +79,9 @@ fun CreativeStudioScreen(
         strings.nav.tabTools,
     )
 
+    val showUnavailableBanner = !state.isLoadingCapabilities &&
+        (!state.enabled || !state.unavailableReason.isNullOrBlank())
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -88,9 +92,10 @@ fun CreativeStudioScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                        .height(56.dp)
+                        .padding(horizontal = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     Surface(
                         shape = RoundedCornerShape(999.dp),
@@ -108,26 +113,26 @@ fun CreativeStudioScreen(
                                 Row(
                                     modifier = Modifier
                                         .clip(RoundedCornerShape(999.dp))
-                                        .background(if (selected) c.primarySoft else Color.Transparent)
+                                        .background(if (selected) c.primary else Color.Transparent)
                                         .clickable {
                                             scope.launch { pagerState.animateScrollToPage(idx) }
                                         }
-                                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                                        .padding(horizontal = 11.dp, vertical = 6.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                                 ) {
                                     Text(
                                         text = label,
-                                        color = if (selected) c.primary else c.muted,
-                                        fontSize = 13.sp,
+                                        color = if (selected) Color.White else c.muted,
+                                        fontSize = 12.5.sp,
                                         fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.SemiBold,
                                         maxLines = 1,
                                     )
                                     if (badgeCount != null) {
                                         Text(
                                             text = if (badgeCount > 99) "99+" else badgeCount.toString(),
-                                            color = if (selected) c.primary else c.muted,
-                                            fontSize = 10.5.sp,
+                                            color = if (selected) Color.White.copy(alpha = 0.85f) else c.muted,
+                                            fontSize = 10.sp,
                                             fontWeight = FontWeight.Bold,
                                         )
                                     }
@@ -136,7 +141,7 @@ fun CreativeStudioScreen(
                                             modifier = Modifier
                                                 .size(6.dp)
                                                 .clip(CircleShape)
-                                                .background(c.accent),
+                                                .background(if (selected) Color.White else c.accent),
                                         )
                                     }
                                 }
@@ -150,7 +155,7 @@ fun CreativeStudioScreen(
                         0 -> {
                             IconButton(
                                 onClick = { showGallerySearch = !showGallerySearch },
-                                modifier = Modifier.size(36.dp),
+                                modifier = Modifier.size(44.dp),
                             ) {
                                 Icon(
                                     Icons.Default.Search,
@@ -161,7 +166,7 @@ fun CreativeStudioScreen(
                             }
                             IconButton(
                                 onClick = imageViewModel::toggleBatchMode,
-                                modifier = Modifier.size(36.dp),
+                                modifier = Modifier.size(44.dp),
                             ) {
                                 Icon(
                                     Icons.Default.Checklist,
@@ -173,12 +178,12 @@ fun CreativeStudioScreen(
                             IconButton(
                                 onClick = imageViewModel::refreshGallery,
                                 enabled = !state.isLoadingGallery,
-                                modifier = Modifier.size(36.dp),
+                                modifier = Modifier.size(44.dp),
                             ) {
                                 Icon(
                                     Icons.Default.Refresh,
                                     contentDescription = strings.common.refresh,
-                                    tint = c.ink,
+                                    tint = if (state.isLoadingGallery) c.muted else c.ink,
                                     modifier = Modifier.size(20.dp),
                                 )
                             }
@@ -187,7 +192,7 @@ fun CreativeStudioScreen(
                         1 -> {
                             IconButton(
                                 onClick = { imageViewModel.setShowPresetSheet(true) },
-                                modifier = Modifier.size(36.dp),
+                                modifier = Modifier.size(44.dp),
                             ) {
                                 Icon(
                                     Icons.Default.Bookmarks,
@@ -200,29 +205,53 @@ fun CreativeStudioScreen(
 
                         else -> {
                             IconButton(
-                                onClick = { imageViewModel.setShowPresetSheet(true) },
-                                modifier = Modifier.size(36.dp),
-                            ) {
-                                Icon(
-                                    Icons.Default.Bookmarks,
-                                    contentDescription = strings.images.presetsTitle,
-                                    tint = c.ink,
-                                    modifier = Modifier.size(20.dp),
-                                )
-                            }
-                            IconButton(
                                 onClick = imageViewModel::refreshGallery,
                                 enabled = !state.isLoadingGallery,
-                                modifier = Modifier.size(36.dp),
+                                modifier = Modifier.size(44.dp),
                             ) {
                                 Icon(
                                     Icons.Default.Refresh,
                                     contentDescription = strings.common.refresh,
-                                    tint = c.ink,
+                                    tint = if (state.isLoadingGallery) c.muted else c.ink,
                                     modifier = Modifier.size(20.dp),
                                 )
                             }
                         }
+                    }
+                }
+            }
+
+            if (showUnavailableBanner) {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = c.warningBg,
+                    border = BorderStroke(1.dp, c.warning.copy(alpha = 0.4f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 9.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Icon(
+                            Icons.Default.WarningAmber,
+                            contentDescription = null,
+                            tint = c.warning,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Text(
+                            text = state.unavailableReason?.takeIf { it.isNotBlank() } ?: strings.images.unavailable,
+                            color = c.warning,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
                     }
                 }
             }
@@ -268,8 +297,10 @@ fun CreativeStudioScreen(
             }
         }
 
+        // Hide floating Create FAB on Tools tab (which has its own primary hero CTA & bottom cards)
+        // and while batch selection mode is active on Gallery.
         AnimatedVisibility(
-            visible = !(pagerState.currentPage == 0 && state.batchMode),
+            visible = pagerState.currentPage != 2 && !(pagerState.currentPage == 0 && state.batchMode),
             enter = fadeIn() + scaleIn(initialScale = 0.9f),
             exit = fadeOut() + scaleOut(targetScale = 0.9f),
             modifier = Modifier
@@ -283,12 +314,12 @@ fun CreativeStudioScreen(
                 shadowElevation = 6.dp,
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 11.dp),
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     Icon(
-                        Icons.Default.AutoAwesome,
+                        Icons.Default.Add,
                         contentDescription = null,
                         tint = Color.White,
                         modifier = Modifier.size(18.dp),

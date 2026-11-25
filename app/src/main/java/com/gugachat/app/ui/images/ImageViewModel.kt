@@ -270,14 +270,19 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    fun openCreateWithPrompt(promptText: String, styleAppend: Boolean = false) {
+    fun openCreateWithPrompt(
+        promptText: String,
+        styleAppend: Boolean = false,
+        aspectRatio: String? = null,
+    ) {
         _ui.update { state ->
             val nextPrompt = if (styleAppend && state.prompt.isNotBlank()) {
                 "${state.prompt.trim()}, $promptText"
             } else {
                 promptText
             }
-            state.copy(prompt = nextPrompt, showCreateSheet = true)
+            val nextRatio = aspectRatio?.takeIf { it.isNotBlank() && !styleAppend } ?: state.aspectRatio
+            state.copy(prompt = nextPrompt, aspectRatio = nextRatio, showCreateSheet = true)
         }
     }
 

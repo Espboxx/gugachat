@@ -2,18 +2,19 @@ package com.gugachat.app.ui.chat
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -27,8 +28,9 @@ import androidx.compose.material.icons.filled.AutoStories
 import androidx.compose.material.icons.filled.Casino
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FolderZip
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PushPin
-import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -42,6 +44,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -54,10 +57,11 @@ import com.gugachat.app.core.theme.GuBadge
 import com.gugachat.app.core.theme.GuBadgeVariant
 import com.gugachat.app.core.theme.GuButton
 import com.gugachat.app.core.theme.GuButtonVariant
+import com.gugachat.app.core.theme.GuCompactSearchBar
 import com.gugachat.app.core.theme.GuConfirmDialog
 import com.gugachat.app.core.theme.GuEmptyState
 import com.gugachat.app.core.theme.GuPill
-import com.gugachat.app.core.theme.GuTextField
+import com.gugachat.app.core.theme.GuPopupMenu
 import com.gugachat.app.core.theme.LocalAppTheme
 import com.gugachat.app.core.util.FuzzyMatcher
 import com.gugachat.app.domain.chat.ChatConversation
@@ -125,7 +129,8 @@ fun ChatSessionsDrawerContent(
         Column(
             modifier = Modifier
                 .fillMaxHeight()
-                .padding(14.dp),
+                .navigationBarsPadding()
+                .padding(horizontal = 14.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Row(
@@ -167,27 +172,27 @@ fun ChatSessionsDrawerContent(
                     compact = true,
                     variant = GuButtonVariant.SUBTLE,
                 ) {
-                    Icon(Icons.Default.FolderZip, contentDescription = strings.chat.importDeepSeekTitle, modifier = Modifier.size(15.dp))
+                    Icon(Icons.Default.FolderZip, contentDescription = strings.chat.importExternalTitle, modifier = Modifier.size(15.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text(strings.chat.importDeepSeekShort, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                    Text(strings.chat.importDeepSeekShort, fontSize = 12.5.sp, fontWeight = FontWeight.Bold, maxLines = 1)
                 }
             }
 
-            GuTextField(
+            GuCompactSearchBar(
                 value = search,
                 onValueChange = { search = it },
                 placeholder = strings.chat.searchSessions,
-                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = c.muted) },
+                clearContentDescription = strings.common.clear,
             )
 
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 GuPill(strings.novel.filterAll, filterMode == null, { filterMode = null })
                 GuPill(strings.novel.filterChat, filterMode == ConversationMode.chat, { filterMode = ConversationMode.chat })
                 GuPill(strings.novel.filterNovel, filterMode == ConversationMode.novel, { filterMode = ConversationMode.novel })
                 GuPill(strings.rp.filterRp, filterMode == ConversationMode.rp, { filterMode = ConversationMode.rp })
             }
 
-            HorizontalDivider(color = c.border)
+            HorizontalDivider(color = c.border.copy(alpha = 0.7f))
 
             if (filtered.isEmpty()) {
                 GuEmptyState(
@@ -196,7 +201,8 @@ fun ChatSessionsDrawerContent(
             } else {
                 LazyColumn(
                     modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    contentPadding = PaddingValues(bottom = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
                     sections.forEach { (sectionTitle, sectionItems) ->
                         item(key = "sec_$sectionTitle") {
@@ -205,31 +211,28 @@ fun ChatSessionsDrawerContent(
                                 color = c.muted,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(start = 4.dp, top = 4.dp, bottom = 2.dp),
+                                modifier = Modifier.padding(start = 6.dp, top = 8.dp, bottom = 4.dp),
                             )
                         }
                         items(sectionItems, key = { it.id }) { conv ->
                             val selected = conv.id == activeConversationId
                             val (modeIcon, modeTint) = when (conv.mode) {
                                 ConversationMode.novel -> Icons.Default.AutoStories to c.accent
-                                ConversationMode.rp -> Icons.Default.Casino to c.primary
+                                ConversationMode.rp -> Icons.Default.Casino to c.success
                                 ConversationMode.chat -> Icons.AutoMirrored.Filled.Chat to c.muted
                             }
+                            var rowMenuOpen by remember(conv.id) { mutableStateOf(false) }
+
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(12.dp))
-                                    .background(if (selected) c.primarySoft else c.surface)
-                                    .border(
-                                        width = 1.dp,
-                                        color = if (selected) c.primary.copy(alpha = 0.55f) else c.border,
-                                        shape = RoundedCornerShape(12.dp),
-                                    )
+                                    .background(if (selected) c.primarySoft else Color.Transparent)
                                     .clickable {
                                         onSelectConversation(conv.id)
                                         onCloseDrawer()
                                     }
-                                    .padding(horizontal = 10.dp, vertical = 9.dp),
+                                    .padding(start = 8.dp, end = 2.dp, top = 7.dp, bottom = 7.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
@@ -245,49 +248,103 @@ fun ChatSessionsDrawerContent(
                                 Icon(
                                     imageVector = modeIcon,
                                     contentDescription = null,
-                                    tint = if (selected) c.primary else modeTint,
-                                    modifier = Modifier.size(16.dp),
+                                    tint = if (selected) c.primarySoftInk else modeTint,
+                                    modifier = Modifier.size(17.dp),
                                 )
                                 Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = conv.title.ifBlank { strings.chat.untitled },
-                                        color = c.ink,
-                                        fontSize = 13.sp,
-                                        fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.SemiBold,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                    ) {
+                                        Text(
+                                            text = conv.title.ifBlank { strings.chat.untitled },
+                                            color = if (selected) c.primarySoftInk else c.ink,
+                                            fontSize = 13.5.sp,
+                                            fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.Medium,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f, fill = false),
+                                        )
+                                        if (conv.pinned) {
+                                            Icon(
+                                                Icons.Default.PushPin,
+                                                contentDescription = null,
+                                                tint = c.accent,
+                                                modifier = Modifier.size(12.dp),
+                                            )
+                                        }
+                                    }
                                     if (!conv.model.isNullOrBlank()) {
                                         Text(
                                             text = conv.model,
                                             color = c.muted,
-                                            fontSize = 10.sp,
+                                            fontSize = 10.5.sp,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis,
                                         )
                                     }
                                 }
-                                IconButton(
-                                    onClick = { onTogglePin(conv.id) },
-                                    modifier = Modifier.size(26.dp),
-                                ) {
-                                    Icon(
-                                        Icons.Default.PushPin,
-                                        contentDescription = null,
-                                        tint = if (conv.pinned) c.accent else c.muted.copy(alpha = 0.45f),
-                                        modifier = Modifier.size(14.dp),
-                                    )
-                                }
-                                IconButton(
-                                    onClick = { deleteTarget = conv },
-                                    modifier = Modifier.size(26.dp),
-                                ) {
-                                    Icon(
-                                        Icons.Default.Delete,
-                                        contentDescription = strings.common.delete,
-                                        tint = c.muted,
-                                        modifier = Modifier.size(14.dp),
-                                    )
+                                Box {
+                                    IconButton(
+                                        onClick = { rowMenuOpen = true },
+                                        modifier = Modifier.size(40.dp),
+                                    ) {
+                                        Icon(
+                                            Icons.Default.MoreVert,
+                                            contentDescription = strings.chat.moreActions,
+                                            tint = c.muted,
+                                            modifier = Modifier.size(18.dp),
+                                        )
+                                    }
+                                    GuPopupMenu(
+                                        expanded = rowMenuOpen,
+                                        onDismissRequest = { rowMenuOpen = false },
+                                    ) {
+                                        DropdownMenuItem(
+                                            leadingIcon = {
+                                                Icon(
+                                                    Icons.Default.PushPin,
+                                                    contentDescription = null,
+                                                    tint = if (conv.pinned) c.accent else c.muted,
+                                                    modifier = Modifier.size(17.dp),
+                                                )
+                                            },
+                                            text = {
+                                                Text(
+                                                    text = if (conv.pinned) strings.chat.ledgerUnpin else strings.chat.ledgerPin,
+                                                    color = c.ink,
+                                                    fontSize = 13.sp,
+                                                    fontWeight = FontWeight.Medium,
+                                                )
+                                            },
+                                            onClick = {
+                                                rowMenuOpen = false
+                                                onTogglePin(conv.id)
+                                            },
+                                        )
+                                        DropdownMenuItem(
+                                            leadingIcon = {
+                                                Icon(
+                                                    Icons.Default.Delete,
+                                                    contentDescription = null,
+                                                    tint = c.danger,
+                                                    modifier = Modifier.size(17.dp),
+                                                )
+                                            },
+                                            text = {
+                                                Text(
+                                                    text = strings.common.delete,
+                                                    color = c.danger,
+                                                    fontSize = 13.sp,
+                                                    fontWeight = FontWeight.Medium,
+                                                )
+                                            },
+                                            onClick = {
+                                                rowMenuOpen = false
+                                                deleteTarget = conv
+                                            },
+                                        )
+                                    }
                                 }
                             }
                         }

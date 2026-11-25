@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.gugachat.app.AppContainer
 import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.storage.ApiProtocol
+import com.gugachat.app.core.theme.ColorMode
 import com.gugachat.app.core.theme.ThemeStyle
 import com.gugachat.app.core.util.ServerUrlUtils
 import com.gugachat.app.data.api.ActiveCaptchaConfig
@@ -80,6 +81,7 @@ data class AuthUiState(
     val savedProvidersCount: Int = 0,
     val hostProbes: List<HostLatencyResult> = GugagaHosts.PRESETS.map { HostLatencyResult(it) },
     val isProbingHosts: Boolean = false,
+    val colorMode: ColorMode = ColorMode.SYSTEM,
 ) {
     val activeCaptcha: ActiveCaptchaConfig
         get() = publicSettings?.resolveActiveCaptcha() ?: ActiveCaptchaConfig.None
@@ -107,6 +109,11 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
     private var hostProbeJob: Job? = null
 
     init {
+        viewModelScope.launch {
+            container.settingsState.collect { st ->
+                _ui.update { it.copy(colorMode = st.colorMode) }
+            }
+        }
         viewModelScope.launch {
             container.apiProviderStore.providers.collect { list ->
                 _ui.update { it.copy(savedProvidersCount = list.count { p -> p.enabled }) }
@@ -673,6 +680,15 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
     fun toggleThemeStyle() {
         val cur = container.settingsState.value.themeStyle
         container.setThemeStyle(if (cur == ThemeStyle.GUGUGA) ThemeStyle.CLASSIC else ThemeStyle.GUGUGA)
+    }
+
+    fun cycleColorMode() {
+        val next = when (container.settingsState.value.colorMode) {
+            ColorMode.SYSTEM -> ColorMode.LIGHT
+            ColorMode.LIGHT -> ColorMode.DARK
+            ColorMode.DARK -> ColorMode.SYSTEM
+        }
+        container.setColorMode(next)
     }
 
     private fun resolveSelectedHostUrl(): String {

@@ -1,5 +1,8 @@
 package com.gugachat.app.core.theme
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
@@ -7,10 +10,13 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.core.view.WindowCompat
 
 enum class ThemeStyle(val wireValue: String) {
     GUGUGA("guguga"),
@@ -44,6 +50,8 @@ data class AppColors(
     val primaryDark: Color,
     val primaryDeep: Color,
     val primarySoft: Color,
+    val primarySoftInk: Color,
+    val surfaceElevated: Color,
     val accent: Color,
     val accentSoft: Color,
     val tag: Color,
@@ -82,6 +90,8 @@ val GUGUGA_LIGHT = AppColors(
     primaryDark = Color(0xFF3956E0),
     primaryDeep = Color(0xFF2842BA),
     primarySoft = Color(0xFFEDF2FF),
+    primarySoftInk = Color(0xFF2842BA),
+    surfaceElevated = Color(0xFFFFFFFF),
     accent = Color(0xFFD97706),
     accentSoft = Color(0xFFFFF8EB),
     tag = Color(0xFFFEF3C7),
@@ -102,27 +112,29 @@ val GUGUGA_LIGHT = AppColors(
 val GUGUGA_DARK = AppColors(
     page = Color(0xFF0C1018),
     surface = Color(0xFF151B28),
-    surfaceSoft = Color(0xFF1B2333),
+    surfaceSoft = Color(0xFF1C2436),
     awning = Color(0xFF121826),
     plankGrain = Color(0x1A5B7CFF),
     primary = Color(0xFF5B7CFF),
     primaryDark = Color(0xFF4364E8),
     primaryDeep = Color(0xFF314EC4),
     primarySoft = Color(0xFF1A2540),
+    primarySoftInk = Color(0xFFA8C0FF),
+    surfaceElevated = Color(0xFF1F283C),
     accent = Color(0xFFF5A623),
     accentSoft = Color(0xFF2A2115),
     tag = Color(0xFF382A16),
     tagInk = Color(0xFFFDE68A),
     ink = Color(0xFFF0F4FC),
     muted = Color(0xFF93A1BA),
-    outline = Color(0xFF2D3950),
-    border = Color(0xFF232D42),
+    outline = Color(0xFF33415C),
+    border = Color(0xFF253047),
     success = Color(0xFF4ADE80),
-    successBg = Color(0x59166534),
+    successBg = Color(0xFF122C20),
     warning = Color(0xFFFBBF24),
-    warningBg = Color(0x5992400E),
+    warningBg = Color(0xFF2E2210),
     danger = Color(0xFFF87171),
-    dangerBg = Color(0x59991B1B),
+    dangerBg = Color(0xFF33161B),
     shadowColor = Color(0x66000000),
 )
 
@@ -136,6 +148,8 @@ val CLASSIC_LIGHT = AppColors(
     primaryDark = Color(0xFF1D4ED8),
     primaryDeep = Color(0xFF1E40AF),
     primarySoft = Color(0xFFEFF6FF),
+    primarySoftInk = Color(0xFF1D4ED8),
+    surfaceElevated = Color(0xFFFFFFFF),
     accent = Color(0xFFD97706),
     accentSoft = Color(0xFFFFFBEB),
     tag = Color(0xFFFEF3C7),
@@ -163,6 +177,8 @@ val CLASSIC_DARK = AppColors(
     primaryDark = Color(0xFF2563EB),
     primaryDeep = Color(0xFF1D4ED8),
     primarySoft = Color(0xFF172554),
+    primarySoftInk = Color(0xFF93C5FD),
+    surfaceElevated = Color(0xFF232329),
     accent = Color(0xFFF59E0B),
     accentSoft = Color(0xFF292114),
     tag = Color(0xFF422006),
@@ -170,13 +186,13 @@ val CLASSIC_DARK = AppColors(
     ink = Color(0xFFF4F4F5),
     muted = Color(0xFFA1A1AA),
     outline = Color(0xFF3F3F46),
-    border = Color(0xFF27272A),
+    border = Color(0xFF2C2C31),
     success = Color(0xFF4ADE80),
-    successBg = Color(0x6614532D),
+    successBg = Color(0xFF0E291C),
     warning = Color(0xFFFBBF24),
-    warningBg = Color(0x6678350F),
+    warningBg = Color(0xFF2C1E0B),
     danger = Color(0xFFF87171),
-    dangerBg = Color(0x667F1D1D),
+    dangerBg = Color(0xFF311316),
     shadowColor = Color(0x73000000),
 )
 
@@ -214,22 +230,28 @@ fun GuGuChatTheme(
     val c = spec.colors
 
     val materialScheme = if (isDark) {
+        val m3Outline = if (themeStyle == ThemeStyle.GUGUGA) Color(0xFF6B7B99) else Color(0xFF71717A)
         darkColorScheme(
             primary = c.primary,
             onPrimary = Color.White,
             primaryContainer = c.primarySoft,
-            onPrimaryContainer = c.ink,
+            onPrimaryContainer = c.primarySoftInk,
             secondary = c.accent,
             onSecondary = Color.White,
-            secondaryContainer = c.tag,
-            onSecondaryContainer = c.tagInk,
+            secondaryContainer = c.surfaceSoft,
+            onSecondaryContainer = c.ink,
             background = c.page,
             onBackground = c.ink,
             surface = c.surface,
             onSurface = c.ink,
             surfaceVariant = c.surfaceSoft,
             onSurfaceVariant = c.muted,
-            outline = c.outline,
+            surfaceContainerLowest = c.page,
+            surfaceContainerLow = c.page,
+            surfaceContainer = c.surface,
+            surfaceContainerHigh = c.surfaceElevated,
+            surfaceContainerHighest = c.surfaceSoft,
+            outline = m3Outline,
             outlineVariant = c.border,
             error = c.danger,
             onError = Color.White,
@@ -239,22 +261,37 @@ fun GuGuChatTheme(
             primary = c.primary,
             onPrimary = Color.White,
             primaryContainer = c.primarySoft,
-            onPrimaryContainer = c.ink,
+            onPrimaryContainer = c.primarySoftInk,
             secondary = c.accent,
             onSecondary = Color.White,
-            secondaryContainer = c.tag,
-            onSecondaryContainer = c.tagInk,
+            secondaryContainer = c.surfaceSoft,
+            onSecondaryContainer = c.ink,
             background = c.page,
             onBackground = c.ink,
             surface = c.surface,
             onSurface = c.ink,
             surfaceVariant = c.surfaceSoft,
             onSurfaceVariant = c.muted,
-            outline = c.outline,
+            surfaceContainerLowest = c.page,
+            surfaceContainerLow = c.page,
+            surfaceContainer = c.surface,
+            surfaceContainerHigh = c.surfaceElevated,
+            surfaceContainerHighest = c.surfaceSoft,
+            outline = Color(0xFF94A3B8),
             outlineVariant = c.border,
             error = c.danger,
             onError = Color.White,
         )
+    }
+
+    val view = LocalView.current
+    if (!view.isInEditMode) {
+        SideEffect {
+            val window = view.context.findActivity()?.window ?: return@SideEffect
+            val controller = WindowCompat.getInsetsController(window, view)
+            controller.isAppearanceLightStatusBars = !isDark
+            controller.isAppearanceLightNavigationBars = !isDark
+        }
     }
 
     CompositionLocalProvider(LocalAppTheme provides spec) {
@@ -263,4 +300,10 @@ fun GuGuChatTheme(
             content = content,
         )
     }
+}
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
 }

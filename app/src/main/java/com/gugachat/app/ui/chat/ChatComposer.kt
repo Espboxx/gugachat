@@ -1,5 +1,6 @@
 package com.gugachat.app.ui.chat
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
@@ -13,7 +14,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
@@ -29,10 +32,10 @@ import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bookmarks
 import androidx.compose.material.icons.filled.Casino
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -58,8 +61,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.rememberAsyncImagePainter
 import com.gugachat.app.core.i18n.LocalAppStrings
 import com.gugachat.app.core.i18n.fmt
-import com.gugachat.app.core.theme.GuBadge
-import com.gugachat.app.core.theme.GuBadgeVariant
+import com.gugachat.app.core.theme.GuPopupMenu
 import com.gugachat.app.core.theme.LocalAppTheme
 import com.gugachat.app.domain.chat.ChatAttachmentMeta
 import com.gugachat.app.domain.chat.ContextWaterlineSummary
@@ -103,9 +105,13 @@ fun ChatComposerBar(
     var showToolsPanel by remember { mutableStateOf(false) }
     var showKindMenu by remember(mode) { mutableStateOf(false) }
 
+    BackHandler(enabled = showToolsPanel) {
+        showToolsPanel = false
+    }
+
     Surface(
         color = c.surface,
-        shape = RoundedCornerShape(24.dp),
+        shape = RoundedCornerShape(22.dp),
         border = BorderStroke(1.dp, c.border),
         shadowElevation = if (theme.isDark) 2.dp else 4.dp,
         modifier = Modifier
@@ -116,8 +122,8 @@ fun ChatComposerBar(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 6.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             if (draftAttachments.isNotEmpty()) {
                 Row(
@@ -125,26 +131,39 @@ fun ChatComposerBar(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     draftAttachments.forEach { att ->
-                        Box(modifier = Modifier.size(50.dp)) {
+                        Box(modifier = Modifier.size(58.dp)) {
                             Image(
                                 painter = rememberAsyncImagePainter(File(att.localPath)),
                                 contentDescription = null,
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier
-                                    .size(50.dp)
+                                    .size(54.dp)
+                                    .align(Alignment.BottomStart)
                                     .clip(RoundedCornerShape(10.dp))
                                     .border(1.dp, c.border, RoundedCornerShape(10.dp)),
                             )
                             Box(
                                 modifier = Modifier
                                     .align(Alignment.TopEnd)
-                                    .size(18.dp)
+                                    .size(28.dp)
                                     .clip(CircleShape)
-                                    .background(c.danger)
                                     .clickable { onRemoveAttachment(att.id) },
                                 contentAlignment = Alignment.Center,
                             ) {
-                                Icon(Icons.Default.Close, contentDescription = null, tint = Color.White, modifier = Modifier.size(12.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .size(20.dp)
+                                        .clip(CircleShape)
+                                        .background(c.danger),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Icon(
+                                        Icons.Default.Close,
+                                        contentDescription = strings.common.delete,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(12.dp),
+                                    )
+                                }
                             }
                         }
                     }
@@ -156,23 +175,31 @@ fun ChatComposerBar(
                     modifier = Modifier
                         .clip(RoundedCornerShape(999.dp))
                         .background(c.tag)
-                        .border(1.dp, c.accent.copy(alpha = 0.4f), RoundedCornerShape(999.dp))
-                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                        .border(1.dp, c.accent.copy(alpha = 0.45f), RoundedCornerShape(999.dp))
+                        .padding(start = 10.dp, end = 4.dp, top = 3.dp, bottom = 3.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                     Text(
                         text = "🎲 ${draftDiceRoll.skill ?: ""} ${draftDiceRoll.expression} = ${draftDiceRoll.total}".trim(),
                         color = c.tagInk,
-                        fontSize = 11.sp,
+                        fontSize = 11.5.sp,
                         fontWeight = FontWeight.Bold,
                     )
-                    Icon(
-                        Icons.Default.Close,
-                        contentDescription = strings.common.clear,
-                        tint = c.tagInk,
-                        modifier = Modifier.size(14.dp).clickable(onClick = onClearDiceRoll),
-                    )
+                    Box(
+                        modifier = Modifier
+                            .size(26.dp)
+                            .clip(CircleShape)
+                            .clickable(onClick = onClearDiceRoll),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = strings.common.clear,
+                            tint = c.tagInk,
+                            modifier = Modifier.size(14.dp),
+                        )
+                    }
                 }
             }
 
@@ -182,20 +209,52 @@ fun ChatComposerBar(
                 else -> strings.chat.composerPlaceholder
             }
 
+            // Row 1: Generous full-width input area
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 38.dp)
+                    .padding(horizontal = 4.dp, vertical = 2.dp),
+                contentAlignment = Alignment.CenterStart,
+            ) {
+                if (draftText.isEmpty()) {
+                    Text(
+                        text = placeholder,
+                        color = c.muted,
+                        fontSize = 15.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                BasicTextField(
+                    value = draftText,
+                    onValueChange = onDraftChange,
+                    maxLines = 6,
+                    textStyle = TextStyle(
+                        color = c.ink,
+                        fontSize = 15.sp,
+                        lineHeight = 22.sp,
+                    ),
+                    cursorBrush = SolidColor(c.primary),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+
+            // Row 2: Balanced toolbar with 40dp+ primary controls
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                Box(modifier = Modifier.size(34.dp)) {
+                Box(modifier = Modifier.size(40.dp)) {
                     Box(
                         modifier = Modifier
-                            .size(34.dp)
+                            .size(40.dp)
                             .clip(CircleShape)
                             .background(if (showToolsPanel) c.primarySoft else c.surfaceSoft)
                             .border(
                                 width = 1.dp,
-                                color = if (showToolsPanel) c.primary.copy(alpha = 0.5f) else c.border,
+                                color = if (showToolsPanel) c.primary.copy(alpha = 0.55f) else c.border,
                                 shape = CircleShape,
                             )
                             .clickable { showToolsPanel = !showToolsPanel },
@@ -204,17 +263,18 @@ fun ChatComposerBar(
                         Icon(
                             imageVector = if (showToolsPanel) Icons.Default.Close else Icons.Default.Add,
                             contentDescription = strings.chat.composerTools,
-                            tint = if (showToolsPanel) c.primary else c.muted,
-                            modifier = Modifier.size(18.dp),
+                            tint = if (showToolsPanel) c.primarySoftInk else c.muted,
+                            modifier = Modifier.size(20.dp),
                         )
                     }
-                    if (!showToolsPanel && (waterline.exceedsModelWindow || enableReasoning)) {
+                    if (!showToolsPanel && waterline.exceedsModelWindow) {
                         Box(
                             modifier = Modifier
                                 .align(Alignment.TopEnd)
-                                .size(7.dp)
+                                .padding(2.dp)
+                                .size(8.dp)
                                 .clip(CircleShape)
-                                .background(if (waterline.exceedsModelWindow) c.danger else c.primary),
+                                .background(c.danger),
                         )
                     }
                 }
@@ -236,27 +296,25 @@ fun ChatComposerBar(
                         }
                     }
                     val pillBg = if (mode == ConversationMode.novel) c.tag else c.primarySoft
-                    val pillFg = if (mode == ConversationMode.novel) c.tagInk else c.primary
+                    val pillFg = if (mode == ConversationMode.novel) c.tagInk else c.primarySoftInk
+                    val pillBorder = (if (mode == ConversationMode.novel) c.accent else c.primary).copy(alpha = 0.45f)
 
                     Box {
                         Row(
                             modifier = Modifier
+                                .height(36.dp)
                                 .clip(RoundedCornerShape(999.dp))
                                 .background(pillBg)
-                                .border(
-                                    width = 1.dp,
-                                    color = (if (mode == ConversationMode.novel) c.accent else c.primary).copy(alpha = 0.45f),
-                                    shape = RoundedCornerShape(999.dp),
-                                )
+                                .border(1.dp, pillBorder, RoundedCornerShape(999.dp))
                                 .clickable { showKindMenu = true }
-                                .padding(horizontal = 8.dp, vertical = 5.dp),
+                                .padding(horizontal = 11.dp),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(2.dp),
+                            horizontalArrangement = Arrangement.spacedBy(3.dp),
                         ) {
                             Text(
                                 text = activeKindLabel,
                                 color = pillFg,
-                                fontSize = 11.sp,
+                                fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold,
                                 maxLines = 1,
                             )
@@ -264,14 +322,13 @@ fun ChatComposerBar(
                                 Icons.Default.KeyboardArrowDown,
                                 contentDescription = null,
                                 tint = pillFg,
-                                modifier = Modifier.size(13.dp),
+                                modifier = Modifier.size(15.dp),
                             )
                         }
 
-                        DropdownMenu(
+                        GuPopupMenu(
                             expanded = showKindMenu,
                             onDismissRequest = { showKindMenu = false },
-                            containerColor = c.surface,
                         ) {
                             if (mode == ConversationMode.novel) {
                                 listOf(
@@ -286,10 +343,13 @@ fun ChatComposerBar(
                                             Text(
                                                 text = label,
                                                 color = if (selected) c.accent else c.ink,
-                                                fontSize = 13.sp,
+                                                fontSize = 13.5.sp,
                                                 fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
                                             )
                                         },
+                                        trailingIcon = if (selected) {
+                                            { Icon(Icons.Default.Check, contentDescription = null, tint = c.accent, modifier = Modifier.size(16.dp)) }
+                                        } else null,
                                         onClick = {
                                             onSelectNovelKind(kind)
                                             showKindMenu = false
@@ -308,11 +368,14 @@ fun ChatComposerBar(
                                         text = {
                                             Text(
                                                 text = label,
-                                                color = if (selected) c.primary else c.ink,
-                                                fontSize = 13.sp,
+                                                color = if (selected) c.primarySoftInk else c.ink,
+                                                fontSize = 13.5.sp,
                                                 fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
                                             )
                                         },
+                                        trailingIcon = if (selected) {
+                                            { Icon(Icons.Default.Check, contentDescription = null, tint = c.primary, modifier = Modifier.size(16.dp)) }
+                                        } else null,
                                         onClick = {
                                             onSelectRpKind(kind)
                                             showKindMenu = false
@@ -324,52 +387,46 @@ fun ChatComposerBar(
                     }
                 }
 
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .heightIn(min = 34.dp)
-                        .padding(horizontal = 2.dp),
-                    contentAlignment = Alignment.CenterStart,
-                ) {
-                    if (draftText.isEmpty()) {
-                        Text(
-                            text = placeholder,
-                            color = c.muted,
-                            fontSize = 15.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                    BasicTextField(
-                        value = draftText,
-                        onValueChange = onDraftChange,
-                        maxLines = 5,
-                        textStyle = TextStyle(
-                            color = c.ink,
-                            fontSize = 15.sp,
-                            lineHeight = 21.sp,
-                        ),
-                        cursorBrush = SolidColor(c.primary),
-                        modifier = Modifier.fillMaxWidth(),
+                // Always-visible Deep Think chip so users see active mode at a glance
+                ComposerChip(
+                    label = strings.chat.deepThinkToggle,
+                    icon = Icons.Default.AutoAwesome,
+                    active = enableReasoning,
+                    onClick = onToggleReasoning,
+                )
+
+                if (mode == ConversationMode.chat) {
+                    ComposerChip(
+                        label = strings.chat.memoryShort,
+                        icon = Icons.Default.Bookmarks,
+                        active = enableAutoMemory,
+                        onClick = onToggleMemory,
                     )
                 }
+
+                Spacer(Modifier.weight(1f))
 
                 if (isStreaming) {
                     Box(
                         modifier = Modifier
-                            .size(34.dp)
+                            .size(40.dp)
                             .clip(CircleShape)
                             .background(c.danger)
                             .clickable(onClick = onStop),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Icon(Icons.Default.Stop, contentDescription = strings.chat.stop, tint = Color.White, modifier = Modifier.size(17.dp))
+                        Icon(
+                            Icons.Default.Stop,
+                            contentDescription = strings.chat.stop,
+                            tint = Color.White,
+                            modifier = Modifier.size(19.dp),
+                        )
                     }
                 } else {
                     val canSend = draftText.isNotBlank() || draftAttachments.isNotEmpty()
                     Box(
                         modifier = Modifier
-                            .size(34.dp)
+                            .size(40.dp)
                             .clip(CircleShape)
                             .background(if (canSend) c.primary else c.surfaceSoft)
                             .border(
@@ -384,7 +441,7 @@ fun ChatComposerBar(
                             Icons.Default.ArrowUpward,
                             contentDescription = strings.chat.send,
                             tint = if (canSend) Color.White else c.muted,
-                            modifier = Modifier.size(17.dp),
+                            modifier = Modifier.size(20.dp),
                         )
                     }
                 }
@@ -392,28 +449,22 @@ fun ChatComposerBar(
 
             AnimatedVisibility(visible = showToolsPanel) {
                 Column(modifier = Modifier.fillMaxWidth()) {
-                    HorizontalDivider(color = c.border.copy(alpha = 0.55f))
+                    HorizontalDivider(color = c.border.copy(alpha = 0.6f))
                     FlowRow(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(top = 6.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                            .padding(top = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        ComposerTogglePill(
-                            label = strings.chat.deepThinkToggle,
-                            icon = Icons.Default.AutoAwesome,
-                            active = enableReasoning,
-                            onClick = onToggleReasoning,
-                        )
-                        ComposerTogglePill(
+                        ComposerChip(
                             label = strings.chat.memoryShort,
                             icon = Icons.Default.Bookmarks,
                             active = enableAutoMemory,
                             onClick = onToggleMemory,
                         )
                         if (supportsVision || draftAttachments.isNotEmpty()) {
-                            ComposerTogglePill(
+                            ComposerChip(
                                 label = strings.chat.uploadImages,
                                 icon = Icons.Default.AddPhotoAlternate,
                                 active = draftAttachments.isNotEmpty(),
@@ -424,11 +475,11 @@ fun ChatComposerBar(
                             )
                         }
                         if (mode == ConversationMode.rp) {
-                            ComposerTogglePill(
+                            ComposerChip(
                                 label = strings.rp.diceBtn,
                                 icon = Icons.Default.Casino,
                                 active = draftDiceRoll != null,
-                                useAccent = true,
+                                tone = ComposerChipTone.ACCENT,
                                 onClick = {
                                     showToolsPanel = false
                                     onOpenDiceDialog()
@@ -436,19 +487,23 @@ fun ChatComposerBar(
                             )
                         }
                         if (waterline.retrievedMemoryCount > 0) {
-                            GuBadge(
-                                text = strings.chat.retrievedMemoryCountPill.fmt("count" to waterline.retrievedMemoryCount),
-                                variant = GuBadgeVariant.HONEY,
-                                modifier = Modifier.clickable {
+                            ComposerChip(
+                                label = strings.chat.retrievedMemoryCountPill.fmt("count" to waterline.retrievedMemoryCount),
+                                icon = null,
+                                active = true,
+                                tone = ComposerChipTone.ACCENT,
+                                onClick = {
                                     showToolsPanel = false
                                     onOpenRecallInspector()
                                 },
                             )
                         }
-                        GuBadge(
-                            text = "${waterline.percentage}% · ${waterline.usedTokens / 1000}K",
-                            variant = if (waterline.exceedsModelWindow) GuBadgeVariant.DANGER else GuBadgeVariant.NEUTRAL,
-                            modifier = Modifier.clickable {
+                        ComposerChip(
+                            label = "${waterline.percentage}% · ${waterline.usedTokens / 1000}K",
+                            icon = null,
+                            active = waterline.exceedsModelWindow,
+                            tone = if (waterline.exceedsModelWindow) ComposerChipTone.DANGER else ComposerChipTone.NEUTRAL,
+                            onClick = {
                                 showToolsPanel = false
                                 onOpenRecallInspector()
                             },
@@ -460,50 +515,62 @@ fun ChatComposerBar(
     }
 }
 
+private enum class ComposerChipTone {
+    PRIMARY,
+    ACCENT,
+    DANGER,
+    NEUTRAL,
+}
+
 @Composable
-private fun ComposerTogglePill(
+private fun ComposerChip(
     label: String,
-    icon: ImageVector,
+    icon: ImageVector?,
     active: Boolean,
     onClick: () -> Unit,
-    useAccent: Boolean = false,
+    tone: ComposerChipTone = ComposerChipTone.PRIMARY,
 ) {
     val c = LocalAppTheme.current.colors
     val bg = when {
-        active && useAccent -> c.tag
-        active -> c.primarySoft
+        tone == ComposerChipTone.DANGER -> c.dangerBg
+        active && tone == ComposerChipTone.ACCENT -> c.tag
+        active && tone == ComposerChipTone.PRIMARY -> c.primarySoft
         else -> c.surfaceSoft
     }
     val fg = when {
-        active && useAccent -> c.tagInk
-        active -> c.primary
+        tone == ComposerChipTone.DANGER -> c.danger
+        active && tone == ComposerChipTone.ACCENT -> c.tagInk
+        active && tone == ComposerChipTone.PRIMARY -> c.primarySoftInk
         else -> c.muted
     }
     val border = when {
-        active && useAccent -> c.accent.copy(alpha = 0.5f)
-        active -> c.primary.copy(alpha = 0.5f)
+        tone == ComposerChipTone.DANGER -> c.danger.copy(alpha = 0.45f)
+        active && tone == ComposerChipTone.ACCENT -> c.accent.copy(alpha = 0.5f)
+        active && tone == ComposerChipTone.PRIMARY -> c.primary.copy(alpha = 0.45f)
         else -> c.border
     }
 
-    Surface(
-        onClick = onClick,
-        shape = RoundedCornerShape(999.dp),
-        color = bg,
-        border = BorderStroke(1.dp, border),
+    Row(
+        modifier = Modifier
+            .height(34.dp)
+            .clip(RoundedCornerShape(999.dp))
+            .background(bg)
+            .border(1.dp, border, RoundedCornerShape(999.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(13.dp))
-            Text(
-                text = label,
-                color = fg,
-                fontSize = 11.sp,
-                fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
-                maxLines = 1,
-            )
+        if (icon != null) {
+            Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(14.dp))
         }
+        Text(
+            text = label,
+            color = fg,
+            fontSize = 11.5.sp,
+            fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }

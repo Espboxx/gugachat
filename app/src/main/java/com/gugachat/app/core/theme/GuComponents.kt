@@ -25,17 +25,27 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -48,6 +58,8 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
@@ -128,16 +140,16 @@ fun GuToastHost(
             toast?.let { msg ->
                 Surface(
                     shape = RoundedCornerShape(theme.pillRadius),
-                    color = if (msg.isError) c.dangerBg else c.tag,
+                    color = if (msg.isError) c.dangerBg else c.surfaceElevated,
                     border = BorderStroke(
                         width = theme.borderWidth,
-                        color = if (msg.isError) c.danger else c.outline,
+                        color = if (msg.isError) c.danger.copy(alpha = 0.7f) else c.border,
                     ),
                     shadowElevation = 6.dp,
                 ) {
                     Text(
                         text = msg.text,
-                        color = if (msg.isError) c.danger else c.tagInk,
+                        color = if (msg.isError) c.danger else c.ink,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
                         maxLines = 2,
@@ -191,18 +203,33 @@ fun GuCard(
     val effectiveBorderColor = borderColor ?: c.border
     val shape = RoundedCornerShape(cornerRadius)
 
-    Surface(
-        modifier = modifier
-            .then(if (onClick != null) Modifier.clip(shape).clickable(onClick = onClick) else Modifier),
-        shape = shape,
-        color = backgroundColor,
-        border = BorderStroke(theme.borderWidth, effectiveBorderColor),
-        shadowElevation = if (theme.isDark) 0.dp else 1.dp,
-    ) {
-        Column(
-            modifier = Modifier.padding(contentPadding),
-            content = content,
-        )
+    if (onClick != null) {
+        Surface(
+            onClick = onClick,
+            modifier = modifier,
+            shape = shape,
+            color = backgroundColor,
+            border = BorderStroke(theme.borderWidth, effectiveBorderColor),
+            shadowElevation = if (theme.isDark) 0.dp else 1.dp,
+        ) {
+            Column(
+                modifier = Modifier.padding(contentPadding),
+                content = content,
+            )
+        }
+    } else {
+        Surface(
+            modifier = modifier,
+            shape = shape,
+            color = backgroundColor,
+            border = BorderStroke(theme.borderWidth, effectiveBorderColor),
+            shadowElevation = if (theme.isDark) 0.dp else 1.dp,
+        ) {
+            Column(
+                modifier = Modifier.padding(contentPadding),
+                content = content,
+            )
+        }
     }
 }
 
@@ -238,13 +265,13 @@ fun GuButton(
         GuButtonVariant.SECONDARY -> c.ink
         GuButtonVariant.HONEY -> c.tagInk
         GuButtonVariant.DANGER -> Color.White
-        GuButtonVariant.SUBTLE -> c.primaryDark
+        GuButtonVariant.SUBTLE -> c.primarySoftInk
     }
     val borderStroke = when (variant) {
         GuButtonVariant.PRIMARY, GuButtonVariant.DANGER -> null
         GuButtonVariant.SECONDARY -> BorderStroke(1.dp, c.border)
-        GuButtonVariant.HONEY -> BorderStroke(1.dp, c.accent.copy(alpha = 0.45f))
-        GuButtonVariant.SUBTLE -> BorderStroke(1.dp, c.primary.copy(alpha = 0.25f))
+        GuButtonVariant.HONEY -> BorderStroke(1.dp, c.accent.copy(alpha = 0.5f))
+        GuButtonVariant.SUBTLE -> BorderStroke(1.dp, c.primary.copy(alpha = 0.32f))
     }
 
     Button(
@@ -307,21 +334,26 @@ fun GuPill(
 
     Surface(
         modifier = modifier
+            .heightIn(min = 34.dp)
             .clip(shape)
             .clickable(enabled = enabled, onClick = onClick),
         shape = shape,
         color = if (enabled) bg else bg.copy(alpha = 0.5f),
         border = BorderStroke(1.dp, border),
     ) {
-        Text(
-            text = label,
-            color = if (enabled) fg else fg.copy(alpha = 0.55f),
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Bold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-        )
+        Box(
+            modifier = Modifier.padding(horizontal = 13.dp, vertical = 7.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = label,
+                color = if (enabled) fg else fg.copy(alpha = 0.55f),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 
@@ -335,11 +367,11 @@ fun GuBadge(
     val c = theme.colors
     val (bg, fg, border) = when (variant) {
         GuBadgeVariant.NEUTRAL -> Triple(c.surfaceSoft, c.muted, c.border)
-        GuBadgeVariant.BLUE -> Triple(c.primarySoft, c.primaryDark, c.primary.copy(alpha = 0.35f))
-        GuBadgeVariant.EMERALD -> Triple(c.successBg, c.success, c.success.copy(alpha = 0.35f))
-        GuBadgeVariant.AMBER -> Triple(c.warningBg, c.warning, c.warning.copy(alpha = 0.35f))
-        GuBadgeVariant.HONEY -> Triple(c.tag, c.tagInk, c.outline.copy(alpha = 0.45f))
-        GuBadgeVariant.DANGER -> Triple(c.dangerBg, c.danger, c.danger.copy(alpha = 0.35f))
+        GuBadgeVariant.BLUE -> Triple(c.primarySoft, c.primarySoftInk, c.primary.copy(alpha = 0.38f))
+        GuBadgeVariant.EMERALD -> Triple(c.successBg, c.success, c.success.copy(alpha = 0.4f))
+        GuBadgeVariant.AMBER -> Triple(c.warningBg, c.warning, c.warning.copy(alpha = 0.4f))
+        GuBadgeVariant.HONEY -> Triple(c.tag, c.tagInk, c.accent.copy(alpha = 0.45f))
+        GuBadgeVariant.DANGER -> Triple(c.dangerBg, c.danger, c.danger.copy(alpha = 0.42f))
     }
     Surface(
         modifier = modifier,
@@ -496,7 +528,7 @@ fun GuConfirmDialog(
     val c = LocalAppTheme.current.colors
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = c.surface,
+        containerColor = c.surfaceElevated,
         titleContentColor = c.ink,
         textContentColor = c.muted,
         title = {
@@ -507,7 +539,7 @@ fun GuConfirmDialog(
             )
         },
         text = {
-            Text(text = message, fontSize = 14.sp)
+            Text(text = message, fontSize = 14.sp, lineHeight = 20.sp)
         },
         confirmButton = {
             GuButton(
@@ -524,4 +556,208 @@ fun GuConfirmDialog(
             }
         },
     )
+}
+
+@Composable
+fun GuSheetHeader(
+    title: String,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier,
+    subtitle: String? = null,
+    closeContentDescription: String = "Close",
+    trailing: (@Composable RowScope.() -> Unit)? = null,
+) {
+    val c = LocalAppTheme.current.colors
+    Column(modifier = modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, end = 6.dp, top = 2.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(
+                    text = title,
+                    color = c.ink,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (!subtitle.isNullOrBlank()) {
+                    Text(
+                        text = subtitle,
+                        color = c.muted,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            if (trailing != null) {
+                trailing()
+            }
+            IconButton(
+                onClick = onClose,
+                modifier = Modifier.size(44.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = closeContentDescription,
+                    tint = c.muted,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+        }
+        HorizontalDivider(color = c.border.copy(alpha = 0.7f))
+    }
+}
+
+@Composable
+fun GuPopupMenu(
+    expanded: Boolean,
+    onDismissRequest: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val theme = LocalAppTheme.current
+    val c = theme.colors
+    DropdownMenu(
+        expanded = expanded,
+        onDismissRequest = onDismissRequest,
+        modifier = modifier,
+        shape = RoundedCornerShape(14.dp),
+        containerColor = c.surfaceElevated,
+        tonalElevation = 0.dp,
+        shadowElevation = if (theme.isDark) 10.dp else 6.dp,
+        border = BorderStroke(1.dp, c.outline),
+        content = content,
+    )
+}
+
+@Composable
+fun GuSwitchRow(
+    label: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+    subtitle: String? = null,
+) {
+    val theme = LocalAppTheme.current
+    val c = theme.colors
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .clickable { onCheckedChange(!checked) }
+            .padding(vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                text = label,
+                color = c.ink,
+                fontSize = 13.5.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+            if (!subtitle.isNullOrBlank()) {
+                Text(
+                    text = subtitle,
+                    color = c.muted,
+                    fontSize = 11.5.sp,
+                    lineHeight = 16.sp,
+                )
+            }
+        }
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color.White,
+                checkedTrackColor = c.primary,
+                checkedBorderColor = c.primary,
+                uncheckedThumbColor = if (theme.isDark) Color(0xFFB4C0D6) else Color(0xFF64748B),
+                uncheckedTrackColor = c.surfaceSoft,
+                uncheckedBorderColor = if (theme.isDark) Color(0xFF526280) else c.outline,
+            ),
+        )
+    }
+}
+
+@Composable
+fun GuCompactSearchBar(
+    value: String,
+    onValueChange: (String) -> Unit,
+    placeholder: String,
+    modifier: Modifier = Modifier,
+    clearContentDescription: String = "Clear",
+) {
+    val theme = LocalAppTheme.current
+    val c = theme.colors
+    val shape = RoundedCornerShape(theme.inputRadius)
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(42.dp)
+            .clip(shape)
+            .background(c.surface)
+            .border(1.dp, c.border, shape)
+            .padding(start = 12.dp, end = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(
+            imageVector = Icons.Default.Search,
+            contentDescription = null,
+            tint = c.muted,
+            modifier = Modifier.size(18.dp),
+        )
+        Box(
+            modifier = Modifier.weight(1f),
+            contentAlignment = Alignment.CenterStart,
+        ) {
+            if (value.isEmpty()) {
+                Text(
+                    text = placeholder,
+                    color = c.muted,
+                    fontSize = 13.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            BasicTextField(
+                value = value,
+                onValueChange = onValueChange,
+                singleLine = true,
+                textStyle = TextStyle(
+                    color = c.ink,
+                    fontSize = 13.5.sp,
+                    fontWeight = FontWeight.Medium,
+                ),
+                cursorBrush = SolidColor(c.primary),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        if (value.isNotEmpty()) {
+            IconButton(
+                onClick = { onValueChange("") },
+                modifier = Modifier.size(36.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = clearContentDescription,
+                    tint = c.muted,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+        }
+    }
 }

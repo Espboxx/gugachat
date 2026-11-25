@@ -3,9 +3,10 @@ package com.gugachat.app.ui.images
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -13,13 +14,16 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -30,9 +34,14 @@ import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bookmarks
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -46,6 +55,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.rememberAsyncImagePainter
@@ -115,6 +125,7 @@ fun ImageCreateSheet(
     }
 
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var expandedPicker by remember { mutableStateOf<String?>(null) }
     var groupSearch by remember { mutableStateOf("") }
     var modelSearch by remember { mutableStateOf("") }
 
@@ -139,245 +150,469 @@ fun ImageCreateSheet(
         }
     }
 
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = c.page) {
+    val canSubmit = state.prompt.isNotBlank() && activeKey != null && activeModel != null && !state.isSubmitting
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = c.page,
+        modifier = Modifier.statusBarsPadding(),
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .imePadding()
-                .padding(horizontal = 16.dp, vertical = 6.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+                .imePadding(),
         ) {
+            // Consistent sheet header
             Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 16.dp, end = 8.dp, bottom = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Text(strings.images.title, color = c.ink, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)
-                GuButton(onClick = onOpenPresets, compact = true, variant = GuButtonVariant.HONEY) {
+                Text(
+                    text = strings.images.title,
+                    color = c.ink,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    modifier = Modifier.weight(1f),
+                )
+                GuButton(onClick = onOpenPresets, compact = true, variant = GuButtonVariant.SUBTLE) {
                     Icon(Icons.Default.Bookmarks, contentDescription = null, modifier = Modifier.size(14.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text(strings.images.presetsTitle, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Text(strings.images.presetsTitle, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
                 }
-            }
-
-            // Key / Group & Model Fixed-Height Fuzzy-Searchable List Boxes
-            GuSearchableListBox(
-                title = strings.images.groupLabel,
-                items = filteredKeys,
-                totalCount = state.keys.size,
-                query = groupSearch,
-                onQueryChange = { groupSearch = it },
-                searchPlaceholder = strings.images.searchGroups,
-                emptyText = strings.images.noKeys,
-                noMatchText = strings.images.noMatchingGroups,
-                listHeight = 148.dp,
-                itemKey = { it.id },
-                selectedSummary = activeKey?.name,
-            ) { key ->
-                GuSelectableListRow(
-                    title = key.name,
-                    selected = key.id == state.selectedKeyId,
-                    highlightFree = key.has_free_quotas,
-                    onClick = {
-                        onSelectKey(key.id)
-                        modelSearch = ""
-                    },
-                    badges = {
-                        key.group_name?.takeIf { it.isNotBlank() && !it.equals(key.name, ignoreCase = true) }?.let { gn ->
-                            GuBadge(gn, variant = GuBadgeVariant.NEUTRAL)
-                        }
-                        if (key.has_free_quotas) {
-                            GuBadge(
-                                text = if (isZh) "★ 含限免" else "★ Free",
-                                variant = GuBadgeVariant.EMERALD,
-                            )
-                        }
-                    },
-                )
-            }
-
-            GuSearchableListBox(
-                title = strings.images.modelLabel,
-                items = filteredModels,
-                totalCount = state.models.size,
-                query = modelSearch,
-                onQueryChange = { modelSearch = it },
-                searchPlaceholder = strings.images.searchModels,
-                emptyText = strings.images.noModels,
-                noMatchText = strings.images.noMatchingModels,
-                listHeight = 176.dp,
-                itemKey = { it.id },
-                selectedSummary = activeModel?.id,
-            ) { model ->
-                val fq = FreeQuotaUtils.formatFreeQuotaBadge(model.free_quota, isZh)
-                GuSelectableListRow(
-                    title = model.id,
-                    selected = model.id == state.selectedModelId,
-                    highlightFree = model.free_quota != null,
-                    onClick = { onSelectModel(model.id) },
-                    badges = {
-                        if (model.provider.isNotBlank()) {
-                            GuBadge(model.provider, variant = GuBadgeVariant.BLUE)
-                        }
-                        if (fq != null) {
-                            GuBadge(
-                                text = fq,
-                                variant = if (FreeQuotaUtils.hasAvailableFreeQuota(model.free_quota)) {
-                                    GuBadgeVariant.EMERALD
-                                } else {
-                                    GuBadgeVariant.NEUTRAL
-                                },
-                            )
-                        }
-                    },
-                )
-            }
-
-            GuTextField(
-                value = state.prompt,
-                onValueChange = onPromptChange,
-                label = strings.images.promptLabel,
-                placeholder = strings.images.promptPlaceholder,
-                singleLine = false,
-                minLines = 3,
-                maxLines = 6,
-            )
-
-            // Reference Images (up to 5)
-            GuCard(modifier = Modifier.fillMaxWidth()) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
+                IconButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.size(44.dp),
                 ) {
-                    Text(strings.images.referencesLabel, color = c.ink, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    if (maxRefs > 0) {
-                        GuButton(
-                            onClick = {
-                                refPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-                            },
-                            compact = true,
-                            variant = GuButtonVariant.SUBTLE,
-                        ) {
-                            Icon(Icons.Default.AddPhotoAlternate, contentDescription = null, modifier = Modifier.size(14.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text(strings.images.addReferences, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                        }
-                    } else {
-                        GuBadge(strings.images.referencesUnsupported, variant = GuBadgeVariant.NEUTRAL)
-                    }
+                    Icon(
+                        Icons.Default.Close,
+                        contentDescription = strings.common.close,
+                        tint = c.muted,
+                        modifier = Modifier.size(20.dp),
+                    )
                 }
-                if (state.referenceUploads.isNotEmpty() || state.referenceAssets.isNotEmpty()) {
-                    Spacer(Modifier.height(8.dp))
+            }
+            HorizontalDivider(color = c.border)
+
+            // Scrollable creation body
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f, fill = false)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                // Compact collapsible Channel & Model Picker Card — keeps Prompt & Refs above the fold
+                GuCard(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                ) {
                     Row(
-                        modifier = Modifier.horizontalScroll(rememberScrollState()),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable {
+                                expandedPicker = if (expandedPicker == "group") null else "group"
+                            }
+                            .padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        state.referenceUploads.forEach { ref ->
-                            Box(modifier = Modifier.size(64.dp)) {
-                                Image(
-                                    painter = rememberAsyncImagePainter(ref.previewUri),
-                                    contentDescription = null,
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier.size(64.dp).clip(RoundedCornerShape(8.dp)),
+                        Text(
+                            text = strings.images.groupLabel,
+                            color = c.muted,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Row(
+                            modifier = Modifier.weight(1f),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.End),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = activeKey?.name ?: strings.images.selectGroup,
+                                color = if (activeKey != null) c.ink else c.muted,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false),
+                            )
+                            if (activeKey?.has_free_quotas == true) {
+                                GuBadge(
+                                    text = if (isZh) "限免" else "Free",
+                                    variant = GuBadgeVariant.EMERALD,
                                 )
-                                Box(
-                                    modifier = Modifier
-                                        .align(Alignment.TopEnd)
-                                        .size(18.dp)
-                                        .clip(CircleShape)
-                                        .background(c.danger)
-                                        .clickable { onRemoveRefUpload(ref.id) },
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    Icon(Icons.Default.Close, contentDescription = null, tint = Color.White, modifier = Modifier.size(12.dp))
-                                }
+                            }
+                            if (state.keys.isNotEmpty()) {
+                                Text(
+                                    text = "${state.keys.size}",
+                                    color = c.muted,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                            }
+                            Icon(
+                                imageVector = if (expandedPicker == "group") Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                contentDescription = null,
+                                tint = c.muted,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
+                    }
+
+                    AnimatedVisibility(visible = expandedPicker == "group") {
+                        Column(modifier = Modifier.padding(bottom = 8.dp)) {
+                            GuSearchableListBox(
+                                title = strings.images.groupLabel,
+                                items = filteredKeys,
+                                totalCount = state.keys.size,
+                                query = groupSearch,
+                                onQueryChange = { groupSearch = it },
+                                searchPlaceholder = strings.images.searchGroups,
+                                emptyText = strings.images.noKeys,
+                                noMatchText = strings.images.noMatchingGroups,
+                                listHeight = 160.dp,
+                                itemKey = { it.id },
+                                selectedSummary = activeKey?.name,
+                            ) { key ->
+                                GuSelectableListRow(
+                                    title = key.name,
+                                    selected = key.id == state.selectedKeyId,
+                                    highlightFree = key.has_free_quotas,
+                                    onClick = {
+                                        onSelectKey(key.id)
+                                        modelSearch = ""
+                                        expandedPicker = null
+                                    },
+                                    badges = {
+                                        key.group_name?.takeIf { it.isNotBlank() && !it.equals(key.name, ignoreCase = true) }?.let { gn ->
+                                            GuBadge(gn, variant = GuBadgeVariant.NEUTRAL)
+                                        }
+                                        if (key.has_free_quotas) {
+                                            GuBadge(
+                                                text = if (isZh) "★ 含限免" else "★ Free",
+                                                variant = GuBadgeVariant.EMERALD,
+                                            )
+                                        }
+                                    },
+                                )
                             }
                         }
-                        state.referenceAssets.forEach { asset ->
-                            Box(modifier = Modifier.size(64.dp)) {
-                                AuthenticatedImage(
-                                    container = container,
-                                    generationId = asset.generation_id,
-                                    imageIndex = asset.image_index,
-                                    variant = "thumb",
-                                    modifier = Modifier.size(64.dp).clip(RoundedCornerShape(8.dp)),
+                    }
+
+                    HorizontalDivider(color = c.border.copy(alpha = 0.6f))
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable {
+                                expandedPicker = if (expandedPicker == "model") null else "model"
+                            }
+                            .padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            text = strings.images.modelLabel,
+                            color = c.muted,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Row(
+                            modifier = Modifier.weight(1f),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.End),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = activeModel?.id ?: strings.images.noModels,
+                                color = if (activeModel != null) c.primary else c.muted,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false),
+                            )
+                            if (activeModel != null && FreeQuotaUtils.hasAvailableFreeQuota(activeModel.free_quota)) {
+                                GuBadge(
+                                    text = if (isZh) "免费" else "Free",
+                                    variant = GuBadgeVariant.EMERALD,
                                 )
-                                Box(
-                                    modifier = Modifier
-                                        .align(Alignment.TopEnd)
-                                        .size(18.dp)
-                                        .clip(CircleShape)
-                                        .background(c.danger)
-                                        .clickable { onRemoveRefAsset(asset) },
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    Icon(Icons.Default.Close, contentDescription = null, tint = Color.White, modifier = Modifier.size(12.dp))
-                                }
+                            }
+                            if (state.models.isNotEmpty()) {
+                                Text(
+                                    text = "${state.models.size}",
+                                    color = c.muted,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                            }
+                            Icon(
+                                imageVector = if (expandedPicker == "model") Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                contentDescription = null,
+                                tint = c.muted,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
+                    }
+
+                    AnimatedVisibility(visible = expandedPicker == "model") {
+                        Column(modifier = Modifier.padding(bottom = 8.dp)) {
+                            GuSearchableListBox(
+                                title = strings.images.modelLabel,
+                                items = filteredModels,
+                                totalCount = state.models.size,
+                                query = modelSearch,
+                                onQueryChange = { modelSearch = it },
+                                searchPlaceholder = strings.images.searchModels,
+                                emptyText = strings.images.noModels,
+                                noMatchText = strings.images.noMatchingModels,
+                                listHeight = 196.dp,
+                                itemKey = { it.id },
+                                selectedSummary = activeModel?.id,
+                            ) { model ->
+                                val fq = FreeQuotaUtils.formatFreeQuotaBadge(model.free_quota, isZh)
+                                GuSelectableListRow(
+                                    title = model.id,
+                                    selected = model.id == state.selectedModelId,
+                                    highlightFree = model.free_quota != null,
+                                    onClick = {
+                                        onSelectModel(model.id)
+                                        expandedPicker = null
+                                    },
+                                    badges = {
+                                        if (model.provider.isNotBlank()) {
+                                            GuBadge(model.provider, variant = GuBadgeVariant.BLUE)
+                                        }
+                                        if (fq != null) {
+                                            GuBadge(
+                                                text = fq,
+                                                variant = if (FreeQuotaUtils.hasAvailableFreeQuota(model.free_quota)) {
+                                                    GuBadgeVariant.EMERALD
+                                                } else {
+                                                    GuBadgeVariant.NEUTRAL
+                                                },
+                                            )
+                                        }
+                                    },
+                                )
                             }
                         }
                     }
                 }
-            }
 
-            if (!isNai) {
-                GuCard(modifier = Modifier.fillMaxWidth()) {
-                    Text(strings.images.aspectRatio, color = c.ink, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    Spacer(Modifier.height(6.dp))
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        ratios.forEach { r ->
-                            GuPill(if (r == "auto") strings.images.auto else r, state.aspectRatio == r, { onAspectChange(r) })
-                        }
-                    }
-
-                    Spacer(Modifier.height(10.dp))
-                    Text(strings.images.resolution, color = c.ink, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    Spacer(Modifier.height(6.dp))
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        resolutions.forEach { res ->
-                            GuPill(if (res == "auto") strings.images.auto else res, state.resolution == res, { onResolutionChange(res) })
-                        }
-                    }
-                }
-            } else {
-                NovelAIParamsPanel(
-                    modelId = activeModel?.id.orEmpty(),
-                    params = state.novelaiParams,
-                    onChange = onUpdateNovelAI,
+                // Prompt immediately visible above the fold
+                GuTextField(
+                    value = state.prompt,
+                    onValueChange = onPromptChange,
+                    label = strings.images.promptLabel,
+                    placeholder = strings.images.promptPlaceholder,
+                    singleLine = false,
+                    minLines = 3,
+                    maxLines = 6,
                 )
+
+                // Reference Images (up to 5) with comfortable 36dp remove hitboxes
+                GuCard(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(strings.images.referencesLabel, color = c.ink, fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
+                        if (maxRefs > 0) {
+                            GuButton(
+                                onClick = {
+                                    refPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                                },
+                                compact = true,
+                                variant = GuButtonVariant.SUBTLE,
+                            ) {
+                                Icon(Icons.Default.AddPhotoAlternate, contentDescription = null, modifier = Modifier.size(15.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text(strings.images.addReferences, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                            }
+                        } else {
+                            GuBadge(strings.images.referencesUnsupported, variant = GuBadgeVariant.NEUTRAL)
+                        }
+                    }
+                    if (state.referenceUploads.isNotEmpty() || state.referenceAssets.isNotEmpty()) {
+                        Spacer(Modifier.height(10.dp))
+                        Row(
+                            modifier = Modifier.horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            state.referenceUploads.forEach { ref ->
+                                Box(modifier = Modifier.size(72.dp)) {
+                                    Image(
+                                        painter = rememberAsyncImagePainter(ref.previewUri),
+                                        contentDescription = null,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier
+                                            .size(64.dp)
+                                            .align(Alignment.BottomStart)
+                                            .clip(RoundedCornerShape(10.dp)),
+                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.TopEnd)
+                                            .size(36.dp)
+                                            .clickable { onRemoveRefUpload(ref.id) },
+                                        contentAlignment = Alignment.TopEnd,
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(20.dp)
+                                                .clip(CircleShape)
+                                                .background(c.danger),
+                                            contentAlignment = Alignment.Center,
+                                        ) {
+                                            Icon(Icons.Default.Close, contentDescription = strings.common.delete, tint = Color.White, modifier = Modifier.size(13.dp))
+                                        }
+                                    }
+                                }
+                            }
+                            state.referenceAssets.forEach { asset ->
+                                Box(modifier = Modifier.size(72.dp)) {
+                                    AuthenticatedImage(
+                                        container = container,
+                                        generationId = asset.generation_id,
+                                        imageIndex = asset.image_index,
+                                        variant = "thumb",
+                                        modifier = Modifier
+                                            .size(64.dp)
+                                            .align(Alignment.BottomStart)
+                                            .clip(RoundedCornerShape(10.dp)),
+                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.TopEnd)
+                                            .size(36.dp)
+                                            .clickable { onRemoveRefAsset(asset) },
+                                        contentAlignment = Alignment.TopEnd,
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(20.dp)
+                                                .clip(CircleShape)
+                                                .background(c.danger),
+                                            contentAlignment = Alignment.Center,
+                                        ) {
+                                            Icon(Icons.Default.Close, contentDescription = strings.common.delete, tint = Color.White, modifier = Modifier.size(13.dp))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (!isNai) {
+                    GuCard(modifier = Modifier.fillMaxWidth()) {
+                        Text(strings.images.aspectRatio, color = c.ink, fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(6.dp))
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            ratios.forEach { r ->
+                                GuPill(if (r == "auto") strings.images.auto else r, state.aspectRatio == r, { onAspectChange(r) })
+                            }
+                        }
+
+                        Spacer(Modifier.height(12.dp))
+                        Text(strings.images.resolution, color = c.ink, fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(6.dp))
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            resolutions.forEach { res ->
+                                GuPill(if (res == "auto") strings.images.auto else res, state.resolution == res, { onResolutionChange(res) })
+                            }
+                        }
+                    }
+                } else {
+                    NovelAIParamsPanel(
+                        modelId = activeModel?.id.orEmpty(),
+                        params = state.novelaiParams,
+                        onChange = onUpdateNovelAI,
+                    )
+                }
+
+                // Image Count (FlowRow prevents horizontal overflow when maxCount >= 4)
+                GuCard(modifier = Modifier.fillMaxWidth()) {
+                    Text(strings.images.countLabel, color = c.ink, fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(6.dp))
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        (1..maxCount).forEach { n ->
+                            GuPill(strings.images.countUnit.fmt("count" to n), state.count == n, { onCountChange(n) })
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(4.dp))
             }
 
-            // Count + Cost Estimate
-            GuCard(modifier = Modifier.fillMaxWidth()) {
-                Text(strings.images.countLabel, color = c.ink, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(6.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    (1..maxCount).forEach { n ->
-                        GuPill(strings.images.countUnit.fmt("count" to n), state.count == n, { onCountChange(n) })
-                    }
-                    Spacer(Modifier.weight(1f))
+            // Sticky bottom Cost + Generate footer bar
+            HorizontalDivider(color = c.border)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(c.surface)
+                    .navigationBarsPadding()
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
                     GuBadge(
                         text = strings.images.estimatePrefix.fmt("cost" to costEstimate.label),
                         variant = if (costEstimate.isFreeByQuota || costEstimate.isOpusFree) GuBadgeVariant.EMERALD else GuBadgeVariant.HONEY,
                     )
+                    Text(
+                        text = buildString {
+                            append(strings.images.countUnit.fmt("count" to state.count))
+                            append(" · ")
+                            if (isNai) {
+                                append("${state.novelaiParams.width}×${state.novelaiParams.height}")
+                            } else {
+                                append(if (state.aspectRatio == "auto") strings.images.auto else state.aspectRatio)
+                                if (state.resolution != "auto") append(" · ${state.resolution}")
+                            }
+                        },
+                        color = c.muted,
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+
+                GuButton(
+                    onClick = onSubmit,
+                    enabled = canSubmit,
+                    loading = state.isSubmitting,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = when {
+                            state.isSubmitting -> strings.images.submitting
+                            costEstimate.label.isNotBlank() -> strings.images.generateWithCost.fmt("cost" to costEstimate.label)
+                            else -> strings.images.generateBtn
+                        },
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
                 }
             }
-
-            GuButton(
-                onClick = onSubmit,
-                loading = state.isSubmitting,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    if (state.isSubmitting) strings.images.submitting else strings.images.generateBtn,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold,
-                )
-            }
-            Spacer(Modifier.height(16.dp))
         }
     }
 }

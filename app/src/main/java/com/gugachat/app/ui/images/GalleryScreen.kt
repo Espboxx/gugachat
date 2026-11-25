@@ -7,9 +7,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,12 +20,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -38,18 +37,26 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.FilterAltOff
 import androidx.compose.material.icons.filled.FolderZip
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -64,12 +71,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.gugachat.app.AppContainer
+import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.i18n.LocalAppStrings
 import com.gugachat.app.core.i18n.fmt
 import com.gugachat.app.core.theme.GuBadge
 import com.gugachat.app.core.theme.GuBadgeVariant
 import com.gugachat.app.core.theme.GuButton
 import com.gugachat.app.core.theme.GuButtonVariant
+import com.gugachat.app.core.theme.GuConfirmDialog
 import com.gugachat.app.core.theme.GuPill
 import com.gugachat.app.core.theme.LocalAppTheme
 import com.gugachat.app.data.api.OnlineImageGenerationDto
@@ -86,11 +95,29 @@ fun GalleryTabContent(
     val strings = LocalAppStrings.current
     val c = LocalAppTheme.current.colors
     val ctx = LocalContext.current
+    val isZh = strings.language == AppLanguage.ZH
+
+    var showBatchDeleteConfirm by remember { mutableStateOf(false) }
 
     val zipLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
         if (uri != null) {
             viewModel.batchDownloadZip(uri, ctx.contentResolver, strings.images.zipSaved)
         }
+    }
+
+    if (showBatchDeleteConfirm) {
+        GuConfirmDialog(
+            title = strings.images.batchDelete,
+            message = strings.images.batchDeleteConfirm.fmt("count" to state.selectedBatchIds.size),
+            confirmText = strings.common.delete,
+            cancelText = strings.common.cancel,
+            isDestructive = true,
+            onConfirm = {
+                showBatchDeleteConfirm = false
+                viewModel.batchDeleteSelected()
+            },
+            onDismiss = { showBatchDeleteConfirm = false },
+        )
     }
 
     val processingCount = state.generations.count {
@@ -106,6 +133,10 @@ fun GalleryTabContent(
         "expiring" to strings.images.filterExpiring,
         "failed" to strings.images.filterFailed,
     )
+
+    val filterListState = rememberLazyListState()
+    val isFiltered = state.activeFilter != "all" || state.searchQuery.isNotBlank()
+    val allSelected = state.generations.isNotEmpty() && state.selectedBatchIds.size >= state.generations.size
 
     Column(
         modifier = Modifier
@@ -124,11 +155,11 @@ fun GalleryTabContent(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 9.dp),
+                        .padding(start = 12.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Icon(Icons.Default.Search, contentDescription = null, tint = c.muted, modifier = Modifier.size(17.dp))
+                    Icon(Icons.Default.Search, contentDescription = null, tint = c.muted, modifier = Modifier.size(18.dp))
                     Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
                         if (state.searchQuery.isEmpty()) {
                             Text(
@@ -150,46 +181,56 @@ fun GalleryTabContent(
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }
-                    if (state.searchQuery.isNotEmpty()) {
+                    IconButton(
+                        onClick = {
+                            if (state.searchQuery.isNotEmpty()) {
+                                viewModel.setSearchQuery("")
+                                viewModel.refreshGallery()
+                            } else {
+                                onCloseSearchBar()
+                            }
+                        },
+                        modifier = Modifier.size(40.dp),
+                    ) {
                         Icon(
                             Icons.Default.Close,
-                            contentDescription = strings.common.clear,
+                            contentDescription = if (state.searchQuery.isNotEmpty()) strings.common.clear else strings.common.close,
                             tint = c.muted,
-                            modifier = Modifier
-                                .size(17.dp)
-                                .clickable {
-                                    viewModel.setSearchQuery("")
-                                    viewModel.refreshGallery()
-                                },
-                        )
-                    } else {
-                        Icon(
-                            Icons.Default.Close,
-                            contentDescription = strings.common.close,
-                            tint = c.muted,
-                            modifier = Modifier
-                                .size(17.dp)
-                                .clickable(onClick = onCloseSearchBar),
+                            modifier = Modifier.size(18.dp),
                         )
                     }
                 }
             }
         }
 
-        Row(
+        LazyRow(
+            state = filterListState,
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
+            verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically,
+                .drawWithContent {
+                    drawContent()
+                    if (filterListState.canScrollForward) {
+                        val fadeWidth = 28.dp.toPx()
+                        drawRect(
+                            brush = Brush.horizontalGradient(
+                                colors = listOf(Color.Transparent, c.page),
+                                startX = size.width - fadeWidth,
+                                endX = size.width,
+                            ),
+                            topLeft = Offset(size.width - fadeWidth, 0f),
+                            size = Size(fadeWidth, size.height),
+                        )
+                    }
+                },
         ) {
-            filterItems.forEach { (key, label) ->
+            items(filterItems, key = { it.first }) { (key, label) ->
                 GuPill(
                     label = label,
                     selected = state.activeFilter == key,
                     onClick = { viewModel.setFilter(key) },
-                    useHoneySelected = key == "processing" && processingCount > 0,
                 )
             }
         }
@@ -206,14 +247,27 @@ fun GalleryTabContent(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 10.dp, vertical = 7.dp),
+                        .padding(start = 10.dp, end = 4.dp, top = 5.dp, bottom = 5.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    GuBadge(strings.images.selectedCount.fmt("count" to state.selectedBatchIds.size), variant = GuBadgeVariant.HONEY)
+                    GuBadge(
+                        strings.images.selectedCount.fmt("count" to state.selectedBatchIds.size),
+                        variant = GuBadgeVariant.BLUE,
+                    )
                     Spacer(Modifier.weight(1f))
-                    GuButton(onClick = viewModel::selectAllBatch, compact = true, variant = GuButtonVariant.SUBTLE) {
-                        Text(strings.images.selectAll, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    GuButton(
+                        onClick = {
+                            if (allSelected) viewModel.clearBatchSelection() else viewModel.selectAllBatch()
+                        },
+                        compact = true,
+                        variant = GuButtonVariant.SUBTLE,
+                    ) {
+                        Text(
+                            if (allSelected) strings.images.clearSelection else strings.images.selectAll,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
                     }
                     GuButton(
                         onClick = { zipLauncher.launch("gugachat-works-${System.currentTimeMillis()}.zip") },
@@ -221,29 +275,56 @@ fun GalleryTabContent(
                         compact = true,
                         variant = GuButtonVariant.PRIMARY,
                     ) {
-                        Icon(Icons.Default.FolderZip, contentDescription = strings.images.downloadZip, modifier = Modifier.size(14.dp))
+                        Icon(Icons.Default.FolderZip, contentDescription = strings.images.downloadZip, modifier = Modifier.size(15.dp))
                     }
                     GuButton(
-                        onClick = viewModel::batchDeleteSelected,
+                        onClick = { showBatchDeleteConfirm = true },
                         enabled = state.selectedBatchIds.isNotEmpty() && !state.isBatchBusy,
                         compact = true,
                         variant = GuButtonVariant.DANGER,
                     ) {
-                        Icon(Icons.Default.Delete, contentDescription = strings.images.batchDelete, modifier = Modifier.size(14.dp))
+                        Icon(Icons.Default.Delete, contentDescription = strings.images.batchDelete, modifier = Modifier.size(15.dp))
                     }
-                    Icon(
-                        Icons.Default.Close,
-                        contentDescription = strings.common.close,
-                        tint = c.muted,
-                        modifier = Modifier
-                            .size(20.dp)
-                            .clickable(onClick = viewModel::toggleBatchMode),
-                    )
+                    IconButton(
+                        onClick = viewModel::toggleBatchMode,
+                        modifier = Modifier.size(40.dp),
+                    ) {
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = strings.common.close,
+                            tint = c.muted,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
                 }
             }
         }
 
-        if (state.generations.isEmpty() && !state.isLoadingGallery) {
+        if (state.isLoadingGallery && state.generations.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 24.dp, vertical = 20.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    CircularProgressIndicator(
+                        color = c.primary,
+                        strokeWidth = 2.5.dp,
+                        modifier = Modifier.size(30.dp),
+                    )
+                    Text(
+                        text = strings.common.loading,
+                        color = c.muted,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                    )
+                }
+            }
+        } else if (state.generations.isEmpty()) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -270,10 +351,19 @@ fun GalleryTabContent(
                                 .background(c.primarySoft),
                             contentAlignment = Alignment.Center,
                         ) {
-                            Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = c.primary, modifier = Modifier.size(26.dp))
+                            Icon(
+                                if (isFiltered) Icons.Default.FilterAltOff else Icons.Default.AutoAwesome,
+                                contentDescription = null,
+                                tint = c.primary,
+                                modifier = Modifier.size(26.dp),
+                            )
                         }
                         Text(
-                            text = strings.images.emptyWorks,
+                            text = if (isFiltered) {
+                                if (isZh) "当前筛选条件下暂无匹配作品" else "No artworks match the current filter"
+                            } else {
+                                strings.images.emptyWorks
+                            },
                             color = c.ink,
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Bold,
@@ -283,19 +373,36 @@ fun GalleryTabContent(
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            GuButton(
-                                onClick = { viewModel.setShowCreateSheet(true) },
-                                compact = true,
-                                variant = GuButtonVariant.PRIMARY,
-                            ) {
-                                Text(strings.images.generateBtn, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                            }
-                            GuButton(
-                                onClick = onNavigateToInspire,
-                                compact = true,
-                                variant = GuButtonVariant.SUBTLE,
-                            ) {
-                                Text(strings.images.studioBrowseInspire, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            if (isFiltered) {
+                                GuButton(
+                                    onClick = {
+                                        viewModel.setSearchQuery("")
+                                        viewModel.setFilter("all")
+                                    },
+                                    compact = true,
+                                    variant = GuButtonVariant.PRIMARY,
+                                ) {
+                                    Text(
+                                        if (isZh) "重置筛选" else "Reset Filters",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                    )
+                                }
+                            } else {
+                                GuButton(
+                                    onClick = { viewModel.setShowCreateSheet(true) },
+                                    compact = true,
+                                    variant = GuButtonVariant.PRIMARY,
+                                ) {
+                                    Text(strings.images.generateBtn, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                }
+                                GuButton(
+                                    onClick = onNavigateToInspire,
+                                    compact = true,
+                                    variant = GuButtonVariant.SUBTLE,
+                                ) {
+                                    Text(strings.images.studioBrowseInspire, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                }
                             }
                         }
                     }
@@ -304,7 +411,7 @@ fun GalleryTabContent(
         } else {
             LazyVerticalGrid(
                 columns = GridCells.Fixed(2),
-                contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 2.dp, bottom = 84.dp),
+                contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 2.dp, bottom = 96.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier.fillMaxSize(),

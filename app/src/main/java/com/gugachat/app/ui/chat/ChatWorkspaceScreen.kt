@@ -1,5 +1,6 @@
 package com.gugachat.app.ui.chat
 
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -9,10 +10,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -31,7 +32,6 @@ import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.DrawerValue
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -59,6 +59,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.gugachat.app.AppContainer
 import com.gugachat.app.core.i18n.LocalAppStrings
 import com.gugachat.app.core.theme.GuAwningHeader
+import com.gugachat.app.core.theme.GuPopupMenu
 import com.gugachat.app.core.theme.LocalAppTheme
 import com.gugachat.app.domain.chat.ChatParams
 import com.gugachat.app.domain.chat.ConversationMode
@@ -90,6 +91,10 @@ fun ChatWorkspaceScreen(
     var showDiceDialog by remember { mutableStateOf(false) }
     var showMoreMenu by remember { mutableStateOf(false) }
     var showDeepSeekImport by remember { mutableStateOf(false) }
+
+    BackHandler(enabled = drawerState.isOpen) {
+        scope.launch { drawerState.close() }
+    }
 
     val imagePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia(),
@@ -244,7 +249,7 @@ fun ChatWorkspaceScreen(
     }
 
     if (showDeepSeekImport) {
-        DeepSeekImportSheet(
+        ExternalImportSheet(
             container = container,
             onImported = { firstConvId ->
                 if (!firstConvId.isNullOrBlank()) {
@@ -276,20 +281,30 @@ fun ChatWorkspaceScreen(
                 .background(c.page),
         ) {
             GuAwningHeader {
-                Row(
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 6.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+                        .height(56.dp)
+                        .padding(horizontal = 6.dp),
                 ) {
-                    IconButton(onClick = { scope.launch { drawerState.open() } }, modifier = Modifier.size(38.dp)) {
-                        Icon(Icons.Default.Menu, contentDescription = strings.chat.sessions, tint = c.ink, modifier = Modifier.size(20.dp))
+                    IconButton(
+                        onClick = { scope.launch { drawerState.open() } },
+                        modifier = Modifier
+                            .align(Alignment.CenterStart)
+                            .size(44.dp),
+                    ) {
+                        Icon(
+                            Icons.Default.Menu,
+                            contentDescription = strings.chat.sessions,
+                            tint = c.ink,
+                            modifier = Modifier.size(22.dp),
+                        )
                     }
 
                     Box(
                         modifier = Modifier
-                            .weight(1f)
-                            .padding(horizontal = 4.dp),
+                            .align(Alignment.Center)
+                            .padding(horizontal = 94.dp),
                         contentAlignment = Alignment.Center,
                     ) {
                         Surface(
@@ -297,16 +312,17 @@ fun ChatWorkspaceScreen(
                             shape = RoundedCornerShape(999.dp),
                             color = c.surface,
                             border = BorderStroke(1.dp, c.border),
+                            modifier = Modifier.heightIn(min = 38.dp),
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
                             ) {
                                 if (activeModel?.free_quota != null) {
                                     Box(
                                         modifier = Modifier
-                                            .size(6.dp)
+                                            .size(7.dp)
                                             .clip(CircleShape)
                                             .background(c.success),
                                     )
@@ -314,7 +330,7 @@ fun ChatWorkspaceScreen(
                                 Text(
                                     text = state.selectedModelId ?: strings.chat.selectModel,
                                     color = c.ink,
-                                    fontSize = 13.sp,
+                                    fontSize = 13.5.sp,
                                     fontWeight = FontWeight.Bold,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
@@ -324,120 +340,140 @@ fun ChatWorkspaceScreen(
                                     Icons.Default.KeyboardArrowDown,
                                     contentDescription = null,
                                     tint = c.muted,
-                                    modifier = Modifier.size(15.dp),
+                                    modifier = Modifier.size(16.dp),
                                 )
                             }
                         }
                     }
 
-                    IconButton(onClick = { showNewSessionSheet = true }, modifier = Modifier.size(38.dp)) {
-                        Icon(Icons.Default.Add, contentDescription = strings.chat.newChat, tint = c.ink, modifier = Modifier.size(20.dp))
-                    }
-
-                    Box {
-                        IconButton(onClick = { showMoreMenu = true }, modifier = Modifier.size(38.dp)) {
-                            Icon(Icons.Default.MoreVert, contentDescription = strings.chat.moreActions, tint = c.ink, modifier = Modifier.size(20.dp))
-                        }
-                        DropdownMenu(
-                            expanded = showMoreMenu,
-                            onDismissRequest = { showMoreMenu = false },
-                            containerColor = c.surface,
+                    Row(
+                        modifier = Modifier.align(Alignment.CenterEnd),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        IconButton(
+                            onClick = { showNewSessionSheet = true },
+                            modifier = Modifier.size(44.dp),
                         ) {
-                            DropdownMenuItem(
-                                leadingIcon = { Icon(Icons.Default.Psychology, contentDescription = null, tint = c.primary, modifier = Modifier.size(18.dp)) },
-                                text = { Text(strings.chat.memoryTitle, color = c.ink, fontSize = 13.sp, fontWeight = FontWeight.Medium) },
-                                onClick = {
-                                    showMoreMenu = false
-                                    memorySheetInitialTab = 0
-                                    showMemorySheet = true
-                                },
+                            Icon(
+                                Icons.Default.Add,
+                                contentDescription = strings.chat.newChat,
+                                tint = c.ink,
+                                modifier = Modifier.size(22.dp),
                             )
-                            DropdownMenuItem(
-                                leadingIcon = { Icon(Icons.Default.Tune, contentDescription = null, tint = c.primary, modifier = Modifier.size(18.dp)) },
-                                text = { Text(strings.chat.paramsTitle, color = c.ink, fontSize = 13.sp, fontWeight = FontWeight.Medium) },
-                                onClick = {
-                                    showMoreMenu = false
-                                    showParamsSheet = true
-                                },
-                            )
-                            DropdownMenuItem(
-                                leadingIcon = { Icon(Icons.Default.Bookmarks, contentDescription = null, tint = c.muted, modifier = Modifier.size(18.dp)) },
-                                text = { Text(strings.chat.recallTitle, color = c.ink, fontSize = 13.sp, fontWeight = FontWeight.Medium) },
-                                trailingIcon = {
-                                    Text(
-                                        text = "${state.waterline.percentage}% · ${state.waterline.usedTokens / 1000}K",
-                                        color = if (state.waterline.exceedsModelWindow) c.danger else c.muted,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.SemiBold,
+                        }
+
+                        Box {
+                            IconButton(
+                                onClick = { showMoreMenu = true },
+                                modifier = Modifier.size(44.dp),
+                            ) {
+                                Icon(
+                                    Icons.Default.MoreVert,
+                                    contentDescription = strings.chat.moreActions,
+                                    tint = c.ink,
+                                    modifier = Modifier.size(21.dp),
+                                )
+                            }
+                            GuPopupMenu(
+                                expanded = showMoreMenu,
+                                onDismissRequest = { showMoreMenu = false },
+                            ) {
+                                DropdownMenuItem(
+                                    leadingIcon = { Icon(Icons.Default.Psychology, contentDescription = null, tint = c.primary, modifier = Modifier.size(18.dp)) },
+                                    text = { Text(strings.chat.memoryTitle, color = c.ink, fontSize = 13.5.sp, fontWeight = FontWeight.Medium) },
+                                    onClick = {
+                                        showMoreMenu = false
+                                        memorySheetInitialTab = 0
+                                        showMemorySheet = true
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    leadingIcon = { Icon(Icons.Default.Tune, contentDescription = null, tint = c.primary, modifier = Modifier.size(18.dp)) },
+                                    text = { Text(strings.chat.paramsTitle, color = c.ink, fontSize = 13.5.sp, fontWeight = FontWeight.Medium) },
+                                    onClick = {
+                                        showMoreMenu = false
+                                        showParamsSheet = true
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    leadingIcon = { Icon(Icons.Default.Bookmarks, contentDescription = null, tint = c.muted, modifier = Modifier.size(18.dp)) },
+                                    text = { Text(strings.chat.recallTitle, color = c.ink, fontSize = 13.5.sp, fontWeight = FontWeight.Medium) },
+                                    trailingIcon = {
+                                        Text(
+                                            text = "${state.waterline.percentage}% · ${state.waterline.usedTokens / 1000}K",
+                                            color = if (state.waterline.exceedsModelWindow) c.danger else c.muted,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                        )
+                                    },
+                                    onClick = {
+                                        showMoreMenu = false
+                                        memorySheetInitialTab = 3
+                                        showMemorySheet = true
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    leadingIcon = { Icon(Icons.Default.FolderZip, contentDescription = null, tint = c.accent, modifier = Modifier.size(18.dp)) },
+                                    text = { Text(strings.chat.importExternalTitle, color = c.ink, fontSize = 13.5.sp, fontWeight = FontWeight.Medium) },
+                                    onClick = {
+                                        showMoreMenu = false
+                                        showDeepSeekImport = true
+                                    },
+                                )
+                                if (mode == ConversationMode.novel && activeConv?.novel != null) {
+                                    HorizontalDivider(color = c.border)
+                                    DropdownMenuItem(
+                                        leadingIcon = { Icon(Icons.Default.Book, contentDescription = null, tint = c.accent, modifier = Modifier.size(18.dp)) },
+                                        text = { Text(strings.novel.studioTitle, color = c.ink, fontSize = 13.5.sp, fontWeight = FontWeight.Medium) },
+                                        onClick = {
+                                            showMoreMenu = false
+                                            showNovelStudio = true
+                                        },
                                     )
-                                },
-                                onClick = {
-                                    showMoreMenu = false
-                                    memorySheetInitialTab = 3
-                                    showMemorySheet = true
-                                },
-                            )
-                            DropdownMenuItem(
-                                leadingIcon = { Icon(Icons.Default.FolderZip, contentDescription = null, tint = c.accent, modifier = Modifier.size(18.dp)) },
-                                text = { Text(strings.chat.importDeepSeekTitle, color = c.ink, fontSize = 13.sp, fontWeight = FontWeight.Medium) },
-                                onClick = {
-                                    showMoreMenu = false
-                                    showDeepSeekImport = true
-                                },
-                            )
-                            if (mode == ConversationMode.novel && activeConv?.novel != null) {
-                                HorizontalDivider(color = c.border)
-                                DropdownMenuItem(
-                                    leadingIcon = { Icon(Icons.Default.Book, contentDescription = null, tint = c.accent, modifier = Modifier.size(18.dp)) },
-                                    text = { Text(strings.novel.studioBtn, color = c.ink, fontSize = 13.sp, fontWeight = FontWeight.Medium) },
-                                    onClick = {
-                                        showMoreMenu = false
-                                        showNovelStudio = true
-                                    },
-                                )
-                                DropdownMenuItem(
-                                    leadingIcon = { Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = null, tint = c.primary, modifier = Modifier.size(18.dp)) },
-                                    text = { Text(strings.novel.pureReading, color = c.ink, fontSize = 13.sp, fontWeight = FontWeight.Medium) },
-                                    onClick = {
-                                        showMoreMenu = false
-                                        viewModel.setPureReadingMode(true)
-                                    },
-                                )
-                            } else if (mode == ConversationMode.rp && activeConv?.rp != null) {
-                                HorizontalDivider(color = c.border)
-                                DropdownMenuItem(
-                                    leadingIcon = { Icon(Icons.Default.Casino, contentDescription = null, tint = c.accent, modifier = Modifier.size(18.dp)) },
-                                    text = { Text(strings.rp.studioBtn, color = c.ink, fontSize = 13.sp, fontWeight = FontWeight.Medium) },
-                                    onClick = {
-                                        showMoreMenu = false
-                                        showRpStudio = true
-                                    },
-                                )
-                                DropdownMenuItem(
-                                    leadingIcon = { Icon(Icons.Default.Save, contentDescription = null, tint = c.primary, modifier = Modifier.size(18.dp)) },
-                                    text = { Text(strings.rp.quickSaveBtn, color = c.ink, fontSize = 13.sp, fontWeight = FontWeight.Medium) },
-                                    onClick = {
-                                        showMoreMenu = false
-                                        viewModel.createRpSaveSlot("快速存档")
-                                    },
-                                )
+                                    DropdownMenuItem(
+                                        leadingIcon = { Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = null, tint = c.primary, modifier = Modifier.size(18.dp)) },
+                                        text = { Text(strings.novel.pureReading, color = c.ink, fontSize = 13.5.sp, fontWeight = FontWeight.Medium) },
+                                        onClick = {
+                                            showMoreMenu = false
+                                            viewModel.setPureReadingMode(true)
+                                        },
+                                    )
+                                } else if (mode == ConversationMode.rp && activeConv?.rp != null) {
+                                    HorizontalDivider(color = c.border)
+                                    DropdownMenuItem(
+                                        leadingIcon = { Icon(Icons.Default.Casino, contentDescription = null, tint = c.accent, modifier = Modifier.size(18.dp)) },
+                                        text = { Text(strings.rp.studioBtn, color = c.ink, fontSize = 13.5.sp, fontWeight = FontWeight.Medium) },
+                                        onClick = {
+                                            showMoreMenu = false
+                                            showRpStudio = true
+                                        },
+                                    )
+                                    DropdownMenuItem(
+                                        leadingIcon = { Icon(Icons.Default.Save, contentDescription = null, tint = c.primary, modifier = Modifier.size(18.dp)) },
+                                        text = { Text(strings.rp.quickSaveBtn, color = c.ink, fontSize = 13.5.sp, fontWeight = FontWeight.Medium) },
+                                        onClick = {
+                                            showMoreMenu = false
+                                            viewModel.createRpSaveSlot(strings.rp.quickSaveBtn)
+                                        },
+                                    )
+                                }
                             }
                         }
                     }
                 }
             }
 
-            if (mode == ConversationMode.novel && activeConv?.novel != null) {
+            if (mode == ConversationMode.novel && activeConv?.novel != null && activeConv.novel.enableStatusHud) {
                 NovelStatusHudBar(
                     novel = activeConv.novel,
                     chapters = state.novelChapters,
                     onOpenStudio = { showNovelStudio = true },
                     onEnterPureReading = { viewModel.setPureReadingMode(true) },
                 )
-            } else if (mode == ConversationMode.rp && activeConv?.rp != null) {
+            } else if (mode == ConversationMode.rp && activeConv?.rp != null && activeConv.rp.enableStateHud) {
                 RpStatusHudBar(
                     rp = activeConv.rp,
-                    onQuickSave = { viewModel.createRpSaveSlot("快速存档") },
+                    onQuickSave = { viewModel.createRpSaveSlot(strings.rp.quickSaveBtn) },
                     onOpenStudio = { showRpStudio = true },
                 )
             }

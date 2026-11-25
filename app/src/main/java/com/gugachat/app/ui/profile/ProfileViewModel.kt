@@ -29,6 +29,7 @@ data class ProfileUiState(
     val isDirectApiOnly: Boolean = false,
     val settings: AppSettings = AppSettings(),
     val worksCount: Int = 0,
+    val imageGroupsCount: Int? = null,
     val providers: List<ApiProviderConfig> = emptyList(),
     val providerTesting: Boolean = false,
     val providerTestCount: Int? = null,
@@ -59,6 +60,7 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
                         isDirectApiOnly = logged?.isDirectApiOnly == true,
                     )
                 }
+                refreshImageGroupsCount()
             }
         }
         viewModelScope.launch {
@@ -74,6 +76,22 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             container.apiProviderStore.providers.collect { list ->
                 _ui.update { it.copy(providers = list) }
+                refreshImageGroupsCount()
+            }
+        }
+    }
+
+    private fun refreshImageGroupsCount() {
+        viewModelScope.launch {
+            val customImgCount = container.apiProviderStore.enabledProviders().count { it.protocol.supportsImages }
+            val isDirect = (container.authSession.value as? AuthSessionState.LoggedIn)?.isDirectApiOnly == true
+            if (isDirect) {
+                _ui.update { it.copy(imageGroupsCount = customImgCount) }
+                return@launch
+            }
+            val serverCount = runCatching { container.onlineImagesApi.capabilities().keys.size }.getOrNull()
+            if (serverCount != null) {
+                _ui.update { it.copy(imageGroupsCount = serverCount + customImgCount) }
             }
         }
     }
@@ -103,7 +121,8 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
     fun saveProvider(draft: ApiProviderDraft) {
         container.apiProviderStore.upsert(draft.toConfig())
         clearProviderTestState()
-        container.toastController.show("Saved API endpoint")
+        val isZh = container.settingsState.value.language == AppLanguage.ZH
+        container.toastController.show(if (isZh) "已保存 API 接口配置" else "Saved API endpoint")
     }
 
     fun toggleProviderEnabled(id: String, enabled: Boolean) {
@@ -115,8 +134,10 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun refreshProfile() {
+        val isZh = container.settingsState.value.language == AppLanguage.ZH
         if (_ui.value.isDirectApiOnly) {
-            container.toastController.show("Direct API Mode")
+            refreshImageGroupsCount()
+            container.toastController.show(if (isZh) "已刷新本地接口状态" else "Local endpoints refreshed")
             return
         }
         viewModelScope.launch {
@@ -125,7 +146,8 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
                 val user = runCatching { container.authApi.getUserProfile() }
                     .getOrElse { container.authApi.getCurrentUser() }
                 container.setLoggedIn(user)
-                container.toastController.show("Profile updated")
+                refreshImageGroupsCount()
+                container.toastController.show(if (isZh) "已同步最新账户与能力数据" else "Account & capabilities refreshed")
             } catch (e: Throwable) {
                 container.toastController.show(e.message ?: "Refresh failed", isError = true)
             } finally {

@@ -8,10 +8,11 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -19,12 +20,18 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
 import androidx.compose.foundation.lazy.staggeredgrid.items
@@ -36,10 +43,14 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -48,6 +59,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -56,7 +71,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 import com.gugachat.app.R
 import com.gugachat.app.core.i18n.LocalAppStrings
 import com.gugachat.app.core.theme.GuBadge
@@ -97,6 +111,9 @@ private val STYLE_SPECS = listOf(
     "minimalPoster" to Color(0xFFEF4444),
 )
 
+private val INSPIRE_CATEGORY_KEYS = listOf("all", "portrait", "anime", "ecommerce", "landscape", "cyber", "clay3d")
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun InspireTabContent(
     imageViewModel: ImageViewModel,
@@ -115,6 +132,8 @@ fun InspireTabContent(
         else SHOWCASE_ITEMS.filter { it.category == selectedCategory }
     }
 
+    val categoryListState = rememberLazyListState()
+
     fun copyPrompt(text: String) {
         val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         cm.setPrimaryClip(ClipData.newPlainText("prompt", text))
@@ -124,113 +143,137 @@ fun InspireTabContent(
     previewItem?.let { item ->
         val title = strings.images.templateTitles[item.id] ?: item.id
         val prompt = strings.images.templatePrompts[item.id].orEmpty()
-        Dialog(onDismissRequest = { previewItem = null }) {
-            Surface(
-                shape = RoundedCornerShape(22.dp),
-                color = c.surface,
-                border = BorderStroke(1.dp, c.border),
-                modifier = Modifier.fillMaxWidth(),
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+        ModalBottomSheet(
+            onDismissRequest = { previewItem = null },
+            sheetState = sheetState,
+            containerColor = c.page,
+            modifier = Modifier.statusBarsPadding(),
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding(),
             ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 16.dp, end = 8.dp, bottom = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        text = title,
+                        color = c.ink,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    IconButton(
+                        onClick = { previewItem = null },
+                        modifier = Modifier.size(44.dp),
+                    ) {
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = strings.common.close,
+                            tint = c.muted,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
+                }
+                HorizontalDivider(color = c.border)
+
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .verticalScroll(rememberScrollState()),
+                        .weight(1f, fill = false)
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    Box(modifier = Modifier.fillMaxWidth()) {
-                        Image(
-                            painter = painterResource(id = item.drawableRes),
-                            contentDescription = title,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .aspectRatio(item.aspectFloat.coerceIn(0.85f, 1.55f)),
+                    Image(
+                        painter = painterResource(id = item.drawableRes),
+                        contentDescription = title,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 320.dp)
+                            .aspectRatio(item.aspectFloat.coerceIn(0.85f, 1.55f))
+                            .clip(RoundedCornerShape(16.dp)),
+                    )
+
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        GuBadge(item.ratioLabel, variant = GuBadgeVariant.BLUE)
+                        GuBadge(
+                            strings.images.inspireCategories[item.category] ?: item.category,
+                            variant = GuBadgeVariant.NEUTRAL,
                         )
-                        Box(
-                            modifier = Modifier
-                                .align(Alignment.TopEnd)
-                                .padding(10.dp)
-                                .size(32.dp)
-                                .clip(CircleShape)
-                                .background(Color.Black.copy(alpha = 0.55f))
-                                .clickable { previewItem = null },
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(Icons.Default.Close, contentDescription = strings.common.close, tint = Color.White, modifier = Modifier.size(18.dp))
-                        }
                     }
 
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = c.surfaceSoft,
+                        border = BorderStroke(1.dp, c.border),
+                        modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
                             Text(
-                                text = title,
-                                color = c.ink,
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.ExtraBold,
-                                modifier = Modifier.weight(1f),
+                                text = strings.images.studioPromptPreviewTitle,
+                                color = c.muted,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
                             )
-                            GuBadge(item.ratioLabel, variant = GuBadgeVariant.BLUE)
-                            GuBadge(strings.images.inspireCategories[item.category] ?: item.category, variant = GuBadgeVariant.NEUTRAL)
+                            Text(
+                                text = prompt,
+                                color = c.ink,
+                                fontSize = 13.sp,
+                                lineHeight = 20.sp,
+                            )
                         }
+                    }
+                }
 
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = c.surfaceSoft,
-                            border = BorderStroke(1.dp, c.border),
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(12.dp),
-                                verticalArrangement = Arrangement.spacedBy(4.dp),
-                            ) {
-                                Text(
-                                    text = strings.images.studioPromptPreviewTitle,
-                                    color = c.muted,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                )
-                                Text(
-                                    text = prompt,
-                                    color = c.ink,
-                                    fontSize = 12.5.sp,
-                                    lineHeight = 19.sp,
-                                )
-                            }
-                        }
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            GuButton(
-                                onClick = { copyPrompt(prompt) },
-                                compact = true,
-                                variant = GuButtonVariant.SUBTLE,
-                                modifier = Modifier.weight(1f),
-                            ) {
-                                Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(14.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text(strings.common.copy, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                            }
-                            GuButton(
-                                onClick = {
-                                    previewItem = null
-                                    imageViewModel.openCreateWithPrompt(prompt, styleAppend = false)
-                                },
-                                compact = true,
-                                variant = GuButtonVariant.PRIMARY,
-                                modifier = Modifier.weight(1.3f),
-                            ) {
-                                Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(14.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text(strings.images.drawSame, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                            }
-                        }
+                HorizontalDivider(color = c.border)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(c.surface)
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    GuButton(
+                        onClick = { copyPrompt(prompt) },
+                        variant = GuButtonVariant.SECONDARY,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(strings.common.copy, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    }
+                    GuButton(
+                        onClick = {
+                            previewItem = null
+                            imageViewModel.openCreateWithPrompt(
+                                promptText = prompt,
+                                styleAppend = false,
+                                aspectRatio = item.ratioLabel,
+                            )
+                        },
+                        variant = GuButtonVariant.PRIMARY,
+                        modifier = Modifier.weight(1.4f),
+                    ) {
+                        Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(strings.images.drawSame, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -242,34 +285,76 @@ fun InspireTabContent(
             .fillMaxSize()
             .background(c.page),
     ) {
+        // Pinned 2-segment subtab switcher (never scrolls off-screen)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                .padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = if (subtab == 0) 4.dp else 8.dp),
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            GuPill(
-                label = strings.images.subtabPrompts,
-                selected = subtab == 0,
-                onClick = { onSubtabChange(0) },
-                useHoneySelected = true,
-            )
-            GuPill(
-                label = strings.images.subtabStyles,
-                selected = subtab == 1,
-                onClick = { onSubtabChange(1) },
-                useHoneySelected = true,
-            )
-            if (subtab == 0) {
-                Box(
+            Surface(
+                shape = RoundedCornerShape(999.dp),
+                color = c.surfaceSoft,
+                border = BorderStroke(1.dp, c.border),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Row(
                     modifier = Modifier
-                        .padding(horizontal = 2.dp)
-                        .size(width = 1.dp, height = 16.dp)
-                        .background(c.border),
-                )
-                listOf("all", "portrait", "anime", "ecommerce", "landscape", "cyber", "clay3d").forEach { key ->
+                        .fillMaxWidth()
+                        .padding(3.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    listOf(strings.images.subtabPrompts, strings.images.subtabStyles).forEachIndexed { idx, label ->
+                        val selected = subtab == idx
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(999.dp))
+                                .background(if (selected) c.primary else Color.Transparent)
+                                .clickable { onSubtabChange(idx) }
+                                .padding(vertical = 7.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = label,
+                                color = if (selected) Color.White else c.muted,
+                                fontSize = 12.5.sp,
+                                fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.SemiBold,
+                                maxLines = 1,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Dedicated horizontally scrollable category chip row for Prompts
+        if (subtab == 0) {
+            LazyRow(
+                state = categoryListState,
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .drawWithContent {
+                        drawContent()
+                        if (categoryListState.canScrollForward) {
+                            val fadeWidth = 28.dp.toPx()
+                            drawRect(
+                                brush = Brush.horizontalGradient(
+                                    colors = listOf(Color.Transparent, c.page),
+                                    startX = size.width - fadeWidth,
+                                    endX = size.width,
+                                ),
+                                topLeft = Offset(size.width - fadeWidth, 0f),
+                                size = Size(fadeWidth, size.height),
+                            )
+                        }
+                    },
+            ) {
+                items(INSPIRE_CATEGORY_KEYS, key = { it }) { key ->
                     GuPill(
                         label = strings.images.inspireCategories[key] ?: key,
                         selected = selectedCategory == key,
@@ -285,7 +370,7 @@ fun InspireTabContent(
             } else {
                 LazyVerticalStaggeredGrid(
                     columns = StaggeredGridCells.Fixed(2),
-                    contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 2.dp, bottom = 84.dp),
+                    contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 96.dp),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalItemSpacing = 10.dp,
                     modifier = Modifier.fillMaxSize(),
@@ -326,7 +411,7 @@ fun InspireTabContent(
                                 }
 
                                 Column(
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 9.dp),
                                     verticalArrangement = Arrangement.spacedBy(4.dp),
                                 ) {
                                     Text(
@@ -354,22 +439,31 @@ fun InspireTabContent(
                                         Text(
                                             text = strings.images.inspireCategories[item.category] ?: item.category,
                                             color = c.muted,
-                                            fontSize = 10.sp,
+                                            fontSize = 10.5.sp,
                                             fontWeight = FontWeight.Medium,
                                             maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f),
                                         )
+                                        Spacer(Modifier.width(6.dp))
                                         Surface(
-                                            onClick = { imageViewModel.openCreateWithPrompt(prompt, styleAppend = false) },
+                                            onClick = {
+                                                imageViewModel.openCreateWithPrompt(
+                                                    promptText = prompt,
+                                                    styleAppend = false,
+                                                    aspectRatio = item.ratioLabel,
+                                                )
+                                            },
                                             shape = RoundedCornerShape(999.dp),
                                             color = c.tag,
-                                            border = BorderStroke(1.dp, c.accent.copy(alpha = 0.4f)),
+                                            border = BorderStroke(1.dp, c.accent.copy(alpha = 0.45f)),
                                         ) {
                                             Text(
                                                 text = strings.images.drawSame,
                                                 color = c.tagInk,
-                                                fontSize = 10.5.sp,
+                                                fontSize = 11.sp,
                                                 fontWeight = FontWeight.Bold,
-                                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.dp),
+                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
                                             )
                                         }
                                     }
@@ -382,7 +476,7 @@ fun InspireTabContent(
         } else {
             LazyVerticalGrid(
                 columns = GridCells.Fixed(2),
-                contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 2.dp, bottom = 84.dp),
+                contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 96.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier.fillMaxSize(),
@@ -395,15 +489,17 @@ fun InspireTabContent(
                         shape = RoundedCornerShape(16.dp),
                         color = c.surface,
                         border = BorderStroke(1.dp, c.border),
-                        modifier = Modifier.fillMaxWidth().height(136.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 132.dp),
                     ) {
                         Column(
                             modifier = Modifier
-                                .fillMaxSize()
-                                .padding(12.dp),
+                                .fillMaxWidth()
+                                .padding(start = 12.dp, end = 6.dp, top = 8.dp, bottom = 12.dp),
                             verticalArrangement = Arrangement.SpaceBetween,
                         ) {
-                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -425,28 +521,33 @@ fun InspireTabContent(
                                     )
                                     IconButton(
                                         onClick = { copyPrompt(prompt) },
-                                        modifier = Modifier.size(24.dp),
+                                        modifier = Modifier.size(36.dp),
                                     ) {
                                         Icon(
                                             Icons.Default.ContentCopy,
                                             contentDescription = strings.common.copy,
                                             tint = c.muted,
-                                            modifier = Modifier.size(14.dp),
+                                            modifier = Modifier.size(16.dp),
                                         )
                                     }
                                 }
                                 Text(
                                     text = prompt,
                                     color = c.muted,
-                                    fontSize = 11.sp,
+                                    fontSize = 11.5.sp,
                                     lineHeight = 16.sp,
                                     maxLines = 2,
                                     overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.padding(end = 6.dp),
                                 )
                             }
 
+                            Spacer(Modifier.height(10.dp))
+
                             Row(
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(end = 6.dp),
                                 horizontalArrangement = Arrangement.End,
                             ) {
                                 Box(
@@ -458,8 +559,8 @@ fun InspireTabContent(
                                 ) {
                                     Text(
                                         text = strings.images.applyStyle,
-                                        color = c.primary,
-                                        fontSize = 10.5.sp,
+                                        color = c.primarySoftInk,
+                                        fontSize = 11.sp,
                                         fontWeight = FontWeight.Bold,
                                     )
                                 }
