@@ -2,6 +2,8 @@ package com.gugachat.app.ui.auth
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -25,14 +27,18 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Public
+import androidx.compose.material.icons.filled.RadioButtonUnchecked
+import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -67,6 +73,10 @@ import com.gugachat.app.core.theme.GuCard
 import com.gugachat.app.core.theme.GuPill
 import com.gugachat.app.core.theme.GuTextField
 import com.gugachat.app.core.theme.LocalAppTheme
+import com.gugachat.app.core.util.ServerUrlUtils
+import com.gugachat.app.data.api.GugagaHosts
+import com.gugachat.app.data.api.HostLatencyResult
+import com.gugachat.app.data.api.HostProbeStatus
 import com.gugachat.app.ui.providers.ApiProviderFormContent
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -263,10 +273,56 @@ fun LoginScreen(
                         )
                     }
                 }
+                Spacer(Modifier.height(10.dp))
+                // GuGuGa Preset Hosts with Live Latency Probe
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = strings.auth.hostPickerTitle,
+                        color = c.muted,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    GuButton(
+                        onClick = { viewModel.probePresetHosts(autoSelectFastest = true) },
+                        loading = state.isProbingHosts,
+                        compact = true,
+                        variant = GuButtonVariant.HONEY,
+                    ) {
+                        Icon(Icons.Default.Speed, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text(strings.auth.hostSpeedTestBtn, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
                 Spacer(Modifier.height(8.dp))
+
+                val fastestHostId = remember(state.hostProbes) {
+                    GugagaHosts.pickFastestReachable(state.hostProbes)?.host?.id
+                }
+                val normalizedCurrentUrl = ServerUrlUtils.normalizeServerUrl(state.serverUrlInput)
+
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    state.hostProbes.forEach { item ->
+                        PresetHostRow(
+                            item = item,
+                            selected = normalizedCurrentUrl.equals(item.host.url, ignoreCase = true),
+                            isFastest = item.status == HostProbeStatus.REACHABLE && item.host.id == fastestHostId,
+                            onClick = { viewModel.selectPresetHost(item.host) },
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(10.dp))
+                HorizontalDivider(color = c.border)
+                Spacer(Modifier.height(10.dp))
+
                 GuTextField(
                     value = state.serverUrlInput,
                     onValueChange = viewModel::updateServerUrlInput,
+                    label = strings.auth.hostCustomUrlHint,
                     placeholder = strings.auth.serverUrlPlaceholder,
                     leadingIcon = { Icon(Icons.Default.Public, contentDescription = null, tint = c.muted) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done),
@@ -658,6 +714,77 @@ private fun FirstLaunchModeChooser(
                 text = if (theme.style.wireValue == "guguga") strings.profile.themeGuguga else strings.profile.themeClassic,
                 variant = GuBadgeVariant.BLUE,
             )
+        }
+    }
+}
+
+@Composable
+private fun PresetHostRow(
+    item: HostLatencyResult,
+    selected: Boolean,
+    isFastest: Boolean,
+    onClick: () -> Unit,
+) {
+    val strings = LocalAppStrings.current
+    val c = LocalAppTheme.current.colors
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(if (selected) c.primarySoft else c.surfaceSoft)
+            .border(1.dp, if (selected) c.primary else c.border, RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(
+            imageVector = if (selected) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
+            contentDescription = null,
+            tint = if (selected) c.primary else c.muted,
+            modifier = Modifier.size(18.dp),
+        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = item.host.label,
+                color = c.ink,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                text = item.host.url,
+                color = c.muted,
+                fontSize = 11.sp,
+            )
+        }
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (isFastest) {
+                GuBadge(
+                    text = strings.auth.hostFastestBadge,
+                    variant = GuBadgeVariant.EMERALD,
+                )
+            }
+            when (item.status) {
+                HostProbeStatus.IDLE, HostProbeStatus.TESTING -> {
+                    GuBadge(strings.auth.hostTesting, variant = GuBadgeVariant.NEUTRAL)
+                }
+                HostProbeStatus.REACHABLE -> {
+                    val ms = item.latencyMs ?: 0L
+                    val variant = when {
+                        ms <= 300L -> GuBadgeVariant.EMERALD
+                        ms <= 900L -> GuBadgeVariant.HONEY
+                        else -> GuBadgeVariant.AMBER
+                    }
+                    GuBadge("${ms}ms", variant = variant)
+                }
+                HostProbeStatus.FAILED -> {
+                    GuBadge(strings.auth.hostUnreachable, variant = GuBadgeVariant.DANGER)
+                }
+            }
         }
     }
 }

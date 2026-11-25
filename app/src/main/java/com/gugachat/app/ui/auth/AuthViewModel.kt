@@ -9,6 +9,11 @@ import com.gugachat.app.core.theme.ThemeStyle
 import com.gugachat.app.core.util.ServerUrlUtils
 import com.gugachat.app.data.api.ApiException
 import com.gugachat.app.data.api.AppJson
+import com.gugachat.app.data.api.GugagaHostProber
+import com.gugachat.app.data.api.GugagaHosts
+import com.gugachat.app.data.api.GugagaPresetHost
+import com.gugachat.app.data.api.HostLatencyResult
+import com.gugachat.app.data.api.HostProbeStatus
 import com.gugachat.app.data.api.PublicSettingsDto
 import com.gugachat.app.data.api.UserDto
 import com.gugachat.app.ui.providers.ApiProviderDraft
@@ -57,6 +62,8 @@ data class AuthUiState(
     val directTestCount: Int? = null,
     val directTestError: String? = null,
     val savedProvidersCount: Int = 0,
+    val hostProbes: List<HostLatencyResult> = GugagaHosts.PRESETS.map { HostLatencyResult(it) },
+    val isProbingHosts: Boolean = false,
 )
 
 class AuthViewModel(private val container: AppContainer) : ViewModel() {
@@ -73,7 +80,9 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
     )
     val ui: StateFlow<AuthUiState> = _ui.asStateFlow()
 
+    private val hostProber = GugagaHostProber(container.apiClient.standardClient)
     private var countdownJob: Job? = null
+    private var hostProbeJob: Job? = null
 
     init {
         viewModelScope.launch {
@@ -95,6 +104,11 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
             }
             if (saved.serverUrl.isNotBlank()) {
                 probeServer(saved.serverUrl, silent = true)
+            }
+            if (resolvedMode == LoginEntryMode.SUB2API) {
+                probePresetHosts(
+                    autoSelectFastest = saved.serverUrl.isBlank() || GugagaHosts.isPresetUrl(saved.serverUrl),
+                )
             }
         }
     }
@@ -124,10 +138,69 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
         if (mode != LoginEntryMode.CHOOSER) {
             val wire = if (mode == LoginEntryMode.DIRECT_API) "direct" else "gugaga"
             viewModelScope.launch { container.settingsStore.setPreferredEntryMode(wire) }
+            if (mode == LoginEntryMode.SUB2API && _ui.value.hostProbes.all { it.status == HostProbeStatus.IDLE }) {
+                probePresetHosts(
+                    autoSelectFastest = _ui.value.serverUrlInput.isBlank() || GugagaHosts.isPresetUrl(_ui.value.serverUrlInput),
+                )
+            }
         }
     }
 
     fun setEntryMode(mode: LoginEntryMode) = chooseEntryMode(mode)
+
+    fun probePresetHosts(autoSelectFastest: Boolean = true) {
+        hostProbeJob?.cancel()
+        hostProbeJob = viewModelScope.launch {
+            _ui.update { cur ->
+                cur.copy(
+                    isProbingHosts = true,
+                    hostProbes = GugagaHosts.PRESETS.map { preset ->
+                        HostLatencyResult(host = preset, status = HostProbeStatus.TESTING)
+                    },
+                )
+            }
+            val results = hostProber.probeAll(GugagaHosts.PRESETS) { completed ->
+                _ui.update { cur ->
+                    cur.copy(
+                        hostProbes = cur.hostProbes.map { item ->
+                            if (item.host.id == completed.host.id) completed else item
+                        },
+                    )
+                }
+            }
+            _ui.update { cur -> cur.copy(isProbingHosts = false, hostProbes = results) }
+
+            val fastest = GugagaHosts.pickFastestReachable(results)
+            val currentUrl = _ui.value.serverUrlInput
+            if (fastest != null && autoSelectFastest && (currentUrl.isBlank() || GugagaHosts.isPresetUrl(currentUrl))) {
+                applySelectedHostResult(fastest)
+            }
+        }
+    }
+
+    fun selectPresetHost(host: GugagaPresetHost) {
+        val cached = _ui.value.hostProbes.firstOrNull { it.host.id == host.id }
+        if (cached?.status == HostProbeStatus.REACHABLE && cached.publicSettings != null) {
+            viewModelScope.launch { applySelectedHostResult(cached) }
+        } else {
+            _ui.update { it.copy(serverUrlInput = host.url, serverError = null, errorMsg = null) }
+            probeServer(host.url, silent = false)
+        }
+    }
+
+    private suspend fun applySelectedHostResult(result: HostLatencyResult) {
+        val normalized = ServerUrlUtils.normalizeServerUrl(result.host.url)
+        container.settingsStore.setServerUrl(normalized)
+        result.publicSettings?.let { container.setPublicSettings(it) }
+        _ui.update { cur ->
+            cur.copy(
+                serverUrlInput = normalized,
+                serverConnected = true,
+                serverError = null,
+                publicSettings = result.publicSettings ?: cur.publicSettings,
+            )
+        }
+    }
 
     fun updateDirectProtocol(protocol: ApiProtocol) {
         _ui.update { state ->

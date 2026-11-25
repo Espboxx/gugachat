@@ -80,6 +80,13 @@ data class AuthStrings(
     val captchaRequiredHint: String,
     val registrationDisabled: String,
     val sessionExpired: String,
+    val hostPickerTitle: String,
+    val hostSpeedTestBtn: String,
+    val hostTesting: String,
+    val hostFastestBadge: String,
+    val hostUnreachable: String,
+    val hostCustomUrlHint: String,
+    val hostAutoSelectedToast: String,
 )
 
 @Immutable
