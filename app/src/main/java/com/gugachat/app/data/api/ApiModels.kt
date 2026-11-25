@@ -58,8 +58,14 @@ data class PublicSettingsDto(
     val password_reset_enabled: Boolean = false,
     val invitation_code_enabled: Boolean = false,
     val turnstile_enabled: Boolean = false,
+    val turnstile_site_key: String = "",
     val tencent_captcha_enabled: Boolean = false,
+    val tencent_captcha_app_id: String = "",
+    val tencent_captcha_region: String = "cn",
     val aliyun_captcha_enabled: Boolean = false,
+    val aliyun_captcha_scene_id: String = "",
+    val aliyun_captcha_prefix: String = "",
+    val aliyun_captcha_region: String = "cn",
     val passkey_enabled: Boolean = false,
     val site_name: String = "GuGuChat",
     val site_logo: String = "",
@@ -80,6 +86,47 @@ data class PublicSettingsDto(
     val version: String = "",
 )
 
+/**
+ * Human-verification proof submitted along with login, register, or verify-code requests.
+ */
+@Serializable
+data class CaptchaProof(
+    val turnstileToken: String = "",
+    val tencentTicket: String = "",
+    val tencentRandstr: String = "",
+) {
+    val isReady: Boolean
+        get() = turnstileToken.isNotBlank() ||
+            (tencentTicket.isNotBlank() && tencentRandstr.isNotBlank())
+}
+
+/**
+ * Active captcha provider enabled on the target server, in priority order matching sub2api-auto frontend.
+ */
+sealed class ActiveCaptchaConfig {
+    data object None : ActiveCaptchaConfig()
+    data class Turnstile(val siteKey: String) : ActiveCaptchaConfig()
+    data class Tencent(val appId: String, val region: String) : ActiveCaptchaConfig()
+    data class Aliyun(val sceneId: String, val prefix: String, val region: String) : ActiveCaptchaConfig()
+}
+
+fun PublicSettingsDto.resolveActiveCaptcha(): ActiveCaptchaConfig = when {
+    turnstile_enabled && turnstile_site_key.isNotBlank() ->
+        ActiveCaptchaConfig.Turnstile(siteKey = turnstile_site_key.trim())
+    tencent_captcha_enabled && tencent_captcha_app_id.isNotBlank() ->
+        ActiveCaptchaConfig.Tencent(
+            appId = tencent_captcha_app_id.trim(),
+            region = if (tencent_captcha_region.trim().equals("intl", ignoreCase = true)) "intl" else "cn",
+        )
+    aliyun_captcha_enabled && aliyun_captcha_scene_id.isNotBlank() && aliyun_captcha_prefix.isNotBlank() ->
+        ActiveCaptchaConfig.Aliyun(
+            sceneId = aliyun_captcha_scene_id.trim(),
+            prefix = aliyun_captcha_prefix.trim(),
+            region = if (aliyun_captcha_region.trim().equals("sgp", ignoreCase = true)) "sgp" else "cn",
+        )
+    else -> ActiveCaptchaConfig.None
+}
+
 @Serializable
 data class UserDto(
     val id: Long = 0L,
@@ -98,6 +145,9 @@ data class UserDto(
 data class AuthLoginRequest(
     val email: String,
     val password: String,
+    val turnstile_token: String? = null,
+    val tencent_captcha_ticket: String? = null,
+    val tencent_captcha_randstr: String? = null,
 )
 
 @Serializable
@@ -107,11 +157,17 @@ data class AuthRegisterRequest(
     val verify_code: String? = null,
     val promo_code: String? = null,
     val invitation_code: String? = null,
+    val turnstile_token: String? = null,
+    val tencent_captcha_ticket: String? = null,
+    val tencent_captcha_randstr: String? = null,
 )
 
 @Serializable
 data class SendVerifyCodeRequest(
     val email: String,
+    val turnstile_token: String? = null,
+    val tencent_captcha_ticket: String? = null,
+    val tencent_captcha_randstr: String? = null,
 )
 
 @Serializable

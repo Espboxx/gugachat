@@ -7,8 +7,10 @@ import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.storage.ApiProtocol
 import com.gugachat.app.core.theme.ThemeStyle
 import com.gugachat.app.core.util.ServerUrlUtils
+import com.gugachat.app.data.api.ActiveCaptchaConfig
 import com.gugachat.app.data.api.ApiException
 import com.gugachat.app.data.api.AppJson
+import com.gugachat.app.data.api.CaptchaProof
 import com.gugachat.app.data.api.GugagaHostProber
 import com.gugachat.app.data.api.GugagaHosts
 import com.gugachat.app.data.api.GugagaPresetHost
@@ -16,6 +18,7 @@ import com.gugachat.app.data.api.HostLatencyResult
 import com.gugachat.app.data.api.HostProbeStatus
 import com.gugachat.app.data.api.PublicSettingsDto
 import com.gugachat.app.data.api.UserDto
+import com.gugachat.app.data.api.resolveActiveCaptcha
 import com.gugachat.app.ui.providers.ApiProviderDraft
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -34,6 +37,15 @@ enum class LoginEntryMode {
 enum class AuthFormTab {
     LOGIN,
     REGISTER,
+}
+
+enum class CaptchaUiStatus {
+    IDLE,
+    LOADING,
+    READY,
+    VERIFIED,
+    EXPIRED,
+    ERROR,
 }
 
 data class AuthUiState(
@@ -57,6 +69,10 @@ data class AuthUiState(
     val isSubmitting: Boolean = false,
     val showWebLoginDialog: Boolean = false,
     val errorMsg: String? = null,
+    val captchaProof: CaptchaProof = CaptchaProof(),
+    val captchaStatus: CaptchaUiStatus = CaptchaUiStatus.IDLE,
+    val captchaErrorMsg: String? = null,
+    val captchaResetNonce: Int = 0,
     val directDraft: ApiProviderDraft = ApiProviderDraft(),
     val directTesting: Boolean = false,
     val directTestCount: Int? = null,
@@ -64,7 +80,13 @@ data class AuthUiState(
     val savedProvidersCount: Int = 0,
     val hostProbes: List<HostLatencyResult> = GugagaHosts.PRESETS.map { HostLatencyResult(it) },
     val isProbingHosts: Boolean = false,
-)
+) {
+    val activeCaptcha: ActiveCaptchaConfig
+        get() = publicSettings?.resolveActiveCaptcha() ?: ActiveCaptchaConfig.None
+
+    val requiresInAppCaptcha: Boolean
+        get() = activeCaptcha !is ActiveCaptchaConfig.None
+}
 
 class AuthViewModel(private val container: AppContainer) : ViewModel() {
     private val _ui = MutableStateFlow(
@@ -183,7 +205,19 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
         if (cached?.status == HostProbeStatus.REACHABLE && cached.publicSettings != null) {
             viewModelScope.launch { applySelectedHostResult(cached) }
         } else {
-            _ui.update { it.copy(serverUrlInput = host.url, serverError = null, errorMsg = null) }
+            val prevUrl = ServerUrlUtils.normalizeServerUrl(_ui.value.serverUrlInput)
+            val nextUrl = ServerUrlUtils.normalizeServerUrl(host.url)
+            val hostChanged = prevUrl != nextUrl
+            _ui.update { cur ->
+                cur.copy(
+                    serverUrlInput = host.url,
+                    serverError = null,
+                    errorMsg = null,
+                    captchaProof = if (hostChanged) CaptchaProof() else cur.captchaProof,
+                    captchaStatus = if (hostChanged && cur.requiresInAppCaptcha) CaptchaUiStatus.LOADING else cur.captchaStatus,
+                    captchaErrorMsg = if (hostChanged) null else cur.captchaErrorMsg,
+                )
+            }
             probeServer(host.url, silent = false)
         }
     }
@@ -193,11 +227,24 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
         container.settingsStore.setServerUrl(normalized)
         result.publicSettings?.let { container.setPublicSettings(it) }
         _ui.update { cur ->
+            val prevUrl = ServerUrlUtils.normalizeServerUrl(cur.serverUrlInput)
+            val nextSettings = result.publicSettings ?: cur.publicSettings
+            val prevCaptcha = cur.activeCaptcha
+            val nextCaptcha = nextSettings?.resolveActiveCaptcha() ?: ActiveCaptchaConfig.None
+            val shouldReset = normalized != prevUrl || nextCaptcha != prevCaptcha
             cur.copy(
                 serverUrlInput = normalized,
                 serverConnected = true,
                 serverError = null,
-                publicSettings = result.publicSettings ?: cur.publicSettings,
+                publicSettings = nextSettings,
+                captchaProof = if (shouldReset) CaptchaProof() else cur.captchaProof,
+                captchaStatus = when {
+                    nextCaptcha is ActiveCaptchaConfig.None -> CaptchaUiStatus.IDLE
+                    shouldReset -> CaptchaUiStatus.LOADING
+                    else -> cur.captchaStatus
+                },
+                captchaErrorMsg = if (shouldReset) null else cur.captchaErrorMsg,
+                captchaResetNonce = if (shouldReset && nextCaptcha !is ActiveCaptchaConfig.None) cur.captchaResetNonce + 1 else cur.captchaResetNonce,
             )
         }
     }
@@ -275,8 +322,103 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun setActiveTab(tab: AuthFormTab) {
-        _ui.update { it.copy(activeTab = tab, errorMsg = null) }
+        val changed = _ui.value.activeTab != tab
+        _ui.update { cur ->
+            val shouldReset = changed && cur.requiresInAppCaptcha
+            cur.copy(
+                activeTab = tab,
+                errorMsg = null,
+                captchaProof = if (shouldReset) CaptchaProof() else cur.captchaProof,
+                captchaStatus = if (shouldReset) CaptchaUiStatus.LOADING else cur.captchaStatus,
+                captchaErrorMsg = if (shouldReset) null else cur.captchaErrorMsg,
+                captchaResetNonce = if (shouldReset) cur.captchaResetNonce + 1 else cur.captchaResetNonce,
+            )
+        }
     }
+
+    fun onCaptchaLoading() {
+        _ui.update { it.copy(captchaStatus = CaptchaUiStatus.LOADING, captchaErrorMsg = null) }
+    }
+
+    fun onCaptchaReady() {
+        _ui.update { cur ->
+            if (cur.captchaStatus == CaptchaUiStatus.VERIFIED && cur.captchaProof.isReady) {
+                cur
+            } else {
+                cur.copy(captchaStatus = CaptchaUiStatus.READY, captchaErrorMsg = null)
+            }
+        }
+    }
+
+    fun onCaptchaVerified(token: String, randstr: String = "") {
+        val cleanToken = token.trim()
+        val cleanRandstr = randstr.trim()
+        if (cleanToken.isEmpty()) {
+            onCaptchaError("empty_token")
+            return
+        }
+        _ui.update { cur ->
+            val proof = if (cur.activeCaptcha is ActiveCaptchaConfig.Tencent) {
+                CaptchaProof(tencentTicket = cleanToken, tencentRandstr = cleanRandstr)
+            } else {
+                CaptchaProof(turnstileToken = cleanToken)
+            }
+            if (!proof.isReady) {
+                cur.copy(
+                    captchaProof = CaptchaProof(),
+                    captchaStatus = CaptchaUiStatus.ERROR,
+                    captchaErrorMsg = "invalid_proof",
+                )
+            } else {
+                cur.copy(
+                    captchaProof = proof,
+                    captchaStatus = CaptchaUiStatus.VERIFIED,
+                    captchaErrorMsg = null,
+                    errorMsg = null,
+                )
+            }
+        }
+    }
+
+    fun onCaptchaExpired() {
+        _ui.update { cur ->
+            cur.copy(
+                captchaProof = CaptchaProof(),
+                captchaStatus = if (cur.requiresInAppCaptcha) CaptchaUiStatus.EXPIRED else CaptchaUiStatus.IDLE,
+            )
+        }
+    }
+
+    fun onCaptchaError(detail: String?) {
+        _ui.update { cur ->
+            cur.copy(
+                captchaProof = CaptchaProof(),
+                captchaStatus = if (cur.requiresInAppCaptcha) CaptchaUiStatus.ERROR else CaptchaUiStatus.IDLE,
+                captchaErrorMsg = detail,
+            )
+        }
+    }
+
+    fun resetCaptcha() = clearCaptchaAndReload()
+
+    private fun clearCaptchaAndReload() {
+        _ui.update { cur ->
+            val hasCaptcha = cur.requiresInAppCaptcha
+            cur.copy(
+                captchaProof = CaptchaProof(),
+                captchaStatus = if (hasCaptcha) CaptchaUiStatus.LOADING else CaptchaUiStatus.IDLE,
+                captchaErrorMsg = null,
+                captchaResetNonce = if (hasCaptcha) cur.captchaResetNonce + 1 else cur.captchaResetNonce,
+            )
+        }
+    }
+
+    private fun captchaRequiredMessage(): String =
+        if (container.settingsState.value.language == AppLanguage.ZH) {
+            "请先完成人机验证"
+        } else {
+            "Please complete human verification first"
+        }
 
     fun updateEmail(value: String) {
         _ui.update { it.copy(email = value, errorMsg = null) }
@@ -329,17 +471,38 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
             return
         }
         viewModelScope.launch {
-            _ui.update { it.copy(isProbing = true, serverError = null, serverUrlInput = normalized) }
+            _ui.update { cur ->
+                val prevUrl = ServerUrlUtils.normalizeServerUrl(cur.serverUrlInput)
+                val urlChanged = prevUrl != normalized
+                cur.copy(
+                    isProbing = true,
+                    serverError = null,
+                    serverUrlInput = normalized,
+                    captchaProof = if (urlChanged) CaptchaProof() else cur.captchaProof,
+                    captchaErrorMsg = if (urlChanged) null else cur.captchaErrorMsg,
+                )
+            }
             container.settingsStore.setServerUrl(normalized)
             try {
                 val settings = container.authApi.getPublicSettings(normalized)
                 container.setPublicSettings(settings)
-                _ui.update {
-                    it.copy(
+                _ui.update { cur ->
+                    val prevCaptcha = cur.activeCaptcha
+                    val nextCaptcha = settings.resolveActiveCaptcha()
+                    val captchaChanged = prevCaptcha != nextCaptcha
+                    cur.copy(
                         isProbing = false,
                         serverConnected = true,
                         serverError = null,
                         publicSettings = settings,
+                        captchaProof = if (captchaChanged) CaptchaProof() else cur.captchaProof,
+                        captchaStatus = when {
+                            nextCaptcha is ActiveCaptchaConfig.None -> CaptchaUiStatus.IDLE
+                            captchaChanged -> CaptchaUiStatus.LOADING
+                            else -> cur.captchaStatus
+                        },
+                        captchaErrorMsg = if (captchaChanged) null else cur.captchaErrorMsg,
+                        captchaResetNonce = if (captchaChanged && nextCaptcha !is ActiveCaptchaConfig.None) cur.captchaResetNonce + 1 else cur.captchaResetNonce,
                     )
                 }
             } catch (e: Throwable) {
@@ -359,18 +522,26 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
         if (state.verifyCountdownSec > 0 || state.isSubmitting) return
         viewModelScope.launch {
             if (!ensureServerConfigured()) return@launch
-            if (state.email.isBlank()) {
+            val cur = _ui.value
+            if (cur.email.isBlank()) {
                 _ui.update { it.copy(errorMsg = "Email required") }
+                return@launch
+            }
+            if (cur.requiresInAppCaptcha && !cur.captchaProof.isReady) {
+                _ui.update { it.copy(errorMsg = captchaRequiredMessage()) }
                 return@launch
             }
             _ui.update { it.copy(isSubmitting = true, errorMsg = null) }
             try {
-                val res = container.authApi.sendVerifyCode(state.email)
+                val proof = cur.captchaProof.takeIf { cur.requiresInAppCaptcha }
+                val res = container.authApi.sendVerifyCode(cur.email, captchaProof = proof)
                 startCountdown(res.countdown.coerceIn(30, 120))
                 container.toastController.show(res.message.ifBlank { "Code sent" })
                 _ui.update { it.copy(isSubmitting = false) }
+                if (cur.requiresInAppCaptcha) clearCaptchaAndReload()
             } catch (e: Throwable) {
                 _ui.update { it.copy(isSubmitting = false, errorMsg = e.message ?: "Failed to send code") }
+                if (cur.requiresInAppCaptcha) clearCaptchaAndReload()
             }
         }
     }
@@ -380,13 +551,19 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
         if (state.isSubmitting) return
         viewModelScope.launch {
             if (!ensureServerConfigured()) return@launch
-            if (state.email.isBlank() || state.password.isBlank()) {
+            val cur = _ui.value
+            if (cur.email.isBlank() || cur.password.isBlank()) {
                 _ui.update { it.copy(errorMsg = "Please enter email and password") }
+                return@launch
+            }
+            if (cur.requiresInAppCaptcha && !cur.captchaProof.isReady) {
+                _ui.update { it.copy(errorMsg = captchaRequiredMessage()) }
                 return@launch
             }
             _ui.update { it.copy(isSubmitting = true, errorMsg = null) }
             try {
-                val resp = container.authApi.login(state.email, state.password)
+                val proof = cur.captchaProof.takeIf { cur.requiresInAppCaptcha }
+                val resp = container.authApi.login(cur.email, cur.password, captchaProof = proof)
                 if (resp.requires_2fa) {
                     _ui.update {
                         it.copy(
@@ -397,6 +574,7 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
                             totpCode = "",
                         )
                     }
+                    if (cur.requiresInAppCaptcha) clearCaptchaAndReload()
                     return@launch
                 }
                 val user = resp.user ?: container.authApi.getCurrentUser()
@@ -409,6 +587,7 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
                         errorMsg = (e as? ApiException)?.message ?: e.message ?: "Login failed",
                     )
                 }
+                if (cur.requiresInAppCaptcha) clearCaptchaAndReload()
             }
         }
     }
@@ -434,20 +613,30 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
         if (state.isSubmitting) return
         viewModelScope.launch {
             if (!ensureServerConfigured()) return@launch
+            val cur = _ui.value
+            val needsCaptcha = cur.requiresInAppCaptcha &&
+                !(cur.publicSettings?.email_verify_enabled == true && cur.verifyCode.isNotBlank())
+            if (needsCaptcha && !cur.captchaProof.isReady) {
+                _ui.update { it.copy(errorMsg = captchaRequiredMessage()) }
+                return@launch
+            }
             _ui.update { it.copy(isSubmitting = true, errorMsg = null) }
             try {
+                val proof = cur.captchaProof.takeIf { needsCaptcha }
                 val resp = container.authApi.register(
-                    email = state.email,
-                    password = state.password,
-                    verifyCode = state.verifyCode,
-                    promoCode = state.promoCode,
-                    invitationCode = state.invitationCode,
+                    email = cur.email,
+                    password = cur.password,
+                    verifyCode = cur.verifyCode,
+                    promoCode = cur.promoCode,
+                    invitationCode = cur.invitationCode,
+                    captchaProof = proof,
                 )
                 val user = resp.user ?: container.authApi.getCurrentUser()
                 container.setLoggedIn(user)
                 _ui.update { it.copy(isSubmitting = false) }
             } catch (e: Throwable) {
                 _ui.update { it.copy(isSubmitting = false, errorMsg = e.message ?: "Registration failed") }
+                if (needsCaptcha) clearCaptchaAndReload()
             }
         }
     }

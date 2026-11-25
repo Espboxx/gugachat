@@ -281,4 +281,80 @@ class ApiClientTest {
         assertTrue(rawBody.contains("""name="reference_images[]""""))
         assertTrue(rawBody.contains("ref1.jpg") && rawBody.contains("ref2.png"))
     }
+
+    @Test
+    fun authApi_parsesPublicCaptchaSettingsAndSerializesProofFields() = runBlocking {
+        val authApi = AuthApi(client, tokenStore)
+
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setBody(
+                    """
+                    {
+                      "code": 0,
+                      "data": {
+                        "site_name": "GuGuGa",
+                        "turnstile_enabled": true,
+                        "turnstile_site_key": "0x4AAAAAAFm2MCrnWLTlaRjZ",
+                        "tencent_captcha_enabled": false,
+                        "tencent_captcha_app_id": "190001",
+                        "tencent_captcha_region": "intl",
+                        "aliyun_captcha_enabled": false,
+                        "aliyun_captcha_scene_id": "scn1",
+                        "aliyun_captcha_prefix": "pre1",
+                        "aliyun_captcha_region": "sgp"
+                      }
+                    }
+                    """.trimIndent(),
+                ),
+        )
+        val settings = authApi.getPublicSettings()
+        assertEquals("0x4AAAAAAFm2MCrnWLTlaRjZ", settings.turnstile_site_key)
+        assertEquals("190001", settings.tencent_captcha_app_id)
+        assertEquals("intl", settings.tencent_captcha_region)
+        assertEquals("scn1", settings.aliyun_captcha_scene_id)
+        assertEquals("pre1", settings.aliyun_captcha_prefix)
+        assertEquals("sgp", settings.aliyun_captcha_region)
+        assertEquals(
+            ActiveCaptchaConfig.Turnstile("0x4AAAAAAFm2MCrnWLTlaRjZ"),
+            settings.resolveActiveCaptcha(),
+        )
+        server.takeRequest()
+
+        // Turnstile/Aliyun token on login
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setBody("""{"code":0,"data":{"access_token":"tok1","refresh_token":"ref1","user":{"id":1,"email":"u@test.com","username":"u"}}}"""),
+        )
+        authApi.login(" u@test.com ", "secret", CaptchaProof(turnstileToken = "cf-tok-123"))
+        val loginBody = server.takeRequest().body.readUtf8()
+        assertTrue(loginBody.contains(""""turnstile_token":"cf-tok-123""""))
+        assertFalse(loginBody.contains("tencent_captcha_ticket"))
+
+        // Tencent ticket + randstr on sendVerifyCode
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setBody("""{"code":0,"data":{"message":"sent","countdown":60}}"""),
+        )
+        authApi.sendVerifyCode("u@test.com", CaptchaProof(tencentTicket = "tkt-9", tencentRandstr = "@rnd"))
+        val codeBody = server.takeRequest().body.readUtf8()
+        assertTrue(codeBody.contains(""""tencent_captcha_ticket":"tkt-9""""))
+        assertTrue(codeBody.contains(""""tencent_captcha_randstr":"@rnd""""))
+        assertFalse(codeBody.contains("turnstile_token"))
+
+        // Null CaptchaProof omits captcha keys on register
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setBody("""{"code":0,"data":{"access_token":"tok2","refresh_token":"ref2","user":{"id":2,"email":"n@test.com","username":"n"}}}"""),
+        )
+        authApi.register(email = "n@test.com", password = "secret", captchaProof = null)
+        val regBody = server.takeRequest().body.readUtf8()
+        assertFalse(regBody.contains("turnstile_token"))
+        assertFalse(regBody.contains("tencent_captcha_ticket"))
+        assertFalse(regBody.contains("tencent_captcha_randstr"))
+    }
 }

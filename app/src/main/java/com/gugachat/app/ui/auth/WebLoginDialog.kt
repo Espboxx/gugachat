@@ -48,6 +48,7 @@ import com.gugachat.app.core.theme.LocalAppTheme
 import com.gugachat.app.core.util.ServerUrlUtils
 import kotlinx.coroutines.delay
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
 
 @Serializable
@@ -90,13 +91,9 @@ fun WebLoginDialog(
         """.trimIndent()
         wv.evaluateJavascript(js) { raw ->
             if (capturedHandled || raw.isNullOrBlank() || raw == "null") return@evaluateJavascript
-            val unquoted = if (raw.startsWith("\"") && raw.endsWith("\"")) {
-                raw.substring(1, raw.length - 1)
-                    .replace("\\\"", "\"")
-                    .replace("\\\\", "\\")
-            } else {
-                raw
-            }
+            val unquoted = runCatching {
+                WEB_SNAPSHOT_JSON.decodeFromString(String.serializer(), raw)
+            }.getOrElse { raw }
             val snap = runCatching {
                 WEB_SNAPSHOT_JSON.decodeFromString(WebAuthSnapshot.serializer(), unquoted)
             }.getOrNull() ?: return@evaluateJavascript
@@ -183,9 +180,12 @@ fun WebLoginDialog(
                     modifier = Modifier.fillMaxSize(),
                     factory = { ctx ->
                         WebView(ctx).apply {
-                            CookieManager.getInstance().setAcceptCookie(true)
+                            val cookies = CookieManager.getInstance()
+                            cookies.setAcceptCookie(true)
+                            cookies.setAcceptThirdPartyCookies(this, true)
                             settings.javaScriptEnabled = true
                             settings.domStorageEnabled = true
+                            settings.databaseEnabled = true
                             settings.useWideViewPort = true
                             settings.loadWithOverviewMode = true
                             webChromeClient = object : WebChromeClient() {
@@ -206,6 +206,11 @@ fun WebLoginDialog(
                             loadUrl(targetUrl)
                             webViewRef = this
                         }
+                    },
+                    onRelease = { wv ->
+                        wv.stopLoading()
+                        wv.loadUrl("about:blank")
+                        wv.destroy()
                     },
                 )
             }

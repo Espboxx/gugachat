@@ -14,10 +14,21 @@ class AuthApi(
             baseUrlOverride = serverUrlOverride,
         )
 
-    suspend fun login(email: String, password: String): LoginResponseDto {
+    suspend fun login(
+        email: String,
+        password: String,
+        captchaProof: CaptchaProof? = null,
+    ): LoginResponseDto {
+        val (turnstile, ticket, randstr) = captchaProof.toWireTriple()
         val body = AppJson.encodeToString(
             AuthLoginRequest.serializer(),
-            AuthLoginRequest(email = email.trim(), password = password),
+            AuthLoginRequest(
+                email = email.trim(),
+                password = password,
+                turnstile_token = turnstile,
+                tencent_captcha_ticket = ticket,
+                tencent_captcha_randstr = randstr,
+            ),
         )
         val resp = client.postJson("/auth/login", body, LoginResponseDto.serializer())
         persistLoginIfComplete(resp)
@@ -40,7 +51,9 @@ class AuthApi(
         verifyCode: String? = null,
         promoCode: String? = null,
         invitationCode: String? = null,
+        captchaProof: CaptchaProof? = null,
     ): LoginResponseDto {
+        val (turnstile, ticket, randstr) = captchaProof.toWireTriple()
         val body = AppJson.encodeToString(
             AuthRegisterRequest.serializer(),
             AuthRegisterRequest(
@@ -49,6 +62,9 @@ class AuthApi(
                 verify_code = verifyCode?.trim()?.ifEmpty { null },
                 promo_code = promoCode?.trim()?.ifEmpty { null },
                 invitation_code = invitationCode?.trim()?.ifEmpty { null },
+                turnstile_token = turnstile,
+                tencent_captcha_ticket = ticket,
+                tencent_captcha_randstr = randstr,
             ),
         )
         val resp = client.postJson("/auth/register", body, LoginResponseDto.serializer())
@@ -56,10 +72,19 @@ class AuthApi(
         return resp
     }
 
-    suspend fun sendVerifyCode(email: String): SendVerifyCodeResponse {
+    suspend fun sendVerifyCode(
+        email: String,
+        captchaProof: CaptchaProof? = null,
+    ): SendVerifyCodeResponse {
+        val (turnstile, ticket, randstr) = captchaProof.toWireTriple()
         val body = AppJson.encodeToString(
             SendVerifyCodeRequest.serializer(),
-            SendVerifyCodeRequest(email = email.trim()),
+            SendVerifyCodeRequest(
+                email = email.trim(),
+                turnstile_token = turnstile,
+                tencent_captcha_ticket = ticket,
+                tencent_captcha_randstr = randstr,
+            ),
         )
         return client.postJson("/auth/send-verify-code", body, SendVerifyCodeResponse.serializer())
     }
@@ -103,4 +128,11 @@ class AuthApi(
             )
         }
     }
+
+    private fun CaptchaProof?.toWireTriple(): Triple<String?, String?, String?> =
+        Triple(
+            this?.turnstileToken?.trim()?.ifEmpty { null },
+            this?.tencentTicket?.trim()?.ifEmpty { null },
+            this?.tencentRandstr?.trim()?.ifEmpty { null },
+        )
 }

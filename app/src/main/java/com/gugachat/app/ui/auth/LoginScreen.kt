@@ -70,6 +70,7 @@ import com.gugachat.app.core.theme.GuPill
 import com.gugachat.app.core.theme.GuTextField
 import com.gugachat.app.core.theme.LocalAppTheme
 import com.gugachat.app.core.util.ServerUrlUtils
+import com.gugachat.app.data.api.ActiveCaptchaConfig
 import com.gugachat.app.data.api.GugagaHosts
 import com.gugachat.app.data.api.HostLatencyResult
 import com.gugachat.app.data.api.HostProbeStatus
@@ -421,7 +422,8 @@ fun LoginScreen(
                                 )
                                 GuButton(
                                     onClick = viewModel::sendVerifyCode,
-                                    enabled = state.verifyCountdownSec <= 0,
+                                    enabled = state.verifyCountdownSec <= 0 &&
+                                        (!state.requiresInAppCaptcha || state.captchaProof.isReady),
                                     variant = GuButtonVariant.SECONDARY,
                                 ) {
                                     Text(
@@ -454,20 +456,50 @@ fun LoginScreen(
                         }
                     }
 
-                    val hasCaptchaOrOAuth = pub != null && (
+                    val needsCaptchaForForm = state.requiresInAppCaptcha && !(
+                        state.activeTab == AuthFormTab.REGISTER &&
+                            pub?.email_verify_enabled == true &&
+                            state.verifyCode.isNotBlank()
+                        )
+                    if (needsCaptchaForForm) {
+                        Spacer(Modifier.height(12.dp))
+                        InAppCaptchaWidget(
+                            config = state.activeCaptcha,
+                            serverUrl = state.serverUrlInput,
+                            status = state.captchaStatus,
+                            resetNonce = state.captchaResetNonce,
+                            errorDetail = state.captchaErrorMsg,
+                            onLoading = viewModel::onCaptchaLoading,
+                            onReady = viewModel::onCaptchaReady,
+                            onVerified = viewModel::onCaptchaVerified,
+                            onExpired = viewModel::onCaptchaExpired,
+                            onError = viewModel::onCaptchaError,
+                            onRefresh = viewModel::resetCaptcha,
+                        )
+                    }
+
+                    val hasRawCaptchaFlag = pub != null && (
                         pub.turnstile_enabled ||
                             pub.tencent_captcha_enabled ||
-                            pub.aliyun_captcha_enabled ||
-                            pub.linuxdo_oauth_enabled ||
-                            pub.github_oauth_enabled ||
-                            pub.google_oauth_enabled ||
-                            pub.oidc_oauth_enabled
+                            pub.aliyun_captcha_enabled
                         )
-                    if (hasCaptchaOrOAuth) {
+                    if (!state.requiresInAppCaptcha && hasRawCaptchaFlag) {
                         Spacer(Modifier.height(10.dp))
                         Text(
                             text = strings.auth.captchaRequiredHint,
                             color = c.warning,
+                            fontSize = 11.sp,
+                        )
+                    }
+
+                    val waitingForTurnstile = needsCaptchaForForm &&
+                        state.activeCaptcha is ActiveCaptchaConfig.Turnstile &&
+                        !state.captchaProof.isReady
+                    if (waitingForTurnstile) {
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            text = strings.auth.captchaRequiredError,
+                            color = c.muted,
                             fontSize = 11.sp,
                         )
                     }
@@ -482,7 +514,7 @@ fun LoginScreen(
                         onClick = {
                             if (state.activeTab == AuthFormTab.LOGIN) viewModel.submitLogin() else viewModel.submitRegister()
                         },
-                        enabled = !regDisabled,
+                        enabled = !regDisabled && !waitingForTurnstile,
                         loading = state.isSubmitting,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
