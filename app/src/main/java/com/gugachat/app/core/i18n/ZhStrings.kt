@@ -77,6 +77,7 @@ val ZhStrings = AppStrings(
     ),
     nav = NavStrings(
         tabChat = "对话",
+        tabStudio = "创作",
         tabGallery = "作品",
         tabInspire = "灵感",
         tabTools = "工具",
@@ -859,6 +860,13 @@ val ZhStrings = AppStrings(
         freeQuotaRemainingReq = "🎁 今日免费 剩 {remaining}/{limit} 次",
         freeQuotaRemainingUsd = "🎁 今日免费 剩 {remaining}/{limit}",
         freeQuotaExhausted = "今日免费已用完",
+        studioCreateFab = "创作",
+        studioBrowseInspire = "逛逛灵感",
+        studioQuickCanvasTitle = "最近作品 · 快速精修",
+        studioSwitchWork = "切换作品",
+        studioSectionEdit = "精修与衍生",
+        studioSectionWorkflow = "专享引擎与词库",
+        studioPromptPreviewTitle = "灵感提示词",
     ),
     providers = ApiProviderStrings(
         chooserWelcomeTitle = "欢迎使用 GuGuChat",

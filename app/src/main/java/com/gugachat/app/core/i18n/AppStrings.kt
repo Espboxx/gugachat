@@ -101,6 +101,7 @@ data class AuthStrings(
 @Immutable
 data class NavStrings(
     val tabChat: String,
+    val tabStudio: String,
     val tabGallery: String,
     val tabInspire: String,
     val tabTools: String,
@@ -751,6 +752,13 @@ data class ImageStrings(
     val freeQuotaRemainingReq: String,
     val freeQuotaRemainingUsd: String,
     val freeQuotaExhausted: String,
+    val studioCreateFab: String,
+    val studioBrowseInspire: String,
+    val studioQuickCanvasTitle: String,
+    val studioSwitchWork: String,
+    val studioSectionEdit: String,
+    val studioSectionWorkflow: String,
+    val studioPromptPreviewTitle: String,
 )
 
 @Immutable

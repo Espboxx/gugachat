@@ -19,8 +19,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.Build
-import androidx.compose.material.icons.filled.Collections
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
@@ -61,23 +59,19 @@ import com.gugachat.app.ui.auth.AuthViewModel
 import com.gugachat.app.ui.auth.LoginScreen
 import com.gugachat.app.ui.chat.ChatViewModel
 import com.gugachat.app.ui.chat.ChatWorkspaceScreen
-import com.gugachat.app.ui.images.GalleryScreen
+import com.gugachat.app.ui.images.CreativeStudioScreen
 import com.gugachat.app.ui.images.ImageCreateSheet
 import com.gugachat.app.ui.images.ImageDetailSheet
 import com.gugachat.app.ui.images.ImageEditorDialog
 import com.gugachat.app.ui.images.ImageLightboxDialog
 import com.gugachat.app.ui.images.ImagePresetSheet
 import com.gugachat.app.ui.images.ImageViewModel
-import com.gugachat.app.ui.images.InspireScreen
-import com.gugachat.app.ui.images.ToolsScreen
 import com.gugachat.app.ui.profile.ProfileScreen
 import com.gugachat.app.ui.profile.ProfileViewModel
 
 private enum class MainTab {
     CHAT,
-    GALLERY,
-    INSPIRE,
-    TOOLS,
+    STUDIO,
     MINE,
 }
 
@@ -156,7 +150,6 @@ private fun AuthenticatedShell(container: AppContainer) {
     val profileVm = remember(container) { ProfileViewModel(container) }
 
     var activeTabOrdinal by rememberSaveable { mutableIntStateOf(MainTab.CHAT.ordinal) }
-    var inspirePreferStyles by rememberSaveable { mutableIntStateOf(0) }
     val activeTab = MainTab.entries.getOrElse(activeTabOrdinal) { MainTab.CHAT }
 
     Scaffold(
@@ -183,24 +176,10 @@ private fun AuthenticatedShell(container: AppContainer) {
                         modifier = Modifier.weight(1f),
                     )
                     CompactBottomNavItem(
-                        selected = activeTab == MainTab.GALLERY,
-                        icon = Icons.Default.Collections,
-                        label = strings.nav.tabGallery,
-                        onClick = { activeTabOrdinal = MainTab.GALLERY.ordinal },
-                        modifier = Modifier.weight(1f),
-                    )
-                    CompactBottomNavItem(
-                        selected = activeTab == MainTab.INSPIRE,
+                        selected = activeTab == MainTab.STUDIO,
                         icon = Icons.Default.AutoAwesome,
-                        label = strings.nav.tabInspire,
-                        onClick = { activeTabOrdinal = MainTab.INSPIRE.ordinal },
-                        modifier = Modifier.weight(1f),
-                    )
-                    CompactBottomNavItem(
-                        selected = activeTab == MainTab.TOOLS,
-                        icon = Icons.Default.Build,
-                        label = strings.nav.tabTools,
-                        onClick = { activeTabOrdinal = MainTab.TOOLS.ordinal },
+                        label = strings.nav.tabStudio,
+                        onClick = { activeTabOrdinal = MainTab.STUDIO.ordinal },
                         modifier = Modifier.weight(1f),
                     )
                     CompactBottomNavItem(
@@ -221,19 +200,7 @@ private fun AuthenticatedShell(container: AppContainer) {
         ) {
             when (activeTab) {
                 MainTab.CHAT -> ChatWorkspaceScreen(container = container, viewModel = chatVm)
-                MainTab.GALLERY -> GalleryScreen(container = container, viewModel = imageVm)
-                MainTab.INSPIRE -> InspireScreen(
-                    imageViewModel = imageVm,
-                    initialSubtab = inspirePreferStyles,
-                )
-                MainTab.TOOLS -> ToolsScreen(
-                    container = container,
-                    imageViewModel = imageVm,
-                    onNavigateToInspireStyles = {
-                        inspirePreferStyles = 1
-                        activeTabOrdinal = MainTab.INSPIRE.ordinal
-                    },
-                )
+                MainTab.STUDIO -> CreativeStudioScreen(container = container, imageViewModel = imageVm)
                 MainTab.MINE -> ProfileScreen(viewModel = profileVm)
             }
         }

@@ -77,7 +77,8 @@ val EnStrings = AppStrings(
     ),
     nav = NavStrings(
         tabChat = "Chat",
-        tabGallery = "Gallery",
+        tabStudio = "Studio",
+        tabGallery = "Works",
         tabInspire = "Inspire",
         tabTools = "Tools",
         tabMine = "Mine",
@@ -859,6 +860,13 @@ val EnStrings = AppStrings(
         freeQuotaRemainingReq = "🎁 Free {remaining}/{limit} left",
         freeQuotaRemainingUsd = "🎁 Free {remaining}/{limit} left",
         freeQuotaExhausted = "Free quota used",
+        studioCreateFab = "Create",
+        studioBrowseInspire = "Explore Inspire",
+        studioQuickCanvasTitle = "Latest Artwork · Quick Edit",
+        studioSwitchWork = "All Works",
+        studioSectionEdit = "Edit & Enhance",
+        studioSectionWorkflow = "Engines & Library",
+        studioPromptPreviewTitle = "Prompt Details",
     ),
     providers = ApiProviderStrings(
         chooserWelcomeTitle = "Welcome to GuGuChat",
