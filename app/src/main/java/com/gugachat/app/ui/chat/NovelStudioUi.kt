@@ -2,6 +2,7 @@ package com.gugachat.app.ui.chat
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -17,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Surface
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.foundation.lazy.LazyColumn
@@ -31,6 +33,8 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Book
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -87,24 +91,67 @@ fun NovelStatusHudBar(
     val c = LocalAppTheme.current.colors
     val activeCh = chapters.firstOrNull { it.id == novel.activeChapterId } ?: chapters.lastOrNull()
     val hud = novel.currentStatus
+    var expanded by remember(novel.title, novel.activeChapterId) { mutableStateOf(false) }
 
-    Surface(
-        shape = RoundedCornerShape(16.dp),
-        color = c.surface,
-        border = BorderStroke(1.dp, c.accent.copy(alpha = 0.35f)),
+    val summarySub = hud?.location?.takeIf { it.isNotBlank() }?.let { "📍$it" }
+        ?: "${activeCh?.wordCount ?: 0} 字"
+    val fullSub = buildString {
+        if (hud != null) {
+            if (hud.location.isNotBlank()) append("📍${hud.location} ")
+            if (hud.time.isNotBlank()) append("🕒${hud.time} ")
+            if (hud.conflict.isNotBlank()) append("⚡${hud.conflict}")
+        }
+        if (isEmpty()) {
+            append("${activeCh?.wordCount ?: 0} 字 · ${novel.genre}")
+        }
+    }
+
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 6.dp),
+            .background(c.surfaceSoft.copy(alpha = 0.72f)),
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(Brush.horizontalGradient(listOf(c.accentSoft.copy(alpha = 0.65f), c.surface)))
-                .padding(horizontal = 12.dp, vertical = 8.dp),
+                .clickable { expanded = !expanded }
+                .padding(horizontal = 12.dp, vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                text = "📖 ${activeCh?.title ?: novel.title} · $summarySub",
+                color = c.muted,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = strings.novel.studioBtn,
+                color = c.accent,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier
+                    .clickable(onClick = onOpenStudio)
+                    .padding(horizontal = 6.dp, vertical = 2.dp),
+            )
+            Icon(
+                imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                contentDescription = null,
+                tint = c.muted,
+                modifier = Modifier.size(16.dp),
+            )
+        }
+
+        AnimatedVisibility(visible = expanded) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 12.dp, end = 12.dp, bottom = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -118,28 +165,26 @@ fun NovelStatusHudBar(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false),
                     )
-                    GuBadge(activeCh?.title ?: strings.novel.chapterLabel, variant = GuBadgeVariant.HONEY)
-                }
-                val sub = buildString {
-                    if (hud != null) {
-                        if (hud.location.isNotBlank()) append("📍${hud.location} ")
-                        if (hud.time.isNotBlank()) append("🕒${hud.time} ")
-                        if (hud.conflict.isNotBlank()) append("⚡${hud.conflict}")
-                    } else {
-                        append("${activeCh?.wordCount ?: 0} 字 · ${novel.genre}")
+                    if (novel.genre.isNotBlank()) {
+                        GuBadge(novel.genre, variant = GuBadgeVariant.HONEY)
                     }
                 }
-                Text(sub, color = c.muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            GuButton(onClick = onEnterPureReading, compact = true, variant = GuButtonVariant.SUBTLE) {
-                Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = strings.novel.pureReading, modifier = Modifier.size(14.dp))
-            }
-            GuButton(onClick = onOpenStudio, compact = true, variant = GuButtonVariant.HONEY) {
-                Icon(Icons.Default.Book, contentDescription = null, modifier = Modifier.size(14.dp))
-                Spacer(Modifier.size(4.dp))
-                Text(strings.novel.studioBtn, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Text(fullSub, color = c.muted, fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    GuButton(onClick = onEnterPureReading, compact = true, variant = GuButtonVariant.SUBTLE) {
+                        Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.size(4.dp))
+                        Text(strings.novel.pureReading, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                    GuButton(onClick = onOpenStudio, compact = true, variant = GuButtonVariant.HONEY) {
+                        Icon(Icons.Default.Book, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.size(4.dp))
+                        Text(strings.novel.studioBtn, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
             }
         }
+        HorizontalDivider(color = c.border.copy(alpha = 0.6f))
     }
 }
 

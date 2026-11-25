@@ -2,10 +2,13 @@ package com.gugachat.app.ui.navigation
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -22,9 +25,6 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -37,6 +37,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -167,54 +169,48 @@ private fun AuthenticatedShell(container: AppContainer) {
                     .navigationBarsPadding(),
             ) {
                 HorizontalDivider(color = c.border)
-                NavigationBar(
-                    containerColor = c.surface,
-                    tonalElevation = 0.dp,
-                    modifier = Modifier.fillMaxWidth(),
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(54.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                val navColors = NavigationBarItemDefaults.colors(
-                    selectedIconColor = c.primary,
-                    selectedTextColor = c.primary,
-                    indicatorColor = c.primarySoft,
-                    unselectedIconColor = c.muted,
-                    unselectedTextColor = c.muted,
-                )
-                NavigationBarItem(
-                    selected = activeTab == MainTab.CHAT,
-                    onClick = { activeTabOrdinal = MainTab.CHAT.ordinal },
-                    icon = { Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = strings.nav.tabChat) },
-                    label = { Text(strings.nav.tabChat, fontSize = 11.sp, fontWeight = FontWeight.Bold) },
-                    colors = navColors,
-                )
-                NavigationBarItem(
-                    selected = activeTab == MainTab.GALLERY,
-                    onClick = { activeTabOrdinal = MainTab.GALLERY.ordinal },
-                    icon = { Icon(Icons.Default.Collections, contentDescription = strings.nav.tabGallery) },
-                    label = { Text(strings.nav.tabGallery, fontSize = 11.sp, fontWeight = FontWeight.Bold) },
-                    colors = navColors,
-                )
-                NavigationBarItem(
-                    selected = activeTab == MainTab.INSPIRE,
-                    onClick = { activeTabOrdinal = MainTab.INSPIRE.ordinal },
-                    icon = { Icon(Icons.Default.AutoAwesome, contentDescription = strings.nav.tabInspire) },
-                    label = { Text(strings.nav.tabInspire, fontSize = 11.sp, fontWeight = FontWeight.Bold) },
-                    colors = navColors,
-                )
-                NavigationBarItem(
-                    selected = activeTab == MainTab.TOOLS,
-                    onClick = { activeTabOrdinal = MainTab.TOOLS.ordinal },
-                    icon = { Icon(Icons.Default.Build, contentDescription = strings.nav.tabTools) },
-                    label = { Text(strings.nav.tabTools, fontSize = 11.sp, fontWeight = FontWeight.Bold) },
-                    colors = navColors,
-                )
-                NavigationBarItem(
-                    selected = activeTab == MainTab.MINE,
-                    onClick = { activeTabOrdinal = MainTab.MINE.ordinal },
-                    icon = { Icon(Icons.Default.Person, contentDescription = strings.nav.tabMine) },
-                    label = { Text(strings.nav.tabMine, fontSize = 11.sp, fontWeight = FontWeight.Bold) },
-                    colors = navColors,
-                )
-            }
+                    CompactBottomNavItem(
+                        selected = activeTab == MainTab.CHAT,
+                        icon = Icons.AutoMirrored.Filled.Chat,
+                        label = strings.nav.tabChat,
+                        onClick = { activeTabOrdinal = MainTab.CHAT.ordinal },
+                        modifier = Modifier.weight(1f),
+                    )
+                    CompactBottomNavItem(
+                        selected = activeTab == MainTab.GALLERY,
+                        icon = Icons.Default.Collections,
+                        label = strings.nav.tabGallery,
+                        onClick = { activeTabOrdinal = MainTab.GALLERY.ordinal },
+                        modifier = Modifier.weight(1f),
+                    )
+                    CompactBottomNavItem(
+                        selected = activeTab == MainTab.INSPIRE,
+                        icon = Icons.Default.AutoAwesome,
+                        label = strings.nav.tabInspire,
+                        onClick = { activeTabOrdinal = MainTab.INSPIRE.ordinal },
+                        modifier = Modifier.weight(1f),
+                    )
+                    CompactBottomNavItem(
+                        selected = activeTab == MainTab.TOOLS,
+                        icon = Icons.Default.Build,
+                        label = strings.nav.tabTools,
+                        onClick = { activeTabOrdinal = MainTab.TOOLS.ordinal },
+                        modifier = Modifier.weight(1f),
+                    )
+                    CompactBottomNavItem(
+                        selected = activeTab == MainTab.MINE,
+                        icon = Icons.Default.Person,
+                        label = strings.nav.tabMine,
+                        onClick = { activeTabOrdinal = MainTab.MINE.ordinal },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
             }
         },
     ) { innerPadding ->
@@ -244,6 +240,48 @@ private fun AuthenticatedShell(container: AppContainer) {
     }
 
     ImageStudioModals(container = container, imageVm = imageVm)
+}
+
+@Composable
+private fun CompactBottomNavItem(
+    selected: Boolean,
+    icon: ImageVector,
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val c = LocalAppTheme.current.colors
+    Column(
+        modifier = modifier
+            .fillMaxHeight()
+            .clickable(onClick = onClick),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(999.dp))
+                .background(if (selected) c.primarySoft else Color.Transparent)
+                .padding(horizontal = 14.dp, vertical = 2.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = if (selected) c.primary else c.muted,
+                modifier = Modifier.size(20.dp),
+            )
+        }
+        Spacer(Modifier.height(2.dp))
+        Text(
+            text = label,
+            fontSize = 10.sp,
+            lineHeight = 12.sp,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+            color = if (selected) c.primary else c.muted,
+            maxLines = 1,
+        )
+    }
 }
 
 @Composable

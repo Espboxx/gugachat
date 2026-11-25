@@ -187,10 +187,10 @@ fun ChatMessageList(
         state = listState,
         modifier = modifier
             .fillMaxSize()
-            .padding(horizontal = 14.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+            .padding(horizontal = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        item { Spacer(Modifier.height(6.dp)) }
+        item { Spacer(Modifier.height(4.dp)) }
 
         items(active, key = { it.id }) { msg ->
             val isUser = msg.role == "user"
@@ -230,7 +230,7 @@ fun ChatMessageList(
             }
         }
 
-        item { Spacer(Modifier.height(10.dp)) }
+        item { Spacer(Modifier.height(6.dp)) }
     }
 }
 
@@ -251,29 +251,129 @@ private fun ChatEmptyWelcomeCanvas(
     val strings = LocalAppStrings.current
     val c = LocalAppTheme.current.colors
 
+    if ((mode == ConversationMode.rp && rpConfig != null) || (mode == ConversationMode.novel && novelConfig != null)) {
+        Column(
+            modifier = modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            if (!hasModelSelected) {
+                Surface(
+                    onClick = onOpenModelSheet,
+                    shape = RoundedCornerShape(999.dp),
+                    color = c.surface,
+                    border = BorderStroke(1.dp, c.border),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text(
+                            text = strings.chat.selectModel,
+                            color = c.muted,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Icon(Icons.Default.KeyboardArrowDown, contentDescription = null, tint = c.muted, modifier = Modifier.size(15.dp))
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+            }
+
+            if (mode == ConversationMode.rp && rpConfig != null) {
+                GuCard(
+                    modifier = Modifier.fillMaxWidth(),
+                    borderColor = c.accent.copy(alpha = 0.4f),
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Icon(Icons.Default.Casino, contentDescription = null, tint = c.accent, modifier = Modifier.size(18.dp))
+                        Text(rpConfig.title, color = c.ink, fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, modifier = Modifier.weight(1f))
+                        GuBadge(strings.rp.badge, variant = GuBadgeVariant.BLUE)
+                    }
+                    if (rpConfig.worldview.isNotBlank()) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            text = rpConfig.worldview,
+                            color = c.muted,
+                            fontSize = 13.sp,
+                            lineHeight = 20.sp,
+                            maxLines = 4,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    val npcs = rpConfig.cast.filter { !it.isPlayer }
+                    if (npcs.isNotEmpty() || rpConfig.playerName.isNotBlank()) {
+                        Spacer(Modifier.height(10.dp))
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            GuBadge("🎭 ${rpConfig.playerName}", variant = GuBadgeVariant.NEUTRAL)
+                            npcs.forEach { npc ->
+                                GuBadge("${npc.name} ❤️${npc.affinity}", variant = GuBadgeVariant.HONEY)
+                            }
+                        }
+                    }
+                }
+            } else if (mode == ConversationMode.novel && novelConfig != null) {
+                GuCard(
+                    modifier = Modifier.fillMaxWidth(),
+                    borderColor = c.accent.copy(alpha = 0.4f),
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Icon(Icons.Default.AutoStories, contentDescription = null, tint = c.accent, modifier = Modifier.size(18.dp))
+                        Text(novelConfig.title, color = c.ink, fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, modifier = Modifier.weight(1f))
+                        if (novelConfig.genre.isNotBlank()) {
+                            GuBadge(novelConfig.genre, variant = GuBadgeVariant.HONEY)
+                        }
+                    }
+                    if (novelConfig.synopsis.isNotBlank()) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            text = novelConfig.synopsis,
+                            color = c.muted,
+                            fontSize = 13.sp,
+                            lineHeight = 20.sp,
+                            maxLines = 5,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
+        }
+        return
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 22.dp),
+            .padding(horizontal = 16.dp, vertical = 18.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.height(4.dp))
 
         Box(
             modifier = Modifier
-                .size(64.dp)
-                .clip(RoundedCornerShape(18.dp))
+                .size(52.dp)
+                .clip(RoundedCornerShape(15.dp))
                 .background(c.primarySoft)
-                .border(1.dp, c.primary.copy(alpha = 0.25f), RoundedCornerShape(18.dp)),
+                .border(1.dp, c.primary.copy(alpha = 0.25f), RoundedCornerShape(15.dp)),
             contentAlignment = Alignment.Center,
         ) {
             Image(
                 painter = painterResource(id = R.drawable.img_logo),
                 contentDescription = strings.common.appName,
                 contentScale = ContentScale.Crop,
-                modifier = Modifier.size(54.dp).clip(RoundedCornerShape(15.dp)),
+                modifier = Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)),
             )
         }
 
@@ -285,161 +385,80 @@ private fun ChatEmptyWelcomeCanvas(
         Text(
             text = heading,
             color = c.ink,
-            fontSize = 21.sp,
+            fontSize = 19.sp,
             fontWeight = FontWeight.ExtraBold,
             textAlign = TextAlign.Center,
         )
 
-        Surface(
-            onClick = onOpenModelSheet,
-            shape = RoundedCornerShape(999.dp),
-            color = c.surface,
-            border = BorderStroke(1.dp, c.border),
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+        if (!hasModelSelected) {
+            Surface(
+                onClick = onOpenModelSheet,
+                shape = RoundedCornerShape(999.dp),
+                color = c.surface,
+                border = BorderStroke(1.dp, c.border),
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(7.dp)
-                        .clip(CircleShape)
-                        .background(if (memoryEnabled) c.success else c.muted),
-                )
-                Text(
-                    text = if (hasModelSelected) {
-                        "$selectedModelLabel · ${selectedGroupLabel.ifBlank { "-" }}"
-                    } else {
-                        strings.chat.selectModel
-                    },
-                    color = c.muted,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false),
-                )
-                Icon(Icons.Default.KeyboardArrowDown, contentDescription = null, tint = c.muted, modifier = Modifier.size(15.dp))
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        text = strings.chat.selectModel,
+                        color = c.muted,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = null, tint = c.muted, modifier = Modifier.size(15.dp))
+                }
             }
         }
 
-        when (mode) {
-            ConversationMode.rp -> {
-                if (rpConfig != null) {
-                    GuCard(
-                        modifier = Modifier.fillMaxWidth(),
-                        borderColor = c.accent.copy(alpha = 0.4f),
+        if (mode == ConversationMode.chat) {
+            val starters = listOf(
+                StarterTileSpec(
+                    icon = Icons.Default.Code,
+                    tint = c.primary,
+                    bg = c.primarySoft,
+                    title = strings.chat.starterCodeTitle,
+                    prompt = strings.chat.starterCodePrompt,
+                ),
+                StarterTileSpec(
+                    icon = Icons.Default.ImageSearch,
+                    tint = c.success,
+                    bg = c.successBg,
+                    title = strings.chat.starterVisionTitle,
+                    prompt = strings.chat.starterVisionPrompt,
+                ),
+                StarterTileSpec(
+                    icon = Icons.Default.Description,
+                    tint = c.accent,
+                    bg = c.accentSoft,
+                    title = strings.chat.starterDocTitle,
+                    prompt = strings.chat.starterDocPrompt,
+                ),
+                StarterTileSpec(
+                    icon = Icons.Default.Psychology,
+                    tint = c.primaryDark,
+                    bg = c.primarySoft,
+                    title = strings.chat.starterMemoryTitle,
+                    prompt = strings.chat.starterMemoryPrompt,
+                ),
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                starters.chunked(2).forEach { pair ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Max),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            Icon(Icons.Default.Casino, contentDescription = null, tint = c.accent, modifier = Modifier.size(18.dp))
-                            Text(rpConfig.title, color = c.ink, fontSize = 15.sp, fontWeight = FontWeight.ExtraBold)
-                            Spacer(Modifier.weight(1f))
-                            GuBadge(strings.rp.badge, variant = GuBadgeVariant.BLUE)
-                        }
-                        if (rpConfig.worldview.isNotBlank()) {
-                            Spacer(Modifier.height(6.dp))
-                            Text(
-                                text = rpConfig.worldview,
-                                color = c.muted,
-                                fontSize = 13.sp,
-                                lineHeight = 19.sp,
-                                maxLines = 4,
-                                overflow = TextOverflow.Ellipsis,
+                        pair.forEach { spec ->
+                            StarterGridCard(
+                                spec = spec,
+                                onClick = { onStarterPrompt(spec.prompt) },
+                                modifier = Modifier.weight(1f).fillMaxHeight(),
                             )
-                        }
-                        val npcs = rpConfig.cast.filter { !it.isPlayer }
-                        if (npcs.isNotEmpty() || rpConfig.playerName.isNotBlank()) {
-                            Spacer(Modifier.height(10.dp))
-                            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                GuBadge("🎭 ${rpConfig.playerName}", variant = GuBadgeVariant.NEUTRAL)
-                                npcs.forEach { npc ->
-                                    GuBadge("${npc.name} ❤️${npc.affinity}", variant = GuBadgeVariant.HONEY)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            ConversationMode.novel -> {
-                if (novelConfig != null) {
-                    GuCard(
-                        modifier = Modifier.fillMaxWidth(),
-                        borderColor = c.accent.copy(alpha = 0.4f),
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            Icon(Icons.Default.AutoStories, contentDescription = null, tint = c.accent, modifier = Modifier.size(18.dp))
-                            Text(novelConfig.title, color = c.ink, fontSize = 15.sp, fontWeight = FontWeight.ExtraBold, modifier = Modifier.weight(1f))
-                            if (novelConfig.genre.isNotBlank()) {
-                                GuBadge(novelConfig.genre, variant = GuBadgeVariant.HONEY)
-                            }
-                        }
-                        if (novelConfig.synopsis.isNotBlank()) {
-                            Spacer(Modifier.height(6.dp))
-                            Text(
-                                text = novelConfig.synopsis,
-                                color = c.muted,
-                                fontSize = 13.sp,
-                                lineHeight = 20.sp,
-                                maxLines = 4,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                    }
-                }
-            }
-
-            ConversationMode.chat -> {
-                val starters = listOf(
-                    StarterTileSpec(
-                        icon = Icons.Default.Code,
-                        tint = c.primary,
-                        bg = c.primarySoft,
-                        title = strings.chat.starterCodeTitle,
-                        prompt = strings.chat.starterCodePrompt,
-                    ),
-                    StarterTileSpec(
-                        icon = Icons.Default.ImageSearch,
-                        tint = c.success,
-                        bg = c.successBg,
-                        title = strings.chat.starterVisionTitle,
-                        prompt = strings.chat.starterVisionPrompt,
-                    ),
-                    StarterTileSpec(
-                        icon = Icons.Default.Description,
-                        tint = c.accent,
-                        bg = c.accentSoft,
-                        title = strings.chat.starterDocTitle,
-                        prompt = strings.chat.starterDocPrompt,
-                    ),
-                    StarterTileSpec(
-                        icon = Icons.Default.Psychology,
-                        tint = c.primaryDark,
-                        bg = c.primarySoft,
-                        title = strings.chat.starterMemoryTitle,
-                        prompt = strings.chat.starterMemoryPrompt,
-                    ),
-                )
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                    starters.chunked(2).forEach { pair ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Max),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        ) {
-                            pair.forEach { spec ->
-                                StarterGridCard(
-                                    spec = spec,
-                                    onClick = { onStarterPrompt(spec.prompt) },
-                                    modifier = Modifier.weight(1f).fillMaxHeight(),
-                                )
-                            }
                         }
                     }
                 }

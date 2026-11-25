@@ -333,6 +333,8 @@ data class ChatStrings(
     val freeQuotaExhaustedUsd: String,
     val freeQuotaAvailableBadge: String,
     val freeQuotaMobileHint: String,
+    val moreActions: String,
+    val composerTools: String,
 )
 
 @Immutable

@@ -2,8 +2,10 @@ package com.gugachat.app.ui.chat
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,6 +21,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Surface
 import androidx.compose.foundation.lazy.LazyColumn
@@ -28,6 +31,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Casino
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material3.AlertDialog
@@ -77,92 +82,110 @@ fun RpStatusHudBar(
     val leadNpc = rp.cast.firstOrNull { !it.isPlayer }
     val hpFrac = (rp.state.hp.toFloat() / rp.state.maxHp.coerceAtLeast(1)).coerceIn(0f, 1f)
     val mpFrac = (rp.state.mp.toFloat() / rp.state.maxMp.coerceAtLeast(1)).coerceIn(0f, 1f)
+    var expanded by remember(rp.title) { mutableStateOf(false) }
 
-    Surface(
-        shape = RoundedCornerShape(16.dp),
-        color = c.surface,
-        border = BorderStroke(1.dp, c.accent.copy(alpha = 0.35f)),
+    val summaryTail = if (leadNpc != null) "❤${leadNpc.affinity}" else "🪙${rp.state.gold}"
+
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 6.dp),
+            .background(c.surfaceSoft.copy(alpha = 0.72f)),
     ) {
-        Column(
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(Brush.horizontalGradient(listOf(c.primarySoft.copy(alpha = 0.55f), c.accentSoft.copy(alpha = 0.45f))))
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+                .clickable { expanded = !expanded }
+                .padding(horizontal = 12.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text(
-                    text = "📍 ${rp.state.scene.ifBlank { rp.title }}",
-                    color = c.ink,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
-                GuButton(onClick = onQuickSave, compact = true, variant = GuButtonVariant.SUBTLE) {
-                    Icon(Icons.Default.Save, contentDescription = strings.rp.quickSaveBtn, modifier = Modifier.size(14.dp))
-                }
-                GuButton(onClick = onOpenStudio, compact = true, variant = GuButtonVariant.HONEY) {
-                    Icon(Icons.Default.Casino, contentDescription = null, modifier = Modifier.size(14.dp))
-                    Spacer(Modifier.size(4.dp))
-                    Text(strings.rp.studioBtn, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                }
-            }
+            Text(
+                text = "📍${rp.state.scene.ifBlank { rp.title }} · HP ${rp.state.hp}/${rp.state.maxHp} · $summaryTail",
+                color = c.muted,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = strings.rp.studioBtn,
+                color = c.accent,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier
+                    .clickable(onClick = onOpenStudio)
+                    .padding(horizontal = 6.dp, vertical = 2.dp),
+            )
+            Icon(
+                imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                contentDescription = null,
+                tint = c.muted,
+                modifier = Modifier.size(16.dp),
+            )
+        }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+        AnimatedVisibility(visible = expanded) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 12.dp, end = 12.dp, bottom = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(
-                        text = "HP ${rp.state.hp}/${rp.state.maxHp}",
-                        color = c.muted,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    LinearProgressIndicator(
-                        progress = { hpFrac },
-                        modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(999.dp)),
-                        color = Color(0xFFEF4444),
-                        trackColor = c.surfaceSoft,
-                    )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            text = "HP ${rp.state.hp}/${rp.state.maxHp}",
+                            color = c.muted,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        LinearProgressIndicator(
+                            progress = { hpFrac },
+                            modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(999.dp)),
+                            color = Color(0xFFEF4444),
+                            trackColor = c.surface,
+                        )
+                    }
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            text = "MP ${rp.state.mp}/${rp.state.maxMp}",
+                            color = c.muted,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        LinearProgressIndicator(
+                            progress = { mpFrac },
+                            modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(999.dp)),
+                            color = c.primary,
+                            trackColor = c.surface,
+                        )
+                    }
+                    if (leadNpc != null) {
+                        GuBadge("❤ ${leadNpc.name} ${leadNpc.affinity}", variant = GuBadgeVariant.HONEY)
+                    } else {
+                        GuBadge("🪙 ${rp.state.gold}", variant = GuBadgeVariant.NEUTRAL)
+                    }
                 }
-                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(
-                        text = "MP ${rp.state.mp}/${rp.state.maxMp}",
-                        color = c.muted,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    LinearProgressIndicator(
-                        progress = { mpFrac },
-                        modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(999.dp)),
-                        color = c.primary,
-                        trackColor = c.surfaceSoft,
-                    )
-                }
-                if (leadNpc != null) {
-                    GuBadge(
-                        text = "❤ ${leadNpc.name} ${leadNpc.affinity}",
-                        variant = GuBadgeVariant.HONEY,
-                    )
-                } else {
-                    GuBadge(
-                        text = "🪙 ${rp.state.gold}",
-                        variant = GuBadgeVariant.NEUTRAL,
-                    )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    GuButton(onClick = onQuickSave, compact = true, variant = GuButtonVariant.SUBTLE) {
+                        Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.size(4.dp))
+                        Text(strings.rp.quickSaveBtn, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                    GuButton(onClick = onOpenStudio, compact = true, variant = GuButtonVariant.HONEY) {
+                        Icon(Icons.Default.Casino, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.size(4.dp))
+                        Text(strings.rp.studioBtn, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
                 }
             }
         }
+        HorizontalDivider(color = c.border.copy(alpha = 0.6f))
     }
 }
 

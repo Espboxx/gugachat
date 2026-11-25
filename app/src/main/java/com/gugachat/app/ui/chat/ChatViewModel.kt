@@ -333,8 +333,8 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     fun selectConversation(convId: String) {
         _activeConvId.value = convId
         val conv = _ui.value.conversations.firstOrNull { it.id == convId }
+        _ui.update { it.copy(activeConversation = conv ?: it.activeConversation, draftDiceRoll = null) }
         if (conv != null) {
-            _ui.update { it.copy(activeConversation = conv) }
             if (conv.groupId != null && conv.groupId != _ui.value.selectedGroupId) {
                 selectGroup(conv.groupId)
             } else if (!conv.model.isNullOrBlank()) {
@@ -356,6 +356,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                 updatedAt = now,
             )
             chatDao.upsertConversation(conv.toEntity())
+            _ui.update { it.copy(draftDiceRoll = null) }
             _activeConvId.value = conv.id
         }
     }
@@ -466,6 +467,8 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
 
             if (overrideText == null) {
                 _ui.update { it.copy(draftText = "", draftAttachments = emptyList(), draftDiceRoll = null) }
+            } else {
+                _ui.update { it.copy(draftDiceRoll = null) }
             }
             launchCompletionForConversation(updatedConv)
         }
@@ -1096,6 +1099,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             chatDao.upsertConversation(conv.toEntity())
             chatDao.upsertNovelChapter(ch1.toEntity())
             if (lore.isNotEmpty()) chatDao.upsertNovelLoreList(lore.map { it.toEntity() })
+            _ui.update { it.copy(draftDiceRoll = null) }
             _activeConvId.value = convId
         }
     }
@@ -1331,6 +1335,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             val normalizedLore = importedLore.map { it.copy(conversationId = convId) }
             chatDao.upsertNovelLoreList(normalizedLore.map { it.toEntity() })
         }
+        _ui.update { it.copy(draftDiceRoll = null) }
         _activeConvId.value = convId
     }
 

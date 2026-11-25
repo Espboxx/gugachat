@@ -163,7 +163,7 @@ val ZhStrings = AppStrings(
         starterMemoryTitle = "结合记忆协作",
         starterMemoryDesc = "稳定前缀注入个人偏好与项目背景，保护 Prompt Cache",
         starterMemoryPrompt = "结合我记忆库里的技术栈与偏好，帮我评估下面这个需求的最简落地方案：",
-        composerPlaceholder = "输入消息…（长按消息可复制/跳过/重发）",
+        composerPlaceholder = "输入消息…",
         send = "发送",
         stop = "停止",
         stoppedNote = "已停止生成",
@@ -330,6 +330,8 @@ val ZhStrings = AppStrings(
         freeQuotaExhaustedUsd = "已用完 $0/{limit}",
         freeQuotaAvailableBadge = "🎁 {count} 个免费模型",
         freeQuotaMobileHint = "{count} 免费",
+        moreActions = "更多操作",
+        composerTools = "工具与开关",
     ),
     novel = NovelStrings(
         badge = "小说",

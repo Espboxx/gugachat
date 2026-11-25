@@ -163,7 +163,7 @@ val EnStrings = AppStrings(
         starterMemoryTitle = "Memory-Aware Planning",
         starterMemoryDesc = "Stable prefix injects preferences & stack while protecting prompt cache",
         starterMemoryPrompt = "Using my saved tech stack and preferences, evaluate the cleanest way to implement this feature:",
-        composerPlaceholder = "Type a message… (long-press messages for actions)",
+        composerPlaceholder = "Message…",
         send = "Send",
         stop = "Stop",
         stoppedNote = "Generation stopped",
@@ -330,6 +330,8 @@ val EnStrings = AppStrings(
         freeQuotaExhaustedUsd = "$0/{limit} free",
         freeQuotaAvailableBadge = "🎁 {count} free today",
         freeQuotaMobileHint = "{count} free",
+        moreActions = "More actions",
+        composerTools = "Tools & toggles",
     ),
     novel = NovelStrings(
         badge = "Novel",
