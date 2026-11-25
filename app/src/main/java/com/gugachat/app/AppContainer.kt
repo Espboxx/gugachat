@@ -3,6 +3,7 @@ package com.gugachat.app
 import android.content.Context
 import coil.ImageLoader
 import com.gugachat.app.core.i18n.AppLanguage
+import com.gugachat.app.core.storage.ApiProviderStore
 import com.gugachat.app.core.storage.AppSettings
 import com.gugachat.app.core.storage.SecureTokenStore
 import com.gugachat.app.core.storage.SettingsStore
@@ -13,12 +14,14 @@ import com.gugachat.app.data.api.ApiClient
 import com.gugachat.app.data.api.ApiException
 import com.gugachat.app.data.api.AppJson
 import com.gugachat.app.data.api.AuthApi
+import com.gugachat.app.data.api.DirectApiClient
 import com.gugachat.app.data.api.OnlineChatApi
 import com.gugachat.app.data.api.OnlineImagesApi
 import com.gugachat.app.data.api.PublicSettingsDto
 import com.gugachat.app.data.api.UserDto
 import com.gugachat.app.data.local.AppDatabase
 import com.gugachat.app.data.local.AttachmentFileStore
+import com.gugachat.app.data.local.DirectImageStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -32,7 +35,10 @@ import kotlinx.coroutines.launch
 sealed interface AuthSessionState {
     data object Checking : AuthSessionState
     data object LoggedOut : AuthSessionState
-    data class LoggedIn(val user: UserDto) : AuthSessionState
+    data class LoggedIn(
+        val user: UserDto,
+        val isDirectApiOnly: Boolean = false,
+    ) : AuthSessionState
 }
 
 class AppContainer(context: Context) {
@@ -41,8 +47,10 @@ class AppContainer(context: Context) {
 
     val settingsStore = SettingsStore(appContext)
     val tokenStore = SecureTokenStore(appContext)
+    val apiProviderStore = ApiProviderStore(appContext)
     val database: AppDatabase = AppDatabase.create(appContext)
     val attachmentStore = AttachmentFileStore(appContext, database.attachmentDao())
+    val directImageStore = DirectImageStore(appContext)
     val toastController = ToastController()
 
     val settingsState: StateFlow<AppSettings> = settingsStore.settingsFlow.stateIn(
@@ -69,9 +77,25 @@ class AppContainer(context: Context) {
         },
     )
 
+    val directApiClient = DirectApiClient(
+        standardClient = apiClient.standardClient,
+        streamingClient = apiClient.streamingClient,
+        parseHttpError = apiClient::parseHttpError,
+    )
+
     val authApi = AuthApi(apiClient, tokenStore)
-    val onlineChatApi = OnlineChatApi(apiClient)
-    val onlineImagesApi = OnlineImagesApi(apiClient)
+    val onlineChatApi = OnlineChatApi(
+        client = apiClient,
+        providerLookup = { id -> apiProviderStore.findBySyntheticId(id) },
+        directClient = directApiClient,
+    )
+    val onlineImagesApi = OnlineImagesApi(
+        client = apiClient,
+        providerLookup = { id -> apiProviderStore.findBySyntheticId(id) },
+        directClient = directApiClient,
+        directImageStore = directImageStore,
+        isDirectOnlyProvider = { (_authSession.value as? AuthSessionState.LoggedIn)?.isDirectApiOnly == true },
+    )
     val imageLoader: ImageLoader = apiClient.createAuthenticatedImageLoader(appContext)
 
     init {
@@ -84,7 +108,14 @@ class AppContainer(context: Context) {
         val current = settingsStore.currentSettings()
         val snap = tokenStore.readSnapshot()
         if (current.serverUrl.isBlank() || snap.accessToken.isNullOrBlank()) {
-            _authSession.value = AuthSessionState.LoggedOut
+            if (current.directModeActive && apiProviderStore.enabledProviders().isNotEmpty()) {
+                _authSession.value = AuthSessionState.LoggedIn(
+                    user = directModeUser(),
+                    isDirectApiOnly = true,
+                )
+            } else {
+                _authSession.value = AuthSessionState.LoggedOut
+            }
             return
         }
 
@@ -92,7 +123,7 @@ class AppContainer(context: Context) {
             runCatching { AppJson.decodeFromString(UserDto.serializer(), raw) }.getOrNull()
         }
         if (cachedUser != null) {
-            _authSession.value = AuthSessionState.LoggedIn(cachedUser)
+            _authSession.value = AuthSessionState.LoggedIn(cachedUser, isDirectApiOnly = false)
         }
 
         runCatching {
@@ -102,7 +133,7 @@ class AppContainer(context: Context) {
 
         try {
             val freshUser = authApi.getCurrentUser()
-            _authSession.value = AuthSessionState.LoggedIn(freshUser)
+            _authSession.value = AuthSessionState.LoggedIn(freshUser, isDirectApiOnly = false)
         } catch (e: ApiException) {
             if (e.status == 401 || _authSession.value !is AuthSessionState.LoggedIn) {
                 tokenStore.clear()
@@ -116,8 +147,22 @@ class AppContainer(context: Context) {
     }
 
     fun setLoggedIn(user: UserDto) {
-        _authSession.value = AuthSessionState.LoggedIn(user)
+        scope.launch { settingsStore.setDirectModeActive(false) }
+        _authSession.value = AuthSessionState.LoggedIn(user, isDirectApiOnly = false)
     }
+
+    fun enterDirectApiMode() {
+        scope.launch { settingsStore.setDirectModeActive(true) }
+        _authSession.value = AuthSessionState.LoggedIn(user = directModeUser(), isDirectApiOnly = true)
+    }
+
+    private fun directModeUser(): UserDto = UserDto(
+        id = 0L,
+        username = "Direct API",
+        email = "Custom Endpoints",
+        role = "direct",
+        concurrency = apiProviderStore.enabledProviders().size.coerceAtLeast(1),
+    )
 
     fun setPublicSettings(settings: PublicSettingsDto) {
         _publicSettings.value = settings
@@ -128,7 +173,11 @@ class AppContainer(context: Context) {
     }
 
     suspend fun logout() {
-        authApi.logout()
+        val isDirect = (_authSession.value as? AuthSessionState.LoggedIn)?.isDirectApiOnly == true
+        settingsStore.setDirectModeActive(false)
+        if (!isDirect) {
+            authApi.logout()
+        }
         _authSession.value = AuthSessionState.LoggedOut
     }
 

@@ -3,6 +3,7 @@ package com.gugachat.app.core.storage
 import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -27,6 +28,7 @@ data class AppSettings(
     val lastChatModel: String = "",
     val lastImageKeyId: Long = 0L,
     val lastImageModel: String = "",
+    val directModeActive: Boolean = false,
 )
 
 class SettingsStore(private val context: Context) {
@@ -40,6 +42,7 @@ class SettingsStore(private val context: Context) {
         val LAST_CHAT_MODEL = stringPreferencesKey("last_chat_model")
         val LAST_IMAGE_KEY_ID = longPreferencesKey("last_image_key_id")
         val LAST_IMAGE_MODEL = stringPreferencesKey("last_image_model")
+        val DIRECT_MODE_ACTIVE = booleanPreferencesKey("direct_mode_active")
     }
 
     val settingsFlow: Flow<AppSettings> = context.settingsDataStore.data.map { prefs ->
@@ -53,6 +56,7 @@ class SettingsStore(private val context: Context) {
             lastChatModel = prefs[Keys.LAST_CHAT_MODEL].orEmpty(),
             lastImageKeyId = prefs[Keys.LAST_IMAGE_KEY_ID] ?: 0L,
             lastImageModel = prefs[Keys.LAST_IMAGE_MODEL].orEmpty(),
+            directModeActive = prefs[Keys.DIRECT_MODE_ACTIVE] ?: false,
         )
     }
 
@@ -92,5 +96,9 @@ class SettingsStore(private val context: Context) {
             it[Keys.LAST_IMAGE_KEY_ID] = keyId
             it[Keys.LAST_IMAGE_MODEL] = model
         }
+    }
+
+    suspend fun setDirectModeActive(active: Boolean) {
+        context.settingsDataStore.edit { it[Keys.DIRECT_MODE_ACTIVE] = active }
     }
 }

@@ -1,20 +1,32 @@
 package com.gugachat.app.data.api
 
+import com.gugachat.app.core.storage.ApiProviderConfig
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import okhttp3.RequestBody.Companion.toRequestBody
 
-class OnlineChatApi(private val client: ApiClient) {
+class OnlineChatApi(
+    private val client: ApiClient,
+    private val providerLookup: ((Long) -> ApiProviderConfig?)? = null,
+    private val directClient: DirectApiClient? = null,
+) {
     suspend fun capabilities(): OnlineChatCapabilitiesDto =
         client.get("/online-chat/capabilities", OnlineChatCapabilitiesDto.serializer())
 
-    suspend fun models(groupId: Long): List<OnlineChatModelDto> =
-        client.get(
+    suspend fun models(groupId: Long): List<OnlineChatModelDto> {
+        if (ApiProviderConfig.isCustomProviderId(groupId)) {
+            val provider = providerLookup?.invoke(groupId)
+                ?: throw ApiException(404, "PROVIDER_NOT_FOUND", "Custom API provider not found")
+            val direct = directClient ?: throw IllegalStateException("DirectApiClient not configured")
+            return direct.listChatModels(provider)
+        }
+        return client.get(
             path = "/online-chat/models",
             queryParams = mapOf("group_id" to groupId.toString()),
             deserializer = OnlineChatModelsResponseDto.serializer(),
         ).models
+    }
 
     suspend fun streamCompletion(
         request: OnlineChatCompletionRequestDto,
@@ -22,6 +34,12 @@ class OnlineChatApi(private val client: ApiClient) {
         onReasoning: (String) -> Unit = {},
         onUsage: (ChatTokenUsageDto) -> Unit = {},
     ): CompletionResult {
+        if (ApiProviderConfig.isCustomProviderId(request.group_id)) {
+            val provider = providerLookup?.invoke(request.group_id)
+                ?: throw ApiException(404, "PROVIDER_NOT_FOUND", "Custom API provider not found")
+            val direct = directClient ?: throw IllegalStateException("DirectApiClient not configured")
+            return direct.streamChat(provider, request, onDelta, onReasoning, onUsage)
+        }
         val payloadJson = AppJson.encodeToString(
             OnlineChatCompletionRequestDto.serializer(),
             request.copy(stream = true),
@@ -97,6 +115,12 @@ class OnlineChatApi(private val client: ApiClient) {
     }
 
     suspend fun completeOnce(request: OnlineChatCompletionRequestDto): CompletionResult {
+        if (ApiProviderConfig.isCustomProviderId(request.group_id)) {
+            val provider = providerLookup?.invoke(request.group_id)
+                ?: throw ApiException(404, "PROVIDER_NOT_FOUND", "Custom API provider not found")
+            val direct = directClient ?: throw IllegalStateException("DirectApiClient not configured")
+            return direct.completeChatOnce(provider, request)
+        }
         val payloadJson = AppJson.encodeToString(
             OnlineChatCompletionRequestDto.serializer(),
             request.copy(stream = false),
