@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.gugachat.app.AppContainer
 import com.gugachat.app.AuthSessionState
 import com.gugachat.app.core.i18n.AppLanguage
+import com.gugachat.app.core.i18n.fmt
 import com.gugachat.app.core.storage.AppSettings
 import com.gugachat.app.core.theme.ColorMode
 import com.gugachat.app.core.theme.ThemeStyle
@@ -114,10 +115,12 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
                     contentResolver.openInputStream(uri)?.use { it.readBytes().toString(Charsets.UTF_8) }
                         ?: error("Cannot read file")
                 }
-                withContext(Dispatchers.IO) {
+                val res = withContext(Dispatchers.IO) {
                     ChatBackupCodec.importJson(container.database, raw, replaceExisting = replaceExisting)
                 }
-                container.toastController.show(successMessage)
+                container.toastController.show(
+                    successMessage.fmt("conversations" to res.conversationsCount, "memories" to res.memoriesCount),
+                )
             } catch (_: Throwable) {
                 container.toastController.show(failedMessage, isError = true)
             } finally {

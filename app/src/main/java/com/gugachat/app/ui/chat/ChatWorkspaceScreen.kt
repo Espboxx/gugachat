@@ -295,11 +295,15 @@ fun ChatWorkspaceScreen(
                 )
             }
 
+            val activeGroupName = state.groups.firstOrNull { it.id == state.selectedGroupId }?.name.orEmpty()
             ChatMessageList(
                 mode = mode,
                 messages = state.messages,
                 waterline = state.waterline,
                 hasModelSelected = !state.selectedModelId.isNullOrBlank(),
+                selectedModelLabel = state.selectedModelId.orEmpty(),
+                selectedGroupLabel = activeGroupName,
+                memoryEnabled = activeConv?.params?.enableAutoMemory ?: true,
                 isStreaming = state.isStreaming,
                 attachmentPathResolver = { id -> File(ctx.filesDir, "chat_attachments/$id.jpg") },
                 onStarterPrompt = viewModel::applyStarterPrompt,

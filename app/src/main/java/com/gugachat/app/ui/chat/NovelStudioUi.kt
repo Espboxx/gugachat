@@ -36,6 +36,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -237,7 +238,8 @@ fun NovelStudioSheet(
         if (uri != null) onExportMd(uri)
     }
 
-    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = c.page) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = c.page) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -274,6 +276,7 @@ fun NovelStudioSheet(
                         items(chapters, key = { it.id }) { ch ->
                             val isActive = ch.id == novel.activeChapterId
                             GuCard(
+                                modifier = Modifier.fillMaxWidth(),
                                 backgroundColor = if (isActive) c.primarySoft else c.surface,
                                 onClick = { onSelectChapter(ch.id) },
                             ) {
@@ -322,7 +325,7 @@ fun NovelStudioSheet(
                     } else {
                         LazyColumn(modifier = Modifier.fillMaxWidth().height(200.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             items(lore, key = { it.id }) { entry ->
-                                GuCard {
+                                GuCard(modifier = Modifier.fillMaxWidth()) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         GuBadge(entry.category, variant = GuBadgeVariant.HONEY)
                                         Spacer(Modifier.size(6.dp))
@@ -344,7 +347,7 @@ fun NovelStudioSheet(
                         modifier = Modifier.fillMaxWidth().height(340.dp).verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        GuCard {
+                        GuCard(modifier = Modifier.fillMaxWidth()) {
                             Text(strings.novel.threePathsBtn, color = c.ink, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp)
                             Spacer(Modifier.height(6.dp))
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -355,7 +358,10 @@ fun NovelStudioSheet(
                             }
                             draftOptions.forEach { opt ->
                                 Spacer(Modifier.height(8.dp))
-                                GuCard(onClick = { onAdoptDraft(opt.opening.ifBlank { opt.summary }); onDismiss() }) {
+                                GuCard(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    onClick = { onAdoptDraft(opt.opening.ifBlank { opt.summary }); onDismiss() },
+                                ) {
                                     Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
                                         Text(opt.title, color = c.ink, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                                         GuBadge(opt.tone, variant = GuBadgeVariant.BLUE)
@@ -368,7 +374,7 @@ fun NovelStudioSheet(
                             }
                         }
 
-                        GuCard {
+                        GuCard(modifier = Modifier.fillMaxWidth()) {
                             Text(strings.novel.outlineChatTitle, color = c.ink, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp)
                             Spacer(Modifier.height(6.dp))
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -383,7 +389,7 @@ fun NovelStudioSheet(
                             }
                         }
 
-                        GuCard {
+                        GuCard(modifier = Modifier.fillMaxWidth()) {
                             Text(strings.novel.polishDescribe, color = c.ink, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp)
                             Spacer(Modifier.height(6.dp))
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -402,7 +408,7 @@ fun NovelStudioSheet(
 
                 else -> {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        GuCard {
+                        GuCard(modifier = Modifier.fillMaxWidth()) {
                             Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween, Alignment.CenterVertically) {
                                 Text(strings.novel.hudToggle, color = c.ink, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                                 Switch(checked = novel.enableStatusHud, onCheckedChange = { v -> onUpdateConfig { it.copy(enableStatusHud = v) } })

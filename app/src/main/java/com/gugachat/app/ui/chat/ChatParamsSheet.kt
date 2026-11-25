@@ -17,6 +17,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -65,7 +66,8 @@ fun ChatParamsSheet(
     var enableAutoMemory by remember(params) { mutableStateOf(params.enableAutoMemory) }
     var enableAutoConsolidate by remember(params) { mutableStateOf(params.enableAutoConsolidate) }
 
-    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = c.page) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = c.page) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -81,7 +83,7 @@ fun ChatParamsSheet(
             )
 
             // Context Waterline Card
-            GuCard {
+            GuCard(modifier = Modifier.fillMaxWidth()) {
                 Text(
                     text = strings.chat.contextWaterline.fmt(
                         "used" to waterline.usedTokens,
@@ -120,7 +122,7 @@ fun ChatParamsSheet(
                 maxLines = 5,
             )
 
-            GuCard {
+            GuCard(modifier = Modifier.fillMaxWidth()) {
                 Text(
                     text = "${strings.chat.temperature}: ${((temp * 100).roundToInt() / 100f)}",
                     color = c.ink,
@@ -168,7 +170,7 @@ fun ChatParamsSheet(
                 )
             }
 
-            GuCard {
+            GuCard(modifier = Modifier.fillMaxWidth()) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,

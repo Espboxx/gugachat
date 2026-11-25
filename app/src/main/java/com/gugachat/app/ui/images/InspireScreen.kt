@@ -61,7 +61,7 @@ private val SHOWCASE_ITEMS = listOf(
     ShowcaseTemplate("t2", R.drawable.showcase_t2, "ecommerce", "1:1", 1.0f),
     ShowcaseTemplate("t3", R.drawable.showcase_t3, "landscape", "16:9", 1.45f),
     ShowcaseTemplate("t4", R.drawable.showcase_t4, "ecommerce", "4:3", 1.18f),
-    ShowcaseTemplate("t5", R.drawable.showcase_t5, "cyberpunk", "9:16", 0.72f),
+    ShowcaseTemplate("t5", R.drawable.showcase_t5, "cyber", "9:16", 0.72f),
     ShowcaseTemplate("t6", R.drawable.showcase_t6, "landscape", "21:9", 1.55f),
     ShowcaseTemplate("t7", R.drawable.showcase_t7, "portrait", "3:4", 0.78f),
     ShowcaseTemplate("t8", R.drawable.showcase_t8, "clay3d", "1:1", 1.0f),
@@ -127,7 +127,7 @@ fun InspireScreen(
                     .padding(horizontal = 12.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                listOf("all", "portrait", "anime", "ecommerce", "landscape", "cyberpunk", "clay3d").forEach { key ->
+                listOf("all", "portrait", "anime", "ecommerce", "landscape", "cyber", "clay3d").forEach { key ->
                     GuPill(
                         label = strings.images.inspireCategories[key] ?: key,
                         selected = selectedCategory == key,

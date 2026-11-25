@@ -34,6 +34,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -107,7 +108,8 @@ fun ImageCreateSheet(
         if (uri != null) onAddRefUri(uri)
     }
 
-    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = c.page) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = c.page) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -129,7 +131,7 @@ fun ImageCreateSheet(
             }
 
             // Key / Group Picker (negative IDs supported!)
-            GuCard {
+            GuCard(modifier = Modifier.fillMaxWidth()) {
                 Text(strings.images.groupLabel, color = c.ink, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(6.dp))
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -172,7 +174,7 @@ fun ImageCreateSheet(
             )
 
             // Reference Images (up to 5)
-            GuCard {
+            GuCard(modifier = Modifier.fillMaxWidth()) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -249,7 +251,7 @@ fun ImageCreateSheet(
             }
 
             if (!isNai) {
-                GuCard {
+                GuCard(modifier = Modifier.fillMaxWidth()) {
                     Text(strings.images.aspectRatio, color = c.ink, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(6.dp))
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -276,7 +278,7 @@ fun ImageCreateSheet(
             }
 
             // Count + Cost Estimate
-            GuCard {
+            GuCard(modifier = Modifier.fillMaxWidth()) {
                 Text(strings.images.countLabel, color = c.ink, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(6.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {

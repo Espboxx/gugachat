@@ -59,6 +59,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.update
@@ -114,9 +115,9 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
 
     init {
         viewModelScope.launch {
-            chatDao.observeConversations().collect { list ->
-                val domainList = list.map { it.toDomain() }
-                val curId = _activeConvId.value
+            combine(chatDao.observeConversations(), _activeConvId) { list, curId ->
+                list.map { it.toDomain() } to curId
+            }.collect { (domainList, curId) ->
                 val active = domainList.firstOrNull { it.id == curId } ?: domainList.firstOrNull()
                 if (active != null && active.id != curId) {
                     _activeConvId.value = active.id
@@ -298,6 +299,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         _activeConvId.value = convId
         val conv = _ui.value.conversations.firstOrNull { it.id == convId }
         if (conv != null) {
+            _ui.update { it.copy(activeConversation = conv) }
             if (conv.groupId != null && conv.groupId != _ui.value.selectedGroupId) {
                 selectGroup(conv.groupId)
             } else if (!conv.model.isNullOrBlank()) {

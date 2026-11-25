@@ -142,7 +142,7 @@ fun ProfileScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             val user = state.user
-            GuCard {
+            GuCard(modifier = Modifier.fillMaxWidth()) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Image(
                         painter = painterResource(id = R.drawable.img_guguga_badge),
@@ -211,7 +211,7 @@ fun ProfileScreen(
                 }
             }
 
-            GuCard {
+            GuCard(modifier = Modifier.fillMaxWidth()) {
                 Text(
                     text = strings.profile.serverLabel,
                     color = c.muted,
@@ -230,7 +230,7 @@ fun ProfileScreen(
             }
 
             // Appearance & Language Card
-            GuCard {
+            GuCard(modifier = Modifier.fillMaxWidth()) {
                 Text(strings.profile.themeStyleLabel, color = c.ink, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(6.dp))
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -304,7 +304,7 @@ fun ProfileScreen(
             }
 
             // Backup & Restore Card
-            GuCard {
+            GuCard(modifier = Modifier.fillMaxWidth()) {
                 Text(strings.profile.backupSectionTitle, color = c.ink, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold)
                 Spacer(Modifier.height(10.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {

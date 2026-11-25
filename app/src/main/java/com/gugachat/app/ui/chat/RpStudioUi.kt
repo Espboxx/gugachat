@@ -30,6 +30,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -43,6 +44,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.gugachat.app.core.i18n.LocalAppStrings
+import com.gugachat.app.core.i18n.fmt
 import com.gugachat.app.core.theme.GuBadge
 import com.gugachat.app.core.theme.GuBadgeVariant
 import com.gugachat.app.core.theme.GuButton
@@ -253,7 +255,8 @@ fun RpStudioSheet(
         if (uri != null) onExportCardJson(uri)
     }
 
-    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = c.page) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = c.page) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -294,7 +297,7 @@ fun RpStudioSheet(
                                     }
                                     GuButton(onClick = { onAdjustAffinity(npc.id, -5) }, compact = true, variant = GuButtonVariant.SUBTLE) { Text("-5", fontSize = 11.sp) }
                                     Spacer(Modifier.size(4.dp))
-                                    GuBadge("${strings.rp.npcAffinityLabel} ${npc.affinity}", variant = GuBadgeVariant.HONEY)
+                                    GuBadge(strings.rp.npcAffinityLabel.fmt("val" to npc.affinity), variant = GuBadgeVariant.HONEY)
                                     Spacer(Modifier.size(4.dp))
                                     GuButton(onClick = { onAdjustAffinity(npc.id, 5) }, compact = true, variant = GuButtonVariant.SUBTLE) { Text("+5", fontSize = 11.sp) }
                                 }

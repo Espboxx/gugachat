@@ -58,6 +58,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.rememberAsyncImagePainter
 import com.gugachat.app.core.i18n.LocalAppStrings
+import com.gugachat.app.core.i18n.fmt
 import com.gugachat.app.core.theme.GuBadge
 import com.gugachat.app.core.theme.GuBadgeVariant
 import com.gugachat.app.core.theme.GuButton
@@ -80,6 +81,9 @@ fun ChatMessageList(
     messages: List<ChatMessage>,
     waterline: ContextWaterlineSummary,
     hasModelSelected: Boolean,
+    selectedModelLabel: String = "",
+    selectedGroupLabel: String = "",
+    memoryEnabled: Boolean = true,
     isStreaming: Boolean,
     attachmentPathResolver: (String) -> File,
     onStarterPrompt: (String) -> Unit,
@@ -147,7 +151,7 @@ fun ChatMessageList(
                 .padding(horizontal = 16.dp, vertical = 18.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            GuCard(backgroundColor = c.awning) {
+            GuCard(backgroundColor = c.awning, modifier = Modifier.fillMaxWidth()) {
                 Text(
                     text = strings.chat.welcomeTitle,
                     color = c.ink,
@@ -155,8 +159,17 @@ fun ChatMessageList(
                     fontWeight = FontWeight.ExtraBold,
                 )
                 Spacer(Modifier.height(4.dp))
+                val memLabel = if (memoryEnabled) strings.chat.memoryOn else strings.chat.memoryOff
                 Text(
-                    text = if (hasModelSelected) strings.chat.welcomeSub else strings.chat.welcomePickModel,
+                    text = if (hasModelSelected) {
+                        strings.chat.welcomeSub.fmt(
+                            "model" to selectedModelLabel.ifBlank { "-" },
+                            "group" to selectedGroupLabel.ifBlank { "-" },
+                            "memoryState" to memLabel,
+                        )
+                    } else {
+                        strings.chat.welcomePickModel.fmt("group" to selectedGroupLabel.ifBlank { "-" })
+                    },
                     color = c.muted,
                     fontSize = 13.sp,
                 )
@@ -170,7 +183,7 @@ fun ChatMessageList(
                     strings.chat.starterMemoryTitle to strings.chat.starterMemoryPrompt,
                 )
                 starters.forEach { (title, prompt) ->
-                    GuCard(onClick = { onStarterPrompt(prompt) }) {
+                    GuCard(onClick = { onStarterPrompt(prompt) }, modifier = Modifier.fillMaxWidth()) {
                         Text(title, color = c.ink, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold)
                         Spacer(Modifier.height(4.dp))
                         Text(prompt, color = c.muted, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)

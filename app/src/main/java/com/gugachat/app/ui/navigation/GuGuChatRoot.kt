@@ -51,6 +51,7 @@ import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.i18n.EnStrings
 import com.gugachat.app.core.i18n.LocalAppStrings
 import com.gugachat.app.core.i18n.ZhStrings
+import com.gugachat.app.core.i18n.fmt
 import com.gugachat.app.core.theme.GuGuChatTheme
 import com.gugachat.app.core.theme.GuToastHost
 import com.gugachat.app.core.theme.LocalAppTheme
@@ -272,9 +273,12 @@ private fun ImageStudioModals(
     if (state.showPresetSheet) {
         ImagePresetSheet(
             presets = state.presets,
-            onApply = { p -> imageVm.applyPreset(p, strings.images.presetsApplied) },
-            onCreate = { name, inc -> imageVm.createPreset(name, inc, strings.images.presetsSaved) },
-            onDelete = { id -> imageVm.deletePreset(id, strings.images.presetsDeleted) },
+            onApply = { p -> imageVm.applyPreset(p, strings.images.presetsApplied.fmt("name" to p.name)) },
+            onCreate = { name, inc -> imageVm.createPreset(name, inc, strings.images.presetsSaved.fmt("name" to name)) },
+            onDelete = { id ->
+                val pName = state.presets.firstOrNull { it.id == id }?.name ?: ""
+                imageVm.deletePreset(id, strings.images.presetsDeleted.fmt("name" to pName))
+            },
             onDismiss = { imageVm.setShowPresetSheet(false) },
         )
     }

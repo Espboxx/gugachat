@@ -23,6 +23,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -81,7 +82,8 @@ fun ChatMemorySheet(
     var newLedgerTitle by remember { mutableStateOf("") }
     var newLedgerContent by remember { mutableStateOf("") }
 
-    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = c.page) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = c.page) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -96,7 +98,7 @@ fun ChatMemorySheet(
             )
 
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                GuPill(strings.chat.savedMemories, tab == 0, { tab = 0 })
+                GuPill(strings.chat.savedMemories.fmt("count" to userMemories.size), tab == 0, { tab = 0 })
                 GuPill(strings.chat.ledgerTabTitle, tab == 1, { tab = 1 })
                 GuPill(strings.chat.episodesTitle, tab == 2, { tab = 2 })
                 GuPill(strings.chat.recallTitle, tab == 3, { tab = 3 }, useHoneySelected = true)

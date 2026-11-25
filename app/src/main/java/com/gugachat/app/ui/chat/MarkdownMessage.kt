@@ -56,6 +56,7 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.gugachat.app.core.i18n.LocalAppStrings
+import com.gugachat.app.core.i18n.fmt
 import com.gugachat.app.core.theme.LocalAppTheme
 
 private sealed interface MdBlock {
@@ -100,7 +101,11 @@ fun ReasoningCard(
                 Icon(Icons.Default.Psychology, contentDescription = null, modifier = Modifier.size(15.dp), tint = c.primary)
             }
             Text(
-                text = if (isStreaming) strings.chat.thinkingRunning else strings.chat.thinkingDone,
+                text = if (isStreaming) {
+                    strings.chat.thinkingRunning
+                } else {
+                    strings.chat.thinkingDone.fmt("seconds" to kotlin.math.max(1, reasoning.length / 45))
+                },
                 color = c.muted,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Bold,

@@ -32,6 +32,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -42,6 +43,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.gugachat.app.AppContainer
+import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.i18n.LocalAppStrings
 import com.gugachat.app.core.theme.GuBadge
 import com.gugachat.app.core.theme.GuBadgeVariant
@@ -76,7 +78,8 @@ fun ImageDetailSheet(
     val c = LocalAppTheme.current.colors
     val safeIdx = imageIndex.coerceIn(0, (generation.images.size - 1).coerceAtLeast(0))
 
-    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = c.page) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = c.page) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -139,7 +142,7 @@ fun ImageDetailSheet(
                 }
             }
 
-            GuCard {
+            GuCard(modifier = Modifier.fillMaxWidth()) {
                 Text(generation.prompt, color = c.ink, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(6.dp))
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -187,7 +190,7 @@ fun ImageDetailSheet(
                 GuButton(onClick = onShare, compact = true, variant = GuButtonVariant.SECONDARY) {
                     Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(14.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("Share", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Text(if (strings.language == AppLanguage.ZH) "分享" else "Share", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
                 GuButton(onClick = onDelete, compact = true, variant = GuButtonVariant.DANGER) {
                     Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(14.dp))
