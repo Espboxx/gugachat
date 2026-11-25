@@ -66,6 +66,7 @@ fun ChatWorkspaceScreen(
     val scope = rememberCoroutineScope()
 
     var showModelSheet by remember { mutableStateOf(false) }
+    var showNewSessionSheet by remember { mutableStateOf(false) }
     var showParamsSheet by remember { mutableStateOf(false) }
     var showMemorySheet by remember { mutableStateOf(false) }
     var memorySheetInitialTab by remember { mutableIntStateOf(0) }
@@ -110,6 +111,24 @@ fun ChatWorkspaceScreen(
             onSelectModel = viewModel::selectModel,
             onSelectCustomModel = viewModel::selectCustomModel,
             onDismiss = { showModelSheet = false },
+        )
+    }
+
+    if (showNewSessionSheet) {
+        NewSessionChooserSheet(
+            onSelectChat = {
+                showNewSessionSheet = false
+                viewModel.createNewChatSession()
+            },
+            onSelectRp = {
+                showNewSessionSheet = false
+                showRpWizard = true
+            },
+            onSelectNovel = {
+                showNewSessionSheet = false
+                showNovelWizard = true
+            },
+            onDismiss = { showNewSessionSheet = false },
         )
     }
 
@@ -216,9 +235,7 @@ fun ChatWorkspaceScreen(
                 conversations = state.conversations,
                 activeConversationId = activeConv?.id,
                 onSelectConversation = viewModel::selectConversation,
-                onNewChat = { viewModel.createNewChatSession() },
-                onOpenNovelWizard = { showNovelWizard = true },
-                onOpenRpWizard = { showRpWizard = true },
+                onNewSession = { showNewSessionSheet = true },
                 onTogglePin = viewModel::togglePinConversation,
                 onDeleteConversation = viewModel::deleteConversation,
                 onCloseDrawer = { scope.launch { drawerState.close() } },
@@ -269,7 +286,7 @@ fun ChatWorkspaceScreen(
                         }
                     }
 
-                    IconButton(onClick = { viewModel.createNewChatSession() }) {
+                    IconButton(onClick = { showNewSessionSheet = true }) {
                         Icon(Icons.Default.Add, contentDescription = strings.chat.newChat, tint = c.ink)
                     }
                     IconButton(onClick = { memorySheetInitialTab = 0; showMemorySheet = true }) {

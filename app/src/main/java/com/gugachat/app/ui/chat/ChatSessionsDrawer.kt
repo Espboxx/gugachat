@@ -19,8 +19,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.AutoStories
-import androidx.compose.material.icons.filled.Casino
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Search
@@ -45,7 +43,6 @@ import com.gugachat.app.core.i18n.LocalAppStrings
 import com.gugachat.app.core.theme.GuBadge
 import com.gugachat.app.core.theme.GuBadgeVariant
 import com.gugachat.app.core.theme.GuButton
-import com.gugachat.app.core.theme.GuButtonVariant
 import com.gugachat.app.core.theme.GuConfirmDialog
 import com.gugachat.app.core.theme.GuEmptyState
 import com.gugachat.app.core.theme.GuPill
@@ -60,9 +57,7 @@ fun ChatSessionsDrawerContent(
     conversations: List<ChatConversation>,
     activeConversationId: String?,
     onSelectConversation: (String) -> Unit,
-    onNewChat: () -> Unit,
-    onOpenNovelWizard: () -> Unit,
-    onOpenRpWizard: () -> Unit,
+    onNewSession: () -> Unit,
     onTogglePin: (String) -> Unit,
     onDeleteConversation: (String) -> Unit,
     onCloseDrawer: () -> Unit,
@@ -113,30 +108,14 @@ fun ChatSessionsDrawerContent(
                 fontWeight = FontWeight.ExtraBold,
             )
 
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                GuButton(
-                    onClick = { onNewChat(); onCloseDrawer() },
-                    compact = true,
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(15.dp))
-                    Spacer(Modifier.width(3.dp))
-                    Text(strings.chat.newChat, fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1)
-                }
-                GuButton(
-                    onClick = { onOpenNovelWizard(); onCloseDrawer() },
-                    compact = true,
-                    variant = GuButtonVariant.HONEY,
-                ) {
-                    Icon(Icons.Default.AutoStories, contentDescription = strings.novel.writeNovel, modifier = Modifier.size(15.dp))
-                }
-                GuButton(
-                    onClick = { onOpenRpWizard(); onCloseDrawer() },
-                    compact = true,
-                    variant = GuButtonVariant.SECONDARY,
-                ) {
-                    Icon(Icons.Default.Casino, contentDescription = strings.rp.newBtn, modifier = Modifier.size(15.dp))
-                }
+            GuButton(
+                onClick = { onNewSession(); onCloseDrawer() },
+                compact = true,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(4.dp))
+                Text(strings.chat.newChat, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1)
             }
 
             GuTextField(
