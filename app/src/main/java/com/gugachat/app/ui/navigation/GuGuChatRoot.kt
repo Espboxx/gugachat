@@ -201,7 +201,7 @@ private fun AuthenticatedShell(container: AppContainer) {
             when (activeTab) {
                 MainTab.CHAT -> ChatWorkspaceScreen(container = container, viewModel = chatVm)
                 MainTab.STUDIO -> CreativeStudioScreen(container = container, imageViewModel = imageVm)
-                MainTab.MINE -> ProfileScreen(viewModel = profileVm)
+                MainTab.MINE -> ProfileScreen(container = container, viewModel = profileVm)
             }
         }
     }

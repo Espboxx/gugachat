@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoStories
 import androidx.compose.material.icons.filled.Casino
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.FolderZip
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.HorizontalDivider
@@ -52,6 +53,7 @@ import com.gugachat.app.core.i18n.LocalAppStrings
 import com.gugachat.app.core.theme.GuBadge
 import com.gugachat.app.core.theme.GuBadgeVariant
 import com.gugachat.app.core.theme.GuButton
+import com.gugachat.app.core.theme.GuButtonVariant
 import com.gugachat.app.core.theme.GuConfirmDialog
 import com.gugachat.app.core.theme.GuEmptyState
 import com.gugachat.app.core.theme.GuPill
@@ -69,6 +71,7 @@ fun ChatSessionsDrawerContent(
     activeConversationId: String?,
     onSelectConversation: (String) -> Unit,
     onNewSession: () -> Unit,
+    onImportDeepSeek: () -> Unit,
     onTogglePin: (String) -> Unit,
     onDeleteConversation: (String) -> Unit,
     onCloseDrawer: () -> Unit,
@@ -145,14 +148,29 @@ fun ChatSessionsDrawerContent(
                 GuBadge("${conversations.size}", variant = GuBadgeVariant.NEUTRAL)
             }
 
-            GuButton(
-                onClick = { onNewSession(); onCloseDrawer() },
-                compact = true,
+            Row(
                 modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(4.dp))
-                Text(strings.chat.newChat, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                GuButton(
+                    onClick = { onNewSession(); onCloseDrawer() },
+                    compact = true,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text(strings.chat.newChat, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                }
+                GuButton(
+                    onClick = { onImportDeepSeek(); onCloseDrawer() },
+                    compact = true,
+                    variant = GuButtonVariant.SUBTLE,
+                ) {
+                    Icon(Icons.Default.FolderZip, contentDescription = strings.chat.importDeepSeekTitle, modifier = Modifier.size(15.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text(strings.chat.importDeepSeekShort, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                }
             }
 
             GuTextField(

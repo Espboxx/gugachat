@@ -25,6 +25,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.FolderZip
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material3.Icon
@@ -46,6 +47,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.gugachat.app.AppContainer
 import com.gugachat.app.R
 import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.i18n.LocalAppStrings
@@ -62,6 +64,7 @@ import com.gugachat.app.core.theme.GuPill
 import com.gugachat.app.core.theme.LocalAppTheme
 import com.gugachat.app.core.theme.ThemeStyle
 import com.gugachat.app.core.util.FormatUtils
+import com.gugachat.app.ui.chat.DeepSeekImportSheet
 import com.gugachat.app.ui.providers.ApiProviderDraft
 import com.gugachat.app.ui.providers.ApiProviderEditorSheet
 import com.gugachat.app.ui.providers.ApiProviderManagerCard
@@ -69,6 +72,7 @@ import com.gugachat.app.ui.providers.ApiProviderManagerCard
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ProfileScreen(
+    container: AppContainer,
     viewModel: ProfileViewModel,
 ) {
     val state by viewModel.ui.collectAsStateWithLifecycle()
@@ -76,7 +80,16 @@ fun ProfileScreen(
     val c = LocalAppTheme.current.colors
     val ctx = LocalContext.current
     var showLogoutConfirm by remember { mutableStateOf(false) }
+    var showDeepSeekImport by remember { mutableStateOf(false) }
     var editingProviderDraft by remember { mutableStateOf<ApiProviderDraft?>(null) }
+
+    if (showDeepSeekImport) {
+        DeepSeekImportSheet(
+            container = container,
+            onImported = {},
+            onDismiss = { showDeepSeekImport = false },
+        )
+    }
 
     editingProviderDraft?.let { draft ->
         ApiProviderEditorSheet(
@@ -379,6 +392,17 @@ fun ProfileScreen(
                         Spacer(Modifier.width(4.dp))
                         Text(strings.profile.importBackup, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     }
+                }
+                Spacer(Modifier.height(8.dp))
+                GuButton(
+                    onClick = { showDeepSeekImport = true },
+                    compact = true,
+                    variant = GuButtonVariant.HONEY,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(Icons.Default.FolderZip, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(strings.chat.importDeepSeekTitle, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
             }
 

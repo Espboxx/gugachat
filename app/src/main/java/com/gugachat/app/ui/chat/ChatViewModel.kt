@@ -126,8 +126,13 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             combine(chatDao.observeConversations(), _activeConvId) { list, curId ->
                 list.map { it.toDomain() } to curId
             }.collect { (domainList, curId) ->
-                val active = domainList.firstOrNull { it.id == curId } ?: domainList.firstOrNull()
-                if (active != null && active.id != curId) {
+                val matched = domainList.firstOrNull { it.id == curId }
+                val active = when {
+                    matched != null -> matched
+                    curId == null -> domainList.firstOrNull()
+                    else -> _ui.value.activeConversation ?: domainList.firstOrNull()
+                }
+                if (curId == null && active != null) {
                     _activeConvId.value = active.id
                 }
                 _ui.update { it.copy(conversations = domainList, activeConversation = active) }

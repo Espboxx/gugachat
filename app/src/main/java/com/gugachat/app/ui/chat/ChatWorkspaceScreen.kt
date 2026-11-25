@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Book
 import androidx.compose.material.icons.filled.Bookmarks
 import androidx.compose.material.icons.filled.Casino
+import androidx.compose.material.icons.filled.FolderZip
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
@@ -88,6 +89,7 @@ fun ChatWorkspaceScreen(
     var showRpStudio by remember { mutableStateOf(false) }
     var showDiceDialog by remember { mutableStateOf(false) }
     var showMoreMenu by remember { mutableStateOf(false) }
+    var showDeepSeekImport by remember { mutableStateOf(false) }
 
     val imagePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia(),
@@ -241,6 +243,18 @@ fun ChatWorkspaceScreen(
         )
     }
 
+    if (showDeepSeekImport) {
+        DeepSeekImportSheet(
+            container = container,
+            onImported = { firstConvId ->
+                if (!firstConvId.isNullOrBlank()) {
+                    viewModel.selectConversation(firstConvId)
+                }
+            },
+            onDismiss = { showDeepSeekImport = false },
+        )
+    }
+
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
@@ -249,6 +263,7 @@ fun ChatWorkspaceScreen(
                 activeConversationId = activeConv?.id,
                 onSelectConversation = viewModel::selectConversation,
                 onNewSession = { showNewSessionSheet = true },
+                onImportDeepSeek = { showDeepSeekImport = true },
                 onTogglePin = viewModel::togglePinConversation,
                 onDeleteConversation = viewModel::deleteConversation,
                 onCloseDrawer = { scope.launch { drawerState.close() } },
@@ -360,6 +375,14 @@ fun ChatWorkspaceScreen(
                                     showMoreMenu = false
                                     memorySheetInitialTab = 3
                                     showMemorySheet = true
+                                },
+                            )
+                            DropdownMenuItem(
+                                leadingIcon = { Icon(Icons.Default.FolderZip, contentDescription = null, tint = c.accent, modifier = Modifier.size(18.dp)) },
+                                text = { Text(strings.chat.importDeepSeekTitle, color = c.ink, fontSize = 13.sp, fontWeight = FontWeight.Medium) },
+                                onClick = {
+                                    showMoreMenu = false
+                                    showDeepSeekImport = true
                                 },
                             )
                             if (mode == ConversationMode.novel && activeConv?.novel != null) {
