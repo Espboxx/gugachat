@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -30,18 +31,20 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bookmarks
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -56,8 +59,11 @@ import com.gugachat.app.core.theme.GuButton
 import com.gugachat.app.core.theme.GuButtonVariant
 import com.gugachat.app.core.theme.GuCard
 import com.gugachat.app.core.theme.GuPill
+import com.gugachat.app.core.theme.GuSearchableListBox
+import com.gugachat.app.core.theme.GuSelectableListRow
 import com.gugachat.app.core.theme.GuTextField
 import com.gugachat.app.core.theme.LocalAppTheme
+import com.gugachat.app.core.util.FuzzyMatcher
 import com.gugachat.app.domain.chat.FreeQuotaUtils
 import com.gugachat.app.domain.images.OnlineImageStudioUtils
 
@@ -109,11 +115,36 @@ fun ImageCreateSheet(
     }
 
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var groupSearch by remember { mutableStateOf("") }
+    var modelSearch by remember { mutableStateOf("") }
+
+    val filteredKeys = remember(state.keys, groupSearch) {
+        FuzzyMatcher.filterAndRank(state.keys, groupSearch) { key ->
+            listOf(
+                key.name,
+                key.group_name.orEmpty(),
+                if (key.has_free_quotas) "限免 free" else "",
+            )
+        }
+    }
+
+    val filteredModels = remember(state.models, modelSearch) {
+        FuzzyMatcher.filterAndRank(state.models, modelSearch) { model ->
+            listOf(
+                model.id,
+                model.provider,
+                model.parameter_schema?.upstream_model.orEmpty(),
+                if (model.free_quota != null) "限免 free" else "",
+            )
+        }
+    }
+
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = c.page) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .verticalScroll(rememberScrollState())
+                .imePadding()
                 .padding(horizontal = 16.dp, vertical = 6.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -130,37 +161,77 @@ fun ImageCreateSheet(
                 }
             }
 
-            // Key / Group Picker (negative IDs supported!)
-            GuCard(modifier = Modifier.fillMaxWidth()) {
-                Text(strings.images.groupLabel, color = c.ink, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(6.dp))
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    state.keys.forEach { key ->
-                        val suffix = if (key.has_free_quotas) " ★" else ""
-                        GuPill(
-                            label = "${key.name}$suffix",
-                            selected = key.id == state.selectedKeyId,
-                            onClick = { onSelectKey(key.id) },
-                            useHoneySelected = key.has_free_quotas,
-                        )
-                    }
-                }
+            // Key / Group & Model Fixed-Height Fuzzy-Searchable List Boxes
+            GuSearchableListBox(
+                title = strings.images.groupLabel,
+                items = filteredKeys,
+                totalCount = state.keys.size,
+                query = groupSearch,
+                onQueryChange = { groupSearch = it },
+                searchPlaceholder = strings.images.searchGroups,
+                emptyText = strings.images.noKeys,
+                noMatchText = strings.images.noMatchingGroups,
+                listHeight = 148.dp,
+                itemKey = { it.id },
+                selectedSummary = activeKey?.name,
+            ) { key ->
+                GuSelectableListRow(
+                    title = key.name,
+                    selected = key.id == state.selectedKeyId,
+                    highlightFree = key.has_free_quotas,
+                    onClick = {
+                        onSelectKey(key.id)
+                        modelSearch = ""
+                    },
+                    badges = {
+                        key.group_name?.takeIf { it.isNotBlank() && !it.equals(key.name, ignoreCase = true) }?.let { gn ->
+                            GuBadge(gn, variant = GuBadgeVariant.NEUTRAL)
+                        }
+                        if (key.has_free_quotas) {
+                            GuBadge(
+                                text = if (isZh) "★ 含限免" else "★ Free",
+                                variant = GuBadgeVariant.EMERALD,
+                            )
+                        }
+                    },
+                )
+            }
 
-                Spacer(Modifier.height(10.dp))
-                Text(strings.images.modelLabel, color = c.ink, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(6.dp))
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    state.models.forEach { model ->
-                        val fq = FreeQuotaUtils.formatFreeQuotaBadge(model.free_quota, isZh)
-                        val label = if (fq != null) "${model.id} · $fq" else model.id
-                        GuPill(
-                            label = label,
-                            selected = model.id == state.selectedModelId,
-                            onClick = { onSelectModel(model.id) },
-                            useHoneySelected = model.free_quota != null,
-                        )
-                    }
-                }
+            GuSearchableListBox(
+                title = strings.images.modelLabel,
+                items = filteredModels,
+                totalCount = state.models.size,
+                query = modelSearch,
+                onQueryChange = { modelSearch = it },
+                searchPlaceholder = strings.images.searchModels,
+                emptyText = strings.images.noModels,
+                noMatchText = strings.images.noMatchingModels,
+                listHeight = 176.dp,
+                itemKey = { it.id },
+                selectedSummary = activeModel?.id,
+            ) { model ->
+                val fq = FreeQuotaUtils.formatFreeQuotaBadge(model.free_quota, isZh)
+                GuSelectableListRow(
+                    title = model.id,
+                    selected = model.id == state.selectedModelId,
+                    highlightFree = model.free_quota != null,
+                    onClick = { onSelectModel(model.id) },
+                    badges = {
+                        if (model.provider.isNotBlank()) {
+                            GuBadge(model.provider, variant = GuBadgeVariant.BLUE)
+                        }
+                        if (fq != null) {
+                            GuBadge(
+                                text = fq,
+                                variant = if (FreeQuotaUtils.hasAvailableFreeQuota(model.free_quota)) {
+                                    GuBadgeVariant.EMERALD
+                                } else {
+                                    GuBadgeVariant.NEUTRAL
+                                },
+                            )
+                        }
+                    },
+                )
             }
 
             GuTextField(

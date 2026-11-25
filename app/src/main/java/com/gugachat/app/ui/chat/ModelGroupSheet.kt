@@ -6,21 +6,18 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
@@ -34,7 +31,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.gugachat.app.core.i18n.AppLanguage
@@ -43,10 +39,10 @@ import com.gugachat.app.core.i18n.fmt
 import com.gugachat.app.core.storage.ApiProviderConfig
 import com.gugachat.app.core.theme.GuBadge
 import com.gugachat.app.core.theme.GuBadgeVariant
-import com.gugachat.app.core.theme.GuEmptyState
-import com.gugachat.app.core.theme.GuPill
-import com.gugachat.app.core.theme.GuTextField
+import com.gugachat.app.core.theme.GuSearchableListBox
+import com.gugachat.app.core.theme.GuSelectableListRow
 import com.gugachat.app.core.theme.LocalAppTheme
+import com.gugachat.app.core.util.FuzzyMatcher
 import com.gugachat.app.data.api.OnlineChatGroupDto
 import com.gugachat.app.data.api.OnlineChatModelDto
 import com.gugachat.app.domain.chat.FreeQuotaUtils
@@ -66,12 +62,43 @@ fun ModelGroupSheet(
     val strings = LocalAppStrings.current
     val c = LocalAppTheme.current.colors
     val isZh = strings.language == AppLanguage.ZH
-    var search by remember { mutableStateOf("") }
+    var groupSearch by remember { mutableStateOf("") }
+    var modelSearch by remember { mutableStateOf("") }
 
-    val filteredModels = remember(models, search) {
-        val q = search.trim().lowercase()
-        if (q.isEmpty()) models else models.filter { it.id.lowercase().contains(q) }
+    val filteredGroups = remember(groups, groupSearch, strings.providers.protocolShortNames) {
+        FuzzyMatcher.filterAndRank(groups, groupSearch) { g ->
+            val protoTag = if (ApiProviderConfig.isCustomProviderId(g.id)) {
+                strings.providers.protocolShortNames[g.platform].orEmpty()
+            } else {
+                ""
+            }
+            listOf(
+                g.name,
+                g.platform,
+                protoTag,
+                if (g.has_free_quotas) "限免 free" else "",
+                if (g.rate_multiplier != 1.0) "${g.rate_multiplier}x" else "",
+            )
+        }
     }
+
+    val filteredModels = remember(models, modelSearch) {
+        FuzzyMatcher.filterAndRank(models, modelSearch) { m ->
+            listOf(
+                m.id,
+                if (m.supports_vision) "视觉 vision" else "",
+                if (m.supports_reasoning) "思考 reasoning" else "",
+                if (m.free_quota != null) "限免 free" else "",
+            )
+        }
+    }
+
+    val activeGroup = remember(groups, selectedGroupId) {
+        groups.firstOrNull { it.id == selectedGroupId }
+    }
+    val trimmedModelSearch = modelSearch.trim()
+    val showCustomAction = trimmedModelSearch.isNotEmpty() &&
+        models.none { it.id.equals(trimmedModelSearch, ignoreCase = true) }
 
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
@@ -82,149 +109,126 @@ fun ModelGroupSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .imePadding()
                 .padding(horizontal = 16.dp, vertical = 6.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text(
-                text = strings.chat.selectGroup,
-                color = c.ink,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.ExtraBold,
-            )
-            if (groups.isEmpty()) {
-                GuEmptyState(title = strings.chat.noGroups)
-            } else {
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    groups.forEach { g ->
-                        val protoTag = if (ApiProviderConfig.isCustomProviderId(g.id)) {
-                            strings.providers.protocolShortNames[g.platform]
-                        } else {
-                            null
-                        }
-                        val label = buildString {
-                            append(g.name)
-                            if (protoTag != null && !g.name.contains(protoTag, ignoreCase = true)) {
-                                append(" · $protoTag")
-                            }
-                            if (g.has_free_quotas) append(" ★")
-                            if (g.rate_multiplier != 1.0) append(" (${g.rate_multiplier}x)")
-                        }
-                        GuPill(
-                            label = label,
-                            selected = g.id == selectedGroupId,
-                            onClick = { onSelectGroup(g.id) },
-                            useHoneySelected = g.has_free_quotas || protoTag != null,
-                        )
-                    }
+            GuSearchableListBox(
+                title = strings.chat.selectGroup,
+                items = filteredGroups,
+                totalCount = groups.size,
+                query = groupSearch,
+                onQueryChange = { groupSearch = it },
+                searchPlaceholder = strings.chat.searchGroups,
+                emptyText = strings.chat.noGroups,
+                noMatchText = strings.chat.noMatchingGroups,
+                listHeight = 160.dp,
+                itemKey = { it.id },
+                selectedSummary = activeGroup?.name,
+            ) { g ->
+                val protoTag = if (ApiProviderConfig.isCustomProviderId(g.id)) {
+                    strings.providers.protocolShortNames[g.platform]
+                } else {
+                    null
                 }
+                GuSelectableListRow(
+                    title = g.name,
+                    selected = g.id == selectedGroupId,
+                    highlightFree = g.has_free_quotas,
+                    onClick = {
+                        onSelectGroup(g.id)
+                        modelSearch = ""
+                    },
+                    badges = {
+                        if (protoTag != null) {
+                            GuBadge(protoTag, variant = GuBadgeVariant.BLUE)
+                        } else if (g.platform.isNotBlank()) {
+                            GuBadge(g.platform, variant = GuBadgeVariant.NEUTRAL)
+                        }
+                        if (g.has_free_quotas) {
+                            GuBadge(
+                                text = if (isZh) "★ 含限免" else "★ Free",
+                                variant = GuBadgeVariant.EMERALD,
+                            )
+                        }
+                        if (g.rate_multiplier != 1.0) {
+                            GuBadge("${g.rate_multiplier}x", variant = GuBadgeVariant.HONEY)
+                        }
+                    },
+                )
             }
 
-            HorizontalDivider(color = c.border)
-
-            Text(
-                text = strings.chat.selectModel,
-                color = c.ink,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.ExtraBold,
-            )
-            GuTextField(
-                value = search,
-                onValueChange = { search = it },
-                placeholder = strings.chat.searchModels,
-                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = c.muted) },
-            )
-
-            val trimmedSearch = search.trim()
-            val showCustomAction = trimmedSearch.isNotEmpty() && models.none { it.id.equals(trimmedSearch, ignoreCase = true) }
-
-            if (filteredModels.isEmpty() && !showCustomAction) {
-                GuEmptyState(title = strings.chat.noModels)
-            } else {
-                LazyColumn(
-                    modifier = Modifier.fillMaxWidth().height(300.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    if (showCustomAction) {
-                        item(key = "__custom_model__") {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(c.accentSoft)
-                                    .border(1.dp, c.accent, RoundedCornerShape(10.dp))
-                                    .clickable {
-                                        onSelectCustomModel(trimmedSearch)
-                                        onDismiss()
-                                    }
-                                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                Icon(Icons.Default.Add, contentDescription = null, tint = c.ink)
-                                Text(
-                                    text = strings.providers.useCustomModelFormat.fmt("model" to trimmedSearch),
-                                    color = c.ink,
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Bold,
-                                )
-                            }
-                        }
-                    }
-                    items(filteredModels, key = { it.id }) { model ->
-                        val isSel = model.id == selectedModelId
-                        val quotaBadge = FreeQuotaUtils.formatFreeQuotaBadge(model.free_quota, isZh = isZh)
+            GuSearchableListBox(
+                title = strings.chat.selectModel,
+                items = filteredModels,
+                totalCount = models.size,
+                query = modelSearch,
+                onQueryChange = { modelSearch = it },
+                searchPlaceholder = strings.chat.searchModels,
+                emptyText = strings.chat.noModels,
+                noMatchText = strings.chat.noMatchingModels,
+                listHeight = 236.dp,
+                itemKey = { it.id },
+                selectedSummary = selectedModelId,
+                topExtraItem = if (showCustomAction) {
+                    {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(10.dp))
-                                .background(if (isSel) c.primarySoft else c.surface)
-                                .border(1.dp, if (isSel) c.primary else c.border, RoundedCornerShape(10.dp))
+                                .background(c.accentSoft)
+                                .border(1.dp, c.accent, RoundedCornerShape(10.dp))
                                 .clickable {
-                                    onSelectModel(model.id)
+                                    onSelectCustomModel(trimmedModelSearch)
                                     onDismiss()
                                 }
                                 .padding(horizontal = 12.dp, vertical = 10.dp),
                             verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = model.id,
-                                    color = c.ink,
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                                Spacer(Modifier.height(4.dp))
-                                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    if (quotaBadge != null) {
-                                        GuBadge(
-                                            text = quotaBadge,
-                                            variant = if (FreeQuotaUtils.hasAvailableFreeQuota(model.free_quota)) {
-                                                GuBadgeVariant.EMERALD
-                                            } else {
-                                                GuBadgeVariant.NEUTRAL
-                                            },
-                                        )
-                                    }
-                                    if (model.supports_vision) {
-                                        GuBadge(strings.chat.visionCap, variant = GuBadgeVariant.BLUE)
-                                    }
-                                    if (model.supports_reasoning) {
-                                        GuBadge(strings.chat.reasoningCap, variant = GuBadgeVariant.HONEY)
-                                    }
-                                    GuBadge("${model.context_window / 1000}K", variant = GuBadgeVariant.NEUTRAL)
-                                }
-                            }
-                            if (isSel) {
-                                Icon(Icons.Default.CheckCircle, contentDescription = null, tint = c.primary)
-                            }
+                            Icon(Icons.Default.Add, contentDescription = null, tint = c.ink)
+                            Text(
+                                text = strings.providers.useCustomModelFormat.fmt("model" to trimmedModelSearch),
+                                color = c.ink,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                            )
                         }
                     }
-                }
+                } else {
+                    null
+                },
+            ) { model ->
+                val quotaBadge = FreeQuotaUtils.formatFreeQuotaBadge(model.free_quota, isZh = isZh)
+                GuSelectableListRow(
+                    title = model.id,
+                    selected = model.id == selectedModelId,
+                    highlightFree = model.free_quota != null,
+                    onClick = {
+                        onSelectModel(model.id)
+                        onDismiss()
+                    },
+                    badges = {
+                        if (quotaBadge != null) {
+                            GuBadge(
+                                text = quotaBadge,
+                                variant = if (FreeQuotaUtils.hasAvailableFreeQuota(model.free_quota)) {
+                                    GuBadgeVariant.EMERALD
+                                } else {
+                                    GuBadgeVariant.NEUTRAL
+                                },
+                            )
+                        }
+                        if (model.supports_vision) {
+                            GuBadge(strings.chat.visionCap, variant = GuBadgeVariant.BLUE)
+                        }
+                        if (model.supports_reasoning) {
+                            GuBadge(strings.chat.reasoningCap, variant = GuBadgeVariant.HONEY)
+                        }
+                        GuBadge("${model.context_window / 1000}K", variant = GuBadgeVariant.NEUTRAL)
+                    },
+                )
             }
             Spacer(Modifier.height(14.dp))
         }
