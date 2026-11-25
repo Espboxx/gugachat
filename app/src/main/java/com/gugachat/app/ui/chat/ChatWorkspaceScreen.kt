@@ -3,17 +3,20 @@ package com.gugachat.app.ui.chat
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -24,6 +27,7 @@ import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
@@ -35,6 +39,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -44,8 +49,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.gugachat.app.AppContainer
 import com.gugachat.app.core.i18n.LocalAppStrings
 import com.gugachat.app.core.theme.GuAwningHeader
-import com.gugachat.app.core.theme.GuBadge
-import com.gugachat.app.core.theme.GuBadgeVariant
 import com.gugachat.app.core.theme.LocalAppTheme
 import com.gugachat.app.domain.chat.ChatParams
 import com.gugachat.app.domain.chat.ConversationMode
@@ -251,49 +254,74 @@ fun ChatWorkspaceScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 8.dp, vertical = 8.dp),
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    IconButton(onClick = { scope.launch { drawerState.open() } }) {
-                        Icon(Icons.Default.Menu, contentDescription = strings.chat.sessions, tint = c.ink)
+                    IconButton(onClick = { scope.launch { drawerState.open() } }, modifier = Modifier.size(40.dp)) {
+                        Icon(Icons.Default.Menu, contentDescription = strings.chat.sessions, tint = c.ink, modifier = Modifier.size(21.dp))
                     }
+
                     Column(
                         modifier = Modifier
                             .weight(1f)
-                            .clickable { showModelSheet = true },
+                            .padding(horizontal = 4.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
                         Text(
                             text = activeConv?.title ?: strings.chat.title,
-                            color = c.ink,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.ExtraBold,
+                            color = c.muted,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text(
-                                text = state.selectedModelId ?: strings.chat.selectModel,
-                                color = c.primary,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Icon(Icons.Default.KeyboardArrowDown, contentDescription = null, tint = c.primary, modifier = Modifier.size(14.dp))
-                            if (activeModel?.free_quota != null) {
-                                GuBadge("限免", variant = GuBadgeVariant.EMERALD)
+                        Spacer(Modifier.height(2.dp))
+                        Surface(
+                            onClick = { showModelSheet = true },
+                            shape = RoundedCornerShape(999.dp),
+                            color = c.surface,
+                            border = BorderStroke(1.dp, c.border),
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                            ) {
+                                if (activeModel?.free_quota != null) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(7.dp)
+                                            .clip(CircleShape)
+                                            .background(c.success),
+                                    )
+                                }
+                                Text(
+                                    text = state.selectedModelId ?: strings.chat.selectModel,
+                                    color = c.ink,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f, fill = false),
+                                )
+                                Icon(
+                                    Icons.Default.KeyboardArrowDown,
+                                    contentDescription = null,
+                                    tint = c.muted,
+                                    modifier = Modifier.size(15.dp),
+                                )
                             }
                         }
                     }
 
-                    IconButton(onClick = { showNewSessionSheet = true }) {
-                        Icon(Icons.Default.Add, contentDescription = strings.chat.newChat, tint = c.ink)
+                    IconButton(onClick = { showNewSessionSheet = true }, modifier = Modifier.size(38.dp)) {
+                        Icon(Icons.Default.Add, contentDescription = strings.chat.newChat, tint = c.ink, modifier = Modifier.size(20.dp))
                     }
-                    IconButton(onClick = { memorySheetInitialTab = 0; showMemorySheet = true }) {
-                        Icon(Icons.Default.Psychology, contentDescription = strings.chat.memoryTitle, tint = c.ink)
+                    IconButton(onClick = { memorySheetInitialTab = 0; showMemorySheet = true }, modifier = Modifier.size(38.dp)) {
+                        Icon(Icons.Default.Psychology, contentDescription = strings.chat.memoryTitle, tint = c.ink, modifier = Modifier.size(20.dp))
                     }
-                    IconButton(onClick = { showParamsSheet = true }) {
-                        Icon(Icons.Default.Tune, contentDescription = strings.chat.paramsTitle, tint = c.ink)
+                    IconButton(onClick = { showParamsSheet = true }, modifier = Modifier.size(38.dp)) {
+                        Icon(Icons.Default.Tune, contentDescription = strings.chat.paramsTitle, tint = c.ink, modifier = Modifier.size(20.dp))
                     }
                 }
             }
@@ -322,8 +350,11 @@ fun ChatWorkspaceScreen(
                 selectedModelLabel = state.selectedModelId.orEmpty(),
                 selectedGroupLabel = activeGroupName,
                 memoryEnabled = activeConv?.params?.enableAutoMemory ?: true,
+                rpConfig = activeConv?.rp,
+                novelConfig = activeConv?.novel,
                 isStreaming = state.isStreaming,
                 attachmentPathResolver = { id -> File(ctx.filesDir, "chat_attachments/$id.jpg") },
+                onOpenModelSheet = { showModelSheet = true },
                 onStarterPrompt = viewModel::applyStarterPrompt,
                 onSelectNovelChoice = { viewModel.sendMessage(overrideText = it) },
                 onSelectRpChoice = viewModel::triggerRpChoice,
@@ -344,11 +375,15 @@ fun ChatWorkspaceScreen(
                 draftRpKind = state.draftRpKind,
                 draftDiceRoll = state.draftDiceRoll,
                 waterline = state.waterline,
+                enableReasoning = activeConv?.params?.enableReasoning ?: true,
+                enableAutoMemory = activeConv?.params?.enableAutoMemory ?: true,
                 isStreaming = state.isStreaming,
                 supportsVision = activeModel?.supports_vision ?: true,
                 onDraftChange = viewModel::updateDraftText,
                 onSelectNovelKind = viewModel::setDraftNovelKind,
                 onSelectRpKind = viewModel::setDraftRpKind,
+                onToggleReasoning = viewModel::toggleActiveReasoning,
+                onToggleMemory = viewModel::toggleActiveMemory,
                 onPickImage = {
                     imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                 },

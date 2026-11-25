@@ -2,7 +2,6 @@ package com.gugachat.app.ui.navigation
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,6 +20,7 @@ import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Collections
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -160,14 +160,18 @@ private fun AuthenticatedShell(container: AppContainer) {
     Scaffold(
         containerColor = c.page,
         bottomBar = {
-            NavigationBar(
-                containerColor = c.surface,
-                tonalElevation = 0.dp,
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .border(1.dp, c.border)
+                    .background(c.surface)
                     .navigationBarsPadding(),
             ) {
+                HorizontalDivider(color = c.border)
+                NavigationBar(
+                    containerColor = c.surface,
+                    tonalElevation = 0.dp,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
                 val navColors = NavigationBarItemDefaults.colors(
                     selectedIconColor = c.primary,
                     selectedTextColor = c.primary,
@@ -210,6 +214,7 @@ private fun AuthenticatedShell(container: AppContainer) {
                     label = { Text(strings.nav.tabMine, fontSize = 11.sp, fontWeight = FontWeight.Bold) },
                     colors = navColors,
                 )
+            }
             }
         },
     ) { innerPadding ->

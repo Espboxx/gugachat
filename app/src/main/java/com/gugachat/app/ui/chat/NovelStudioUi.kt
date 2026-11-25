@@ -2,6 +2,7 @@ package com.gugachat.app.ui.chat
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -16,6 +17,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.material3.Surface
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -85,42 +88,57 @@ fun NovelStatusHudBar(
     val activeCh = chapters.firstOrNull { it.id == novel.activeChapterId } ?: chapters.lastOrNull()
     val hud = novel.currentStatus
 
-    Row(
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = c.surface,
+        border = BorderStroke(1.dp, c.accent.copy(alpha = 0.35f)),
         modifier = Modifier
             .fillMaxWidth()
-            .background(c.accentSoft)
-            .border(1.dp, c.border)
             .padding(horizontal = 12.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = "${novel.title} · ${activeCh?.title ?: strings.novel.chapterLabel}",
-                color = c.ink,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.ExtraBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            val sub = buildString {
-                if (hud != null) {
-                    if (hud.location.isNotBlank()) append("📍${hud.location} ")
-                    if (hud.time.isNotBlank()) append("🕒${hud.time} ")
-                    if (hud.conflict.isNotBlank()) append("⚡${hud.conflict}")
-                } else {
-                    append("${activeCh?.wordCount ?: 0} 字 · ${novel.genre}")
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Brush.horizontalGradient(listOf(c.accentSoft.copy(alpha = 0.65f), c.surface)))
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        text = novel.title,
+                        color = c.ink,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    GuBadge(activeCh?.title ?: strings.novel.chapterLabel, variant = GuBadgeVariant.HONEY)
                 }
+                val sub = buildString {
+                    if (hud != null) {
+                        if (hud.location.isNotBlank()) append("📍${hud.location} ")
+                        if (hud.time.isNotBlank()) append("🕒${hud.time} ")
+                        if (hud.conflict.isNotBlank()) append("⚡${hud.conflict}")
+                    } else {
+                        append("${activeCh?.wordCount ?: 0} 字 · ${novel.genre}")
+                    }
+                }
+                Text(sub, color = c.muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            Text(sub, color = c.muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
-        GuButton(onClick = onEnterPureReading, compact = true, variant = GuButtonVariant.SUBTLE) {
-            Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = strings.novel.pureReading, modifier = Modifier.size(14.dp))
-        }
-        GuButton(onClick = onOpenStudio, compact = true, variant = GuButtonVariant.HONEY) {
-            Icon(Icons.Default.Book, contentDescription = null, modifier = Modifier.size(14.dp))
-            Spacer(Modifier.size(4.dp))
-            Text(strings.novel.studioBtn, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            GuButton(onClick = onEnterPureReading, compact = true, variant = GuButtonVariant.SUBTLE) {
+                Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = strings.novel.pureReading, modifier = Modifier.size(14.dp))
+            }
+            GuButton(onClick = onOpenStudio, compact = true, variant = GuButtonVariant.HONEY) {
+                Icon(Icons.Default.Book, contentDescription = null, modifier = Modifier.size(14.dp))
+                Spacer(Modifier.size(4.dp))
+                Text(strings.novel.studioBtn, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            }
         }
     }
 }

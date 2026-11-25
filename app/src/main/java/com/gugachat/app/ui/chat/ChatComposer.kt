@@ -1,5 +1,6 @@
 package com.gugachat.app.ui.chat
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -18,16 +20,17 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AddPhotoAlternate
+import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Bookmarks
 import androidx.compose.material.icons.filled.Casino
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -35,8 +38,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.rememberAsyncImagePainter
@@ -63,11 +70,15 @@ fun ChatComposerBar(
     draftRpKind: RpInputKind,
     draftDiceRoll: RpDiceRoll?,
     waterline: ContextWaterlineSummary,
+    enableReasoning: Boolean,
+    enableAutoMemory: Boolean,
     isStreaming: Boolean,
     supportsVision: Boolean,
     onDraftChange: (String) -> Unit,
     onSelectNovelKind: (NovelInputKind) -> Unit,
     onSelectRpKind: (RpInputKind) -> Unit,
+    onToggleReasoning: () -> Unit,
+    onToggleMemory: () -> Unit,
     onPickImage: () -> Unit,
     onRemoveAttachment: (String) -> Unit,
     onOpenDiceDialog: () -> Unit,
@@ -82,63 +93,54 @@ fun ChatComposerBar(
 
     Surface(
         color = c.surface,
-        shadowElevation = 4.dp,
+        shape = RoundedCornerShape(22.dp),
+        border = BorderStroke(1.dp, c.border),
+        shadowElevation = if (theme.isDark) 2.dp else 4.dp,
         modifier = Modifier
             .fillMaxWidth()
-            .border(1.dp, c.border, RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
+            .padding(horizontal = 12.dp, vertical = 8.dp)
             .imePadding(),
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            // Top micro-strip: Mode pills or Waterline + Recall badge
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                if (mode == ConversationMode.novel) {
-                    GuPill(strings.novel.inputDirector, draftNovelKind == NovelInputKind.director, { onSelectNovelKind(NovelInputKind.director) })
-                    GuPill(strings.novel.inputContinue, draftNovelKind == NovelInputKind.`continue`, { onSelectNovelKind(NovelInputKind.`continue`) })
-                    GuPill(strings.novel.inputAction, draftNovelKind == NovelInputKind.branch, { onSelectNovelKind(NovelInputKind.branch) })
-                    GuPill(strings.novel.inputDialogue, draftNovelKind == NovelInputKind.dialogue, { onSelectNovelKind(NovelInputKind.dialogue) })
-                } else if (mode == ConversationMode.rp) {
-                    GuPill(strings.rp.inputAction, draftRpKind == RpInputKind.action, { onSelectRpKind(RpInputKind.action) })
-                    GuPill(strings.rp.inputSay, draftRpKind == RpInputKind.speech, { onSelectRpKind(RpInputKind.speech) })
-                    GuPill(strings.rp.inputThought, draftRpKind == RpInputKind.thought, { onSelectRpKind(RpInputKind.thought) })
-                    GuPill(strings.rp.inputOoc, draftRpKind == RpInputKind.gm_command, { onSelectRpKind(RpInputKind.gm_command) })
+            if (mode == ConversationMode.novel || mode == ConversationMode.rp) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (mode == ConversationMode.novel) {
+                        GuPill(strings.novel.inputDirector, draftNovelKind == NovelInputKind.director, { onSelectNovelKind(NovelInputKind.director) }, useHoneySelected = true)
+                        GuPill(strings.novel.inputContinue, draftNovelKind == NovelInputKind.`continue`, { onSelectNovelKind(NovelInputKind.`continue`) }, useHoneySelected = true)
+                        GuPill(strings.novel.inputAction, draftNovelKind == NovelInputKind.branch, { onSelectNovelKind(NovelInputKind.branch) }, useHoneySelected = true)
+                        GuPill(strings.novel.inputDialogue, draftNovelKind == NovelInputKind.dialogue, { onSelectNovelKind(NovelInputKind.dialogue) }, useHoneySelected = true)
+                    } else {
+                        GuPill(strings.rp.inputAction, draftRpKind == RpInputKind.action, { onSelectRpKind(RpInputKind.action) })
+                        GuPill(strings.rp.inputSay, draftRpKind == RpInputKind.speech, { onSelectRpKind(RpInputKind.speech) })
+                        GuPill(strings.rp.inputThought, draftRpKind == RpInputKind.thought, { onSelectRpKind(RpInputKind.thought) })
+                        GuPill(strings.rp.inputOoc, draftRpKind == RpInputKind.gm_command, { onSelectRpKind(RpInputKind.gm_command) })
+                    }
                 }
-
-                if (waterline.retrievedMemoryCount > 0) {
-                    GuBadge(
-                        text = strings.chat.retrievedMemoryCountPill.fmt("count" to waterline.retrievedMemoryCount),
-                        variant = GuBadgeVariant.HONEY,
-                        modifier = Modifier.clickable(onClick = onOpenRecallInspector),
-                    )
-                }
-                GuBadge(
-                    text = "${waterline.percentage}% (${waterline.usedTokens / 1000}K)",
-                    variant = if (waterline.exceedsModelWindow) GuBadgeVariant.DANGER else GuBadgeVariant.NEUTRAL,
-                    modifier = Modifier.clickable(onClick = onOpenRecallInspector),
-                )
             }
 
             if (draftDiceRoll != null) {
                 Row(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
+                        .clip(RoundedCornerShape(999.dp))
                         .background(c.tag)
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                        .border(1.dp, c.accent.copy(alpha = 0.4f), RoundedCornerShape(999.dp))
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     Text(
-                        text = "🎲 ${draftDiceRoll.skill ?: ""} ${draftDiceRoll.expression} = ${draftDiceRoll.total}",
+                        text = "🎲 ${draftDiceRoll.skill ?: ""} ${draftDiceRoll.expression} = ${draftDiceRoll.total}".trim(),
                         color = c.tagInk,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
@@ -158,15 +160,15 @@ fun ChatComposerBar(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     draftAttachments.forEach { att ->
-                        Box(modifier = Modifier.size(56.dp)) {
+                        Box(modifier = Modifier.size(54.dp)) {
                             Image(
                                 painter = rememberAsyncImagePainter(File(att.localPath)),
                                 contentDescription = null,
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier
-                                    .size(56.dp)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .border(1.dp, c.outline, RoundedCornerShape(8.dp)),
+                                    .size(54.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .border(1.dp, c.border, RoundedCornerShape(10.dp)),
                             )
                             Box(
                                 modifier = Modifier
@@ -184,75 +186,182 @@ fun ChatComposerBar(
                 }
             }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.Bottom,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            val placeholder = when (mode) {
+                ConversationMode.novel -> strings.novel.composerPlaceholder
+                ConversationMode.rp -> strings.rp.composerPlaceholder
+                else -> strings.chat.composerPlaceholder
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 34.dp)
+                    .padding(horizontal = 4.dp, vertical = 2.dp),
+                contentAlignment = Alignment.CenterStart,
             ) {
-                if (mode == ConversationMode.rp) {
-                    IconButton(onClick = onOpenDiceDialog, modifier = Modifier.size(40.dp)) {
-                        Icon(Icons.Default.Casino, contentDescription = strings.rp.diceBtn, tint = c.accent)
-                    }
+                if (draftText.isEmpty()) {
+                    Text(
+                        text = placeholder,
+                        color = c.muted,
+                        fontSize = 15.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
-                if (supportsVision || draftAttachments.isNotEmpty()) {
-                    IconButton(onClick = onPickImage, modifier = Modifier.size(40.dp)) {
-                        Icon(Icons.Default.AddPhotoAlternate, contentDescription = strings.chat.uploadImages, tint = c.primary)
-                    }
-                }
-
-                val placeholder = when (mode) {
-                    ConversationMode.novel -> strings.novel.composerPlaceholder
-                    ConversationMode.rp -> strings.rp.composerPlaceholder
-                    else -> strings.chat.composerPlaceholder
-                }
-                OutlinedTextField(
+                BasicTextField(
                     value = draftText,
                     onValueChange = onDraftChange,
-                    modifier = Modifier.weight(1f),
-                    placeholder = { Text(placeholder, color = c.muted, fontSize = 13.sp, maxLines = 1) },
-                    minLines = 1,
-                    maxLines = 4,
-                    shape = RoundedCornerShape(theme.inputRadius),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = c.ink,
-                        unfocusedTextColor = c.ink,
-                        focusedContainerColor = c.surfaceSoft,
-                        unfocusedContainerColor = c.surfaceSoft,
-                        focusedBorderColor = c.primary,
-                        unfocusedBorderColor = c.border,
+                    maxLines = 5,
+                    textStyle = TextStyle(
+                        color = c.ink,
+                        fontSize = 15.sp,
+                        lineHeight = 22.sp,
                     ),
+                    cursorBrush = SolidColor(c.primary),
+                    modifier = Modifier.fillMaxWidth(),
                 )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    ComposerTogglePill(
+                        label = strings.chat.deepThinkToggle,
+                        icon = Icons.Default.AutoAwesome,
+                        active = enableReasoning,
+                        onClick = onToggleReasoning,
+                    )
+                    ComposerTogglePill(
+                        label = strings.chat.memoryShort,
+                        icon = Icons.Default.Bookmarks,
+                        active = enableAutoMemory,
+                        onClick = onToggleMemory,
+                    )
+                    if (mode == ConversationMode.rp) {
+                        ComposerTogglePill(
+                            label = strings.rp.diceBtn,
+                            icon = Icons.Default.Casino,
+                            active = draftDiceRoll != null,
+                            useAccent = true,
+                            onClick = onOpenDiceDialog,
+                        )
+                    }
+                    if (waterline.retrievedMemoryCount > 0) {
+                        GuBadge(
+                            text = strings.chat.retrievedMemoryCountPill.fmt("count" to waterline.retrievedMemoryCount),
+                            variant = GuBadgeVariant.HONEY,
+                            modifier = Modifier.clickable(onClick = onOpenRecallInspector),
+                        )
+                    }
+                    GuBadge(
+                        text = "${waterline.percentage}% · ${waterline.usedTokens / 1000}K",
+                        variant = if (waterline.exceedsModelWindow) GuBadgeVariant.DANGER else GuBadgeVariant.NEUTRAL,
+                        modifier = Modifier.clickable(onClick = onOpenRecallInspector),
+                    )
+                }
+
+                if (supportsVision || draftAttachments.isNotEmpty()) {
+                    IconButton(onClick = onPickImage, modifier = Modifier.size(34.dp)) {
+                        Icon(
+                            Icons.Default.AddPhotoAlternate,
+                            contentDescription = strings.chat.uploadImages,
+                            tint = c.muted,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
+                }
 
                 if (isStreaming) {
                     Box(
                         modifier = Modifier
-                            .size(42.dp)
+                            .size(36.dp)
                             .clip(CircleShape)
                             .background(c.danger)
                             .clickable(onClick = onStop),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Icon(Icons.Default.Stop, contentDescription = strings.chat.stop, tint = Color.White, modifier = Modifier.size(20.dp))
+                        Icon(Icons.Default.Stop, contentDescription = strings.chat.stop, tint = Color.White, modifier = Modifier.size(18.dp))
                     }
                 } else {
                     val canSend = draftText.isNotBlank() || draftAttachments.isNotEmpty()
                     Box(
                         modifier = Modifier
-                            .size(42.dp)
+                            .size(36.dp)
                             .clip(CircleShape)
                             .background(if (canSend) c.primary else c.surfaceSoft)
+                            .border(
+                                width = 1.dp,
+                                color = if (canSend) c.primary else c.border,
+                                shape = CircleShape,
+                            )
                             .clickable(enabled = canSend, onClick = onSend),
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
-                            Icons.AutoMirrored.Filled.Send,
+                            Icons.Default.ArrowUpward,
                             contentDescription = strings.chat.send,
                             tint = if (canSend) Color.White else c.muted,
-                            modifier = Modifier.size(19.dp),
+                            modifier = Modifier.size(18.dp),
                         )
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ComposerTogglePill(
+    label: String,
+    icon: ImageVector,
+    active: Boolean,
+    onClick: () -> Unit,
+    useAccent: Boolean = false,
+) {
+    val c = LocalAppTheme.current.colors
+    val bg = when {
+        active && useAccent -> c.tag
+        active -> c.primarySoft
+        else -> c.surfaceSoft
+    }
+    val fg = when {
+        active && useAccent -> c.tagInk
+        active -> c.primary
+        else -> c.muted
+    }
+    val border = when {
+        active && useAccent -> c.accent.copy(alpha = 0.5f)
+        active -> c.primary.copy(alpha = 0.5f)
+        else -> c.border
+    }
+
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(999.dp),
+        color = bg,
+        border = BorderStroke(1.dp, border),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(13.dp))
+            Text(
+                text = label,
+                color = fg,
+                fontSize = 11.sp,
+                fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
+                maxLines = 1,
+            )
         }
     }
 }

@@ -81,24 +81,23 @@ fun ReasoningCard(
     var expanded by remember(isStreaming) { mutableStateOf(isStreaming) }
 
     Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
-            .background(c.surfaceSoft)
-            .border(1.dp, c.border, RoundedCornerShape(10.dp)),
+        modifier = modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Row(
             modifier = Modifier
-                .fillMaxWidth()
+                .clip(RoundedCornerShape(999.dp))
+                .background(c.surfaceSoft)
+                .border(1.dp, c.border, RoundedCornerShape(999.dp))
                 .clickable { expanded = !expanded }
-                .padding(horizontal = 10.dp, vertical = 7.dp),
+                .padding(horizontal = 10.dp, vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             if (isStreaming) {
-                CircularProgressIndicator(modifier = Modifier.size(13.dp), strokeWidth = 1.8.dp, color = c.primary)
+                CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 1.8.dp, color = c.primary)
             } else {
-                Icon(Icons.Default.Psychology, contentDescription = null, modifier = Modifier.size(15.dp), tint = c.primary)
+                Icon(Icons.Default.Psychology, contentDescription = null, modifier = Modifier.size(14.dp), tint = c.primary)
             }
             Text(
                 text = if (isStreaming) {
@@ -106,26 +105,40 @@ fun ReasoningCard(
                 } else {
                     strings.chat.thinkingDone.fmt("seconds" to kotlin.math.max(1, reasoning.length / 45))
                 },
-                color = c.muted,
+                color = c.ink,
                 fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.weight(1f),
+                fontWeight = FontWeight.SemiBold,
             )
             Icon(
                 if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
                 contentDescription = null,
                 tint = c.muted,
-                modifier = Modifier.size(16.dp),
+                modifier = Modifier.size(15.dp),
             )
         }
         AnimatedVisibility(visible = expanded && reasoning.isNotBlank()) {
-            Text(
-                text = reasoning.trim(),
-                color = c.muted,
-                fontSize = 12.sp,
-                lineHeight = 18.sp,
-                modifier = Modifier.padding(start = 10.dp, end = 10.dp, bottom = 10.dp),
-            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(IntrinsicSize.Min)
+                    .padding(start = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .width(2.dp)
+                        .fillMaxHeight()
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(c.primary.copy(alpha = 0.45f)),
+                )
+                Text(
+                    text = reasoning.trim(),
+                    color = c.muted,
+                    fontSize = 13.sp,
+                    lineHeight = 20.sp,
+                    modifier = Modifier.padding(bottom = 4.dp),
+                )
+            }
         }
     }
 }
@@ -224,14 +237,14 @@ fun MarkdownMessageText(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(Color(0xFF151C28))
-                            .border(1.dp, c.outline.copy(alpha = 0.45f), RoundedCornerShape(10.dp)),
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color(0xFF0D121D))
+                            .border(1.dp, c.border, RoundedCornerShape(12.dp)),
                     ) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .background(Color(0xFF1E2838))
+                                .background(Color(0xFF161E2E))
                                 .padding(horizontal = 10.dp, vertical = 6.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically,

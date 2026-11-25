@@ -2,9 +2,10 @@ package com.gugachat.app.ui.chat
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -14,6 +15,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.Surface
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -58,6 +65,7 @@ import com.gugachat.app.domain.chat.RpConfig
 import com.gugachat.app.domain.chat.RpPresets
 import com.gugachat.app.domain.chat.RpSaveSlot
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun RpStatusHudBar(
     rp: RpConfig,
@@ -66,40 +74,94 @@ fun RpStatusHudBar(
 ) {
     val strings = LocalAppStrings.current
     val c = LocalAppTheme.current.colors
+    val leadNpc = rp.cast.firstOrNull { !it.isPlayer }
+    val hpFrac = (rp.state.hp.toFloat() / rp.state.maxHp.coerceAtLeast(1)).coerceIn(0f, 1f)
+    val mpFrac = (rp.state.mp.toFloat() / rp.state.maxMp.coerceAtLeast(1)).coerceIn(0f, 1f)
 
-    Row(
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = c.surface,
+        border = BorderStroke(1.dp, c.accent.copy(alpha = 0.35f)),
         modifier = Modifier
             .fillMaxWidth()
-            .background(c.primarySoft)
-            .border(1.dp, c.border)
             .padding(horizontal = 12.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = "${rp.title} · ${rp.state.scene.ifBlank { rp.playerName }}",
-                color = c.ink,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.ExtraBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = "❤️ ${rp.state.hp}/${rp.state.maxHp}  ✨ ${rp.state.mp}/${rp.state.maxMp}  🪙 ${rp.state.gold}  🎒 ${rp.state.inventory.size}",
-                color = c.muted,
-                fontSize = 11.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        GuButton(onClick = onQuickSave, compact = true, variant = GuButtonVariant.SUBTLE) {
-            Icon(Icons.Default.Save, contentDescription = strings.rp.quickSaveBtn, modifier = Modifier.size(14.dp))
-        }
-        GuButton(onClick = onOpenStudio, compact = true, variant = GuButtonVariant.HONEY) {
-            Icon(Icons.Default.Casino, contentDescription = null, modifier = Modifier.size(14.dp))
-            Spacer(Modifier.size(4.dp))
-            Text(strings.rp.studioBtn, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Brush.horizontalGradient(listOf(c.primarySoft.copy(alpha = 0.55f), c.accentSoft.copy(alpha = 0.45f))))
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = "📍 ${rp.state.scene.ifBlank { rp.title }}",
+                    color = c.ink,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                GuButton(onClick = onQuickSave, compact = true, variant = GuButtonVariant.SUBTLE) {
+                    Icon(Icons.Default.Save, contentDescription = strings.rp.quickSaveBtn, modifier = Modifier.size(14.dp))
+                }
+                GuButton(onClick = onOpenStudio, compact = true, variant = GuButtonVariant.HONEY) {
+                    Icon(Icons.Default.Casino, contentDescription = null, modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.size(4.dp))
+                    Text(strings.rp.studioBtn, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        text = "HP ${rp.state.hp}/${rp.state.maxHp}",
+                        color = c.muted,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    LinearProgressIndicator(
+                        progress = { hpFrac },
+                        modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(999.dp)),
+                        color = Color(0xFFEF4444),
+                        trackColor = c.surfaceSoft,
+                    )
+                }
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        text = "MP ${rp.state.mp}/${rp.state.maxMp}",
+                        color = c.muted,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    LinearProgressIndicator(
+                        progress = { mpFrac },
+                        modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(999.dp)),
+                        color = c.primary,
+                        trackColor = c.surfaceSoft,
+                    )
+                }
+                if (leadNpc != null) {
+                    GuBadge(
+                        text = "❤ ${leadNpc.name} ${leadNpc.affinity}",
+                        variant = GuBadgeVariant.HONEY,
+                    )
+                } else {
+                    GuBadge(
+                        text = "🪙 ${rp.state.gold}",
+                        variant = GuBadgeVariant.NEUTRAL,
+                    )
+                }
+            }
         }
     }
 }

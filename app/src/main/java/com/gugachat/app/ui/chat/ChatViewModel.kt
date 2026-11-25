@@ -399,6 +399,24 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
+    fun toggleActiveReasoning() {
+        val conv = _ui.value.activeConversation
+        val params = conv?.params ?: ChatParams()
+        updateConversationParams(
+            systemPrompt = conv?.systemPrompt.orEmpty(),
+            params = params.copy(enableReasoning = !params.enableReasoning),
+        )
+    }
+
+    fun toggleActiveMemory() {
+        val conv = _ui.value.activeConversation
+        val params = conv?.params ?: ChatParams()
+        updateConversationParams(
+            systemPrompt = conv?.systemPrompt.orEmpty(),
+            params = params.copy(enableAutoMemory = !params.enableAutoMemory),
+        )
+    }
+
     fun applyStarterPrompt(prompt: String) {
         _ui.update { it.copy(draftText = prompt) }
         sendMessage()

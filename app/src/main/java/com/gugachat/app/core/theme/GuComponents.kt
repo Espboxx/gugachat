@@ -46,7 +46,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.VisualTransformation
@@ -156,35 +156,16 @@ fun GuAwningHeader(
     includeStatusBarPadding: Boolean = true,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    val theme = LocalAppTheme.current
-    val c = theme.colors
-    val stripeWidthDp = 20.dp
-    val showStripes = theme.style == ThemeStyle.GUGUGA
+    val c = LocalAppTheme.current.colors
 
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .background(c.awning)
+            .background(Brush.verticalGradient(listOf(c.awning, c.page)))
             .drawBehind {
-                if (showStripes) {
-                    val step = stripeWidthDp.toPx()
-                    var x = 0f
-                    var drawStripe = true
-                    while (x < size.width) {
-                        if (drawStripe) {
-                            drawRect(
-                                color = c.plankGrain,
-                                topLeft = Offset(x, 0f),
-                                size = Size(step, size.height),
-                            )
-                        }
-                        x += step
-                        drawStripe = !drawStripe
-                    }
-                }
-                val stroke = theme.borderWidth.toPx()
+                val stroke = 1.dp.toPx()
                 drawLine(
-                    color = if (theme.style == ThemeStyle.GUGUGA) c.outline else c.border,
+                    color = c.border,
                     start = Offset(0f, size.height - stroke / 2f),
                     end = Offset(size.width, size.height - stroke / 2f),
                     strokeWidth = stroke,
@@ -207,7 +188,7 @@ fun GuCard(
 ) {
     val theme = LocalAppTheme.current
     val c = theme.colors
-    val effectiveBorderColor = borderColor ?: if (theme.style == ThemeStyle.GUGUGA) c.outline else c.border
+    val effectiveBorderColor = borderColor ?: c.border
     val shape = RoundedCornerShape(cornerRadius)
 
     Surface(
@@ -216,7 +197,7 @@ fun GuCard(
         shape = shape,
         color = backgroundColor,
         border = BorderStroke(theme.borderWidth, effectiveBorderColor),
-        shadowElevation = if (theme.style == ThemeStyle.GUGUGA) 2.dp else 1.dp,
+        shadowElevation = if (theme.isDark) 0.dp else 1.dp,
     ) {
         Column(
             modifier = Modifier.padding(contentPadding),
@@ -259,12 +240,11 @@ fun GuButton(
         GuButtonVariant.DANGER -> Color.White
         GuButtonVariant.SUBTLE -> c.primaryDark
     }
-    val borderColor = when (variant) {
-        GuButtonVariant.PRIMARY -> if (theme.style == ThemeStyle.GUGUGA) c.outline else c.primary
-        GuButtonVariant.SECONDARY -> if (theme.style == ThemeStyle.GUGUGA) c.outline else c.border
-        GuButtonVariant.HONEY -> if (theme.style == ThemeStyle.GUGUGA) c.outline else c.accent.copy(alpha = 0.4f)
-        GuButtonVariant.DANGER -> if (theme.style == ThemeStyle.GUGUGA) c.outline else c.danger
-        GuButtonVariant.SUBTLE -> c.border
+    val borderStroke = when (variant) {
+        GuButtonVariant.PRIMARY, GuButtonVariant.DANGER -> null
+        GuButtonVariant.SECONDARY -> BorderStroke(1.dp, c.border)
+        GuButtonVariant.HONEY -> BorderStroke(1.dp, c.accent.copy(alpha = 0.45f))
+        GuButtonVariant.SUBTLE -> BorderStroke(1.dp, c.primary.copy(alpha = 0.25f))
     }
 
     Button(
@@ -274,16 +254,13 @@ fun GuButton(
         colors = ButtonDefaults.buttonColors(
             containerColor = containerColor,
             contentColor = contentColor,
-            disabledContainerColor = containerColor.copy(alpha = 0.5f),
-            disabledContentColor = contentColor.copy(alpha = 0.6f),
+            disabledContainerColor = containerColor.copy(alpha = 0.45f),
+            disabledContentColor = contentColor.copy(alpha = 0.55f),
         ),
-        border = BorderStroke(
-            width = if (variant == GuButtonVariant.SUBTLE) 1.dp else theme.borderWidth,
-            color = borderColor,
-        ),
+        border = borderStroke,
         contentPadding = contentPadding,
         elevation = ButtonDefaults.buttonElevation(
-            defaultElevation = if (theme.style == ThemeStyle.GUGUGA && variant != GuButtonVariant.SUBTLE) 2.dp else 0.dp,
+            defaultElevation = 0.dp,
             pressedElevation = 0.dp,
         ),
         modifier = modifier.heightIn(min = minHeight),
@@ -323,9 +300,8 @@ fun GuPill(
         else -> c.ink
     }
     val border = when {
-        selected && theme.style == ThemeStyle.GUGUGA -> c.outline
+        selected && useHoneySelected -> c.accent.copy(alpha = 0.65f)
         selected -> c.primary
-        theme.style == ThemeStyle.GUGUGA -> c.outline
         else -> c.border
     }
 
@@ -335,7 +311,7 @@ fun GuPill(
             .clickable(enabled = enabled, onClick = onClick),
         shape = shape,
         color = if (enabled) bg else bg.copy(alpha = 0.5f),
-        border = BorderStroke(if (theme.style == ThemeStyle.GUGUGA) 1.5.dp else 1.dp, border),
+        border = BorderStroke(1.dp, border),
     ) {
         Text(
             text = label,
@@ -451,7 +427,7 @@ fun GuTextField(
                 unfocusedContainerColor = c.surface,
                 disabledContainerColor = c.surfaceSoft,
                 focusedBorderColor = c.primary,
-                unfocusedBorderColor = if (theme.style == ThemeStyle.GUGUGA) c.outline else c.border,
+                unfocusedBorderColor = c.border,
                 errorBorderColor = c.danger,
                 cursorColor = c.primary,
             ),
