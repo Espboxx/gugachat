@@ -6,6 +6,41 @@
 
 ---
 
+## 界面预览
+
+<table>
+  <tr>
+    <td align="center" width="33%">
+      <img src="docs/screenshots/chat_dark.jpg" width="240" alt="对话与文游主界面（暗色）" /><br />
+      <sub><b>对话 / 互动文游（暗色）</b></sub>
+    </td>
+    <td align="center" width="33%">
+      <img src="docs/screenshots/rp_studio.jpg" width="240" alt="文游台与 RPG 数值面板" /><br />
+      <sub><b>文游台 · RPG 数值背包</b></sub>
+    </td>
+    <td align="center" width="33%">
+      <img src="docs/screenshots/external_import.jpg" width="240" alt="多平台外部对话与剧本导入" /><br />
+      <sub><b>多平台外部对话 / 剧本导入</b></sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="33%">
+      <img src="docs/screenshots/studio_inspire.jpg" width="240" alt="创作工坊灵感广场" /><br />
+      <sub><b>创作工坊 · 灵感画廊</b></sub>
+    </td>
+    <td align="center" width="33%">
+      <img src="docs/screenshots/image_create.jpg" width="240" alt="在线生图与 NovelAI 参数" /><br />
+      <sub><b>在线生图 · NovelAI 工坊</b></sub>
+    </td>
+    <td align="center" width="33%">
+      <img src="docs/screenshots/light_mode.jpg" width="240" alt="浅色模式自适应界面" /><br />
+      <sub><b>浅色主题自适应</b></sub>
+    </td>
+  </tr>
+</table>
+
+---
+
 ## 核心特性
 
 ### 1. 四大标准 AI API 协议与混合接入
