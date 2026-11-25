@@ -63,6 +63,7 @@ import com.gugachat.app.core.theme.GuCard
 import com.gugachat.app.core.theme.GuPill
 import com.gugachat.app.core.theme.GuTextField
 import com.gugachat.app.core.theme.LocalAppTheme
+import com.gugachat.app.ui.providers.ApiProviderFormContent
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -136,8 +137,79 @@ fun LoginScreen(
                 .padding(horizontal = 16.dp, vertical = 14.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            // Server URL Card
-            GuCard {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                GuPill(
+                    label = strings.providers.entrySub2api,
+                    selected = state.entryMode == LoginEntryMode.SUB2API,
+                    onClick = { viewModel.setEntryMode(LoginEntryMode.SUB2API) },
+                )
+                GuPill(
+                    label = strings.providers.entryDirectApi,
+                    selected = state.entryMode == LoginEntryMode.DIRECT_API,
+                    onClick = { viewModel.setEntryMode(LoginEntryMode.DIRECT_API) },
+                    useHoneySelected = true,
+                )
+            }
+
+            if (state.entryMode == LoginEntryMode.DIRECT_API) {
+                if (state.savedProvidersCount > 0) {
+                    GuCard(modifier = Modifier.fillMaxWidth()) {
+                        GuButton(
+                            onClick = viewModel::enterWithSavedProviders,
+                            variant = GuButtonVariant.HONEY,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(
+                                text = strings.providers.enterSavedBtn.fmt("count" to state.savedProvidersCount),
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                            )
+                        }
+                    }
+                }
+                GuCard(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = strings.providers.entryDirectApi,
+                        color = c.ink,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = strings.providers.directSubtitle,
+                        color = c.muted,
+                        fontSize = 12.sp,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    ApiProviderFormContent(
+                        draft = state.directDraft,
+                        isTesting = state.directTesting,
+                        testSuccessCount = state.directTestCount,
+                        testError = state.directTestError,
+                        onProtocolChange = viewModel::updateDirectProtocol,
+                        onNameChange = viewModel::updateDirectName,
+                        onBaseUrlChange = viewModel::updateDirectBaseUrl,
+                        onApiKeyChange = viewModel::updateDirectApiKey,
+                        onCustomModelsChange = viewModel::updateDirectCustomModels,
+                        onTestConnection = viewModel::testDirectConnection,
+                    )
+                    Spacer(Modifier.height(14.dp))
+                    GuButton(
+                        onClick = viewModel::saveAndEnterDirectMode,
+                        enabled = state.directDraft.baseUrl.isNotBlank() && state.directDraft.apiKey.isNotBlank(),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Icon(Icons.Default.Lock, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(strings.providers.saveAndEnterBtn, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            } else {
+                // Server URL Card
+                GuCard(modifier = Modifier.fillMaxWidth()) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -203,7 +275,7 @@ fun LoginScreen(
             }
 
             // Auth Card
-            GuCard {
+            GuCard(modifier = Modifier.fillMaxWidth()) {
                 if (state.requires2fa) {
                     Text(
                         text = strings.auth.totpTitle,
@@ -405,6 +477,7 @@ fun LoginScreen(
                         )
                     }
                 }
+            }
             }
         }
     }

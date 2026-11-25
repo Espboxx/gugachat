@@ -36,9 +36,10 @@ fun AuthenticatedImage(
     val settings by container.settingsState.collectAsStateWithLifecycle()
     val c = LocalAppTheme.current.colors
     val ctx = LocalContext.current
+    val localFile = container.directImageStore.getImageFile(generationId, imageIndex)
     val baseUrl = ServerUrlUtils.normalizeServerUrl(settings.serverUrl)
 
-    if (baseUrl.isEmpty()) {
+    if (localFile == null && baseUrl.isEmpty()) {
         Box(
             modifier = modifier.background(c.surfaceSoft),
             contentAlignment = Alignment.Center,
@@ -48,17 +49,19 @@ fun AuthenticatedImage(
         return
     }
 
-    val relPath = container.onlineImagesApi.contentEndpointPath(
-        id = generationId,
-        index = imageIndex,
-        variant = variant,
-        revision = revision,
-    )
-    val fullUrl = ServerUrlUtils.buildApiUrl(baseUrl, relPath)
+    val modelData: Any = localFile ?: run {
+        val relPath = container.onlineImagesApi.contentEndpointPath(
+            id = generationId,
+            index = imageIndex,
+            variant = variant,
+            revision = revision,
+        )
+        ServerUrlUtils.buildApiUrl(baseUrl, relPath)
+    }
 
     SubcomposeAsyncImage(
         model = ImageRequest.Builder(ctx)
-            .data(fullUrl)
+            .data(modelData)
             .crossfade(true)
             .build(),
         imageLoader = container.imageLoader,

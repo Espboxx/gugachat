@@ -1,49 +1,35 @@
-# GuGuChat — Native Android Client for sub2api-auto
+# GuGuChat — Native Android Client for sub2api-auto & Direct AI APIs
 
-GuGuChat (`com.gugachat.app`) is a native Kotlin + Jetpack Compose Android client implementing **Online Chat** and **Online Images** from `sub2api-auto`, with Room persistence, encrypted token storage, dual visual themes, bilingual UI, and MuMu emulator verification.
+GuGuChat (`com.gugachat.app`) is a native Kotlin + Jetpack Compose Android client supporting both **sub2api-auto** accounts and direct connections to the **4 standard AI API protocols** (**OpenAI Chat Completions**, **OpenAI Responses**, **Anthropic Messages / Claude**, and **Google Gemini**) with custom `Base URL`, custom `API Key`, and custom models across Online Chat and Online Images.
 
 ## Features
 
-### Authentication & Profile
-- **Flexible Sign-In**: Server URL normalization (`ServerUrlUtils`), email/password login, 2FA TOTP verification, and WebView SSO login (`WebLoginDialog`) against `/api/v1/*`.
-- **Session Security**: Single-flight bearer token refresh in `ApiClient` backed by `EncryptedSharedPreferences` (`SecureTokenStore`) and DataStore preferences (`SettingsStore`).
-- **Dual Themes & Live i18n**: Supports `GuGuGa` (playful striped awning theme) and `Classic Clean` across `System / Light / Dark` modes (`ThemeTokens`, `GuComponents`), plus instant `中文 / English` switching (`AppStrings`, `ZhStrings`, `EnStrings`).
+### 4 Standard AI API Protocols & Custom Endpoints (`ApiProviderStore`, `DirectApiClient`, `DirectProtocolCodec`)
+- **Protocols Supported**:
+  - **OpenAI Chat Completions** (`/v1/chat/completions`, `/v1/models`, `/v1/images/generations`, `/v1/images/edits`, `Authorization: Bearer ...`)
+  - **OpenAI Responses** (`/v1/responses`, reasoning summaries + usage events, `Authorization: Bearer ...`)
+  - **Anthropic Claude Messages** (`/v1/messages`, extended thinking blocks + base64 vision images, `x-api-key` + `anthropic-version: 2023-06-01`)
+  - **Google Gemini Native** (`/v1beta/models/*:streamGenerateContent?alt=sse`, `:generateContent`, `:predict` Imagen, thought parts + inline image generation, `x-goog-api-key`)
+- **Custom Base URL & API Key**: Enter directly on the Sign-In screen (`自定义 API 直连` / Direct API mode) without a `sub2api-auto` backend, or manage multiple endpoints across all 4 protocols inside **Mine -> API Endpoints** (`ApiProviderManagerCard`). API keys are encrypted locally via `EncryptedSharedPreferences`.
+- **Live Connection Test & Custom Models**: Test connectivity + auto-fetch models (`/models`), add comma-separated custom models, or type any arbitrary model name directly inside `ModelGroupSheet`.
+
+### Authentication & Profile (`ui/auth`, `ui/profile`)
+- **Dual Entry Modes**: Sign in with `sub2api-auto` (URL normalization via `ServerUrlUtils`, email/password, 2FA TOTP, WebView SSO via `WebLoginDialog`, single-flight token refresh in `ApiClient`) OR jump straight into Direct API mode.
+- **Dual Themes & Live i18n**: Supports `GuGuGa` (striped awning comic style) and `Classic Clean` across `System / Light / Dark` (`ThemeTokens`, `GuComponents`), plus instant `中文 / English` switching (`AppStrings`, `ZhStrings`, `EnStrings`).
 - **Local Backup**: Full JSON conversation, memory ledger, novel, and RP backup export/import via `ChatBackupCodec` + Room `AppDatabase`.
 
 ### Online Chat (`ui/chat`, `domain/chat`)
-- **Group & Model Picker**: `ModelGroupSheet` with free-quota group/model sorting (`FreeQuotaUtils`), vision/reasoning/context badges, and search filtering.
-- **Streaming SSE & Markdown**: `SseParser` + `OnlineChatApi` supporting OpenAI-compatible SSE chunks and reasoning fields (`reasoning_content`, `reasoning`, `thinking`), collapsible thinking timer, syntax-styled code blocks with one-tap copy, and multimodal image attachments (`AttachmentFileStore`).
-- **Context & Long-Term Memory**: Token waterline monitor (`ChatParamsSheet`), automatic/manual context compaction (`ContextCompactor`), CJK bigram/unigram BM25 + demonstrative noun memory recall (`CjkSearch`, `ContextBuilder`), user memories, ledger items, and hierarchical episode consolidation (`MemoryExtractor`, `EpisodeConsolidator`).
-- **Novel Studio (`NovelStudioUi`, `NovelEngine`, `NovelExport`)**: Genre open-book wizard, chapter manager, independent lorebook, 3-path plot drafting, AI outline co-creation, prose polishing, interactive Pure Reading overlay (`cream / parchment / night` paper + serif toggle + font sizing), and `.txt` / `.md` export.
-- **Roleplay & RPG Studio (`RpStudioUi`, `RpEngine`, `RpCardCodec`)**: Campaign presets, SillyTavern V2/V3 JSON & PNG embedded card import/export, NPC cast & affinity controls, RPG stats/inventory/quests/flags, dice roller, action choices, variant rewind (`TimelineReconciler`), and SL save slots.
+- **Group & Model Picker**: `ModelGroupSheet` blends `sub2api-auto` groups (with `FreeQuotaUtils` badges) alongside enabled custom API endpoints, and allows ad-hoc custom model selection.
+- **Streaming SSE & Markdown**: Unified streaming across `OnlineChatApi` and `DirectApiClient` with collapsible reasoning/thinking timer, syntax-styled code blocks with one-tap copy (`MarkdownMessage`), and multimodal image attachments (`AttachmentFileStore`).
+- **Context & Long-Term Memory**: Token waterline monitor (`ChatParamsSheet`), automatic/manual compaction (`ContextCompactor`), CJK bigram/unigram BM25 + demonstrative noun memory recall (`CjkSearch`, `ContextBuilder`), user memories, ledger items, and episode consolidation (`MemoryExtractor`, `EpisodeConsolidator`).
+- **Novel Studio (`NovelStudioUi`, `NovelEngine`, `NovelExport`)**: Genre open-book wizard, chapter manager, lorebook, 3-path plot drafting, outline co-creation, prose polishing, interactive Pure Reading overlay, and `.txt` / `.md` export.
+- **Roleplay & RPG Studio (`RpStudioUi`, `RpEngine`, `RpCardCodec`)**: Presets, SillyTavern V2/V3 JSON & PNG card import/export, NPC affinity, stats/inventory/quests/flags, dice roller, choices, variant rewind (`TimelineReconciler`), and SL save slots.
 
-### Online Images (`ui/images`, `domain/images`)
-- **3 Creative Tabs (`GalleryScreen`, `InspireScreen`, `ToolsScreen`)**: Works gallery with pull/status refresh, 2-column Inspiration style showcase (`showcase_t1..t8`), and quick-launch tool tiles.
-- **Creation Studio (`ImageCreateSheet`)**: Supports standard GPT-Image / multimodal keys (including negative synthetic `api_key_id` groups), up to 5 reference images (`reference_images[]`), idempotency keys (`Idempotency-Key`), parameter presets (`ImagePresetSheet`), cost estimation, and **NovelAI V4.5 / V5** parameter tuning (`NovelAIParamsPanel`).
-- **4-Mode Image Editor (`ImageEditorDialog`, `ImageMaskCanvas`, `MaskPngEncoder`)**: Text-guided Edit (`文字改图`), Variation (`生成变体`), interactive finger-painted Inpaint mask canvas with brush/eraser/undo/clear (`局部重绘`), and interactive Outpaint framing with aspect ratios, scaling, and 3x3 anchor grid (`智能扩图` / `OnlineImageCanvasMath`).
-- **Detail, Lightbox & Export**: Authenticated image loading (`AuthenticatedImage`), version lineage switching, full-screen lightbox (`ImageLightboxDialog`), MediaStore gallery save, and `FileProvider` share sheet.
-
-## Package Structure
-
-```text
-app/src/main/java/com/gugachat/app/
-├── AppContainer.kt          # App-wide singletons (OkHttp APIs, Room, DataStore, EncryptedPrefs)
-├── GuGuChatApp.kt           # Application entry point
-├── MainActivity.kt          # Compose host Activity
-├── core/                    # i18n, theme tokens & components, secure storage, utilities
-├── data/
-│   ├── api/                 # ApiClient, AuthApi, OnlineChatApi, OnlineImagesApi, SseParser, DTOs
-│   └── local/               # Room Entities, DAOs, AppDatabase, AttachmentFileStore, ChatBackupCodec
-├── domain/
-│   ├── chat/                # ContextBuilder, CjkSearch, Memory/Novel/RP engines, Card codec, Reconciler
-│   └── images/              # OnlineImageStudioUtils, OnlineImageNovelAI, CanvasMath, MaskPngEncoder
-└── ui/
-    ├── auth/                # LoginScreen, WebLoginDialog, AuthViewModel
-    ├── chat/                # ChatWorkspaceScreen, Drawer, Composer, Markdown, Memory, Novel & RP Studios
-    ├── images/              # Gallery, Inspire, Tools, CreateSheet, EditorDialog, DetailSheet, Lightbox
-    ├── navigation/          # GuGuChatRoot (Auth gate + 5-tab navigation + toast overlay)
-    └── profile/             # ProfileScreen, ProfileViewModel
-```
+### Online Images (`ui/images`, `domain/images`, `DirectImageStore`)
+- **3 Creative Tabs (`GalleryScreen`, `InspireScreen`, `ToolsScreen`)**: Unified gallery combining server generations and locally stored direct API generations (`DirectImageStore`), 2-column Inspiration showcase, and quick-launch tool tiles.
+- **Creation Studio (`ImageCreateSheet`)**: Supports `sub2api-auto` channels + direct OpenAI / Responses / Gemini image endpoints, reference images, presets (`ImagePresetSheet`), cost estimates, and **NovelAI V4.5 / V5** parameter tuning (`NovelAIParamsPanel`).
+- **4-Mode Image Editor (`ImageEditorDialog`, `ImageMaskCanvas`, `MaskPngEncoder`)**: Text Edit (`文字改图`), Variation (`生成变体`), finger-painted Inpaint mask canvas (`局部重绘`), and Outpaint canvas/anchor framing (`智能扩图` / `OnlineImageCanvasMath`).
+- **Detail, Lightbox & Export**: Authenticated remote or direct-local image loading (`AuthenticatedImage`), version lineage, lightbox zoom (`ImageLightboxDialog`), MediaStore save, and `FileProvider` share.
 
 ## Prerequisites & Build
 
@@ -66,13 +52,3 @@ export JAVA_HOME=/Library/Java/JavaVirtualMachines/jdk-17.jdk/Contents/Home
 ```
 
 Output APK: `app/build/outputs/apk/debug/app-debug.apk`
-
-## Emulator Verification (MuMu Player)
-
-Verified interactively on MuMu Player (`127.0.0.1:16384`, `1440x2560`) using `adb`:
-
-```bash
-adb connect 127.0.0.1:16384
-adb -s 127.0.0.1:16384 install -r app/build/outputs/apk/debug/app-debug.apk
-adb -s 127.0.0.1:16384 shell am start -n com.gugachat.app/.MainActivity
-```

@@ -4,7 +4,9 @@ import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.gugachat.app.AppContainer
+import com.gugachat.app.AuthSessionState
 import com.gugachat.app.data.api.ApiException
+import com.gugachat.app.data.api.DirectProtocolCodec
 import com.gugachat.app.data.api.OnlineChatCompletionRequestDto
 import com.gugachat.app.data.api.OnlineChatGroupDto
 import com.gugachat.app.data.api.OnlineChatModelDto
@@ -60,6 +62,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.update
@@ -187,6 +190,12 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             }
         }
 
+        viewModelScope.launch {
+            container.apiProviderStore.providers.drop(1).collect {
+                loadCapabilities()
+            }
+        }
+
         loadCapabilities()
     }
 
@@ -194,8 +203,19 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             _ui.update { it.copy(isLoadingCapabilities = true) }
             try {
-                val cap = container.onlineChatApi.capabilities()
-                val sortedGroups = FreeQuotaUtils.sortChatGroupsByFreeQuota(cap.groups)
+                val isDirectOnly = (container.authSession.value as? AuthSessionState.LoggedIn)?.isDirectApiOnly == true
+                val customGroups = container.apiProviderStore.enabledProviders().map { p ->
+                    OnlineChatGroupDto(
+                        id = p.syntheticGroupId,
+                        name = p.displayTitle(),
+                        platform = p.protocol.wireValue,
+                    )
+                }
+                val cap = if (isDirectOnly) null else runCatching { container.onlineChatApi.capabilities() }.getOrElse { err ->
+                    if (customGroups.isEmpty()) throw err else null
+                }
+                val serverGroups = cap?.groups?.let { FreeQuotaUtils.sortChatGroupsByFreeQuota(it) }.orEmpty()
+                val sortedGroups = serverGroups + customGroups
                 val saved = container.settingsStore.currentSettings()
                 val pickedGroupId = sortedGroups.firstOrNull { it.id == _ui.value.selectedGroupId }?.id
                     ?: sortedGroups.firstOrNull { it.id == saved.lastChatGroupId }?.id
@@ -203,7 +223,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
 
                 _ui.update {
                     it.copy(
-                        enabled = cap.enabled,
+                        enabled = (cap?.enabled ?: false) || sortedGroups.isNotEmpty(),
                         groups = sortedGroups,
                         selectedGroupId = pickedGroupId,
                         isLoadingCapabilities = false,
@@ -259,6 +279,21 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             }
             recomputeWaterline()
         }
+    }
+
+    fun selectCustomModel(modelId: String) {
+        val clean = modelId.trim()
+        if (clean.isEmpty()) return
+        val groupId = _ui.value.selectedGroupId
+        if (groupId != null && com.gugachat.app.core.storage.ApiProviderConfig.isCustomProviderId(groupId)) {
+            container.apiProviderStore.addCustomModel(groupId, clean)
+        }
+        _ui.update { state ->
+            val exists = state.models.any { it.id == clean }
+            val nextModels = if (exists) state.models else listOf(DirectProtocolCodec.inferChatModelMeta(clean)) + state.models
+            state.copy(models = nextModels)
+        }
+        selectModel(clean)
     }
 
     fun updateDraftText(text: String) {

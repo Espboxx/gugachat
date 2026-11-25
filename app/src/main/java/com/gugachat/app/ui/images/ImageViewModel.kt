@@ -14,6 +14,7 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.gugachat.app.AppContainer
+import com.gugachat.app.AuthSessionState
 import com.gugachat.app.data.api.AppJson
 import com.gugachat.app.data.api.ImageBinaryUpload
 import com.gugachat.app.data.api.OnlineImageGenerationDto
@@ -40,6 +41,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -106,6 +108,11 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
     private var pollJob: Job? = null
 
     init {
+        viewModelScope.launch {
+            container.apiProviderStore.providers.drop(1).collect {
+                loadAll()
+            }
+        }
         loadAll()
     }
 
@@ -113,8 +120,21 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             _ui.update { it.copy(isLoadingCapabilities = true) }
             try {
-                val cap = container.onlineImagesApi.capabilities()
-                val sortedKeys = FreeQuotaUtils.sortImageKeysByFreeQuota(cap.keys)
+                val isDirectOnly = (container.authSession.value as? AuthSessionState.LoggedIn)?.isDirectApiOnly == true
+                val customKeys = container.apiProviderStore.enabledProviders()
+                    .filter { it.protocol.supportsImages }
+                    .map { p ->
+                        OnlineImageKeyDto(
+                            id = p.syntheticGroupId,
+                            name = "${p.displayTitle()} · ${p.protocol.displayName}",
+                            models = container.directApiClient.listImageModels(p),
+                        )
+                    }
+                val cap = if (isDirectOnly) null else runCatching { container.onlineImagesApi.capabilities() }.getOrElse { err ->
+                    if (customKeys.isEmpty()) throw err else null
+                }
+                val serverKeys = cap?.keys?.let { FreeQuotaUtils.sortImageKeysByFreeQuota(it) }.orEmpty()
+                val sortedKeys = serverKeys + customKeys
                 val saved = container.settingsStore.currentSettings()
                 val preferredKey = sortedKeys.firstOrNull { it.id == _ui.value.selectedKeyId }
                     ?: sortedKeys.firstOrNull { it.id == saved.lastImageKeyId && saved.lastImageKeyId != 0L }
@@ -122,8 +142,8 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
 
                 _ui.update {
                     it.copy(
-                        enabled = cap.enabled,
-                        unavailableReason = cap.reason,
+                        enabled = (cap?.enabled ?: false) || sortedKeys.isNotEmpty(),
+                        unavailableReason = cap?.reason,
                         keys = sortedKeys,
                         selectedKeyId = preferredKey?.id,
                         isLoadingCapabilities = false,
@@ -132,6 +152,8 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
 
                 if (preferredKey != null) {
                     loadModelsForKey(preferredKey)
+                } else {
+                    _ui.update { it.copy(models = emptyList(), selectedModelId = null) }
                 }
                 loadPresets()
                 refreshGallery()
@@ -458,25 +480,46 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             _ui.update { it.copy(isLoadingGallery = true) }
             try {
+                val isDirectOnly = (container.authSession.value as? AuthSessionState.LoggedIn)?.isDirectApiOnly == true
+                val search = _ui.value.searchQuery.trim().ifBlank { null }
+                val filter = _ui.value.activeFilter
+                val localHist = container.directImageStore.list(search = search, filter = filter)
+
+                if (isDirectOnly) {
+                    val total = localHist.all_total ?: localHist.total
+                    container.updateImageWorksTotal(total)
+                    _ui.update {
+                        it.copy(
+                            generations = localHist.items,
+                            hasMore = false,
+                            nextCursor = null,
+                            totalWorks = total,
+                            isLoadingGallery = false,
+                        )
+                    }
+                    return@launch
+                }
+
                 val res = container.onlineImagesApi.list(
                     OnlineImageListParams(
-                        search = _ui.value.searchQuery.trim().ifBlank { null },
-                        filter = _ui.value.activeFilter,
+                        search = search,
+                        filter = filter,
                         pageSize = 24,
                     ),
                 )
-                val total = res.all_total ?: res.total
+                val merged = (localHist.items + res.items).distinctBy { it.id }
+                val total = (res.all_total ?: res.total) + (localHist.all_total ?: localHist.total)
                 container.updateImageWorksTotal(total)
                 _ui.update {
                     it.copy(
-                        generations = res.items,
+                        generations = merged,
                         hasMore = res.has_more ?: !res.next_cursor.isNullOrBlank(),
                         nextCursor = res.next_cursor,
                         totalWorks = total,
                         isLoadingGallery = false,
                     )
                 }
-                if (res.items.any { isActiveStatus(it.status) }) {
+                if (merged.any { isActiveStatus(it.status) }) {
                     ensurePollingActive()
                 }
             } catch (e: Throwable) {

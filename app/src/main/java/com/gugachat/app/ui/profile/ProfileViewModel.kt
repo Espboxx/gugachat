@@ -8,11 +8,14 @@ import com.gugachat.app.AppContainer
 import com.gugachat.app.AuthSessionState
 import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.i18n.fmt
+import com.gugachat.app.core.storage.ApiProviderConfig
 import com.gugachat.app.core.storage.AppSettings
 import com.gugachat.app.core.theme.ColorMode
 import com.gugachat.app.core.theme.ThemeStyle
+import com.gugachat.app.data.api.ApiException
 import com.gugachat.app.data.api.UserDto
 import com.gugachat.app.data.local.ChatBackupCodec
+import com.gugachat.app.ui.providers.ApiProviderDraft
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -23,8 +26,13 @@ import kotlinx.coroutines.withContext
 
 data class ProfileUiState(
     val user: UserDto? = null,
+    val isDirectApiOnly: Boolean = false,
     val settings: AppSettings = AppSettings(),
     val worksCount: Int = 0,
+    val providers: List<ApiProviderConfig> = emptyList(),
+    val providerTesting: Boolean = false,
+    val providerTestCount: Int? = null,
+    val providerTestError: String? = null,
     val isRefreshing: Boolean = false,
     val isBackupBusy: Boolean = false,
 )
@@ -33,8 +41,10 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
     private val _ui = MutableStateFlow(
         ProfileUiState(
             user = (container.authSession.value as? AuthSessionState.LoggedIn)?.user,
+            isDirectApiOnly = (container.authSession.value as? AuthSessionState.LoggedIn)?.isDirectApiOnly == true,
             settings = container.settingsState.value,
             worksCount = container.imageWorksTotal.value,
+            providers = container.apiProviderStore.currentProviders(),
         ),
     )
     val ui: StateFlow<ProfileUiState> = _ui.asStateFlow()
@@ -42,7 +52,13 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
     init {
         viewModelScope.launch {
             container.authSession.collect { session ->
-                _ui.update { it.copy(user = (session as? AuthSessionState.LoggedIn)?.user) }
+                val logged = session as? AuthSessionState.LoggedIn
+                _ui.update {
+                    it.copy(
+                        user = logged?.user,
+                        isDirectApiOnly = logged?.isDirectApiOnly == true,
+                    )
+                }
             }
         }
         viewModelScope.launch {
@@ -55,9 +71,54 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
                 _ui.update { it.copy(worksCount = count) }
             }
         }
+        viewModelScope.launch {
+            container.apiProviderStore.providers.collect { list ->
+                _ui.update { it.copy(providers = list) }
+            }
+        }
+    }
+
+    fun clearProviderTestState() {
+        _ui.update { it.copy(providerTesting = false, providerTestCount = null, providerTestError = null) }
+    }
+
+    fun testProvider(draft: ApiProviderDraft) {
+        if (_ui.value.providerTesting) return
+        viewModelScope.launch {
+            _ui.update { it.copy(providerTesting = true, providerTestCount = null, providerTestError = null) }
+            try {
+                val models = container.directApiClient.testAndFetchModels(draft.toConfig())
+                _ui.update { it.copy(providerTesting = false, providerTestCount = models.size) }
+            } catch (e: Throwable) {
+                _ui.update {
+                    it.copy(
+                        providerTesting = false,
+                        providerTestError = (e as? ApiException)?.message ?: e.message ?: "Test failed",
+                    )
+                }
+            }
+        }
+    }
+
+    fun saveProvider(draft: ApiProviderDraft) {
+        container.apiProviderStore.upsert(draft.toConfig())
+        clearProviderTestState()
+        container.toastController.show("Saved API endpoint")
+    }
+
+    fun toggleProviderEnabled(id: String, enabled: Boolean) {
+        container.apiProviderStore.setEnabled(id, enabled)
+    }
+
+    fun deleteProvider(id: String) {
+        container.apiProviderStore.delete(id)
     }
 
     fun refreshProfile() {
+        if (_ui.value.isDirectApiOnly) {
+            container.toastController.show("Direct API Mode")
+            return
+        }
         viewModelScope.launch {
             _ui.update { it.copy(isRefreshing = true) }
             try {

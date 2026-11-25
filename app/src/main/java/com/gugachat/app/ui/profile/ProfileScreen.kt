@@ -60,6 +60,9 @@ import com.gugachat.app.core.theme.GuPill
 import com.gugachat.app.core.theme.LocalAppTheme
 import com.gugachat.app.core.theme.ThemeStyle
 import com.gugachat.app.core.util.FormatUtils
+import com.gugachat.app.ui.providers.ApiProviderDraft
+import com.gugachat.app.ui.providers.ApiProviderEditorSheet
+import com.gugachat.app.ui.providers.ApiProviderManagerCard
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -71,6 +74,29 @@ fun ProfileScreen(
     val c = LocalAppTheme.current.colors
     val ctx = LocalContext.current
     var showLogoutConfirm by remember { mutableStateOf(false) }
+    var editingProviderDraft by remember { mutableStateOf<ApiProviderDraft?>(null) }
+
+    editingProviderDraft?.let { draft ->
+        ApiProviderEditorSheet(
+            initialDraft = draft,
+            isTesting = state.providerTesting,
+            testSuccessCount = state.providerTestCount,
+            testError = state.providerTestError,
+            onDraftChange = {
+                editingProviderDraft = it
+                viewModel.clearProviderTestState()
+            },
+            onTestConnection = viewModel::testProvider,
+            onSave = {
+                viewModel.saveProvider(it)
+                editingProviderDraft = null
+            },
+            onDismiss = {
+                editingProviderDraft = null
+                viewModel.clearProviderTestState()
+            },
+        )
+    }
 
     val exportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/json"),
@@ -166,10 +192,15 @@ fun ProfileScreen(
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
+                            val isDirect = state.isDirectApiOnly
                             val isAdmin = user?.role.equals("admin", ignoreCase = true)
                             GuBadge(
-                                text = if (isAdmin) strings.profile.roleAdmin else strings.profile.roleUser,
-                                variant = if (isAdmin) GuBadgeVariant.HONEY else GuBadgeVariant.BLUE,
+                                text = when {
+                                    isDirect -> strings.providers.directModeBadge
+                                    isAdmin -> strings.profile.roleAdmin
+                                    else -> strings.profile.roleUser
+                                },
+                                variant = if (isDirect || isAdmin) GuBadgeVariant.HONEY else GuBadgeVariant.BLUE,
                             )
                         }
                         if (!user?.email.isNullOrBlank()) {
@@ -211,23 +242,39 @@ fun ProfileScreen(
                 }
             }
 
-            GuCard(modifier = Modifier.fillMaxWidth()) {
-                Text(
-                    text = strings.profile.serverLabel,
-                    color = c.muted,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                )
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    text = state.settings.serverUrl.ifBlank { "-" },
-                    color = c.ink,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+            if (!state.isDirectApiOnly) {
+                GuCard(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = strings.profile.serverLabel,
+                        color = c.muted,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = state.settings.serverUrl.ifBlank { "-" },
+                        color = c.ink,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
+
+            ApiProviderManagerCard(
+                providers = state.providers,
+                onAddClick = {
+                    viewModel.clearProviderTestState()
+                    editingProviderDraft = ApiProviderDraft()
+                },
+                onEditClick = { cfg ->
+                    viewModel.clearProviderTestState()
+                    editingProviderDraft = ApiProviderDraft.fromConfig(cfg)
+                },
+                onToggleEnabled = viewModel::toggleProviderEnabled,
+                onDeleteClick = viewModel::deleteProvider,
+            )
 
             // Appearance & Language Card
             GuCard(modifier = Modifier.fillMaxWidth()) {
@@ -340,7 +387,11 @@ fun ProfileScreen(
             ) {
                 Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
-                Text(strings.profile.logout, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    if (state.isDirectApiOnly) strings.providers.switchToSub2api else strings.profile.logout,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                )
             }
 
             Spacer(Modifier.height(12.dp))

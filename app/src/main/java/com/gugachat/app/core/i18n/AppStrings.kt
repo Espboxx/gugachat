@@ -719,6 +719,37 @@ data class ImageStrings(
 )
 
 @Immutable
+data class ApiProviderStrings(
+    val entrySub2api: String,
+    val entryDirectApi: String,
+    val directSubtitle: String,
+    val protocolLabel: String,
+    val nameLabel: String,
+    val namePlaceholder: String,
+    val baseUrlLabel: String,
+    val baseUrlPlaceholder: String,
+    val apiKeyLabel: String,
+    val apiKeyPlaceholder: String,
+    val customModelsLabel: String,
+    val customModelsPlaceholder: String,
+    val testBtn: String,
+    val testingBtn: String,
+    val testOkFormat: String,
+    val saveAndEnterBtn: String,
+    val enterSavedBtn: String,
+    val managerTitle: String,
+    val managerSubtitle: String,
+    val addProviderBtn: String,
+    val editProviderTitle: String,
+    val newProviderTitle: String,
+    val emptyProviders: String,
+    val directModeBadge: String,
+    val switchToSub2api: String,
+    val useCustomModelFormat: String,
+    val protocolShortNames: Map<String, String>,
+)
+
+@Immutable
 data class AppStrings(
     val language: AppLanguage,
     val common: CommonStrings,
@@ -729,6 +760,7 @@ data class AppStrings(
     val novel: NovelStrings,
     val rp: RpStrings,
     val images: ImageStrings,
+    val providers: ApiProviderStrings,
 )
 
 val LocalAppStrings = staticCompositionLocalOf<AppStrings> { ZhStrings }

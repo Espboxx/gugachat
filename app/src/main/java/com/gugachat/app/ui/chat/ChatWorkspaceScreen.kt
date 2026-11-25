@@ -108,6 +108,7 @@ fun ChatWorkspaceScreen(
             selectedModelId = state.selectedModelId,
             onSelectGroup = viewModel::selectGroup,
             onSelectModel = viewModel::selectModel,
+            onSelectCustomModel = viewModel::selectCustomModel,
             onDismiss = { showModelSheet = false },
         )
     }

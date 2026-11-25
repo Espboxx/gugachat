@@ -4,12 +4,14 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.gugachat.app.AppContainer
 import com.gugachat.app.core.i18n.AppLanguage
+import com.gugachat.app.core.storage.ApiProtocol
 import com.gugachat.app.core.theme.ThemeStyle
 import com.gugachat.app.core.util.ServerUrlUtils
 import com.gugachat.app.data.api.ApiException
 import com.gugachat.app.data.api.AppJson
 import com.gugachat.app.data.api.PublicSettingsDto
 import com.gugachat.app.data.api.UserDto
+import com.gugachat.app.ui.providers.ApiProviderDraft
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -18,12 +20,18 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
+enum class LoginEntryMode {
+    SUB2API,
+    DIRECT_API,
+}
+
 enum class AuthFormTab {
     LOGIN,
     REGISTER,
 }
 
 data class AuthUiState(
+    val entryMode: LoginEntryMode = LoginEntryMode.SUB2API,
     val serverUrlInput: String = "",
     val isProbing: Boolean = false,
     val serverConnected: Boolean = false,
@@ -43,6 +51,11 @@ data class AuthUiState(
     val isSubmitting: Boolean = false,
     val showWebLoginDialog: Boolean = false,
     val errorMsg: String? = null,
+    val directDraft: ApiProviderDraft = ApiProviderDraft(),
+    val directTesting: Boolean = false,
+    val directTestCount: Int? = null,
+    val directTestError: String? = null,
+    val savedProvidersCount: Int = 0,
 )
 
 class AuthViewModel(private val container: AppContainer) : ViewModel() {
@@ -59,12 +72,89 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
 
     init {
         viewModelScope.launch {
+            container.apiProviderStore.providers.collect { list ->
+                _ui.update { it.copy(savedProvidersCount = list.count { p -> p.enabled }) }
+            }
+        }
+        viewModelScope.launch {
             val savedUrl = container.settingsStore.currentSettings().serverUrl
             if (savedUrl.isNotBlank() && _ui.value.serverUrlInput.isBlank()) {
                 _ui.update { it.copy(serverUrlInput = savedUrl) }
                 probeServer(savedUrl, silent = true)
             }
         }
+    }
+
+    fun setEntryMode(mode: LoginEntryMode) {
+        _ui.update { it.copy(entryMode = mode, errorMsg = null, directTestError = null) }
+    }
+
+    fun updateDirectProtocol(protocol: ApiProtocol) {
+        _ui.update { state ->
+            val curBase = state.directDraft.baseUrl.trim()
+            val shouldResetBase = curBase.isEmpty() || ApiProtocol.entries.any { it.defaultBaseUrl == curBase }
+            state.copy(
+                directDraft = state.directDraft.copy(
+                    protocol = protocol,
+                    baseUrl = if (shouldResetBase) protocol.defaultBaseUrl else curBase,
+                ),
+                directTestCount = null,
+                directTestError = null,
+            )
+        }
+    }
+
+    fun updateDirectName(v: String) = _ui.update { it.copy(directDraft = it.directDraft.copy(name = v)) }
+    fun updateDirectBaseUrl(v: String) = _ui.update {
+        it.copy(directDraft = it.directDraft.copy(baseUrl = v), directTestCount = null, directTestError = null)
+    }
+    fun updateDirectApiKey(v: String) = _ui.update {
+        it.copy(directDraft = it.directDraft.copy(apiKey = v), directTestCount = null, directTestError = null)
+    }
+    fun updateDirectCustomModels(v: String) = _ui.update {
+        it.copy(directDraft = it.directDraft.copy(customModelsText = v), directTestError = null)
+    }
+
+    fun testDirectConnection() {
+        val draft = _ui.value.directDraft
+        if (_ui.value.directTesting) return
+        viewModelScope.launch {
+            _ui.update { it.copy(directTesting = true, directTestCount = null, directTestError = null) }
+            try {
+                val cfg = draft.toConfig()
+                val models = container.directApiClient.testAndFetchModels(cfg)
+                _ui.update { it.copy(directTesting = false, directTestCount = models.size) }
+            } catch (e: Throwable) {
+                _ui.update {
+                    it.copy(
+                        directTesting = false,
+                        directTestError = (e as? ApiException)?.message ?: e.message ?: "Connection failed",
+                    )
+                }
+            }
+        }
+    }
+
+    fun saveAndEnterDirectMode() {
+        val draft = _ui.value.directDraft
+        if (draft.baseUrl.isBlank() || draft.apiKey.isBlank()) {
+            _ui.update { it.copy(directTestError = "Base URL and API Key are required") }
+            return
+        }
+        val saved = container.apiProviderStore.upsert(draft.toConfig())
+        viewModelScope.launch {
+            container.settingsStore.setLastChatSelection(saved.syntheticGroupId, saved.customModels.firstOrNull().orEmpty())
+            if (saved.protocol.supportsImages) {
+                container.settingsStore.setLastImageSelection(saved.syntheticGroupId, "")
+            }
+            container.enterDirectApiMode()
+        }
+    }
+
+    fun enterWithSavedProviders() {
+        val enabled = container.apiProviderStore.enabledProviders()
+        if (enabled.isEmpty()) return
+        container.enterDirectApiMode()
     }
 
     fun updateServerUrlInput(value: String) {

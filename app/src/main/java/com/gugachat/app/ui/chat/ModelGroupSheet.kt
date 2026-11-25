@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -38,6 +39,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.i18n.LocalAppStrings
+import com.gugachat.app.core.i18n.fmt
+import com.gugachat.app.core.storage.ApiProviderConfig
 import com.gugachat.app.core.theme.GuBadge
 import com.gugachat.app.core.theme.GuBadgeVariant
 import com.gugachat.app.core.theme.GuEmptyState
@@ -57,6 +60,7 @@ fun ModelGroupSheet(
     selectedModelId: String?,
     onSelectGroup: (Long) -> Unit,
     onSelectModel: (String) -> Unit,
+    onSelectCustomModel: (String) -> Unit = onSelectModel,
     onDismiss: () -> Unit,
 ) {
     val strings = LocalAppStrings.current
@@ -95,8 +99,16 @@ fun ModelGroupSheet(
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     groups.forEach { g ->
+                        val protoTag = if (ApiProviderConfig.isCustomProviderId(g.id)) {
+                            strings.providers.protocolShortNames[g.platform]
+                        } else {
+                            null
+                        }
                         val label = buildString {
                             append(g.name)
+                            if (protoTag != null && !g.name.contains(protoTag, ignoreCase = true)) {
+                                append(" · $protoTag")
+                            }
                             if (g.has_free_quotas) append(" ★")
                             if (g.rate_multiplier != 1.0) append(" (${g.rate_multiplier}x)")
                         }
@@ -104,7 +116,7 @@ fun ModelGroupSheet(
                             label = label,
                             selected = g.id == selectedGroupId,
                             onClick = { onSelectGroup(g.id) },
-                            useHoneySelected = g.has_free_quotas,
+                            useHoneySelected = g.has_free_quotas || protoTag != null,
                         )
                     }
                 }
@@ -125,13 +137,42 @@ fun ModelGroupSheet(
                 leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = c.muted) },
             )
 
-            if (filteredModels.isEmpty()) {
+            val trimmedSearch = search.trim()
+            val showCustomAction = trimmedSearch.isNotEmpty() && models.none { it.id.equals(trimmedSearch, ignoreCase = true) }
+
+            if (filteredModels.isEmpty() && !showCustomAction) {
                 GuEmptyState(title = strings.chat.noModels)
             } else {
                 LazyColumn(
                     modifier = Modifier.fillMaxWidth().height(300.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
+                    if (showCustomAction) {
+                        item(key = "__custom_model__") {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(c.accentSoft)
+                                    .border(1.dp, c.accent, RoundedCornerShape(10.dp))
+                                    .clickable {
+                                        onSelectCustomModel(trimmedSearch)
+                                        onDismiss()
+                                    }
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Icon(Icons.Default.Add, contentDescription = null, tint = c.ink)
+                                Text(
+                                    text = strings.providers.useCustomModelFormat.fmt("model" to trimmedSearch),
+                                    color = c.ink,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                            }
+                        }
+                    }
                     items(filteredModels, key = { it.id }) { model ->
                         val isSel = model.id == selectedModelId
                         val quotaBadge = FreeQuotaUtils.formatFreeQuotaBadge(model.free_quota, isZh = isZh)
