@@ -3,8 +3,11 @@ package com.gugachat.app.data.api
 import com.gugachat.app.core.storage.ApiProtocol
 import com.gugachat.app.core.storage.ApiProviderConfig
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.job
+import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
@@ -21,12 +24,14 @@ class DirectApiClient(
         val url = modelsEndpoint(provider)
         val req = buildGetRequest(provider, url)
         val resp = standardClient.awaitCall(req)
-        val fetched = resp.use { r ->
-            val raw = r.body?.string().orEmpty()
-            if (!r.isSuccessful) {
-                throw parseHttpError(r.code, raw)
+        val fetched = withContext(Dispatchers.IO) {
+            resp.use { r ->
+                val raw = r.body?.string().orEmpty()
+                if (!r.isSuccessful) {
+                    throw parseHttpError(r.code, raw)
+                }
+                DirectProtocolCodec.parseModelsJson(provider.protocol, raw)
             }
-            DirectProtocolCodec.parseModelsJson(provider.protocol, raw)
         }
         val custom = provider.customModels.map { DirectProtocolCodec.inferChatModelMeta(it) }
         return (custom + fetched).distinctBy { it.id }.ifEmpty {
@@ -40,9 +45,12 @@ class DirectApiClient(
         val fetched = runCatching {
             val url = modelsEndpoint(provider)
             val req = buildGetRequest(provider, url)
-            standardClient.awaitCall(req).use { r ->
-                if (!r.isSuccessful) emptyList()
-                else DirectProtocolCodec.parseModelsJson(provider.protocol, r.body?.string().orEmpty())
+            val resp = standardClient.awaitCall(req)
+            withContext(Dispatchers.IO) {
+                resp.use { r ->
+                    if (!r.isSuccessful) emptyList()
+                    else DirectProtocolCodec.parseModelsJson(provider.protocol, r.body?.string().orEmpty())
+                }
             }
         }.getOrDefault(emptyList())
         return (custom + fetched).distinctBy { it.id }.ifEmpty {
@@ -66,82 +74,91 @@ class DirectApiClient(
             Request.Builder().url(url).post(payload.toRequestBody(ApiClient.JSON_MEDIA_TYPE)),
             provider,
         ).header("Accept", "text/event-stream")
+            .header("Accept-Encoding", "identity")
+            .header("Cache-Control", "no-cache")
             .header("Content-Type", "application/json")
 
         val response = streamingClient.awaitCall(reqBuilder.build())
-        return response.use { resp ->
-            if (!resp.isSuccessful) {
-                throw parseHttpError(resp.code, resp.body?.string().orEmpty())
-            }
-            val contentType = resp.header("Content-Type").orEmpty().lowercase()
-            val body = resp.body ?: throw ApiException(resp.code, "EMPTY_BODY", "Streaming response body unavailable")
-
-            if (contentType.contains("application/json")) {
-                val raw = body.string()
-                val single = parseSingleResponse(provider.protocol, raw, resp.code)
-                if (single.reasoning.isNotEmpty()) onReasoning(single.reasoning)
-                if (single.content.isNotEmpty()) onDelta(single.content)
-                if (single.usage != null) onUsage(single.usage)
-                return@use single
-            }
-
-            val source = body.source()
-            val contentBuf = StringBuilder()
-            val reasoningBuf = StringBuilder()
-            var lastUsage: ChatTokenUsageDto? = null
-            var currentEvent: String? = null
-            val ctx = currentCoroutineContext()
-
-            try {
-                while (!source.exhausted()) {
-                    ctx.ensureActive()
-                    val line = source.readUtf8Line() ?: break
-                    if (line.isBlank()) {
-                        currentEvent = null
-                        continue
-                    }
-                    if (line.startsWith("event:")) {
-                        currentEvent = line.removePrefix("event:").trim()
-                        continue
-                    }
-                    if (line.startsWith("data:")) {
-                        val rawData = line.removePrefix("data:")
-                        val outcome = when (provider.protocol) {
-                            ApiProtocol.OPENAI_CHAT -> SseParser.parseDataPayload(rawData)
-                            ApiProtocol.OPENAI_RESPONSES -> DirectProtocolCodec.parseOpenAIResponsesSse(currentEvent, rawData)
-                            ApiProtocol.ANTHROPIC -> DirectProtocolCodec.parseAnthropicSse(currentEvent, rawData)
-                            ApiProtocol.GEMINI -> DirectProtocolCodec.parseGeminiSseData(rawData)
-                        } ?: continue
-
-                        if (outcome.usage != null) {
-                            lastUsage = SseParser.mergeUsage(lastUsage, outcome.usage)
-                            lastUsage?.let(onUsage)
-                        }
-                        if (outcome.deltaReasoning.isNotEmpty()) {
-                            reasoningBuf.append(outcome.deltaReasoning)
-                            onReasoning(outcome.deltaReasoning)
-                        }
-                        if (outcome.deltaText.isNotEmpty()) {
-                            contentBuf.append(outcome.deltaText)
-                            onDelta(outcome.deltaText)
-                        }
-                        if (outcome.done) break
-                    }
+        return withContext(Dispatchers.IO) {
+            response.use { resp ->
+                if (!resp.isSuccessful) {
+                    throw parseHttpError(resp.code, resp.body?.string().orEmpty())
                 }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: ApiException) {
-                throw e
-            } catch (e: Exception) {
-                ctx.ensureActive()
-                throw ApiException(502, "STREAM_READ_ERROR", e.message ?: "Failed to read stream")
-            }
+                val contentType = resp.header("Content-Type").orEmpty().lowercase()
+                val body = resp.body ?: throw ApiException(resp.code, "EMPTY_BODY", "Streaming response body unavailable")
 
-            CompletionResult(
-                content = contentBuf.toString(),
-                reasoning = reasoningBuf.toString(),
-                usage = lastUsage,
-            )
+                if (contentType.contains("application/json")) {
+                    val raw = body.string()
+                    val single = parseSingleResponse(provider.protocol, raw, resp.code)
+                    if (single.reasoning.isNotEmpty()) onReasoning(single.reasoning)
+                    if (single.content.isNotEmpty()) onDelta(single.content)
+                    if (single.usage != null) onUsage(single.usage)
+                    return@use single
+                }
+
+                val source = body.source()
+                val contentBuf = StringBuilder()
+                val reasoningBuf = StringBuilder()
+                var lastUsage: ChatTokenUsageDto? = null
+                var currentEvent: String? = null
+                val ctx = currentCoroutineContext()
+                val cancelHandle = ctx.job.invokeOnCompletion { cause ->
+                    if (cause != null) runCatching { resp.close() }
+                }
+
+                try {
+                    while (true) {
+                        ctx.ensureActive()
+                        val line = source.readUtf8Line() ?: break
+                        if (line.isBlank()) {
+                            currentEvent = null
+                            continue
+                        }
+                        if (line.startsWith("event:")) {
+                            currentEvent = line.removePrefix("event:").trim()
+                            continue
+                        }
+                        if (line.startsWith("data:")) {
+                            val rawData = line.removePrefix("data:")
+                            val outcome = when (provider.protocol) {
+                                ApiProtocol.OPENAI_CHAT -> SseParser.parseDataPayload(rawData)
+                                ApiProtocol.OPENAI_RESPONSES -> DirectProtocolCodec.parseOpenAIResponsesSse(currentEvent, rawData)
+                                ApiProtocol.ANTHROPIC -> DirectProtocolCodec.parseAnthropicSse(currentEvent, rawData)
+                                ApiProtocol.GEMINI -> DirectProtocolCodec.parseGeminiSseData(rawData)
+                            } ?: continue
+
+                            if (outcome.usage != null) {
+                                lastUsage = SseParser.mergeUsage(lastUsage, outcome.usage)
+                                lastUsage?.let(onUsage)
+                            }
+                            if (outcome.deltaReasoning.isNotEmpty()) {
+                                reasoningBuf.append(outcome.deltaReasoning)
+                                onReasoning(outcome.deltaReasoning)
+                            }
+                            if (outcome.deltaText.isNotEmpty()) {
+                                contentBuf.append(outcome.deltaText)
+                                onDelta(outcome.deltaText)
+                            }
+                            if (outcome.done) break
+                        }
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: ApiException) {
+                    throw e
+                } catch (e: Exception) {
+                    ctx.ensureActive()
+                    throw ApiException(502, "STREAM_READ_ERROR", e.message ?: "Failed to read stream")
+                } finally {
+                    cancelHandle.dispose()
+                }
+
+                CompletionResult(
+                    content = contentBuf.toString(),
+                    reasoning = reasoningBuf.toString(),
+                    usage = lastUsage,
+                )
+            }
         }
     }
 
@@ -158,12 +175,14 @@ class DirectApiClient(
             .header("Content-Type", "application/json")
 
         val resp = streamingClient.awaitCall(reqBuilder.build())
-        return resp.use { r ->
-            val raw = r.body?.string().orEmpty()
-            if (!r.isSuccessful) {
-                throw parseHttpError(r.code, raw)
+        return withContext(Dispatchers.IO) {
+            resp.use { r ->
+                val raw = r.body?.string().orEmpty()
+                if (!r.isSuccessful) {
+                    throw parseHttpError(r.code, raw)
+                }
+                parseSingleResponse(provider.protocol, raw, r.code)
             }
-            parseSingleResponse(provider.protocol, raw, r.code)
         }
     }
 
@@ -171,7 +190,7 @@ class DirectApiClient(
         provider: ApiProviderConfig,
         input: OnlineImageSubmitInput,
         sourceImageBytes: ByteArray? = null,
-    ): List<Pair<ByteArray, String>> {
+    ): List<Pair<ByteArray, String>> = withContext(Dispatchers.IO) {
         validateProvider(provider)
         val decoded: List<DecodedDirectImage> = when (provider.protocol) {
             ApiProtocol.OPENAI_CHAT,
@@ -292,7 +311,7 @@ class DirectApiClient(
         if (resolved.isEmpty()) {
             throw ApiException(502, "EMPTY_IMAGE_RESULT", "No image was returned by the provider")
         }
-        return resolved
+        resolved
     }
 
     private fun validateProvider(provider: ApiProviderConfig) {

@@ -58,6 +58,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -65,7 +67,9 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
@@ -111,6 +115,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     private val userMemoryDao = container.database.userMemoryDao()
 
     private val _activeConvId = MutableStateFlow<String?>(null)
+    private val _streamingMessage = MutableStateFlow<ChatMessage?>(null)
     private val _ui = MutableStateFlow(ChatUiState())
     val ui: StateFlow<ChatUiState> = _ui.asStateFlow()
 
@@ -139,10 +144,32 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
 
         viewModelScope.launch {
             _activeConvId.flatMapLatest { id ->
-                if (id == null) flowOf(emptyList()) else chatDao.observeMessages(id)
-            }.collect { rows ->
-                _ui.update { it.copy(messages = rows.map { r -> r.toDomain() }) }
-                recomputeWaterline()
+                if (id == null) {
+                    flowOf(Triple<String?, List<ChatMessage>, ChatMessage?>(null, emptyList(), null))
+                } else {
+                    val dbFlow = chatDao.observeMessages(id).map { rows -> rows.map { r -> r.toDomain() } }
+                    combine(dbFlow, _streamingMessage) { dbMsgs, live ->
+                        Triple(id, dbMsgs, live)
+                    }
+                }
+            }.collect { (convId, dbMsgs, live) ->
+                val merged = if (live != null && live.conversationId == convId) {
+                    val dbMatch = dbMsgs.firstOrNull { it.id == live.id }
+                    if (dbMatch != null && dbMatch.status != "streaming" && live.status != "streaming") {
+                        _streamingMessage.compareAndSet(live, null)
+                        dbMsgs
+                    } else if (dbMatch != null) {
+                        dbMsgs.map { if (it.id == live.id) live else it }
+                    } else {
+                        dbMsgs + live
+                    }
+                } else {
+                    dbMsgs
+                }
+                _ui.update { it.copy(messages = merged) }
+                if (live == null || live.status != "streaming") {
+                    recomputeWaterline()
+                }
             }
         }
 
@@ -331,6 +358,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun selectConversation(convId: String) {
+        if (!_ui.value.isStreaming) _streamingMessage.value = null
         _activeConvId.value = convId
         val conv = _ui.value.conversations.firstOrNull { it.id == convId }
         _ui.update { it.copy(activeConversation = conv ?: it.activeConversation, draftDiceRoll = null) }
@@ -523,6 +551,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
 
     fun deleteMessage(msgId: String) {
         viewModelScope.launch {
+            if (!_ui.value.isStreaming) _streamingMessage.value = null
             val conv = _ui.value.activeConversation ?: return@launch
             val msgs = chatDao.getMessagesForConversation(conv.id).map { it.toDomain() }
             val updated = TimelineReconciler.softDeleteMessage(msgId, msgs)
@@ -555,6 +584,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
 
     fun switchMessageVariant(msgId: String, variantIndex: Int) {
         viewModelScope.launch {
+            if (!_ui.value.isStreaming) _streamingMessage.value = null
             val conv = _ui.value.activeConversation ?: return@launch
             val msgs = chatDao.getMessagesForConversation(conv.id).map { it.toDomain() }
             val msg = msgs.firstOrNull { it.id == msgId } ?: return@launch
@@ -604,36 +634,92 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                 status = "streaming",
                 variants = existingMessageForVariant?.variants.orEmpty(),
             )
+            _streamingMessage.value = assistantStart
             chatDao.upsertMessage(assistantStart.toEntity())
 
+            val streamLock = Any()
             val contentBuf = StringBuilder()
             val reasoningBuf = StringBuilder()
             var latestUsage: MessageUsage? = null
-            var lastFlushMs = 0L
+            var lastUiEmitMs = 0L
+            var lastDbFlushMs = System.currentTimeMillis()
+            var uiDirty = false
 
-            suspend fun persistDelta(force: Boolean = false, status: String = "streaming", error: String? = null) {
-                val now = System.currentTimeMillis()
-                if (!force && now - lastFlushMs < 80L) return
-                lastFlushMs = now
-                chatDao.upsertMessage(
-                    assistantStart.copy(
-                        content = contentBuf.toString(),
-                        reasoning = reasoningBuf.toString(),
-                        usage = latestUsage,
-                        status = status,
-                        error = error,
-                    ).toEntity(),
+            fun buildSnapshotLocked(status: String = "streaming", error: String? = null): ChatMessage =
+                assistantStart.copy(
+                    content = contentBuf.toString(),
+                    reasoning = reasoningBuf.toString(),
+                    usage = latestUsage,
+                    status = status,
+                    error = error,
                 )
+
+            fun buildSnapshot(status: String = "streaming", error: String? = null): ChatMessage =
+                synchronized(streamLock) { buildSnapshotLocked(status, error) }
+
+            fun publishStreamingSnapshot(snap: ChatMessage) {
+                _streamingMessage.update { cur ->
+                    if (cur == null || cur.id == assistantId) snap else cur
+                }
+            }
+
+            fun onChunkAppended(deltaText: String? = null, deltaReasoning: String? = null) {
+                val immediateSnap: ChatMessage? = synchronized(streamLock) {
+                    if (!deltaText.isNullOrEmpty()) contentBuf.append(deltaText)
+                    if (!deltaReasoning.isNullOrEmpty()) reasoningBuf.append(deltaReasoning)
+                    val now = System.currentTimeMillis()
+                    if (lastUiEmitMs == 0L || now - lastUiEmitMs >= 35L) {
+                        lastUiEmitMs = now
+                        uiDirty = false
+                        buildSnapshotLocked()
+                    } else {
+                        uiDirty = true
+                        null
+                    }
+                }
+                if (immediateSnap != null) {
+                    publishStreamingSnapshot(immediateSnap)
+                }
+            }
+
+            val flushTickerJob = viewModelScope.launch {
+                while (isActive) {
+                    delay(35L)
+                    val pendingSnap: ChatMessage? = synchronized(streamLock) {
+                        if (!uiDirty) {
+                            null
+                        } else {
+                            lastUiEmitMs = System.currentTimeMillis()
+                            uiDirty = false
+                            buildSnapshotLocked()
+                        }
+                    }
+                    if (pendingSnap != null) {
+                        publishStreamingSnapshot(pendingSnap)
+                    }
+                    val now = System.currentTimeMillis()
+                    if (now - lastDbFlushMs >= 1000L) {
+                        lastDbFlushMs = now
+                        val checkpoint = buildSnapshot()
+                        if (checkpoint.content.isNotEmpty() || checkpoint.reasoning.isNotEmpty()) {
+                            chatDao.upsertMessage(checkpoint.toEntity())
+                        }
+                    }
+                }
             }
 
             try {
                 var built = buildWirePayload(conv, allMsgs, groupId, modelId)
                 try {
-                    streamOnce(built, conv, groupId, modelId, contentBuf, reasoningBuf, { latestUsage = it }) {
-                        persistDelta(force = false)
-                    }
+                    streamOnce(
+                        request = built,
+                        onTextDelta = { delta -> onChunkAppended(deltaText = delta) },
+                        onReasoningDelta = { r -> onChunkAppended(deltaReasoning = r) },
+                        onUsageSet = { u -> synchronized(streamLock) { latestUsage = u } },
+                    )
                 } catch (e: ApiException) {
-                    if (e.isContextTooLong && contentBuf.isEmpty()) {
+                    val isBufEmpty = synchronized(streamLock) { contentBuf.isEmpty() }
+                    if (e.isContextTooLong && isBufEmpty) {
                         container.toastController.show("Context too long, auto-compacting...")
                         val outcome = ContextCompactor.compactConversation(container.onlineChatApi, conv, allMsgs)
                         if (outcome != null) {
@@ -644,9 +730,12 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                             chatDao.upsertConversation(updatedConv.toEntity())
                             outcome.newEpisode?.let { chatDao.upsertMemoryEpisode(it.toEntity()) }
                             built = buildWirePayload(updatedConv, allMsgs, groupId, modelId)
-                            streamOnce(built, updatedConv, groupId, modelId, contentBuf, reasoningBuf, { latestUsage = it }) {
-                                persistDelta(force = false)
-                            }
+                            streamOnce(
+                                request = built,
+                                onTextDelta = { delta -> onChunkAppended(deltaText = delta) },
+                                onReasoningDelta = { r -> onChunkAppended(deltaReasoning = r) },
+                                onUsageSet = { u -> synchronized(streamLock) { latestUsage = u } },
+                            )
                         } else {
                             throw e
                         }
@@ -655,21 +744,32 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                     }
                 }
 
-                val finalRawContent = contentBuf.toString()
-                val finalReasoning = reasoningBuf.toString()
+                flushTickerJob.cancel()
+                val (finalRawContent, finalReasoning, finalUsage) = synchronized(streamLock) {
+                    Triple(contentBuf.toString(), reasoningBuf.toString(), latestUsage)
+                }
                 finalizeCompletedAssistantTurn(
                     conv = conv,
                     assistantTemplate = assistantStart,
                     rawContent = finalRawContent,
                     reasoning = finalReasoning,
-                    usage = latestUsage,
+                    usage = finalUsage,
                 )
             } catch (_: CancellationException) {
-                persistDelta(force = true, status = "aborted")
+                flushTickerJob.cancel()
+                withContext(NonCancellable) {
+                    val aborted = buildSnapshot(status = "aborted")
+                    publishStreamingSnapshot(aborted)
+                    chatDao.upsertMessage(aborted.toEntity())
+                }
             } catch (e: Throwable) {
-                persistDelta(force = true, status = "error", error = e.message ?: "Generation failed")
+                flushTickerJob.cancel()
+                val failed = buildSnapshot(status = "error", error = e.message ?: "Generation failed")
+                publishStreamingSnapshot(failed)
+                chatDao.upsertMessage(failed.toEntity())
                 container.toastController.show(e.message ?: "Generation failed", isError = true)
             } finally {
+                flushTickerJob.cancel()
                 _ui.update { it.copy(isStreaming = false) }
             }
         }
@@ -712,24 +812,14 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
 
     private suspend fun streamOnce(
         request: OnlineChatCompletionRequestDto,
-        conv: ChatConversation,
-        groupId: Long,
-        modelId: String,
-        contentBuf: StringBuilder,
-        reasoningBuf: StringBuilder,
+        onTextDelta: (String) -> Unit,
+        onReasoningDelta: (String) -> Unit,
         onUsageSet: (MessageUsage) -> Unit,
-        onFlush: suspend () -> Unit,
     ) {
         container.onlineChatApi.streamCompletion(
             request = request,
-            onDelta = { delta ->
-                contentBuf.append(delta)
-                viewModelScope.launch { onFlush() }
-            },
-            onReasoning = { r ->
-                reasoningBuf.append(r)
-                viewModelScope.launch { onFlush() }
-            },
+            onDelta = onTextDelta,
+            onReasoning = onReasoningDelta,
             onUsage = { u ->
                 onUsageSet(
                     MessageUsage(
@@ -852,6 +942,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             variants = updatedVariants,
             activeVariantIndex = if (updatedVariants.isNotEmpty()) updatedVariants.lastIndex else 0,
         )
+        _streamingMessage.update { cur -> if (cur == null || cur.id == finalMsg.id) finalMsg else cur }
         chatDao.upsertMessage(finalMsg.toEntity())
         chatDao.upsertConversation(nextConv.copy(updatedAt = System.currentTimeMillis()).toEntity())
 
@@ -1410,6 +1501,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     fun loadRpSaveSlotRewind(slot: RpSaveSlot) {
         val conv = _ui.value.activeConversation ?: return
         viewModelScope.launch {
+            if (!_ui.value.isStreaming) _streamingMessage.value = null
             chatDao.deleteMessagesForConversation(conv.id)
             chatDao.deleteMemoryLedgerForConversation(conv.id)
             chatDao.deleteMemoryEpisodesForConversation(conv.id)

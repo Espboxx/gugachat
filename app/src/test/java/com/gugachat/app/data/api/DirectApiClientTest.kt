@@ -15,6 +15,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import java.util.Base64
+import java.util.Collections
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 
 class DirectApiClientTest {
     private lateinit var server: MockWebServer
@@ -195,6 +198,48 @@ class DirectApiClientTest {
         assertEquals(1, gemImgs.size)
         assertArrayEquals(pngStub, gemImgs[0].first)
         assertEquals("/v1beta/models/gemini-2.5-flash-image:generateContent", server.takeRequest().path)
+    }
+
+    @Test
+    fun streamChat_deliversIncrementalChunksOffCallerThreadWithIdentityEncoding() = runBlocking {
+        val oaChat = ApiProviderConfig(
+            id = "p1", numericId = 1, protocol = ApiProtocol.OPENAI_CHAT,
+            baseUrl = baseUrl(), apiKey = "sk-stream-key",
+        )
+        val sseBody = (1..4).joinToString("") { idx ->
+            "data: {\"choices\":[{\"delta\":{\"content\":\"chunk$idx \"}}]}\n\n"
+        } + "data: [DONE]\n\n"
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .addHeader("Content-Type", "text/event-stream")
+                .setChunkedBody(sseBody, 56)
+                .throttleBody(56, 70, TimeUnit.MILLISECONDS),
+        )
+
+        val callerThread = Thread.currentThread().name
+        val deltaThreads = Collections.synchronizedList(mutableListOf<String>())
+        val firstDeltaAt = AtomicLong(0L)
+        val chunks = Collections.synchronizedList(mutableListOf<String>())
+
+        val result = directClient.streamChat(
+            provider = oaChat,
+            request = OnlineChatCompletionRequestDto(oaChat.syntheticGroupId, "gpt-4o", listOf(WireChatMessageDto.text("user", "hi"))),
+            onDelta = { delta ->
+                firstDeltaAt.compareAndSet(0L, System.currentTimeMillis())
+                deltaThreads.add(Thread.currentThread().name)
+                chunks.add(delta)
+            },
+        )
+        val doneAt = System.currentTimeMillis()
+
+        val recorded = server.takeRequest()
+        assertEquals("identity", recorded.getHeader("Accept-Encoding"))
+        assertEquals("no-cache", recorded.getHeader("Cache-Control"))
+        assertEquals("chunk1 chunk2 chunk3 chunk4 ", result.content)
+        assertEquals(4, chunks.size)
+        assertTrue("Expected SSE streaming off caller thread ($callerThread), got $deltaThreads", deltaThreads.all { it != callerThread })
+        assertTrue("Expected incremental chunks before EOF, delta span was ${doneAt - firstDeltaAt.get()}ms", doneAt - firstDeltaAt.get() >= 100L)
     }
 }
 

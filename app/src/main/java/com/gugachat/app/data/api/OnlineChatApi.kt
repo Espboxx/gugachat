@@ -2,8 +2,11 @@ package com.gugachat.app.data.api
 
 import com.gugachat.app.core.storage.ApiProviderConfig
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.job
+import kotlinx.coroutines.withContext
 import okhttp3.RequestBody.Companion.toRequestBody
 
 class OnlineChatApi(
@@ -48,69 +51,80 @@ class OnlineChatApi(
             method = "POST",
             path = "/online-chat/completions",
             body = payloadJson.toRequestBody(ApiClient.JSON_MEDIA_TYPE),
-            extraHeaders = mapOf("Accept" to "text/event-stream"),
+            extraHeaders = mapOf(
+                "Accept" to "text/event-stream",
+                "Accept-Encoding" to "identity",
+                "Cache-Control" to "no-cache",
+            ),
             client = client.streamingClient,
         )
 
-        return response.use { resp ->
-            if (!resp.isSuccessful) {
-                val errBody = resp.body?.string().orEmpty()
-                throw client.parseHttpError(resp.code, errBody)
-            }
+        return withContext(Dispatchers.IO) {
+            response.use { resp ->
+                if (!resp.isSuccessful) {
+                    val errBody = resp.body?.string().orEmpty()
+                    throw client.parseHttpError(resp.code, errBody)
+                }
 
-            val contentType = resp.header("Content-Type").orEmpty().lowercase()
-            val body = resp.body ?: throw ApiException(resp.code, "EMPTY_BODY", "Streaming response body unavailable")
+                val contentType = resp.header("Content-Type").orEmpty().lowercase()
+                val body = resp.body ?: throw ApiException(resp.code, "EMPTY_BODY", "Streaming response body unavailable")
 
-            if (contentType.contains("application/json")) {
-                val raw = body.string()
-                val single = SseParser.parseSingleCompletionJson(raw, resp.code)
-                if (single.reasoning.isNotEmpty()) onReasoning(single.reasoning)
-                if (single.content.isNotEmpty()) onDelta(single.content)
-                if (single.usage != null) onUsage(single.usage)
-                return@use single
-            }
+                if (contentType.contains("application/json")) {
+                    val raw = body.string()
+                    val single = SseParser.parseSingleCompletionJson(raw, resp.code)
+                    if (single.reasoning.isNotEmpty()) onReasoning(single.reasoning)
+                    if (single.content.isNotEmpty()) onDelta(single.content)
+                    if (single.usage != null) onUsage(single.usage)
+                    return@use single
+                }
 
-            val source = body.source()
-            val contentBuf = StringBuilder()
-            val reasoningBuf = StringBuilder()
-            var lastUsage: ChatTokenUsageDto? = null
-            val ctx = currentCoroutineContext()
+                val source = body.source()
+                val contentBuf = StringBuilder()
+                val reasoningBuf = StringBuilder()
+                var lastUsage: ChatTokenUsageDto? = null
+                val ctx = currentCoroutineContext()
+                val cancelHandle = ctx.job.invokeOnCompletion { cause ->
+                    if (cause != null) runCatching { resp.close() }
+                }
 
-            try {
-                while (!source.exhausted()) {
-                    ctx.ensureActive()
-                    val line = source.readUtf8Line() ?: break
-                    if (line.startsWith("data:")) {
-                        val outcome = SseParser.parseDataPayload(line.removePrefix("data:")) ?: continue
-                        if (outcome.done) break
-                        if (outcome.usage != null) {
-                            lastUsage = SseParser.mergeUsage(lastUsage, outcome.usage)
-                            lastUsage?.let(onUsage)
-                        }
-                        if (outcome.deltaReasoning.isNotEmpty()) {
-                            reasoningBuf.append(outcome.deltaReasoning)
-                            onReasoning(outcome.deltaReasoning)
-                        }
-                        if (outcome.deltaText.isNotEmpty()) {
-                            contentBuf.append(outcome.deltaText)
-                            onDelta(outcome.deltaText)
+                try {
+                    while (true) {
+                        ctx.ensureActive()
+                        val line = source.readUtf8Line() ?: break
+                        if (line.startsWith("data:")) {
+                            val outcome = SseParser.parseDataPayload(line.removePrefix("data:")) ?: continue
+                            if (outcome.done) break
+                            if (outcome.usage != null) {
+                                lastUsage = SseParser.mergeUsage(lastUsage, outcome.usage)
+                                lastUsage?.let(onUsage)
+                            }
+                            if (outcome.deltaReasoning.isNotEmpty()) {
+                                reasoningBuf.append(outcome.deltaReasoning)
+                                onReasoning(outcome.deltaReasoning)
+                            }
+                            if (outcome.deltaText.isNotEmpty()) {
+                                contentBuf.append(outcome.deltaText)
+                                onDelta(outcome.deltaText)
+                            }
                         }
                     }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: ApiException) {
+                    throw e
+                } catch (e: Exception) {
+                    ctx.ensureActive()
+                    throw ApiException(502, "STREAM_READ_ERROR", e.message ?: "Failed to read stream")
+                } finally {
+                    cancelHandle.dispose()
                 }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: ApiException) {
-                throw e
-            } catch (e: Exception) {
-                ctx.ensureActive()
-                throw ApiException(502, "STREAM_READ_ERROR", e.message ?: "Failed to read stream")
-            }
 
-            CompletionResult(
-                content = contentBuf.toString(),
-                reasoning = reasoningBuf.toString(),
-                usage = lastUsage,
-            )
+                CompletionResult(
+                    content = contentBuf.toString(),
+                    reasoning = reasoningBuf.toString(),
+                    usage = lastUsage,
+                )
+            }
         }
     }
 
@@ -132,12 +146,14 @@ class OnlineChatApi(
             extraHeaders = mapOf("Accept" to "application/json"),
             client = client.streamingClient,
         )
-        return response.use { resp ->
-            val raw = resp.body?.string().orEmpty()
-            if (!resp.isSuccessful) {
-                throw client.parseHttpError(resp.code, raw)
+        return withContext(Dispatchers.IO) {
+            response.use { resp ->
+                val raw = resp.body?.string().orEmpty()
+                if (!resp.isSuccessful) {
+                    throw client.parseHttpError(resp.code, raw)
+                }
+                SseParser.parseSingleCompletionJson(raw, resp.code)
             }
-            SseParser.parseSingleCompletionJson(raw, resp.code)
         }
     }
 }

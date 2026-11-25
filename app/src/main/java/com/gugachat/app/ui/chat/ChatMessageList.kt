@@ -128,9 +128,18 @@ fun ChatMessageList(
     var editTarget by remember { mutableStateOf<ChatMessage?>(null) }
     var editBuffer by remember { mutableStateOf("") }
 
-    LaunchedEffect(active.size, active.lastOrNull()?.content?.length) {
-        if (active.isNotEmpty()) {
-            listState.animateScrollToItem(active.lastIndex)
+    val lastMsg = active.lastOrNull()
+    LaunchedEffect(active.size, lastMsg?.content?.length, lastMsg?.reasoning?.length) {
+        if (active.isEmpty()) return@LaunchedEffect
+        // LazyColumn has a leading top spacer (index 0), messages (1..active.size), and a trailing bottom spacer (active.size + 1).
+        val bottomIndex = active.size + 1
+        if (isStreaming) {
+            val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: bottomIndex
+            if (lastVisible >= bottomIndex - 2) {
+                listState.scrollToItem(bottomIndex)
+            }
+        } else {
+            listState.animateScrollToItem(bottomIndex)
         }
     }
 

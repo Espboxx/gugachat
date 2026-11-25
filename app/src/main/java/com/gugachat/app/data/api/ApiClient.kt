@@ -6,10 +6,12 @@ import com.gugachat.app.core.storage.TokenStore
 import com.gugachat.app.core.util.ServerUrlUtils
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -184,7 +186,7 @@ class ApiClient(
         val firstResp = client.awaitCall(firstReq)
 
         if (firstResp.code == 401 && !isAuthEndpoint && !tokenStore.getRefreshToken().isNullOrBlank()) {
-            firstResp.close()
+            withContext(Dispatchers.IO) { firstResp.close() }
             val refreshedToken = refreshTokensSingleFlight(firstToken)
             val retryReq = buildRequest(method, requestUrl, body, extraHeaders, refreshedToken)
             return client.awaitCall(retryReq)
@@ -210,12 +212,14 @@ class ApiClient(
             if (!token.isNullOrBlank()) reqBuilder.header("Authorization", "Bearer $token")
         }
         val resp = standardClient.newBuilder().readTimeout(90, TimeUnit.SECONDS).build().awaitCall(reqBuilder.build())
-        return resp.use {
-            if (!it.isSuccessful) {
-                val errBody = it.body?.string().orEmpty()
-                throw parseHttpError(it.code, errBody)
+        return withContext(Dispatchers.IO) {
+            resp.use {
+                if (!it.isSuccessful) {
+                    val errBody = it.body?.string().orEmpty()
+                    throw parseHttpError(it.code, errBody)
+                }
+                it.body?.bytes() ?: ByteArray(0)
             }
-            it.body?.bytes() ?: ByteArray(0)
         }
     }
 
@@ -238,12 +242,14 @@ class ApiClient(
             client = client,
             baseUrlOverride = baseUrlOverride,
         )
-        return resp.use { response ->
-            val rawText = response.body?.string().orEmpty()
-            if (!response.isSuccessful) {
-                throw parseHttpError(response.code, rawText)
+        return withContext(Dispatchers.IO) {
+            resp.use { response ->
+                val rawText = response.body?.string().orEmpty()
+                if (!response.isSuccessful) {
+                    throw parseHttpError(response.code, rawText)
+                }
+                unwrapEnvelopeAndDecode(response.code, rawText, deserializer)
             }
-            unwrapEnvelopeAndDecode(response.code, rawText, deserializer)
         }
     }
 
@@ -284,33 +290,35 @@ class ApiClient(
             throw ApiException(0, "TOKEN_REFRESH_UNAVAILABLE", e.message ?: "Network error while refreshing token")
         }
 
-        resp.use { response ->
-            val bodyText = response.body?.string().orEmpty()
-            if (!response.isSuccessful) {
-                if (response.code in 400..499 && response.code != 429) {
-                    val latest = tokenStore.readSnapshot()
-                    if (latest.refreshToken == refreshToken) {
-                        tokenStore.clear()
-                        onSessionExpired()
-                    }
-                    throw ApiException(401, "TOKEN_REFRESH_FAILED", "Session expired. Please sign in again.")
-                }
-                throw ApiException(response.code, "TOKEN_REFRESH_UNAVAILABLE", "Token refresh unavailable")
+        val (respCode, respSuccessful, bodyText) = withContext(Dispatchers.IO) {
+            resp.use { response ->
+                Triple(response.code, response.isSuccessful, response.body?.string().orEmpty())
             }
-
-            val parsed = unwrapEnvelopeAndDecode(response.code, bodyText, RefreshTokenResponseDto.serializer())
-            val latest = tokenStore.readSnapshot()
-            if (latest.refreshToken != refreshToken) {
-                if (!latest.accessToken.isNullOrBlank()) return@withLock latest.accessToken
-                throw ApiException(401, "AUTH_SESSION_CHANGED", "Authentication session changed while refreshing.")
-            }
-            tokenStore.saveTokens(
-                accessToken = parsed.access_token,
-                refreshToken = parsed.refresh_token,
-                expiresInSec = parsed.expires_in,
-            )
-            parsed.access_token
         }
+        if (!respSuccessful) {
+            if (respCode in 400..499 && respCode != 429) {
+                val latest = tokenStore.readSnapshot()
+                if (latest.refreshToken == refreshToken) {
+                    tokenStore.clear()
+                    onSessionExpired()
+                }
+                throw ApiException(401, "TOKEN_REFRESH_FAILED", "Session expired. Please sign in again.")
+            }
+            throw ApiException(respCode, "TOKEN_REFRESH_UNAVAILABLE", "Token refresh unavailable")
+        }
+
+        val parsed = unwrapEnvelopeAndDecode(respCode, bodyText, RefreshTokenResponseDto.serializer())
+        val latest = tokenStore.readSnapshot()
+        if (latest.refreshToken != refreshToken) {
+            if (!latest.accessToken.isNullOrBlank()) return@withLock latest.accessToken
+            throw ApiException(401, "AUTH_SESSION_CHANGED", "Authentication session changed while refreshing.")
+        }
+        tokenStore.saveTokens(
+            accessToken = parsed.access_token,
+            refreshToken = parsed.refresh_token,
+            expiresInSec = parsed.expires_in,
+        )
+        parsed.access_token
     }
 
     private fun buildUrlWithParams(
