@@ -9,6 +9,8 @@ import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.doubleOrNull
+import kotlinx.serialization.json.floatOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -32,16 +34,29 @@ data class DirectInlineImage(
     val bytes: ByteArray,
 )
 
+enum class DiscoveredModelKind {
+    EMBEDDING,
+    RERANK,
+}
+
+data class DiscoveredRetrievalModel(
+    val id: String,
+    val kind: DiscoveredModelKind,
+)
+
 object DirectProtocolCodec {
     private val VERSION_SUFFIX_RE = Regex("/v\\d+(alpha|beta)?$", RegexOption.IGNORE_CASE)
     private val GEMINI_VERSION_SUFFIX_RE = Regex("/v1(beta|alpha)?$", RegexOption.IGNORE_CASE)
     private val DATA_URL_RE = Regex("^data:([^;]+);base64,(.+)$", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+    private val E5_MODEL_RE = Regex("(^|[/_-])e5([/_-]|$)")
     private val ENDPOINT_TAILS = listOf(
         "/chat/completions",
         "/responses",
         "/messages",
         "/images/generations",
         "/images/edits",
+        "/embeddings",
+        "/rerank",
         "/models",
     )
 
@@ -89,6 +104,8 @@ object DirectProtocolCodec {
     fun openaiModelsUrl(baseUrl: String): String = "${openAiOrAnthropicRoot(baseUrl, ApiProtocol.OPENAI_CHAT.defaultBaseUrl)}/models"
     fun openaiImagesGenUrl(baseUrl: String): String = "${openAiOrAnthropicRoot(baseUrl, ApiProtocol.OPENAI_CHAT.defaultBaseUrl)}/images/generations"
     fun openaiImagesEditUrl(baseUrl: String): String = "${openAiOrAnthropicRoot(baseUrl, ApiProtocol.OPENAI_CHAT.defaultBaseUrl)}/images/edits"
+    fun openaiEmbeddingsUrl(baseUrl: String): String = "${openAiOrAnthropicRoot(baseUrl, ApiProtocol.OPENAI_CHAT.defaultBaseUrl)}/embeddings"
+    fun openaiRerankUrl(baseUrl: String): String = "${openAiOrAnthropicRoot(baseUrl, ApiProtocol.OPENAI_CHAT.defaultBaseUrl)}/rerank"
 
     fun anthropicMessagesUrl(baseUrl: String): String = "${openAiOrAnthropicRoot(baseUrl, ApiProtocol.ANTHROPIC.defaultBaseUrl)}/messages"
     fun anthropicModelsUrl(baseUrl: String): String = "${openAiOrAnthropicRoot(baseUrl, ApiProtocol.ANTHROPIC.defaultBaseUrl)}/models"
@@ -108,6 +125,18 @@ object DirectProtocolCodec {
         val cleanModel = model.trim().removePrefix("models/")
         val encoded = URLEncoder.encode(cleanModel, StandardCharsets.UTF_8.name()).replace("+", "%20")
         return "${geminiRoot(baseUrl)}/models/$encoded:predict"
+    }
+
+    fun geminiEmbedContentUrl(baseUrl: String, modelId: String): String {
+        val cleanModel = modelId.trim().removePrefix("models/")
+        val encoded = URLEncoder.encode(cleanModel, StandardCharsets.UTF_8.name()).replace("+", "%20")
+        return "${geminiRoot(baseUrl)}/models/$encoded:embedContent"
+    }
+
+    fun geminiBatchEmbedContentsUrl(baseUrl: String, modelId: String): String {
+        val cleanModel = modelId.trim().removePrefix("models/")
+        val encoded = URLEncoder.encode(cleanModel, StandardCharsets.UTF_8.name()).replace("+", "%20")
+        return "${geminiRoot(baseUrl)}/models/$encoded:batchEmbedContents"
     }
 
     // ==================== Chat Request Builders ====================
@@ -773,6 +802,298 @@ object DirectProtocolCodec {
         return out
     }
 
+    // ==================== Embedding & Rerank Request/Response Helpers ====================
+
+    fun buildOpenAIEmbeddingRequestJson(
+        modelId: String,
+        texts: List<String>,
+        dimensions: Int? = null,
+    ): String = buildJsonObject {
+        put("model", modelId.trim())
+        putJsonArray("input") {
+            texts.forEach { add(JsonPrimitive(it)) }
+        }
+        if (dimensions != null && dimensions > 0) {
+            put("dimensions", dimensions)
+        }
+    }.toString()
+
+    fun parseOpenAIEmbeddingsJson(rawBody: String, statusCode: Int): List<FloatArray> {
+        val obj = runCatching { AppJson.parseToJsonElement(rawBody).jsonObject }.getOrNull()
+            ?: throw ApiException(statusCode, "INVALID_JSON", "Invalid embeddings response JSON")
+        checkEmbeddedError(obj, statusCode)
+
+        val dataArr = obj["data"] as? JsonArray
+        if (dataArr != null) {
+            val indexed = dataArr.mapIndexedNotNull { fallbackIdx, el ->
+                val item = el as? JsonObject ?: return@mapIndexedNotNull null
+                val idx = item["index"]?.jsonPrimitive?.intOrNull ?: fallbackIdx
+                val embArr = item["embedding"] as? JsonArray ?: return@mapIndexedNotNull null
+                val vec = parseFloatVector(embArr)
+                if (vec.isEmpty()) return@mapIndexedNotNull null
+                idx to vec
+            }
+            if (indexed.isEmpty()) {
+                throw ApiException(statusCode, "EMPTY_EMBEDDING", "No embedding vectors returned")
+            }
+            return indexed.sortedBy { it.first }.map { it.second }
+        }
+
+        // Fallback for Ollama native /api/embed shape: {"embeddings": [[...], [...]]}
+        val ollamaArr = obj["embeddings"] as? JsonArray
+        if (ollamaArr != null) {
+            val vectors = ollamaArr.mapNotNull { el ->
+                val vecArr = el as? JsonArray ?: return@mapNotNull null
+                parseFloatVector(vecArr).takeIf { it.isNotEmpty() }
+            }
+            if (vectors.isNotEmpty()) return vectors
+        }
+
+        throw ApiException(statusCode, "EMPTY_EMBEDDING", "No embedding vectors returned")
+    }
+
+    fun buildGeminiEmbedContentRequestJson(
+        modelId: String,
+        text: String,
+        isQuery: Boolean,
+        outputDimensionality: Int? = null,
+    ): String {
+        val modelRef = formatGeminiModelRef(modelId)
+        val taskType = if (isQuery) "RETRIEVAL_QUERY" else "RETRIEVAL_DOCUMENT"
+        return buildJsonObject {
+            put("model", modelRef)
+            putJsonObject("content") {
+                putJsonArray("parts") {
+                    addJsonObject { put("text", text) }
+                }
+            }
+            put("taskType", taskType)
+            if (outputDimensionality != null && outputDimensionality > 0) {
+                put("outputDimensionality", outputDimensionality)
+            }
+        }.toString()
+    }
+
+    fun buildGeminiBatchEmbedContentsRequestJson(
+        modelId: String,
+        texts: List<String>,
+        isQuery: Boolean,
+        outputDimensionality: Int? = null,
+    ): String {
+        val modelRef = formatGeminiModelRef(modelId)
+        val taskType = if (isQuery) "RETRIEVAL_QUERY" else "RETRIEVAL_DOCUMENT"
+        return buildJsonObject {
+            putJsonArray("requests") {
+                for (text in texts) {
+                    addJsonObject {
+                        put("model", modelRef)
+                        putJsonObject("content") {
+                            putJsonArray("parts") {
+                                addJsonObject { put("text", text) }
+                            }
+                        }
+                        put("taskType", taskType)
+                        if (outputDimensionality != null && outputDimensionality > 0) {
+                            put("outputDimensionality", outputDimensionality)
+                        }
+                    }
+                }
+            }
+        }.toString()
+    }
+
+    fun parseGeminiEmbeddingsJson(rawBody: String, statusCode: Int): List<FloatArray> {
+        val obj = runCatching { AppJson.parseToJsonElement(rawBody).jsonObject }.getOrNull()
+            ?: throw ApiException(statusCode, "INVALID_JSON", "Invalid Gemini embeddings JSON")
+        checkEmbeddedError(obj, statusCode)
+
+        val batchArr = obj["embeddings"] as? JsonArray
+        if (batchArr != null) {
+            val vectors = batchArr.mapNotNull { el ->
+                val values = (el as? JsonObject)?.get("values") as? JsonArray ?: return@mapNotNull null
+                parseFloatVector(values).takeIf { it.isNotEmpty() }
+            }
+            if (vectors.isEmpty()) {
+                throw ApiException(statusCode, "EMPTY_EMBEDDING", "No Gemini embedding vectors returned")
+            }
+            return vectors
+        }
+
+        val singleValues = (obj["embedding"] as? JsonObject)?.get("values") as? JsonArray
+        if (singleValues != null) {
+            val vec = parseFloatVector(singleValues)
+            if (vec.isNotEmpty()) return listOf(vec)
+        }
+
+        throw ApiException(statusCode, "EMPTY_EMBEDDING", "No Gemini embedding vectors returned")
+    }
+
+    fun buildRerankRequestJson(
+        modelId: String,
+        query: String,
+        documents: List<String>,
+        topN: Int,
+        useTeiSchema: Boolean = false,
+    ): String = if (useTeiSchema) {
+        buildJsonObject {
+            put("query", query)
+            putJsonArray("texts") {
+                documents.forEach { add(JsonPrimitive(it)) }
+            }
+            put("return_text", false)
+            put("truncate", true)
+        }.toString()
+    } else {
+        buildJsonObject {
+            put("model", modelId.trim())
+            put("query", query)
+            putJsonArray("documents") {
+                documents.forEach { add(JsonPrimitive(it)) }
+            }
+            if (topN > 0) {
+                put("top_n", topN.coerceAtMost(documents.size.coerceAtLeast(1)))
+            }
+            put("return_documents", false)
+        }.toString()
+    }
+
+    fun parseRerankResponseJson(rawBody: String, statusCode: Int): Map<Int, Double> {
+        val root = runCatching { AppJson.parseToJsonElement(rawBody) }.getOrNull()
+            ?: throw ApiException(statusCode, "INVALID_JSON", "Invalid rerank response JSON")
+
+        val resultsArr: JsonArray = when (root) {
+            is JsonArray -> root // HuggingFace TEI returns top-level [{"index": 0, "score": 0.9}]
+            is JsonObject -> {
+                checkEmbeddedError(root, statusCode)
+                val direct = root["results"] as? JsonArray
+                val nested = (root["output"] as? JsonObject)?.get("results") as? JsonArray
+                val found = direct ?: nested
+                if (found == null) {
+                    val detail = root["detail"]?.jsonPrimitive?.content
+                        ?: root["message"]?.jsonPrimitive?.content
+                    if (!detail.isNullOrBlank()) {
+                        throw ApiException(statusCode, "RERANK_ERROR", detail)
+                    }
+                    return emptyMap()
+                }
+                found
+            }
+            else -> throw ApiException(statusCode, "INVALID_JSON", "Unexpected rerank response JSON")
+        }
+
+        val scores = LinkedHashMap<Int, Double>(resultsArr.size)
+        for (el in resultsArr) {
+            val item = el as? JsonObject ?: continue
+            val idx = item["index"]?.jsonPrimitive?.intOrNull ?: continue
+            if (idx < 0) continue
+            val score = item["relevance_score"]?.jsonPrimitive?.doubleOrNull
+                ?: item["score"]?.jsonPrimitive?.doubleOrNull
+                ?: continue
+            if (score.isFinite()) {
+                scores[idx] = score.coerceIn(0.0, 1.0)
+            }
+        }
+        return scores
+    }
+
+    fun parseEmbeddingAndRerankModelsJson(
+        protocol: ApiProtocol,
+        rawBody: String,
+    ): List<DiscoveredRetrievalModel> {
+        val obj = runCatching { AppJson.parseToJsonElement(rawBody).jsonObject }.getOrNull()
+            ?: return emptyList()
+        return when (protocol) {
+            ApiProtocol.GEMINI -> {
+                val arr = obj["models"] as? JsonArray ?: return emptyList()
+                arr.mapNotNull { el ->
+                    val m = el as? JsonObject ?: return@mapNotNull null
+                    val rawName = m["name"]?.jsonPrimitive?.content ?: return@mapNotNull null
+                    val id = rawName.removePrefix("models/").trim()
+                    if (id.isEmpty()) return@mapNotNull null
+                    val methods = (m["supportedGenerationMethods"] as? JsonArray)
+                        ?.mapNotNull { it.jsonPrimitive.content }
+                        .orEmpty()
+                    val supportsEmbed = methods.any {
+                        it.equals("embedContent", ignoreCase = true) ||
+                            it.equals("batchEmbedContents", ignoreCase = true)
+                    }
+                    val lower = id.lowercase()
+                    if (supportsEmbed || lower.contains("embedding") || lower.contains("embed")) {
+                        DiscoveredRetrievalModel(id = id, kind = DiscoveredModelKind.EMBEDDING)
+                    } else {
+                        null
+                    }
+                }.distinctBy { it.id }
+            }
+
+            ApiProtocol.OPENAI_CHAT,
+            ApiProtocol.OPENAI_RESPONSES,
+            ApiProtocol.ANTHROPIC -> {
+                val arr = (obj["data"] as? JsonArray) ?: (obj["models"] as? JsonArray) ?: return emptyList()
+                arr.mapNotNull { el ->
+                    val m = el as? JsonObject ?: return@mapNotNull null
+                    val id = (m["id"] ?: m["name"])?.jsonPrimitive?.content?.trim().orEmpty()
+                    if (id.isEmpty()) return@mapNotNull null
+                    classifyRetrievalModelId(id)
+                }.distinctBy { it.id }
+            }
+        }
+    }
+
+    fun totalInputTokens(protocol: ApiProtocol, usage: ChatTokenUsageDto): Int? = when (protocol) {
+        ApiProtocol.ANTHROPIC -> {
+            val prompt = usage.prompt_tokens
+            val cacheRead = usage.cache_read_input_tokens
+            if (prompt != null || cacheRead != null) (prompt ?: 0) + (cacheRead ?: 0) else null
+        }
+        ApiProtocol.OPENAI_CHAT,
+        ApiProtocol.OPENAI_RESPONSES,
+        ApiProtocol.GEMINI -> usage.prompt_tokens
+    }
+
+    private fun classifyRetrievalModelId(id: String): DiscoveredRetrievalModel? {
+        val lower = id.lowercase()
+        if (lower.startsWith("tts-") ||
+            lower.startsWith("whisper") ||
+            lower.contains("moderation") ||
+            lower.startsWith("dall-e") ||
+            lower.startsWith("gpt-image")
+        ) {
+            return null
+        }
+        // Check rerank BEFORE embedding because bge-reranker / gte-rerank contain "bge" / "gte".
+        if (lower.contains("rerank")) {
+            return DiscoveredRetrievalModel(id = id, kind = DiscoveredModelKind.RERANK)
+        }
+        val isEmbedding = lower.contains("embedding") ||
+            lower.contains("embed") ||
+            lower.contains("bge") ||
+            lower.contains("gte") ||
+            lower.contains("m3e") ||
+            E5_MODEL_RE.containsMatchIn(lower)
+        return if (isEmbedding) {
+            DiscoveredRetrievalModel(id = id, kind = DiscoveredModelKind.EMBEDDING)
+        } else {
+            null
+        }
+    }
+
+    private fun formatGeminiModelRef(modelId: String): String {
+        val clean = modelId.trim()
+        return if (clean.startsWith("models/")) clean else "models/$clean"
+    }
+
+    private fun parseFloatVector(arr: JsonArray): FloatArray {
+        val out = FloatArray(arr.size)
+        for (i in arr.indices) {
+            val prim = arr[i] as? JsonPrimitive ?: return FloatArray(0)
+            val v = prim.floatOrNull ?: prim.doubleOrNull?.toFloat() ?: return FloatArray(0)
+            if (!v.isFinite()) return FloatArray(0)
+            out[i] = v
+        }
+        return out
+    }
+
     // ==================== Private Helpers ====================
 
     private data class WirePart(val text: String? = null, val imageUrl: String? = null)
@@ -827,9 +1148,20 @@ object DirectProtocolCodec {
         val input = u["input_tokens"]?.jsonPrimitive?.intOrNull
         val output = u["output_tokens"]?.jsonPrimitive?.intOrNull
         val cacheRead = u["cache_read_input_tokens"]?.jsonPrimitive?.intOrNull
-        val total = if (input != null && output != null) input + output else null
+        val cacheCreation = u["cache_creation_input_tokens"]?.jsonPrimitive?.intOrNull
+        val effectivePrompt = if (input != null || cacheCreation != null) {
+            (input ?: 0) + (cacheCreation ?: 0)
+        } else {
+            null
+        }
+        val totalInput = if (input != null || cacheRead != null || cacheCreation != null) {
+            (input ?: 0) + (cacheRead ?: 0) + (cacheCreation ?: 0)
+        } else {
+            null
+        }
+        val total = if (totalInput != null && output != null) totalInput + output else null
         return ChatTokenUsageDto(
-            prompt_tokens = input,
+            prompt_tokens = effectivePrompt,
             completion_tokens = output,
             total_tokens = total,
             cache_read_input_tokens = cacheRead,

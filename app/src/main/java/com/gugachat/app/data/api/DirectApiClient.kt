@@ -2,6 +2,11 @@ package com.gugachat.app.data.api
 
 import com.gugachat.app.core.storage.ApiProtocol
 import com.gugachat.app.core.storage.ApiProviderConfig
+import com.gugachat.app.domain.chat.EmbeddingEngine
+import com.gugachat.app.domain.chat.RemoteEmbeddingConfig
+import com.gugachat.app.domain.chat.RemoteRerankConfig
+import com.gugachat.app.domain.chat.RerankEngine
+import com.gugachat.app.domain.chat.recommendedMinCosineForRemoteModel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -15,7 +20,14 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.InterruptedIOException
 import java.net.SocketTimeoutException
+import java.net.URI
 import java.util.concurrent.TimeUnit
+
+data class EmbeddingConnectionTestResult(
+    val dimension: Int,
+    val latencyMs: Long,
+    val modelId: String,
+)
 
 class DirectApiClient(
     private val standardClient: OkHttpClient,
@@ -140,7 +152,7 @@ class DirectApiClient(
                                 sawFinishReason = true
                             }
                             if (outcome.usage != null) {
-                                lastUsage = SseParser.mergeUsage(lastUsage, outcome.usage)
+                                lastUsage = mergeUsageForProtocol(provider.protocol, lastUsage, outcome.usage)
                                 lastUsage?.let(onUsage)
                             }
                             if (outcome.deltaReasoning.isNotEmpty()) {
@@ -345,11 +357,227 @@ class DirectApiClient(
         resolved
     }
 
+    suspend fun embedTexts(
+        provider: ApiProviderConfig,
+        modelId: String,
+        texts: List<String>,
+        isQuery: Boolean = false,
+        dimensions: Int? = null,
+        timeoutMs: Long = 15_000L,
+    ): List<FloatArray> {
+        validateProvider(provider)
+        val cleanModel = modelId.trim()
+        if (cleanModel.isEmpty()) {
+            throw ApiException(400, "NO_EMBEDDING_MODEL", "Embedding model ID is empty")
+        }
+        if (texts.isEmpty()) return emptyList()
+
+        val (url, payload) = when (provider.protocol) {
+            ApiProtocol.OPENAI_CHAT,
+            ApiProtocol.OPENAI_RESPONSES -> DirectProtocolCodec.openaiEmbeddingsUrl(provider.baseUrl) to
+                DirectProtocolCodec.buildOpenAIEmbeddingRequestJson(
+                    modelId = cleanModel,
+                    texts = texts,
+                    dimensions = dimensions,
+                )
+
+            ApiProtocol.GEMINI -> if (texts.size == 1) {
+                DirectProtocolCodec.geminiEmbedContentUrl(provider.baseUrl, cleanModel) to
+                    DirectProtocolCodec.buildGeminiEmbedContentRequestJson(
+                        modelId = cleanModel,
+                        text = texts[0],
+                        isQuery = isQuery,
+                        outputDimensionality = dimensions,
+                    )
+            } else {
+                DirectProtocolCodec.geminiBatchEmbedContentsUrl(provider.baseUrl, cleanModel) to
+                    DirectProtocolCodec.buildGeminiBatchEmbedContentsRequestJson(
+                        modelId = cleanModel,
+                        texts = texts,
+                        isQuery = isQuery,
+                        outputDimensionality = dimensions,
+                    )
+            }
+
+            ApiProtocol.ANTHROPIC -> throw ApiException(
+                400,
+                "UNSUPPORTED",
+                "Anthropic protocol does not support embeddings",
+            )
+        }
+
+        val req = applyAuthHeaders(
+            Request.Builder()
+                .url(url)
+                .post(payload.toRequestBody(ApiClient.JSON_MEDIA_TYPE)),
+            provider,
+        ).header("Accept", "application/json")
+            .header("Content-Type", "application/json")
+            .build()
+
+        val client = clientWithTimeout(timeoutMs)
+        val resp = client.awaitCall(req)
+        val vectors = withContext(Dispatchers.IO) {
+            resp.use { r ->
+                val raw = r.body?.string().orEmpty()
+                if (!r.isSuccessful) {
+                    throw parseHttpError(r.code, raw)
+                }
+                when (provider.protocol) {
+                    ApiProtocol.GEMINI -> DirectProtocolCodec.parseGeminiEmbeddingsJson(raw, r.code)
+                    ApiProtocol.OPENAI_CHAT,
+                    ApiProtocol.OPENAI_RESPONSES,
+                    ApiProtocol.ANTHROPIC -> DirectProtocolCodec.parseOpenAIEmbeddingsJson(raw, r.code)
+                }
+            }
+        }
+        if (vectors.size != texts.size) {
+            throw ApiException(
+                502,
+                "EMBEDDING_COUNT_MISMATCH",
+                "Expected ${texts.size} embeddings but received ${vectors.size}",
+            )
+        }
+        return vectors
+    }
+
+    suspend fun testEmbeddingConnection(
+        provider: ApiProviderConfig,
+        modelId: String,
+        dimensions: Int? = null,
+        timeoutMs: Long = 10_000L,
+    ): EmbeddingConnectionTestResult {
+        val startNanos = System.nanoTime()
+        val vectors = embedTexts(
+            provider = provider,
+            modelId = modelId,
+            texts = listOf("GuGuChat embedding connectivity test"),
+            isQuery = true,
+            dimensions = dimensions,
+            timeoutMs = timeoutMs,
+        )
+        val elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos).coerceAtLeast(0L)
+        val dim = vectors.firstOrNull()?.size ?: 0
+        if (dim <= 0) {
+            throw ApiException(502, "EMPTY_EMBEDDING", "Embedding test returned an empty vector")
+        }
+        return EmbeddingConnectionTestResult(
+            dimension = dim,
+            latencyMs = elapsedMs,
+            modelId = modelId.trim(),
+        )
+    }
+
+    suspend fun rerankDocuments(
+        provider: ApiProviderConfig,
+        modelId: String,
+        query: String,
+        documents: List<String>,
+        topN: Int = documents.size,
+        useTeiSchema: Boolean = false,
+        timeoutMs: Long = 10_000L,
+    ): Map<Int, Double> {
+        validateProvider(provider)
+        if (documents.isEmpty() || query.isBlank()) return emptyMap()
+        if (provider.protocol == ApiProtocol.ANTHROPIC || provider.protocol == ApiProtocol.GEMINI) {
+            throw ApiException(
+                400,
+                "UNSUPPORTED",
+                "${provider.protocol.displayName} protocol does not support /rerank",
+            )
+        }
+        val cleanModel = modelId.trim()
+        if (!useTeiSchema && cleanModel.isEmpty()) {
+            throw ApiException(400, "NO_RERANK_MODEL", "Rerank model ID is empty")
+        }
+
+        val url = DirectProtocolCodec.openaiRerankUrl(provider.baseUrl)
+        val payload = DirectProtocolCodec.buildRerankRequestJson(
+            modelId = cleanModel,
+            query = query,
+            documents = documents,
+            topN = topN,
+            useTeiSchema = useTeiSchema,
+        )
+        val req = applyAuthHeaders(
+            Request.Builder()
+                .url(url)
+                .post(payload.toRequestBody(ApiClient.JSON_MEDIA_TYPE)),
+            provider,
+        ).header("Accept", "application/json")
+            .header("Content-Type", "application/json")
+            .build()
+
+        val client = clientWithTimeout(timeoutMs)
+        val resp = client.awaitCall(req)
+        val parsed = withContext(Dispatchers.IO) {
+            resp.use { r ->
+                val raw = r.body?.string().orEmpty()
+                if (!r.isSuccessful) {
+                    throw parseHttpError(r.code, raw)
+                }
+                DirectProtocolCodec.parseRerankResponseJson(raw, r.code)
+            }
+        }
+        val filtered = parsed.entries
+            .filter { it.key in documents.indices }
+            .sortedByDescending { it.value }
+        val limited = if (topN > 0) filtered.take(topN) else filtered
+        return LinkedHashMap<Int, Double>(limited.size).apply {
+            for ((idx, score) in limited) {
+                put(idx, score)
+            }
+        }
+    }
+
+    suspend fun fetchEmbeddingAndRerankModels(provider: ApiProviderConfig): List<DiscoveredRetrievalModel> {
+        validateProvider(provider)
+        val url = modelsEndpoint(provider)
+        val req = buildGetRequest(provider, url)
+        val resp = standardClient.awaitCall(req)
+        return withContext(Dispatchers.IO) {
+            resp.use { r ->
+                val raw = r.body?.string().orEmpty()
+                if (!r.isSuccessful) {
+                    throw parseHttpError(r.code, raw)
+                }
+                DirectProtocolCodec.parseEmbeddingAndRerankModelsJson(provider.protocol, raw)
+            }
+        }
+    }
+
+    private fun clientWithTimeout(timeoutMs: Long): OkHttpClient {
+        if (timeoutMs <= 0L) return standardClient
+        val clamped = timeoutMs.coerceAtLeast(100L)
+        return standardClient.newBuilder()
+            .connectTimeout(clamped, TimeUnit.MILLISECONDS)
+            .readTimeout(clamped, TimeUnit.MILLISECONDS)
+            .writeTimeout(clamped, TimeUnit.MILLISECONDS)
+            .callTimeout(clamped, TimeUnit.MILLISECONDS)
+            .build()
+    }
+
+    private fun mergeUsageForProtocol(
+        protocol: ApiProtocol,
+        previous: ChatTokenUsageDto?,
+        incoming: ChatTokenUsageDto?,
+    ): ChatTokenUsageDto? {
+        val merged = SseParser.mergeUsage(previous, incoming) ?: return null
+        if (protocol == ApiProtocol.ANTHROPIC) {
+            val totalInput = DirectProtocolCodec.totalInputTokens(protocol, merged)
+            val completion = merged.completion_tokens
+            if (totalInput != null && completion != null) {
+                return merged.copy(total_tokens = totalInput + completion)
+            }
+        }
+        return merged
+    }
+
     private fun validateProvider(provider: ApiProviderConfig) {
         if (provider.baseUrl.isBlank()) {
             throw ApiException(0, "NO_SERVER_URL", "Custom Base URL is empty")
         }
-        if (provider.apiKey.isBlank()) {
+        if (provider.apiKey.isBlank() && !isLocalOrLanHost(provider.baseUrl)) {
             throw ApiException(401, "NO_API_KEY", "API Key is required")
         }
     }
@@ -388,13 +616,129 @@ class DirectApiClient(
             .header("Accept", "application/json")
             .build()
 
-    private fun applyAuthHeaders(builder: Request.Builder, provider: ApiProviderConfig): Request.Builder =
-        when (provider.protocol) {
+    private fun applyAuthHeaders(builder: Request.Builder, provider: ApiProviderConfig): Request.Builder {
+        val key = provider.apiKey.trim()
+        return when (provider.protocol) {
             ApiProtocol.OPENAI_CHAT,
-            ApiProtocol.OPENAI_RESPONSES -> builder.header("Authorization", "Bearer ${provider.apiKey.trim()}")
-            ApiProtocol.ANTHROPIC -> builder
-                .header("x-api-key", provider.apiKey.trim())
-                .header("anthropic-version", "2023-06-01")
-            ApiProtocol.GEMINI -> builder.header("x-goog-api-key", provider.apiKey.trim())
+            ApiProtocol.OPENAI_RESPONSES -> if (key.isNotEmpty()) {
+                builder.header("Authorization", "Bearer $key")
+            } else {
+                builder
+            }
+            ApiProtocol.ANTHROPIC -> {
+                builder.header("anthropic-version", "2023-06-01")
+                if (key.isNotEmpty()) builder.header("x-api-key", key) else builder
+            }
+            ApiProtocol.GEMINI -> if (key.isNotEmpty()) {
+                builder.header("x-goog-api-key", key)
+            } else {
+                builder
+            }
         }
+    }
+
+    companion object {
+        fun isLocalOrLanHost(baseUrl: String): Boolean {
+            val normalized = DirectProtocolCodec.normalizeBaseOrigin(baseUrl)
+            val host = runCatching {
+                URI(normalized.ifEmpty { baseUrl.trim() }).host
+            }.getOrNull()?.lowercase()?.trim('[', ']') ?: return false
+            if (host.isEmpty()) return false
+            if (host == "localhost" || host == "::1" || host == "0:0:0:0:0:0:0:1" || host.endsWith(".local")) {
+                return true
+            }
+            val octets = host.split('.')
+            if (octets.size == 4 && octets.all { it.isNotEmpty() && it.all(Char::isDigit) }) {
+                val nums = octets.map { it.toIntOrNull() ?: return false }
+                if (nums.any { it !in 0..255 }) return false
+                val a = nums[0]
+                val b = nums[1]
+                return a == 127 ||
+                    a == 10 ||
+                    (a == 192 && b == 168) ||
+                    (a == 172 && b in 16..31)
+            }
+            return false
+        }
+
+        fun resolveRemoteEmbeddingProvider(
+            config: RemoteEmbeddingConfig,
+            providerLookup: (String) -> ApiProviderConfig? = { null },
+        ): ApiProviderConfig? {
+            val saved = config.providerId.trim().takeIf { it.isNotEmpty() }?.let(providerLookup)
+            if (saved != null) return saved
+            val baseUrl = config.customBaseUrl.trim()
+            if (baseUrl.isEmpty()) return null
+            return ApiProviderConfig(
+                id = config.providerId.ifBlank { "custom_embed" },
+                protocol = config.protocol,
+                baseUrl = baseUrl,
+                apiKey = config.customApiKey.trim(),
+            )
+        }
+
+        fun resolveRemoteRerankProvider(
+            config: RemoteRerankConfig,
+            providerLookup: (String) -> ApiProviderConfig? = { null },
+        ): ApiProviderConfig? {
+            val saved = config.providerId.trim().takeIf { it.isNotEmpty() }?.let(providerLookup)
+            if (saved != null) return saved
+            val baseUrl = config.customBaseUrl.trim()
+            if (baseUrl.isEmpty()) return null
+            return ApiProviderConfig(
+                id = config.providerId.ifBlank { "custom_rerank" },
+                protocol = ApiProtocol.OPENAI_CHAT,
+                baseUrl = baseUrl,
+                apiKey = config.customApiKey.trim(),
+            )
+        }
+    }
+}
+
+class RemoteApiEmbeddingEngine(
+    private val directApiClient: DirectApiClient,
+    private val provider: ApiProviderConfig,
+    private val config: RemoteEmbeddingConfig,
+    private val requestTimeoutMs: Long = 15_000L,
+) : EmbeddingEngine {
+    override val profileKey: String =
+        "remote|${config.providerId.ifBlank { provider.id }}|${config.modelId.trim()}|${config.dimensions ?: 0}"
+
+    override val minCosineFloor: Double = recommendedMinCosineForRemoteModel(config.modelId)
+
+    override suspend fun isAvailable(): Boolean =
+        provider.baseUrl.isNotBlank() &&
+            config.modelId.isNotBlank() &&
+            provider.protocol != ApiProtocol.ANTHROPIC &&
+            (provider.apiKey.isNotBlank() || DirectApiClient.isLocalOrLanHost(provider.baseUrl))
+
+    override suspend fun embed(texts: List<String>, isQuery: Boolean): List<FloatArray> =
+        directApiClient.embedTexts(
+            provider = provider,
+            modelId = config.modelId.trim(),
+            texts = texts,
+            isQuery = isQuery,
+            dimensions = config.dimensions,
+            timeoutMs = requestTimeoutMs,
+        )
+}
+
+class RemoteApiRerankEngine(
+    private val directApiClient: DirectApiClient,
+    private val provider: ApiProviderConfig,
+    private val config: RemoteRerankConfig,
+    private val requestTimeoutMs: Long = 10_000L,
+) : RerankEngine {
+    override suspend fun rerank(query: String, documents: List<String>, topN: Int): Map<Int, Double> {
+        if (!config.enabled || documents.isEmpty() || query.isBlank()) return emptyMap()
+        return directApiClient.rerankDocuments(
+            provider = provider,
+            modelId = config.modelId.trim(),
+            query = query,
+            documents = documents,
+            topN = topN,
+            useTeiSchema = config.useTeiSchema,
+            timeoutMs = requestTimeoutMs,
+        )
+    }
 }
