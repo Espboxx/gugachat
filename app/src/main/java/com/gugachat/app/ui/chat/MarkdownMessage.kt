@@ -25,6 +25,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.WrapText
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ExpandLess
@@ -61,6 +62,7 @@ import androidx.compose.ui.text.withLink
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.i18n.LocalAppStrings
 import com.gugachat.app.core.i18n.fmt
 import com.gugachat.app.core.theme.LocalAppTheme
@@ -465,6 +467,35 @@ fun MarkdownMessageText(
     }
 }
 
+private val PLAIN_TEXT_FENCE_LANGS = setOf(
+    "text", "txt", "plaintext", "plain", "md", "markdown",
+    "note", "notes", "diary", "story", "quote", "prose", "log", "output",
+)
+
+private val CJK_CHAR_RE = Regex("[\\u4E00-\\u9FFF\\u3040-\\u30FF\\uAC00-\\uD7AF]")
+private val CODE_SYNTAX_HINT_RE = Regex(
+    """(^\s*(?:import|export|package|def|class|func|function|const|let|var|return|if\s*\(|for\s*\(|while\s*\(|public|private|struct|SELECT|INSERT|UPDATE|DELETE|#include|<!DOCTYPE|<html)\b|[{};]\s*$)""",
+    setOf(RegexOption.MULTILINE, RegexOption.IGNORE_CASE),
+)
+
+internal fun isPlainTextCodeFence(lang: String, code: String): Boolean {
+    val norm = lang.trim().lowercase()
+    if (norm in PLAIN_TEXT_FENCE_LANGS) return true
+    if (norm.isNotEmpty()) return false
+    // Unlabeled fence: treat as prose if it contains CJK text without obvious code syntax.
+    return CJK_CHAR_RE.containsMatchIn(code) && !CODE_SYNTAX_HINT_RE.containsMatchIn(code)
+}
+
+internal fun shouldDefaultWrapCodeFence(lang: String, code: String): Boolean {
+    if (isPlainTextCodeFence(lang, code)) return true
+    val norm = lang.trim().lowercase()
+    if (norm.isEmpty()) {
+        val longestLine = code.lineSequence().maxOfOrNull { it.length } ?: 0
+        if (longestLine > 44 && !CODE_SYNTAX_HINT_RE.containsMatchIn(code)) return true
+    }
+    return false
+}
+
 @Composable
 private fun CodeFenceBlock(
     lang: String,
@@ -475,6 +506,10 @@ private fun CodeFenceBlock(
     onCopy: () -> Unit,
 ) {
     val theme = LocalAppTheme.current
+    val strings = LocalAppStrings.current
+    val isZh = strings.language == AppLanguage.ZH
+    val isPlainText = remember(lang, code) { isPlainTextCodeFence(lang, code) }
+    var wrapLines by remember(lang, code) { mutableStateOf(shouldDefaultWrapCodeFence(lang, code)) }
     var justCopied by remember(code) { mutableStateOf(false) }
     LaunchedEffect(justCopied) {
         if (justCopied) {
@@ -498,7 +533,7 @@ private fun CodeFenceBlock(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = lang.ifBlank { "code" }.lowercase(),
+                text = lang.ifBlank { if (isPlainText) "text" else "code" }.lowercase(),
                 color = palette.codeMeta,
                 fontSize = 11.sp,
                 fontFamily = FontFamily.Monospace,
@@ -506,31 +541,70 @@ private fun CodeFenceBlock(
                 letterSpacing = 0.3.sp,
             )
             Row(
-                modifier = Modifier
-                    .heightIn(min = 32.dp)
-                    .clip(RoundedCornerShape(999.dp))
-                    .background(palette.codeBg.copy(alpha = 0.72f))
-                    .border(theme.borderWidth, palette.border.copy(alpha = 0.8f), RoundedCornerShape(999.dp))
-                    .clickable {
-                        onCopy()
-                        justCopied = true
-                    }
-                    .padding(horizontal = 9.dp, vertical = 5.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                Icon(
-                    imageVector = if (justCopied) Icons.Default.Check else Icons.Default.ContentCopy,
-                    contentDescription = copyLabel,
-                    tint = palette.accent,
-                    modifier = Modifier.size(13.dp),
-                )
-                Text(
-                    text = if (justCopied) copiedLabel else copyLabel,
-                    color = palette.accent,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.SemiBold,
-                )
+                Row(
+                    modifier = Modifier
+                        .heightIn(min = 32.dp)
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(
+                            if (wrapLines) palette.accent.copy(alpha = 0.14f) else palette.codeBg.copy(alpha = 0.72f),
+                        )
+                        .border(
+                            theme.borderWidth,
+                            if (wrapLines) palette.accent.copy(alpha = 0.45f) else palette.border.copy(alpha = 0.8f),
+                            RoundedCornerShape(999.dp),
+                        )
+                        .clickable { wrapLines = !wrapLines }
+                        .padding(horizontal = 8.dp, vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.WrapText,
+                        contentDescription = if (isZh) "切换自动换行" else "Toggle line wrap",
+                        tint = if (wrapLines) palette.accent else palette.codeMeta,
+                        modifier = Modifier.size(13.dp),
+                    )
+                    Text(
+                        text = if (isZh) {
+                            if (wrapLines) "已换行" else "换行"
+                        } else {
+                            if (wrapLines) "Wrapped" else "Wrap"
+                        },
+                        color = if (wrapLines) palette.accent else palette.codeMeta,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+                Row(
+                    modifier = Modifier
+                        .heightIn(min = 32.dp)
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(palette.codeBg.copy(alpha = 0.72f))
+                        .border(theme.borderWidth, palette.border.copy(alpha = 0.8f), RoundedCornerShape(999.dp))
+                        .clickable {
+                            onCopy()
+                            justCopied = true
+                        }
+                        .padding(horizontal = 9.dp, vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Icon(
+                        imageVector = if (justCopied) Icons.Default.Check else Icons.Default.ContentCopy,
+                        contentDescription = copyLabel,
+                        tint = palette.accent,
+                        modifier = Modifier.size(13.dp),
+                    )
+                    Text(
+                        text = if (justCopied) copiedLabel else copyLabel,
+                        color = palette.accent,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
             }
         }
         HorizontalDivider(
@@ -540,12 +614,19 @@ private fun CodeFenceBlock(
         Text(
             text = code,
             color = palette.codeInk,
-            fontSize = 12.5.sp,
-            lineHeight = 19.5.sp,
-            fontFamily = FontFamily.Monospace,
-            modifier = Modifier
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 13.dp, vertical = 12.dp),
+            fontSize = if (isPlainText && wrapLines) 13.5.sp else 12.5.sp,
+            lineHeight = if (isPlainText && wrapLines) 21.sp else 19.5.sp,
+            fontFamily = if (isPlainText && wrapLines) FontFamily.Default else FontFamily.Monospace,
+            softWrap = wrapLines,
+            modifier = if (wrapLines) {
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 13.dp, vertical = 12.dp)
+            } else {
+                Modifier
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 13.dp, vertical = 12.dp)
+            },
         )
     }
 }

@@ -114,6 +114,9 @@ object ExternalImportService {
         withContext(Dispatchers.IO) {
             db.withTransaction {
                 chatDao.upsertConversations(convEntities)
+                selectedItems.forEach { item ->
+                    chatDao.deleteMessagesForConversation(item.conversation.id)
+                }
                 if (msgEntities.isNotEmpty()) chatDao.upsertMessages(msgEntities)
                 if (loreEntities.isNotEmpty()) chatDao.upsertNovelLoreList(loreEntities)
                 if (chapterEntities.isNotEmpty()) chatDao.upsertNovelChapters(chapterEntities)

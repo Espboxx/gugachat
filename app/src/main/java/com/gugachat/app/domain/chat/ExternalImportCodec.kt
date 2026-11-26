@@ -97,7 +97,13 @@ object ExternalImportCodec {
             return parseJsonText(text, fileName, hintSource)
         }
 
-        // 5. Plain text / Markdown (Chengguang script or generic User/Assistant transcript)
+        // 5. Legacy DeepSeek CSV export (chat.csv / coder.csv)
+        if (lowerName.endsWith(".csv") || DeepSeekImportCodec.looksLikeLegacyCsv(text, fileName)) {
+            val ds = DeepSeekImportCodec.parseBytes(bytes, fileName = fileName)
+            return ds.toExternalBundle(ExternalImportSource.DEEPSEEK)
+        }
+
+        // 6. Plain text / Markdown (Chengguang script or generic User/Assistant transcript)
         return parseTextOrScript(text, fileName, hintSource)
     }
 
@@ -187,7 +193,8 @@ object ExternalImportCodec {
                 val norm = entry.name.replace('\\', '/').trimStart('/')
                 val lower = norm.lowercase()
                 when {
-                    lower.endsWith(".json") || lower.endsWith(".jsonl") || lower.endsWith(".txt") || lower.endsWith(".md") -> {
+                    lower.contains("_files/") -> Unit
+                    lower.endsWith(".json") || lower.endsWith(".jsonl") || lower.endsWith(".txt") || lower.endsWith(".md") || lower.endsWith(".csv") -> {
                         val content = readBoundedBytes(zis, MAX_ENTRY_BYTES).toString(Charsets.UTF_8).removePrefix("\uFEFF").trim()
                         if (content.isNotEmpty()) textEntries[norm] = content
                     }
@@ -200,16 +207,24 @@ object ExternalImportCodec {
             }
         }
 
-        // Check if ZIP is DeepSeek v3 (chat_sessions/*.json) or DeepSeek conversations.json
+        // Check if ZIP is DeepSeek v3 (chat_sessions/*.json) or DeepSeek legacy CSV (chat.csv / coder.csv)
         val hasDeepSeekV3 = textEntries.keys.any { it.lowercase().contains("chat_sessions/") && it.lowercase().endsWith(".json") }
         if (hasDeepSeekV3) {
-            val ds = DeepSeekImportCodec.parseZipBytes(zipBytes)
+            val ds = DeepSeekImportCodec.parseZipTextEntries(textEntries)
             return ds.toExternalBundle(ExternalImportSource.DEEPSEEK)
         }
 
         val convJsonEntry = textEntries.entries.firstOrNull { it.key.substringAfterLast('/').equals("conversations.json", ignoreCase = true) }
         if (convJsonEntry != null) {
             return parseJsonText(convJsonEntry.value, convJsonEntry.key, hintSource)
+        }
+
+        val hasDeepSeekLegacyCsv = textEntries.entries.any { (name, content) ->
+            name.lowercase().endsWith(".csv") && DeepSeekImportCodec.looksLikeLegacyCsv(content, name)
+        }
+        if (hasDeepSeekLegacyCsv) {
+            val ds = DeepSeekImportCodec.parseZipTextEntries(textEntries)
+            return ds.toExternalBundle(ExternalImportSource.DEEPSEEK)
         }
 
         // Collect all recognizable items inside ZIP (e.g. SillyTavern PNG/JSONL pack, Chatbox JSON, Chengguang TXT/JSON)
@@ -719,6 +734,7 @@ object ExternalImportCodec {
         } ?: return false
         val msgs = sample["chat_messages"] as? JsonArray ?: return false
         val firstMsg = msgs.firstOrNull() as? JsonObject ?: return false
+        if (firstMsg.containsKey("fragments") || firstMsg.containsKey("parent_id")) return false
         return firstMsg.containsKey("sender") || sample.containsKey("uuid")
     }
 

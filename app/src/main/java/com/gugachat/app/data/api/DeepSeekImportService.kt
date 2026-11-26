@@ -103,6 +103,9 @@ object DeepSeekImportService {
         withContext(Dispatchers.IO) {
             db.withTransaction {
                 chatDao.upsertConversations(convEntities)
+                selectedItems.forEach { item ->
+                    chatDao.deleteMessagesForConversation(item.conversation.id)
+                }
                 if (msgEntities.isNotEmpty()) {
                     chatDao.upsertMessages(msgEntities)
                 }
