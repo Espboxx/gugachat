@@ -162,6 +162,21 @@ object NovelPresets {
                 Triple("concept", "冒险者经费核销表", "公会对破坏公共建筑的法术征收 300% 赔偿金的万恶规则。"),
             ),
         ),
+        NovelPresetTemplate(
+            id = "custom",
+            name = "自由原创",
+            genre = "自由原创 / 不限题材",
+            style = "画面克制真实、节奏张弛有度、重人物动机与情绪暗流",
+            pov = "third_limited",
+            targetWordsPerChapter = 2500,
+            synopsis = "完全由你定义的世界与故事。填入核心构思后即可自由开篇，或让 AI 协助一键生成大纲与世界书。",
+            worldview = "",
+            mainOutline = "",
+            authorNote = "优先忠实于作者给出的剧情指令与人物设定，不随意篡改已确立的事实。",
+            firstChapterTitle = "第一章 初入此间",
+            firstChapterOutline = "",
+            starterLore = emptyList(),
+        ),
     )
 
     fun findById(id: String): NovelPresetTemplate =

@@ -5,6 +5,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -34,6 +35,11 @@ data class AppSettings(
     val directModeActive: Boolean = false,
     val hasChosenEntryMode: Boolean = false,
     val preferredEntryMode: String = "",
+    val readerPaper: String = "cream",
+    val readerFontSizeSp: Int = 17,
+    val readerLineHeight: Float = 1.75f,
+    val readerSerif: Boolean = true,
+    val readerIndent: Boolean = true,
 )
 
 class SettingsStore(private val context: Context) {
@@ -51,6 +57,11 @@ class SettingsStore(private val context: Context) {
         val DIRECT_MODE_ACTIVE = booleanPreferencesKey("direct_mode_active")
         val HAS_CHOSEN_ENTRY_MODE = booleanPreferencesKey("has_chosen_entry_mode")
         val PREFERRED_ENTRY_MODE = stringPreferencesKey("preferred_entry_mode")
+        val READER_PAPER = stringPreferencesKey("reader_paper")
+        val READER_FONT_SIZE_SP = intPreferencesKey("reader_font_size_sp")
+        val READER_LINE_HEIGHT = floatPreferencesKey("reader_line_height")
+        val READER_SERIF = booleanPreferencesKey("reader_serif")
+        val READER_INDENT = booleanPreferencesKey("reader_indent")
     }
 
     val settingsFlow: Flow<AppSettings> = context.settingsDataStore.data.map { prefs ->
@@ -70,6 +81,11 @@ class SettingsStore(private val context: Context) {
             directModeActive = prefs[Keys.DIRECT_MODE_ACTIVE] ?: false,
             hasChosenEntryMode = prefs[Keys.HAS_CHOSEN_ENTRY_MODE] ?: false,
             preferredEntryMode = prefs[Keys.PREFERRED_ENTRY_MODE].orEmpty(),
+            readerPaper = prefs[Keys.READER_PAPER]?.takeIf { it in setOf("cream", "parchment", "sage", "night") } ?: "cream",
+            readerFontSizeSp = (prefs[Keys.READER_FONT_SIZE_SP] ?: 17).coerceIn(13, 24),
+            readerLineHeight = (prefs[Keys.READER_LINE_HEIGHT] ?: 1.75f).coerceIn(1.4f, 2.2f),
+            readerSerif = prefs[Keys.READER_SERIF] ?: true,
+            readerIndent = prefs[Keys.READER_INDENT] ?: true,
         )
     }
 
@@ -124,6 +140,22 @@ class SettingsStore(private val context: Context) {
         context.settingsDataStore.edit {
             it[Keys.HAS_CHOSEN_ENTRY_MODE] = true
             it[Keys.PREFERRED_ENTRY_MODE] = mode
+        }
+    }
+
+    suspend fun setReaderPrefs(
+        paper: String? = null,
+        fontSizeSp: Int? = null,
+        lineHeight: Float? = null,
+        serif: Boolean? = null,
+        indent: Boolean? = null,
+    ) {
+        context.settingsDataStore.edit { prefs ->
+            paper?.takeIf { it in setOf("cream", "parchment", "sage", "night") }?.let { prefs[Keys.READER_PAPER] = it }
+            fontSizeSp?.let { prefs[Keys.READER_FONT_SIZE_SP] = it.coerceIn(13, 24) }
+            lineHeight?.let { prefs[Keys.READER_LINE_HEIGHT] = it.coerceIn(1.4f, 2.2f) }
+            serif?.let { prefs[Keys.READER_SERIF] = it }
+            indent?.let { prefs[Keys.READER_INDENT] = it }
         }
     }
 }

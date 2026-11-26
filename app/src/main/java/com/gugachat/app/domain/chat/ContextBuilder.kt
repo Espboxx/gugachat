@@ -230,6 +230,7 @@ object ContextBuilder {
                 activeChapter = activeChapter,
                 constantLore = constantLore,
                 chronicleSummary = chronicleText,
+                previousChapters = novelChapters,
             )
             isRp -> RpEngine.buildRpSystemPrompt(
                 rp = conversation.rp!!,

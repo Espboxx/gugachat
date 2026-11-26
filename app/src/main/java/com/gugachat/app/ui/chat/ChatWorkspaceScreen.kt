@@ -92,6 +92,7 @@ fun ChatWorkspaceScreen(
     var memorySheetInitialTab by remember { mutableIntStateOf(0) }
     var showNovelWizard by remember { mutableStateOf(false) }
     var showNovelStudio by remember { mutableStateOf(false) }
+    var novelStudioInitialTab by remember { mutableIntStateOf(0) }
     var showRpWizard by remember { mutableStateOf(false) }
     var showRpStudio by remember { mutableStateOf(false) }
     var rpStudioInitialTab by remember { mutableIntStateOf(0) }
@@ -120,10 +121,15 @@ fun ChatWorkspaceScreen(
             messages = state.messages,
             paper = state.readerPaper,
             fontSizeSp = state.readerFontSizeSp,
+            lineHeightMultiplier = state.readerLineHeight,
             useSerif = state.readerSerif,
+            useIndent = state.readerIndent,
             onPaperChange = { viewModel.updateReaderPrefs(paper = it) },
             onFontSizeChange = { viewModel.updateReaderPrefs(fontSize = it) },
+            onLineHeightChange = { viewModel.updateReaderPrefs(lineHeight = it) },
             onSerifToggle = { viewModel.updateReaderPrefs(serif = it) },
+            onIndentToggle = { viewModel.updateReaderPrefs(indent = it) },
+            onContinueWriting = { viewModel.continueLastAssistantMessage() },
             onExit = { viewModel.setPureReadingMode(false) },
         )
     }
@@ -193,8 +199,32 @@ fun ChatWorkspaceScreen(
 
     if (showNovelWizard) {
         NovelWizardDialog(
+            hasModelSelected = !state.selectedModelId.isNullOrBlank(),
+            isCreatingWithAi = state.isCreatingNovelWithAi,
             onDismiss = { showNovelWizard = false },
-            onCreate = viewModel::createNovelSession,
+            onCreate = { presetId, title, idea, pov, targetWords, playStyle, antiAiRules ->
+                viewModel.createNovelSession(
+                    presetId = presetId,
+                    title = title,
+                    customIdea = idea,
+                    pov = pov,
+                    targetWords = targetWords,
+                    playStyle = playStyle,
+                    antiAiRules = antiAiRules,
+                )
+            },
+            onCreateWithAi = { presetId, title, idea, pov, targetWords, playStyle, antiAiRules, onDone ->
+                viewModel.createNovelSessionWithAi(
+                    presetId = presetId,
+                    title = title,
+                    customIdea = idea,
+                    pov = pov,
+                    targetWords = targetWords,
+                    playStyle = playStyle,
+                    antiAiRules = antiAiRules,
+                    onCompleted = onDone,
+                )
+            },
         )
     }
 
@@ -204,24 +234,43 @@ fun ChatWorkspaceScreen(
             chapters = state.novelChapters,
             lore = state.novelLore,
             messages = state.messages,
+            triggeredLoreIds = state.waterline.triggeredLoreIds.toSet(),
+            initialTab = novelStudioInitialTab,
             draftOptions = state.threePathDrafts,
             outlineReply = state.outlineChatReply,
             polishResult = state.polishResult,
             isBusy = state.isGeneratingDrafts,
+            isExtractingLore = state.isExtractingNovelLore,
+            isGeneratingRecap = state.isGeneratingRecap,
+            isSyncingChapters = state.isSyncingOutlineChapters,
             onSelectChapter = viewModel::selectActiveChapter,
-            onAddChapter = viewModel::addOrSelectNovelChapter,
+            onAddChapter = { title, outline -> viewModel.addOrSelectNovelChapter(title, outline) },
+            onUpdateChapter = viewModel::updateNovelChapter,
+            onDeleteChapter = viewModel::deleteNovelChapter,
+            onFinishChapterAndAdvance = viewModel::finishActiveChapterAndAdvance,
+            onGenerateChapterRecap = viewModel::generateChapterRecap,
             onAddLore = viewModel::upsertNovelLore,
+            onUpdateLore = viewModel::updateNovelLore,
+            onToggleLoreEnabled = viewModel::toggleNovelLoreEnabled,
+            onToggleLoreAlwaysActive = viewModel::toggleNovelLoreAlwaysActive,
             onDeleteLore = viewModel::deleteNovelLore,
+            onExtractLoreNow = viewModel::extractNovelLoreNow,
+            onSaveForeshadowToLore = viewModel::saveForeshadowToLore,
             onUpdateConfig = viewModel::updateNovelConfig,
             onGenerate3Paths = viewModel::generateThreePathDrafts,
-            onAdoptDraft = { text -> viewModel.updateDraftText(text) },
+            onAdoptDraft = viewModel::adoptThreePathDraft,
             onOutlineChat = viewModel::runOutlineChat,
-            onPolishLast = { inst ->
+            onApplyOutlineToBook = viewModel::applyOutlineToBook,
+            onSyncChaptersFromOutline = viewModel::syncChaptersFromOutline,
+            onPolishLast = { inst, presetMode ->
                 val lastProse = TimelineReconciler.activeMessages(state.messages).lastOrNull { it.role == "assistant" }?.content.orEmpty()
-                viewModel.runPolish(lastProse, inst)
+                viewModel.runPolish(lastProse, inst, presetMode)
             },
-            onExportTxt = { uri -> viewModel.exportNovelToUri(uri, ctx.contentResolver, markdown = false) },
-            onExportMd = { uri -> viewModel.exportNovelToUri(uri, ctx.contentResolver, markdown = true) },
+            onApplyPolishAsVariant = viewModel::applyPolishAsVariant,
+            onFillComposerDraft = viewModel::updateDraftText,
+            onExportTxt = { uri, includeLore -> viewModel.exportNovelToUri(uri, ctx.contentResolver, markdown = false, includeLore = includeLore) },
+            onExportMd = { uri, includeLore -> viewModel.exportNovelToUri(uri, ctx.contentResolver, markdown = true, includeLore = includeLore) },
+            onToast = { container.toastController.show(it) },
             onDismiss = { showNovelStudio = false },
         )
     }
@@ -571,6 +620,7 @@ fun ChatWorkspaceScreen(
                                         },
                                         onClick = {
                                             showMoreMenu = false
+                                            novelStudioInitialTab = 0
                                             showNovelStudio = true
                                         },
                                     )
@@ -698,12 +748,18 @@ fun ChatWorkspaceScreen(
                 }
             }
 
-            if (mode == ConversationMode.novel && activeConv?.novel != null && activeConv.novel.enableStatusHud) {
+            if (mode == ConversationMode.novel && activeConv?.novel != null) {
                 NovelStatusHudBar(
                     novel = activeConv.novel,
                     chapters = state.novelChapters,
-                    onOpenStudio = { showNovelStudio = true },
+                    triggeredLoreCount = state.waterline.triggeredLoreIds.size,
+                    onOpenStudio = { tab ->
+                        novelStudioInitialTab = tab
+                        showNovelStudio = true
+                    },
                     onEnterPureReading = { viewModel.setPureReadingMode(true) },
+                    onFinishChapterAndAdvance = viewModel::finishActiveChapterAndAdvance,
+                    onUpdateAuthorNote = { note -> viewModel.updateNovelConfig { it.copy(authorNote = note) } },
                 )
             } else if (mode == ConversationMode.rp && activeConv?.rp != null && !activeConv.rp.theaterMode) {
                 if (activeConv.rp.enableStateHud) {
@@ -818,6 +874,7 @@ fun ChatWorkspaceScreen(
                     memoryEnabled = activeConv?.params?.enableAutoMemory ?: true,
                     rpConfig = activeConv?.rp,
                     novelConfig = activeConv?.novel,
+                    novelChapters = state.novelChapters,
                     isStreaming = state.isStreaming,
                     streamingStatusHint = state.streamingStatusHint,
                     isRefreshingChoices = state.isRefreshingChoices,
@@ -825,6 +882,12 @@ fun ChatWorkspaceScreen(
                     onOpenModelSheet = { showModelSheet = true },
                     onStarterPrompt = viewModel::applyStarterPrompt,
                     onSelectNovelChoice = { viewModel.sendMessage(overrideText = it) },
+                    onRefreshNovelChoices = viewModel::refreshNovelChoices,
+                    onContinueNovel = { viewModel.continueLastAssistantMessage() },
+                    onOpenNovelStudio = { tab ->
+                        novelStudioInitialTab = tab
+                        showNovelStudio = true
+                    },
                     onSelectRpChoice = { choice, bypassLock -> viewModel.triggerRpChoice(choice, bypassLock) },
                     onRefreshRpChoices = viewModel::refreshRpChoices,
                     onContinueRp = { viewModel.continueLastAssistantMessage() },
@@ -872,6 +935,12 @@ fun ChatWorkspaceScreen(
                 isImpersonating = state.isImpersonating,
                 onImpersonate = viewModel::impersonatePlayerDraft,
                 onContinueRp = { viewModel.continueLastAssistantMessage() },
+                onContinueNovel = { viewModel.continueLastAssistantMessage() },
+                onOpenNovelStudio = { tab ->
+                    novelStudioInitialTab = tab
+                    showNovelStudio = true
+                },
+                onEnterPureReading = { viewModel.setPureReadingMode(true) },
             )
         }
     }

@@ -32,6 +32,8 @@ import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.AutoFixHigh
+import androidx.compose.material.icons.filled.AutoStories
+import androidx.compose.material.icons.filled.Book
 import androidx.compose.material.icons.filled.Bookmarks
 import androidx.compose.material.icons.filled.Casino
 import androidx.compose.material.icons.filled.Check
@@ -106,6 +108,9 @@ fun ChatComposerBar(
     isImpersonating: Boolean = false,
     onImpersonate: () -> Unit = {},
     onContinueRp: () -> Unit = {},
+    onContinueNovel: () -> Unit = {},
+    onOpenNovelStudio: (Int) -> Unit = {},
+    onEnterPureReading: () -> Unit = {},
 ) {
     val strings = LocalAppStrings.current
     val theme = LocalAppTheme.current
@@ -289,11 +294,13 @@ fun ChatComposerBar(
                 }
 
                 if (mode == ConversationMode.novel || mode == ConversationMode.rp) {
+                    val isZh = strings.language == AppLanguage.ZH
+                    val novelBranchLabel = if (isZh) "分支" else "Branch"
                     val activeKindLabel = if (mode == ConversationMode.novel) {
                         when (draftNovelKind) {
                             NovelInputKind.director -> strings.novel.inputDirector
                             NovelInputKind.`continue` -> strings.novel.inputContinue
-                            NovelInputKind.branch -> strings.novel.inputAction
+                            NovelInputKind.branch -> novelBranchLabel
                             NovelInputKind.dialogue -> strings.novel.inputDialogue
                         }
                     } else {
@@ -343,7 +350,7 @@ fun ChatComposerBar(
                                 listOf(
                                     NovelInputKind.director to strings.novel.inputDirector,
                                     NovelInputKind.`continue` to strings.novel.inputContinue,
-                                    NovelInputKind.branch to strings.novel.inputAction,
+                                    NovelInputKind.branch to novelBranchLabel,
                                     NovelInputKind.dialogue to strings.novel.inputDialogue,
                                 ).forEach { (kind, label) ->
                                     val selected = draftNovelKind == kind
@@ -486,6 +493,49 @@ fun ChatComposerBar(
                                 onClick = {
                                     showToolsPanel = false
                                     onPickImage()
+                                },
+                            )
+                        }
+                        if (mode == ConversationMode.novel) {
+                            ComposerChip(
+                                label = strings.novel.continueBtn,
+                                icon = Icons.Default.PlayArrow,
+                                active = false,
+                                enabled = !isStreaming,
+                                tone = ComposerChipTone.PRIMARY,
+                                onClick = {
+                                    showToolsPanel = false
+                                    onContinueNovel()
+                                },
+                            )
+                            ComposerChip(
+                                label = strings.novel.threePathsBtn,
+                                icon = Icons.Default.AutoAwesome,
+                                active = false,
+                                tone = ComposerChipTone.ACCENT,
+                                onClick = {
+                                    showToolsPanel = false
+                                    onOpenNovelStudio(2)
+                                },
+                            )
+                            ComposerChip(
+                                label = strings.novel.studioBtn,
+                                icon = Icons.Default.Book,
+                                active = false,
+                                tone = ComposerChipTone.ACCENT,
+                                onClick = {
+                                    showToolsPanel = false
+                                    onOpenNovelStudio(0)
+                                },
+                            )
+                            ComposerChip(
+                                label = strings.novel.pureReading,
+                                icon = Icons.Default.AutoStories,
+                                active = false,
+                                tone = ComposerChipTone.NEUTRAL,
+                                onClick = {
+                                    showToolsPanel = false
+                                    onEnterPureReading()
                                 },
                             )
                         }

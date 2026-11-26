@@ -40,7 +40,9 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountTree
+import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.AutoStories
+import androidx.compose.material.icons.filled.Book
 import androidx.compose.material.icons.filled.Casino
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
@@ -103,8 +105,10 @@ import com.gugachat.app.core.theme.LocalAppTheme
 import com.gugachat.app.domain.chat.ChatMessage
 import com.gugachat.app.domain.chat.ContextWaterlineSummary
 import com.gugachat.app.domain.chat.ConversationMode
+import com.gugachat.app.domain.chat.NovelChapter
 import com.gugachat.app.domain.chat.NovelConfig
 import com.gugachat.app.domain.chat.NovelExport
+import com.gugachat.app.domain.chat.NovelInputKind
 import com.gugachat.app.domain.chat.RpChoice
 import com.gugachat.app.domain.chat.RpConfig
 import com.gugachat.app.domain.chat.RpEngine
@@ -125,6 +129,7 @@ fun ChatMessageList(
     memoryEnabled: Boolean = true,
     rpConfig: RpConfig? = null,
     novelConfig: NovelConfig? = null,
+    novelChapters: List<NovelChapter> = emptyList(),
     isStreaming: Boolean,
     streamingStatusHint: String? = null,
     isRefreshingChoices: Boolean = false,
@@ -132,6 +137,9 @@ fun ChatMessageList(
     onOpenModelSheet: () -> Unit = {},
     onStarterPrompt: (String) -> Unit,
     onSelectNovelChoice: (String) -> Unit,
+    onRefreshNovelChoices: () -> Unit = {},
+    onContinueNovel: () -> Unit = {},
+    onOpenNovelStudio: (Int) -> Unit = {},
     onSelectRpChoice: (RpChoice, Boolean) -> Unit,
     onRefreshRpChoices: () -> Unit = {},
     onContinueRp: () -> Unit = {},
@@ -277,11 +285,27 @@ fun ChatMessageList(
             memoryEnabled = memoryEnabled,
             rpConfig = rpConfig,
             novelConfig = novelConfig,
+            novelChapters = novelChapters,
             onOpenModelSheet = onOpenModelSheet,
             onStarterPrompt = onStarterPrompt,
+            onOpenNovelStudio = onOpenNovelStudio,
             modifier = modifier,
         )
         return
+    }
+
+    val chapterStartMsgMap = remember(mode, novelChapters, active) {
+        if (mode != ConversationMode.novel || novelChapters.isEmpty()) {
+            emptyMap()
+        } else {
+            val map = HashMap<String, NovelChapter>()
+            NovelExport.groupMessagesByChapter(novelChapters, active).forEach { sec ->
+                val ch = sec.chapter ?: return@forEach
+                val firstMsg = sec.messages.firstOrNull() ?: return@forEach
+                map[firstMsg.id] = ch
+            }
+            map
+        }
     }
 
     val showScrollToBottom by remember(active.size) {
@@ -317,37 +341,47 @@ fun ChatMessageList(
                         onDelete = { deleteTarget = msg },
                     )
                 } else {
-                    AssistantMessageBlock(
-                        mode = mode,
-                        msg = msg,
-                        rpConfig = rpConfig,
-                        isLatestAssistant = isLatestAssistant,
-                        isStreaming = isStreaming,
-                        streamingStatusHint = streamingStatusHint,
-                        isRefreshingChoices = isRefreshingChoices,
-                        onSelectNovelChoice = onSelectNovelChoice,
-                        onSelectRpChoice = onSelectRpChoice,
-                        onRefreshRpChoices = onRefreshRpChoices,
-                        onContinueRp = onContinueRp,
-                        onEditAssistant = { clean ->
-                            editAssistantBuffer = clean
-                            editAssistantTarget = msg
-                        },
-                        onRegenerate = { onRegenerate(msg.id) },
-                        onBranch = { onBranchFromMessage(msg.id) },
-                        onDelete = { deleteTarget = msg },
-                        onSwitchVariant = { idx -> onSwitchVariant(msg.id, idx) },
-                        onCopyText = { body ->
-                            val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                            cm.setPrimaryClip(ClipData.newPlainText("reply", body))
-                            onToast(strings.common.copied)
-                        },
-                        onFrontendAction = onFrontendAction,
-                        onFrontendFillInput = onFrontendFillInput,
-                        onFrontendSetFlag = onFrontendSetFlag,
-                        onFrontendAdjustAffinity = onFrontendAdjustAffinity,
-                        onToast = onToast,
-                    )
+                    val chapterStart = chapterStartMsgMap[msg.id]
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        if (chapterStart != null) {
+                            NovelChapterDividerRibbon(chapter = chapterStart)
+                        }
+                        AssistantMessageBlock(
+                            mode = mode,
+                            msg = msg,
+                            rpConfig = rpConfig,
+                            novelConfig = novelConfig,
+                            isLatestAssistant = isLatestAssistant,
+                            isStreaming = isStreaming,
+                            streamingStatusHint = streamingStatusHint,
+                            isRefreshingChoices = isRefreshingChoices,
+                            onSelectNovelChoice = onSelectNovelChoice,
+                            onRefreshNovelChoices = onRefreshNovelChoices,
+                            onContinueNovel = onContinueNovel,
+                            onOpenNovelPolish = { onOpenNovelStudio(2) },
+                            onSelectRpChoice = onSelectRpChoice,
+                            onRefreshRpChoices = onRefreshRpChoices,
+                            onContinueRp = onContinueRp,
+                            onEditAssistant = { clean ->
+                                editAssistantBuffer = clean
+                                editAssistantTarget = msg
+                            },
+                            onRegenerate = { onRegenerate(msg.id) },
+                            onBranch = { onBranchFromMessage(msg.id) },
+                            onDelete = { deleteTarget = msg },
+                            onSwitchVariant = { idx -> onSwitchVariant(msg.id, idx) },
+                            onCopyText = { body ->
+                                val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                cm.setPrimaryClip(ClipData.newPlainText("reply", body))
+                                onToast(strings.common.copied)
+                            },
+                            onFrontendAction = onFrontendAction,
+                            onFrontendFillInput = onFrontendFillInput,
+                            onFrontendSetFlag = onFrontendSetFlag,
+                            onFrontendAdjustAffinity = onFrontendAdjustAffinity,
+                            onToast = onToast,
+                        )
+                    }
                 }
             }
 
@@ -398,8 +432,10 @@ private fun ChatEmptyWelcomeCanvas(
     memoryEnabled: Boolean,
     rpConfig: RpConfig?,
     novelConfig: NovelConfig?,
+    novelChapters: List<NovelChapter> = emptyList(),
     onOpenModelSheet: () -> Unit,
     onStarterPrompt: (String) -> Unit,
+    onOpenNovelStudio: (Int) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val strings = LocalAppStrings.current
@@ -619,6 +655,25 @@ private fun ChatEmptyWelcomeCanvas(
                             .padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
+                        val povLabel = when (novelConfig.pov) {
+                            "first" -> strings.novel.povFirst
+                            "third_omniscient" -> strings.novel.povThirdOmniscient
+                            else -> strings.novel.povThirdLimited
+                        }
+                        val firstCh = novelChapters.firstOrNull { it.id == novelConfig.activeChapterId } ?: novelChapters.firstOrNull()
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            GuBadge(povLabel, variant = GuBadgeVariant.BLUE)
+                            GuBadge(
+                                text = if (isZh) "目标 ${novelConfig.targetWordsPerChapter} 字/章" else "~${novelConfig.targetWordsPerChapter}w/ch",
+                                variant = GuBadgeVariant.NEUTRAL,
+                            )
+                            if (novelConfig.antiAiRules) {
+                                GuBadge(if (isZh) "反AI味" else "Anti-AI", variant = GuBadgeVariant.EMERALD)
+                            }
+                        }
                         if (novelConfig.synopsis.isNotBlank()) {
                             Text(
                                 text = novelConfig.synopsis,
@@ -629,19 +684,67 @@ private fun ChatEmptyWelcomeCanvas(
                                 overflow = TextOverflow.Ellipsis,
                             )
                         }
-                        GuButton(
-                            onClick = {
-                                onStarterPrompt(
-                                    if (isZh) "请正式开启第一章，以有画面感的场景切入故事。"
-                                    else "Begin Chapter 1 with a vivid opening scene.",
-                                )
-                            },
-                            variant = GuButtonVariant.HONEY,
+                        if (firstCh != null) {
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = c.surfaceSoft,
+                                border = BorderStroke(theme.borderWidth, c.border),
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(horizontal = 11.dp, vertical = 9.dp),
+                                    verticalArrangement = Arrangement.spacedBy(3.dp),
+                                ) {
+                                    Text(
+                                        text = firstCh.title,
+                                        color = c.ink,
+                                        fontSize = 12.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                    )
+                                    if (firstCh.outline.isNotBlank()) {
+                                        Text(
+                                            text = firstCh.outline,
+                                            color = c.muted,
+                                            fontSize = 12.sp,
+                                            lineHeight = 17.5.sp,
+                                            maxLines = 3,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        Row(
                             modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text(strings.novel.wizardEmptyBtn, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                            GuButton(
+                                onClick = { onOpenNovelStudio(3) },
+                                variant = GuButtonVariant.SUBTLE,
+                                modifier = Modifier.weight(0.85f),
+                            ) {
+                                Icon(Icons.Default.Book, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(5.dp))
+                                Text(strings.novel.studioBtn, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            }
+                            GuButton(
+                                onClick = {
+                                    val prompt = if (!firstCh?.outline.isNullOrBlank()) {
+                                        if (isZh) "请正式开启《${firstCh!!.title}》，围绕本章细纲「${firstCh.outline}」，以有画面感和人物动作细节的场景切入故事。"
+                                        else "Begin ${firstCh!!.title} with a vivid opening scene grounded in: ${firstCh.outline}"
+                                    } else {
+                                        if (isZh) "请正式开启第一章，以有画面感的场景切入故事。"
+                                        else "Begin Chapter 1 with a vivid opening scene."
+                                    }
+                                    onStarterPrompt(prompt)
+                                },
+                                variant = GuButtonVariant.HONEY,
+                                modifier = Modifier.weight(1.35f),
+                            ) {
+                                Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(5.dp))
+                                Text(strings.novel.wizardEmptyBtn, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
+                            }
                         }
                     }
                 }
@@ -892,6 +995,16 @@ private fun UserMessageBlock(
                 .padding(horizontal = 15.dp, vertical = 11.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
+            msg.inputKind?.let { kind ->
+                val isZh = strings.language == AppLanguage.ZH
+                val tagText = when (kind) {
+                    NovelInputKind.director -> strings.novel.inputDirector
+                    NovelInputKind.`continue` -> strings.novel.inputContinue
+                    NovelInputKind.branch -> if (isZh) "分支" else "Branch"
+                    NovelInputKind.dialogue -> strings.novel.inputDialogue
+                }
+                GuBadge(tagText, variant = GuBadgeVariant.HONEY)
+            }
             msg.rpInputKind?.let { kind ->
                 val tagText = when (kind) {
                     RpInputKind.action -> strings.rp.inputAction
@@ -983,15 +1096,69 @@ private fun UserMessageBlock(
 }
 
 @Composable
+private fun NovelChapterDividerRibbon(chapter: NovelChapter) {
+    val theme = LocalAppTheme.current
+    val c = theme.colors
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        HorizontalDivider(
+            modifier = Modifier.weight(1f),
+            thickness = theme.borderWidth,
+            color = c.accent.copy(alpha = 0.35f),
+        )
+        Surface(
+            shape = RoundedCornerShape(999.dp),
+            color = c.tag,
+            border = BorderStroke(theme.borderWidth, c.accent.copy(alpha = 0.42f)),
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Default.AutoStories,
+                    contentDescription = null,
+                    tint = c.tagInk,
+                    modifier = Modifier.size(13.dp),
+                )
+                Text(
+                    text = chapter.title,
+                    color = c.tagInk,
+                    fontSize = 11.5.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        HorizontalDivider(
+            modifier = Modifier.weight(1f),
+            thickness = theme.borderWidth,
+            color = c.accent.copy(alpha = 0.35f),
+        )
+    }
+}
+
+@Composable
 private fun AssistantMessageBlock(
     mode: ConversationMode,
     msg: ChatMessage,
     rpConfig: RpConfig?,
+    novelConfig: NovelConfig? = null,
     isLatestAssistant: Boolean,
     isStreaming: Boolean,
     streamingStatusHint: String? = null,
     isRefreshingChoices: Boolean,
     onSelectNovelChoice: (String) -> Unit,
+    onRefreshNovelChoices: () -> Unit = {},
+    onContinueNovel: () -> Unit = {},
+    onOpenNovelPolish: () -> Unit = {},
     onSelectRpChoice: (RpChoice, Boolean) -> Unit,
     onRefreshRpChoices: () -> Unit,
     onContinueRp: () -> Unit,
@@ -1142,6 +1309,14 @@ private fun AssistantMessageBlock(
         }
 
         ConversationMode.novel -> {
+            val passageWordCount = remember(cleanBody) { NovelExport.countProseWords(cleanBody) }
+            val syncingMeta = isThisMsgStreaming && NovelExport.isStreamingInternalMeta(msg.content)
+            val showNovelChoicesDeck = isLatestAssistant && !isStreaming && (
+                msg.novelChoices.isNotEmpty() ||
+                    isRefreshingChoices ||
+                    (novelConfig?.enableChoices == true && novelConfig.playStyle != "author")
+                )
+
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(theme.cardRadius),
@@ -1164,6 +1339,16 @@ private fun AssistantMessageBlock(
                             fontSize = 13.sp,
                             fontWeight = FontWeight.Bold,
                         )
+                        if (passageWordCount > 0) {
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                text = if (isZh) "$passageWordCount 字" else "${passageWordCount}w",
+                                color = c.muted,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                fontFamily = FontFamily.Monospace,
+                            )
+                        }
                         Spacer(Modifier.width(8.dp))
                         HorizontalDivider(
                             modifier = Modifier.weight(1f),
@@ -1172,7 +1357,13 @@ private fun AssistantMessageBlock(
                         )
                         if (!msg.model.isNullOrBlank()) {
                             Spacer(Modifier.width(8.dp))
-                            Text(msg.model, color = c.muted, fontSize = 11.sp)
+                            Text(
+                                text = msg.model,
+                                color = c.muted,
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
                         }
                     }
 
@@ -1189,8 +1380,78 @@ private fun AssistantMessageBlock(
                         onToast = onToast,
                     )
 
-                    if (isLatestAssistant && msg.novelChoices.isNotEmpty() && !isStreaming) {
+                    if (syncingMeta) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(7.dp),
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(999.dp))
+                                .background(c.surfaceSoft)
+                                .border(theme.borderWidth, c.border, RoundedCornerShape(999.dp))
+                                .padding(horizontal = 10.dp, vertical = 5.dp),
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(12.dp),
+                                strokeWidth = 1.8.dp,
+                                color = c.accent,
+                            )
+                            Text(
+                                text = strings.novel.syncingMeta,
+                                color = c.muted,
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.Medium,
+                            )
+                        }
+                    }
+
+                    if (showNovelChoicesDeck) {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                            ) {
+                                Text(
+                                    text = strings.novel.choicesTitle,
+                                    color = c.muted,
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                                Surface(
+                                    onClick = onRefreshNovelChoices,
+                                    enabled = !isRefreshingChoices && !isStreaming,
+                                    shape = RoundedCornerShape(999.dp),
+                                    color = c.surfaceSoft,
+                                    border = BorderStroke(theme.borderWidth, c.border),
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                    ) {
+                                        if (isRefreshingChoices) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(11.dp),
+                                                strokeWidth = 1.6.dp,
+                                                color = c.primary,
+                                            )
+                                        } else {
+                                            Icon(
+                                                imageVector = Icons.Default.Refresh,
+                                                contentDescription = null,
+                                                tint = c.primary,
+                                                modifier = Modifier.size(12.5.dp),
+                                            )
+                                        }
+                                        Text(
+                                            text = if (isRefreshingChoices) strings.rp.refreshingChoices else strings.rp.refreshChoicesBtn,
+                                            color = c.ink,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                        )
+                                    }
+                                }
+                            }
                             msg.novelChoices.forEachIndexed { idx, choice ->
                                 DramaticChoiceCard(
                                     index = idx + 1,
@@ -1207,6 +1468,11 @@ private fun AssistantMessageBlock(
                             msg = msg,
                             showVariantBar = msg.variants.size > 1,
                             isStreaming = isStreaming,
+                            showContinue = isLatestAssistant && !isStreaming,
+                            continueLabel = strings.novel.continueBtn,
+                            onContinue = onContinueNovel,
+                            showPolish = isLatestAssistant && !isStreaming,
+                            onPolish = onOpenNovelPolish,
                             onEdit = { onEditAssistant(cleanBody.ifBlank { msg.content }) },
                             onCopy = { onCopyText(cleanBody) },
                             onRegenerate = onRegenerate,
@@ -1543,46 +1809,81 @@ private fun AssistantFooterRow(
     onDelete: () -> Unit,
     onSwitchVariant: (Int) -> Unit,
     showContinue: Boolean = false,
+    continueLabel: String? = null,
     onContinue: () -> Unit = {},
+    showPolish: Boolean = false,
+    onPolish: () -> Unit = {},
 ) {
     val strings = LocalAppStrings.current
     val theme = LocalAppTheme.current
     val c = theme.colors
+    val isZh = strings.language == AppLanguage.ZH
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        if (showContinue) {
+        if (showContinue || showPolish) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.Start,
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.Start),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Surface(
-                    onClick = onContinue,
-                    enabled = !isStreaming,
-                    shape = RoundedCornerShape(999.dp),
-                    color = c.primarySoft,
-                    border = BorderStroke(theme.borderWidth, c.primary.copy(alpha = 0.4f)),
-                    modifier = Modifier.heightIn(min = 36.dp),
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                if (showContinue) {
+                    Surface(
+                        onClick = onContinue,
+                        enabled = !isStreaming,
+                        shape = RoundedCornerShape(999.dp),
+                        color = c.primarySoft,
+                        border = BorderStroke(theme.borderWidth, c.primary.copy(alpha = 0.4f)),
+                        modifier = Modifier.heightIn(min = 34.dp),
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.PlayArrow,
-                            contentDescription = null,
-                            tint = c.primarySoftInk,
-                            modifier = Modifier.size(14.dp),
-                        )
-                        Text(
-                            text = strings.rp.continueBtn,
-                            color = c.primarySoftInk,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                        )
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.PlayArrow,
+                                contentDescription = null,
+                                tint = c.primarySoftInk,
+                                modifier = Modifier.size(14.dp),
+                            )
+                            Text(
+                                text = continueLabel ?: strings.rp.continueBtn,
+                                color = c.primarySoftInk,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                            )
+                        }
+                    }
+                }
+                if (showPolish) {
+                    Surface(
+                        onClick = onPolish,
+                        enabled = !isStreaming,
+                        shape = RoundedCornerShape(999.dp),
+                        color = c.tag,
+                        border = BorderStroke(theme.borderWidth, c.accent.copy(alpha = 0.42f)),
+                        modifier = Modifier.heightIn(min = 34.dp),
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.AutoFixHigh,
+                                contentDescription = null,
+                                tint = c.tagInk,
+                                modifier = Modifier.size(13.5.dp),
+                            )
+                            Text(
+                                text = if (isZh) "精修 / 三走向" else "Polish / 3 Paths",
+                                color = c.tagInk,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                            )
+                        }
                     }
                 }
             }

@@ -223,6 +223,7 @@ fun MarkdownMessageText(
     fontSize: TextUnit = 14.sp,
     lineHeight: TextUnit = 21.sp,
     useSerif: Boolean = false,
+    indentFirstLine: Boolean = false,
     palette: MarkdownPalette? = null,
     onCopyToast: ((String) -> Unit)? = null,
 ) {
@@ -434,8 +435,20 @@ fun MarkdownMessageText(
                         }
                     }
                     is MdBlock.Paragraph -> {
+                        val paragraphText = if (indentFirstLine) {
+                            block.text.lines().joinToString("\n") { line ->
+                                val trimmedLine = line.trimStart()
+                                if (trimmedLine.isEmpty() || line.startsWith("　　") || line.startsWith("  ")) {
+                                    line
+                                } else {
+                                    "　　$trimmedLine"
+                                }
+                            }
+                        } else {
+                            block.text
+                        }
                         InlineRichText(
-                            raw = block.text,
+                            raw = paragraphText,
                             color = p.text,
                             linkColor = p.accent,
                             codeBg = p.inlineCodeBg,

@@ -384,7 +384,10 @@ data class NovelConfig(
     val synopsis: String = "",
     val genre: String = "",
     val style: String = "",
+    val styleSample: String = "",
     val pov: String = "third_limited", // third_limited | first | third_omniscient
+    val playStyle: String = "hybrid", // hybrid | author | interactive
+    val antiAiRules: Boolean = true,
     val worldview: String = "",
     val mainOutline: String = "",
     val authorNote: String = "",
