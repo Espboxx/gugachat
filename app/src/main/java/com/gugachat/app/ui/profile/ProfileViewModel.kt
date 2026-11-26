@@ -163,6 +163,10 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch { container.settingsStore.setMemoryBudget(budget) }
     }
 
+    fun setSseAutoRetryCount(count: Int) {
+        viewModelScope.launch { container.settingsStore.setSseAutoRetryCount(count) }
+    }
+
     fun exportBackup(uri: Uri, contentResolver: ContentResolver, successMessage: String) {
         viewModelScope.launch {
             _ui.update { it.copy(isBackupBusy = true) }

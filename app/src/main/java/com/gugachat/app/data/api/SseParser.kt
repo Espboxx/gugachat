@@ -44,6 +44,7 @@ data class SseLineOutcome(
     val deltaText: String = "",
     val deltaReasoning: String = "",
     val usage: ChatTokenUsageDto? = null,
+    val finishReason: String? = null,
 )
 
 object SseParser {
@@ -82,6 +83,7 @@ object SseParser {
             deltaText = contentPiece.orEmpty(),
             deltaReasoning = reasoningPiece.orEmpty(),
             usage = chunk.usage,
+            finishReason = choice?.finish_reason?.takeIf { it.isNotBlank() },
         )
     }
 

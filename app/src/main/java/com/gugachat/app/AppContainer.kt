@@ -89,6 +89,7 @@ class AppContainer(context: Context) {
         client = apiClient,
         providerLookup = { id -> apiProviderStore.findBySyntheticId(id) },
         directClient = directApiClient,
+        maxSseRetriesProvider = { settingsState.value.sseAutoRetryCount },
     )
     val onlineImagesApi = OnlineImagesApi(
         client = apiClient,

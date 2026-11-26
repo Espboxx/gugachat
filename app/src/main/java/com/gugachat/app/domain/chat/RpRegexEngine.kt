@@ -32,7 +32,7 @@ data class RpStatusWidgetTemplate(
 
 object RpRegexEngine {
     private val VALID_JS_FLAGS_RE = Regex("^[gimsuydv]*$")
-    private val FENCE_LINE_RE = Regex("^ {0,3}(`{3,}|~{3,})([^\\n]*)$")
+    private val FENCE_LINE_RE = Regex("^[ \\t]*(`{3,}|~{3,})([^\\n\\r]*)$")
     private val EXTERNAL_SCRIPT_PAIR_RE = Regex(
         "<script\\b[^>]*\\bsrc\\s*=\\s*(?:\"[^\"]*\"|'[^']*'|[^\\s>]+)[^>]*>[\\s\\S]*?</script\\s*>",
         RegexOption.IGNORE_CASE,
@@ -47,10 +47,20 @@ object RpRegexEngine {
     )
     private val HEAD_EXTRACT_RE = Regex("<head\\b[^>]*>([\\s\\S]*?)</head\\s*>", RegexOption.IGNORE_CASE)
     private val BODY_EXTRACT_RE = Regex("<body\\b[^>]*>([\\s\\S]*?)</body\\s*>", RegexOption.IGNORE_CASE)
+    private val HTML_SHELL_WRAPPER_RE = Regex(
+        "(?:<!DOCTYPE\\s+html\\b[^>]*>|</?html\\b[^>]*>|</?head\\b[^>]*>|</?body\\b[^>]*>)",
+        RegexOption.IGNORE_CASE,
+    )
     private val DOCTYPE_OPEN_RE = Regex("<!DOCTYPE\\s+html\\b[^>]*>", RegexOption.IGNORE_CASE)
     private val HTML_CLOSE_RE = Regex("</html\\s*>", RegexOption.IGNORE_CASE)
+    private val SCRIPT_OPEN_RE = Regex("<script\\b[^>]*>", RegexOption.IGNORE_CASE)
     private val SCRIPT_CLOSE_RE = Regex("</script\\s*>", RegexOption.IGNORE_CASE)
     private val STYLE_CLOSE_RE = Regex("</style\\s*>", RegexOption.IGNORE_CASE)
+    private val HTML_FENCE_BODY_SIGNAL_RE = Regex(
+        "(?:<!DOCTYPE\\s+html\\b|<html\\b|<head\\b|<body\\b|<(?:div|section|details|table|article|header|footer|main|nav|aside|figure|form|fieldset|svg|canvas|iframe|button|style)\\b[^>]*>[\\s\\S]*</(?:div|section|details|table|article|header|footer|main|nav|aside|figure|form|fieldset|svg|canvas|iframe|button|style|html|body)\\s*>)",
+        RegexOption.IGNORE_CASE,
+    )
+    private val HTML_LAST_CLOSE_RE = Regex("</(?:html|body|script|style|div|section|table|article|main|form|footer|details|svg)\\s*>", RegexOption.IGNORE_CASE)
     private val COMMENT_CLOSE = "-->"
 
     private val BLOCK_CONTAINER_TAGS = setOf(
@@ -60,14 +70,25 @@ object RpRegexEngine {
         "table",
         "article",
         "header",
+        "footer",
         "main",
         "nav",
         "aside",
         "figure",
+        "form",
+        "fieldset",
+        "svg",
+        "canvas",
+        "iframe",
+        "template",
+        "ul",
+        "ol",
         "html",
+        "head",
+        "body",
     )
-    private val RAW_BLOCK_START_RE = Regex(
-        "(?:<!DOCTYPE\\s+html\\b[^>]*>|<(div|section|details|table|article|header|main|nav|aside|figure|html|style|script)\\b[^>]*>)",
+    private val RAW_TAG_NAME_RE = Regex(
+        "<(div|section|details|table|article|header|footer|main|nav|aside|figure|form|fieldset|svg|canvas|iframe|template|ul|ol|html|head|body|style|script)(?=[\\s/>])",
         RegexOption.IGNORE_CASE,
     )
 
@@ -485,7 +506,8 @@ object RpRegexEngine {
             }
             if (!modeMatches) continue
 
-            val (pattern, effectiveFlags) = parseRegexLiteral(script.findRegex, script.flags)
+            val (rawPattern, effectiveFlags) = parseRegexLiteral(script.findRegex, script.flags)
+            val pattern = normalizeJsRegexPattern(rawPattern)
             if (pattern.isEmpty()) continue
 
             val lowerFlags = effectiveFlags.lowercase()
@@ -504,11 +526,11 @@ object RpRegexEngine {
             current = try {
                 val regex = Regex(pattern, options)
                 if (isGlobal) {
-                    regex.replace(current) { m -> expandReplacement(replaceTemplate, m) }
+                    regex.replace(current) { m -> expandReplacement(replaceTemplate, m, script.trimStrings) }
                 } else {
                     val first = regex.find(current)
                     if (first != null) {
-                        val rep = expandReplacement(replaceTemplate, first)
+                        val rep = expandReplacement(replaceTemplate, first, script.trimStrings)
                         current.substring(0, first.range.first) + rep + current.substring(first.range.last + 1)
                     } else {
                         current
@@ -526,23 +548,24 @@ object RpRegexEngine {
             return listOf(RpContentSegment(isHtml = false, content = text))
         }
 
+        val normalized = text.replace("\r\n", "\n")
         val rawSegments = ArrayList<RpContentSegment>()
         var cursor = 0
         var mdStart = 0
-        val n = text.length
+        val n = normalized.length
 
         fun flushMarkdown(endIdx: Int) {
             if (endIdx > mdStart) {
-                rawSegments.add(RpContentSegment(isHtml = false, content = text.substring(mdStart, endIdx)))
+                rawSegments.add(RpContentSegment(isHtml = false, content = normalized.substring(mdStart, endIdx)))
             }
         }
 
         while (cursor < n) {
-            // Check fenced code block at line start
-            val atLineStart = cursor == 0 || text[cursor - 1] == '\n'
+            // Check fenced code block at line start (supports arbitrary leading spaces/tabs matching MarkdownMessage)
+            val atLineStart = cursor == 0 || normalized[cursor - 1] == '\n'
             if (atLineStart) {
-                val lineEnd = text.indexOf('\n', cursor).let { if (it < 0) n else it }
-                val line = text.substring(cursor, lineEnd)
+                val lineEnd = normalized.indexOf('\n', cursor).let { if (it < 0) n else it }
+                val line = normalized.substring(cursor, lineEnd)
                 val fenceMatch = FENCE_LINE_RE.matchEntire(line)
                 if (fenceMatch != null) {
                     val fenceMarker = fenceMatch.groupValues[1]
@@ -550,34 +573,56 @@ object RpRegexEngine {
                     val fenceLen = fenceMarker.length
                     val info = fenceMatch.groupValues[2].trim().lowercase()
                     val bodyStart = if (lineEnd < n) lineEnd + 1 else n
-                    val closeBounds = findClosingFence(text, bodyStart, fenceChar, fenceLen)
+                    val explicitHtmlInfo = isExplicitHtmlFenceInfo(info)
+                    val candidateHtmlByInfo = explicitHtmlInfo || info.isEmpty()
+
+                    val closeBounds = if (candidateHtmlByInfo) {
+                        findClosingFenceForHtml(normalized, bodyStart, fenceChar, fenceLen)
+                    } else {
+                        findClosingFence(normalized, bodyStart, fenceChar, fenceLen)
+                    }
+
                     if (closeBounds != null) {
                         val (bodyEnd, nextCursor) = closeBounds
-                        if (info == "html" || info.startsWith("html ")) {
-                            val htmlBody = text.substring(bodyStart, bodyEnd).trim()
-                            if (htmlBody.isNotEmpty()) {
-                                flushMarkdown(cursor)
-                                rawSegments.add(RpContentSegment(isHtml = true, content = htmlBody))
-                                cursor = nextCursor
-                                mdStart = nextCursor
-                                continue
-                            }
+                        val fenceBody = normalized.substring(bodyStart, bodyEnd).trim()
+                        val treatAsHtml = when {
+                            fenceBody.isEmpty() -> false
+                            explicitHtmlInfo -> true
+                            candidateHtmlByInfo -> looksLikeHtmlFrontend(fenceBody)
+                            else -> false
+                        }
+                        if (treatAsHtml) {
+                            flushMarkdown(cursor)
+                            rawSegments.add(RpContentSegment(isHtml = true, content = fenceBody))
+                            cursor = nextCursor
+                            mdStart = nextCursor
+                            continue
                         }
                         // Non-HTML fenced block: skip over it untouched as markdown
                         cursor = nextCursor
                         continue
+                    } else if (candidateHtmlByInfo) {
+                        // Unclosed fence at EOF: render as HTML card instead of falling through as a giant raw code block
+                        val restBody = normalized.substring(bodyStart).trim()
+                        if (restBody.isNotEmpty() && (explicitHtmlInfo || looksLikeHtmlFrontend(restBody))) {
+                            flushMarkdown(cursor)
+                            rawSegments.add(RpContentSegment(isHtml = true, content = restBody))
+                            cursor = n
+                            mdStart = n
+                            continue
+                        }
                     }
                 }
             }
 
             // Check raw HTML container block starting at cursor
-            if (text[cursor] == '<') {
-                val blockEnd = matchRawHtmlBlockEnd(text, cursor)
+            if (normalized[cursor] == '<') {
+                val blockEnd = matchRawHtmlBlockEnd(normalized, cursor)
                 if (blockEnd != null && blockEnd > cursor) {
-                    val snippet = text.substring(cursor, blockEnd)
+                    val snippet = normalized.substring(cursor, blockEnd)
                     // Avoid turning a lone <style> or <script> without any sibling HTML block into a card
                     val isAuxOnly = isAuxTagBlock(snippet)
-                    if (!isAuxOnly || hasAdjacentHtmlContainer(text, blockEnd, rawSegments)) {
+                    if (!isAuxOnly || hasAdjacentHtmlContainer(normalized, blockEnd, rawSegments)) {
                         flushMarkdown(cursor)
                         rawSegments.add(RpContentSegment(isHtml = true, content = snippet))
                         cursor = blockEnd
@@ -596,7 +641,7 @@ object RpRegexEngine {
             return listOf(RpContentSegment(isHtml = false, content = text))
         }
 
-        // Merge adjacent HTML segments separated only by whitespace (e.g. <style>...</style> + <div>...</div> + <script>...</script>)
+        // Merge adjacent HTML segments separated only by whitespace or HTML comments
         val merged = ArrayList<RpContentSegment>()
         var i = 0
         while (i < rawSegments.size) {
@@ -609,7 +654,7 @@ object RpRegexEngine {
                     if (next.isHtml) {
                         combined.append('\n').append(next.content)
                         j++
-                    } else if (next.content.isBlank() && j + 1 < rawSegments.size && rawSegments[j + 1].isHtml) {
+                    } else if (isWhitespaceOrHtmlCommentOnly(next.content) && j + 1 < rawSegments.size && rawSegments[j + 1].isHtml) {
                         combined.append(next.content).append(rawSegments[j + 1].content)
                         j += 2
                     } else {
@@ -649,11 +694,28 @@ object RpRegexEngine {
         val extractedBody: String
         val bodyMatch = BODY_EXTRACT_RE.find(expanded)
         if (bodyMatch != null) {
-            extractedHead = HEAD_EXTRACT_RE.find(expanded)?.groupValues?.get(1).orEmpty()
-            extractedBody = bodyMatch.groupValues[1]
+            val headMatch = HEAD_EXTRACT_RE.find(expanded)
+            extractedHead = headMatch?.groupValues?.get(1).orEmpty()
+            // Also preserve any <style>/<script> tags placed outside <head>/<body> (e.g. after </body> before </html>)
+            var remainder = expanded.removeRange(bodyMatch.range)
+            if (headMatch != null) {
+                remainder = HEAD_EXTRACT_RE.replace(remainder, "")
+            }
+            val trailingExtras = HTML_SHELL_WRAPPER_RE.replace(remainder, "").trim()
+            extractedBody = if (trailingExtras.isNotEmpty()) {
+                "${bodyMatch.groupValues[1]}\n$trailingExtras"
+            } else {
+                bodyMatch.groupValues[1]
+            }
         } else {
-            extractedHead = ""
-            extractedBody = expanded
+            val headMatch = HEAD_EXTRACT_RE.find(expanded)
+            if (headMatch != null) {
+                extractedHead = headMatch.groupValues[1]
+                extractedBody = HTML_SHELL_WRAPPER_RE.replace(HEAD_EXTRACT_RE.replace(expanded, ""), "").trim()
+            } else {
+                extractedHead = ""
+                extractedBody = HTML_SHELL_WRAPPER_RE.replace(expanded, "").trim()
+            }
         }
 
         val stateJson = buildRpStateJson(rp, isDark).replace("</", "<\\/")
@@ -679,7 +741,7 @@ object RpRegexEngine {
             appendLine("  color-scheme:$colorScheme;")
             appendLine("}")
             appendLine("*{box-sizing:border-box;}")
-            appendLine("html,body{margin:0;padding:0;background:transparent;color:var(--gu-ink);font-family:-apple-system,BlinkMacSystemFont,\"PingFang SC\",\"Noto Sans SC\",sans-serif;font-size:14px;line-height:1.5;overflow-x:hidden;-webkit-text-size-adjust:100%;}")
+            appendLine("html,body{margin:0;padding:0;height:auto !important;min-height:0 !important;background:transparent;color:var(--gu-ink);font-family:-apple-system,BlinkMacSystemFont,\"PingFang SC\",\"Noto Sans SC\",sans-serif;font-size:14px;line-height:1.5;overflow-x:hidden;-webkit-text-size-adjust:100%;}")
             appendLine("img,svg,video{max-width:100%;height:auto;}")
             appendLine("table{max-width:100%;border-collapse:collapse;}")
             if (safeCustomCss.isNotBlank()) {
@@ -693,9 +755,40 @@ object RpRegexEngine {
             appendLine("window.RP_STATE=$stateJson;")
             appendLine("window.GuGuRp={")
             appendLine("  sendAction:function(text){try{if(window.GuGuBridge&&typeof window.GuGuBridge.sendAction==='function'){window.GuGuBridge.sendAction(String(text||''));}}catch(e){}},")
+            appendLine("  fillInput:function(text){try{if(window.GuGuBridge&&typeof window.GuGuBridge.fillInput==='function'){window.GuGuBridge.fillInput(String(text||''));}else if(window.GuGuBridge&&typeof window.GuGuBridge.sendAction==='function'){window.GuGuBridge.sendAction(String(text||''));}}catch(e){}},")
             appendLine("  setFlag:function(k,v){try{if(window.GuGuBridge&&typeof window.GuGuBridge.setFlag==='function'){window.GuGuBridge.setFlag(String(k||''),String(v==null?'':v));}}catch(e){}},")
             appendLine("  adjustAffinity:function(name,delta){try{if(window.GuGuBridge&&typeof window.GuGuBridge.adjustAffinity==='function'){window.GuGuBridge.adjustAffinity(String(name||''),Number(delta)||0);}}catch(e){}}")
             appendLine("};")
+            appendLine("(function(){")
+            appendLine("  function runSlash(cmd){")
+            appendLine("    var s=String(cmd||'').trim();if(!s)return Promise.resolve('');")
+            appendLine("    var parts=s.split(/\\|\\|?/);")
+            appendLine("    parts.forEach(function(seg){")
+            appendLine("      var t=seg.trim();")
+            appendLine("      if(/^\\/(?:send|sendas)\\b/i.test(t)){var body=t.replace(/^\\/(?:send|sendas)(?:\\s+name=\\S+)?\\s*/i,'').trim();if(body)window.GuGuRp.sendAction(body);}")
+            appendLine("      else if(/^\\/setinput\\b/i.test(t)){var inp=t.replace(/^\\/setinput\\s*/i,'').trim();if(inp)window.GuGuRp.fillInput(inp);}")
+            appendLine("      else if(/^\\/setvar\\b/i.test(t)){var m=t.match(/key=(\\S+)\\s+(.+)$/i);if(m)window.GuGuRp.setFlag(m[1],m[2].trim());}")
+            appendLine("    });")
+            appendLine("    return Promise.resolve('');")
+            appendLine("  }")
+            appendLine("  window.setInputBoxText=function(t){window.GuGuRp.fillInput(t);};")
+            appendLine("  window.sendMessageAsUser=function(t){window.GuGuRp.sendAction(t);};")
+            appendLine("  window.sendToChat=function(t){window.GuGuRp.sendAction(t);};")
+            appendLine("  window.triggerSlash=runSlash;")
+            appendLine("  window.STscript=runSlash;")
+            appendLine("  window.TavernHelper={")
+            appendLine("    triggerSlash:runSlash,")
+            appendLine("    setInputBoxText:function(t){window.GuGuRp.fillInput(t);},")
+            appendLine("    getVariables:function(){var st=window.RP_STATE||{};return Object.assign({},st.stats||{},st.flags||{});},")
+            appendLine("    insertOrAssignVariables:function(vars){if(vars&&typeof vars==='object'){Object.keys(vars).forEach(function(k){window.GuGuRp.setFlag(k,vars[k]);});}},")
+            appendLine("    updateVariablesWith:function(fn){try{var cur=window.TavernHelper.getVariables();var next=fn(cur);if(next&&typeof next==='object')window.TavernHelper.insertOrAssignVariables(next);}catch(e){}},")
+            appendLine("    getChatMessages:function(){return [];},")
+            appendLine("    getLastMessageId:function(){return 0;}")
+            appendLine("  };")
+            appendLine("  window.SillyTavern={")
+            appendLine("    getContext:function(){var st=window.RP_STATE||{};return {name1:st.playerName||'',name2:st.leadChar||'',chat:[]};}")
+            appendLine("  };")
+            appendLine("})();")
             appendLine("</script>")
             appendLine("</head>")
             appendLine("<body>")
@@ -847,14 +940,50 @@ object RpRegexEngine {
         return obj.toString()
     }
 
-    private fun expandReplacement(template: String, match: MatchResult): String {
+    private fun normalizeJsRegexPattern(pattern: String): String {
+        if (!pattern.contains("[^]")) return pattern
+        val sb = StringBuilder(pattern.length + 8)
+        var i = 0
+        while (i < pattern.length) {
+            if (i + 3 <= pattern.length &&
+                pattern[i] == '[' &&
+                pattern[i + 1] == '^' &&
+                pattern[i + 2] == ']' &&
+                !isEscapedAt(pattern, i)
+            ) {
+                sb.append("[\\s\\S]")
+                i += 3
+            } else {
+                sb.append(pattern[i])
+                i++
+            }
+        }
+        return sb.toString()
+    }
+
+    private fun applyTrimStrings(value: String, trimStrings: List<String>): String {
+        if (value.isEmpty() || trimStrings.isEmpty()) return value
+        var out = value
+        for (trim in trimStrings) {
+            if (trim.isNotEmpty()) {
+                out = out.replace(trim, "")
+            }
+        }
+        return out
+    }
+
+    private fun expandReplacement(
+        template: String,
+        match: MatchResult,
+        trimStrings: List<String> = emptyList(),
+    ): String {
         val sb = StringBuilder(template.length + match.value.length)
         val len = template.length
         val maxGroup = match.groups.size - 1
         var i = 0
         while (i < len) {
             if (i + 9 <= len && template.regionMatches(i, "{{match}}", 0, 9, ignoreCase = true)) {
-                sb.append(match.value)
+                sb.append(applyTrimStrings(match.value, trimStrings))
                 i += 9
                 continue
             }
@@ -868,7 +997,7 @@ object RpRegexEngine {
                         continue
                     }
                     next == '&' -> {
-                        sb.append(match.value)
+                        sb.append(applyTrimStrings(match.value, trimStrings))
                         i += 2
                         continue
                     }
@@ -879,13 +1008,13 @@ object RpRegexEngine {
                             -1
                         }
                         if (twoDigit in 1..maxGroup) {
-                            sb.append(match.groups[twoDigit]?.value.orEmpty())
+                            sb.append(applyTrimStrings(match.groups[twoDigit]?.value.orEmpty(), trimStrings))
                             i += 3
                             continue
                         }
                         val oneDigit = next - '0'
                         if (oneDigit in 0..maxGroup) {
-                            sb.append(match.groups[oneDigit]?.value.orEmpty())
+                            sb.append(applyTrimStrings(match.groups[oneDigit]?.value.orEmpty(), trimStrings))
                             i += 2
                             continue
                         }
@@ -898,18 +1027,32 @@ object RpRegexEngine {
         return sb.toString()
     }
 
+    private fun isExplicitHtmlFenceInfo(info: String): Boolean {
+        if (info.isEmpty()) return false
+        val token = info.substringBefore(' ').substringBefore(';').substringBefore('!').trim()
+        return token == "html" || token == "htm" || token == "xhtml" || token == "html5" || token == "svg"
+    }
+
+    private fun looksLikeHtmlFrontend(body: String): Boolean {
+        val trimmed = body.trim()
+        if (trimmed.length < 7) return false
+        return HTML_FENCE_BODY_SIGNAL_RE.containsMatchIn(trimmed)
+    }
+
+    private fun isClosingFenceLine(line: String, fenceChar: Char, fenceLen: Int): Boolean {
+        val trimmed = line.trimStart(' ', '\t')
+        if (trimmed.length < fenceLen) return false
+        val markerLen = trimmed.takeWhile { it == fenceChar }.length
+        return markerLen >= fenceLen && trimmed.drop(markerLen).isBlank()
+    }
+
     private fun findClosingFence(text: String, start: Int, fenceChar: Char, fenceLen: Int): Pair<Int, Int>? {
         var pos = start
         val n = text.length
         while (pos <= n) {
             val lineEnd = text.indexOf('\n', pos).let { if (it < 0) n else it }
             val line = text.substring(pos, lineEnd)
-            val trimmed = line.trimStart(' ')
-            val leadingSpaces = line.length - trimmed.length
-            if (leadingSpaces <= 3 && trimmed.length >= fenceLen &&
-                trimmed.takeWhile { it == fenceChar }.length >= fenceLen &&
-                trimmed.dropWhile { it == fenceChar }.isBlank()
-            ) {
+            if (isClosingFenceLine(line, fenceChar, fenceLen)) {
                 val nextCursor = if (lineEnd < n) lineEnd + 1 else n
                 return pos to nextCursor
             }
@@ -919,37 +1062,99 @@ object RpRegexEngine {
         return null
     }
 
-    private fun matchRawHtmlBlockEnd(text: String, start: Int): Int? {
-        val m = RAW_BLOCK_START_RE.matchAt(text, start) ?: return null
-        val matchedText = m.value
+    private fun findClosingFenceForHtml(text: String, start: Int, fenceChar: Char, fenceLen: Int): Pair<Int, Int>? {
+        var pos = start
+        val n = text.length
+        var inScript = false
+        var fallbackCandidate: Pair<Int, Int>? = null
+        while (pos <= n) {
+            val lineEnd = text.indexOf('\n', pos).let { if (it < 0) n else it }
+            val line = text.substring(pos, lineEnd)
+            if (isClosingFenceLine(line, fenceChar, fenceLen)) {
+                val nextCursor = if (lineEnd < n) lineEnd + 1 else n
+                if (!inScript) {
+                    return pos to nextCursor
+                }
+                fallbackCandidate = pos to nextCursor
+            } else {
+                var scan = 0
+                while (scan < line.length) {
+                    if (!inScript) {
+                        val openM = SCRIPT_OPEN_RE.find(line, scan) ?: break
+                        val closeAfter = SCRIPT_CLOSE_RE.find(line, openM.range.last + 1)
+                        if (closeAfter != null) {
+                            scan = closeAfter.range.last + 1
+                        } else {
+                            inScript = true
+                            break
+                        }
+                    } else {
+                        val closeM = SCRIPT_CLOSE_RE.find(line, scan) ?: break
+                        inScript = false
+                        scan = closeM.range.last + 1
+                    }
+                }
+            }
+            if (lineEnd >= n) break
+            pos = lineEnd + 1
+        }
+        return fallbackCandidate
+    }
 
-        if (DOCTYPE_OPEN_RE.matches(matchedText)) {
-            val htmlClose = HTML_CLOSE_RE.find(text, m.range.last + 1) ?: return null
-            return htmlClose.range.last + 1
+    private fun isWhitespaceOrHtmlCommentOnly(text: String): Boolean {
+        if (text.isBlank()) return true
+        var i = 0
+        val n = text.length
+        while (i < n) {
+            while (i < n && text[i].isWhitespace()) i++
+            if (i >= n) return true
+            if (text.startsWith("<!--", i)) {
+                val end = text.indexOf(COMMENT_CLOSE, i + 4)
+                if (end < 0) return false
+                i = end + COMMENT_CLOSE.length
+            } else {
+                return false
+            }
+        }
+        return true
+    }
+
+    private fun matchRawHtmlBlockEnd(text: String, start: Int): Int? {
+        if (start >= text.length || text[start] != '<') return null
+
+        val doctypeM = DOCTYPE_OPEN_RE.matchAt(text, start)
+        if (doctypeM != null) {
+            val htmlClose = HTML_CLOSE_RE.find(text, doctypeM.range.last + 1)
+            if (htmlClose != null) return htmlClose.range.last + 1
+            val lastClose = HTML_LAST_CLOSE_RE.findAll(text, doctypeM.range.last + 1).lastOrNull()
+            return lastClose?.let { it.range.last + 1 } ?: text.length
         }
 
-        val tagName = m.groupValues[1].lowercase()
-        if (matchedText.trimEnd().endsWith("/>")) {
-            return m.range.last + 1
+        val tagM = RAW_TAG_NAME_RE.matchAt(text, start) ?: return null
+        val tagName = tagM.groupValues[1].lowercase()
+        val openBracketEnd = findTagCloseBracket(text, start) ?: return null
+        val matchedOpen = text.substring(start, openBracketEnd + 1)
+        if (matchedOpen.trimEnd().endsWith("/>")) {
+            return openBracketEnd + 1
         }
 
         if (tagName == "style") {
-            val close = STYLE_CLOSE_RE.find(text, m.range.last + 1) ?: return null
+            val close = STYLE_CLOSE_RE.find(text, openBracketEnd + 1) ?: return null
             return close.range.last + 1
         }
         if (tagName == "script") {
-            val close = SCRIPT_CLOSE_RE.find(text, m.range.last + 1) ?: return null
+            val close = SCRIPT_CLOSE_RE.find(text, openBracketEnd + 1) ?: return null
             return close.range.last + 1
         }
         if (tagName !in BLOCK_CONTAINER_TAGS) return null
 
         // Scan forward balancing nested same-name tags while skipping comments, <script>, and <style>
         var depth = 1
-        var pos = m.range.last + 1
+        var pos = openBracketEnd + 1
         val n = text.length
         while (pos < n) {
             val nextLt = text.indexOf('<', pos)
-            if (nextLt < 0) return null
+            if (nextLt < 0) break
             if (text.startsWith("<!--", nextLt)) {
                 val endComment = text.indexOf(COMMENT_CLOSE, nextLt + 4)
                 pos = if (endComment < 0) n else endComment + COMMENT_CLOSE.length
@@ -957,27 +1162,27 @@ object RpRegexEngine {
             }
             // Skip nested <script>...</script> and <style>...</style> bodies cleanly
             if (tagName != "script" && startsWithTag(text, nextLt, "script")) {
-                val openEnd = findTagCloseBracket(text, nextLt) ?: return null
-                val closeScript = SCRIPT_CLOSE_RE.find(text, openEnd + 1) ?: return null
+                val openEnd = findTagCloseBracket(text, nextLt) ?: break
+                val closeScript = SCRIPT_CLOSE_RE.find(text, openEnd + 1) ?: break
                 pos = closeScript.range.last + 1
                 continue
             }
             if (tagName != "style" && startsWithTag(text, nextLt, "style")) {
-                val openEnd = findTagCloseBracket(text, nextLt) ?: return null
-                val closeStyle = STYLE_CLOSE_RE.find(text, openEnd + 1) ?: return null
+                val openEnd = findTagCloseBracket(text, nextLt) ?: break
+                val closeStyle = STYLE_CLOSE_RE.find(text, openEnd + 1) ?: break
                 pos = closeStyle.range.last + 1
                 continue
             }
 
             if (startsWithClosingTag(text, nextLt, tagName)) {
-                val closeEnd = findTagCloseBracket(text, nextLt) ?: return null
+                val closeEnd = findTagCloseBracket(text, nextLt) ?: break
                 depth--
                 pos = closeEnd + 1
                 if (depth == 0) return pos
                 continue
             }
             if (startsWithTag(text, nextLt, tagName)) {
-                val openEnd = findTagCloseBracket(text, nextLt) ?: return null
+                val openEnd = findTagCloseBracket(text, nextLt) ?: break
                 val tagStr = text.substring(nextLt, openEnd + 1)
                 if (!tagStr.trimEnd().endsWith("/>")) {
                     depth++
@@ -986,6 +1191,10 @@ object RpRegexEngine {
                 continue
             }
             pos = nextLt + 1
+        }
+        if (tagName == "html") {
+            val lastClose = HTML_LAST_CLOSE_RE.findAll(text, openBracketEnd + 1).lastOrNull()
+            return lastClose?.let { it.range.last + 1 }
         }
         return null
     }

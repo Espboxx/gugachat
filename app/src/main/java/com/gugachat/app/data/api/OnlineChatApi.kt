@@ -8,12 +8,22 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.job
 import kotlinx.coroutines.withContext
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.InterruptedIOException
+import java.net.SocketTimeoutException
+import java.util.concurrent.TimeUnit
 
 class OnlineChatApi(
     private val client: ApiClient,
     private val providerLookup: ((Long) -> ApiProviderConfig?)? = null,
     private val directClient: DirectApiClient? = null,
+    private val maxSseRetriesProvider: () -> Int = { 0 },
+    private val sseReadTimeoutMs: Long = SseRetryPolicy.DEFAULT_SSE_READ_TIMEOUT_MS,
+    private val retryBaseDelayMs: Long = SseRetryPolicy.DEFAULT_RETRY_BASE_DELAY_MS,
 ) {
+    private val sseStreamingClient = client.streamingClient.newBuilder()
+        .readTimeout(sseReadTimeoutMs.coerceAtLeast(100L), TimeUnit.MILLISECONDS)
+        .build()
+
     suspend fun capabilities(): OnlineChatCapabilitiesDto =
         client.get("/online-chat/capabilities", OnlineChatCapabilitiesDto.serializer())
 
@@ -36,6 +46,31 @@ class OnlineChatApi(
         onDelta: (String) -> Unit = {},
         onReasoning: (String) -> Unit = {},
         onUsage: (ChatTokenUsageDto) -> Unit = {},
+        maxRetries: Int? = null,
+        onRetryAttempt: (attempt: Int, maxRetries: Int, error: Throwable) -> Unit = { _, _, _ -> },
+        onResetForRetry: () -> Unit = {},
+    ): CompletionResult {
+        val effectiveRetries = SseRetryPolicy.clampRetryCount(maxRetries ?: maxSseRetriesProvider())
+        return SseRetryPolicy.executeWithSseRetry(
+            maxRetries = effectiveRetries,
+            baseDelayMs = retryBaseDelayMs,
+            onRetryAttempt = onRetryAttempt,
+            onResetForRetry = onResetForRetry,
+        ) {
+            streamCompletionOnce(
+                request = request,
+                onDelta = onDelta,
+                onReasoning = onReasoning,
+                onUsage = onUsage,
+            )
+        }
+    }
+
+    private suspend fun streamCompletionOnce(
+        request: OnlineChatCompletionRequestDto,
+        onDelta: (String) -> Unit,
+        onReasoning: (String) -> Unit,
+        onUsage: (ChatTokenUsageDto) -> Unit,
     ): CompletionResult {
         if (ApiProviderConfig.isCustomProviderId(request.group_id)) {
             val provider = providerLookup?.invoke(request.group_id)
@@ -56,7 +91,7 @@ class OnlineChatApi(
                 "Accept-Encoding" to "identity",
                 "Cache-Control" to "no-cache",
             ),
-            client = client.streamingClient,
+            client = sseStreamingClient,
         )
 
         return withContext(Dispatchers.IO) {
@@ -82,6 +117,8 @@ class OnlineChatApi(
                 val contentBuf = StringBuilder()
                 val reasoningBuf = StringBuilder()
                 var lastUsage: ChatTokenUsageDto? = null
+                var sawDone = false
+                var sawFinishReason = false
                 val ctx = currentCoroutineContext()
                 val cancelHandle = ctx.job.invokeOnCompletion { cause ->
                     if (cause != null) runCatching { resp.close() }
@@ -93,7 +130,13 @@ class OnlineChatApi(
                         val line = source.readUtf8Line() ?: break
                         if (line.startsWith("data:")) {
                             val outcome = SseParser.parseDataPayload(line.removePrefix("data:")) ?: continue
-                            if (outcome.done) break
+                            if (outcome.done) {
+                                sawDone = true
+                                break
+                            }
+                            if (!outcome.finishReason.isNullOrBlank()) {
+                                sawFinishReason = true
+                            }
                             if (outcome.usage != null) {
                                 lastUsage = SseParser.mergeUsage(lastUsage, outcome.usage)
                                 lastUsage?.let(onUsage)
@@ -112,11 +155,21 @@ class OnlineChatApi(
                     throw e
                 } catch (e: ApiException) {
                     throw e
+                } catch (e: SocketTimeoutException) {
+                    ctx.ensureActive()
+                    throw ApiException(504, "STREAM_TIMEOUT", e.message ?: "SSE stream timed out")
+                } catch (e: InterruptedIOException) {
+                    ctx.ensureActive()
+                    throw ApiException(504, "STREAM_TIMEOUT", e.message ?: "SSE stream timed out")
                 } catch (e: Exception) {
                     ctx.ensureActive()
                     throw ApiException(502, "STREAM_READ_ERROR", e.message ?: "Failed to read stream")
                 } finally {
                     cancelHandle.dispose()
+                }
+
+                if (!sawDone && !sawFinishReason) {
+                    throw ApiException(502, "STREAM_UNEXPECTED_EOF", "SSE stream interrupted: unexpected EOF")
                 }
 
                 CompletionResult(

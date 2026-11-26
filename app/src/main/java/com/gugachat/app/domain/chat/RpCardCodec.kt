@@ -134,7 +134,8 @@ object RpCardCodec {
             inScene = true,
         )
 
-        val regexScripts = parseRegexScripts(data?.extensions ?: env.extensions)
+        val regexScripts = (parseRegexScripts(data?.extensions) + parseRegexScripts(env.extensions))
+            .distinctBy { "${it.id}|${it.findRegex}|${it.replaceString}" }
 
         val rp = RpConfig(
             title = charName,
@@ -228,6 +229,10 @@ object RpCardCodec {
             val markdownOnly = (obj["markdownOnly"] as? JsonPrimitive)?.booleanOrNull ?: !promptOnly
 
             val placement = parseRegexPlacement(obj["placement"])
+            val trimStrings = (obj["trimStrings"] as? JsonArray)
+                ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
+                ?.filter { it.isNotEmpty() }
+                .orEmpty()
 
             RpRegexScript(
                 id = id,
@@ -239,6 +244,7 @@ object RpCardCodec {
                 markdownOnly = markdownOnly,
                 promptOnly = promptOnly,
                 flags = parsedFlags,
+                trimStrings = trimStrings,
             )
         }
     }
@@ -283,7 +289,10 @@ object RpCardCodec {
                                 put("scriptName", s.name)
                                 put("findRegex", RpRegexEngine.formatRegexLiteral(s.findRegex, s.flags))
                                 put("replaceString", s.replaceString)
-                                put("trimStrings", buildJsonArray {})
+                                put(
+                                    "trimStrings",
+                                    buildJsonArray { s.trimStrings.forEach { add(JsonPrimitive(it)) } },
+                                )
                                 put(
                                     "placement",
                                     buildJsonArray { placementCodes.forEach { add(JsonPrimitive(it)) } },

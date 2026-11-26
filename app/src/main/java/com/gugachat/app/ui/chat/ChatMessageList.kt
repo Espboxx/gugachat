@@ -56,6 +56,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -125,6 +126,7 @@ fun ChatMessageList(
     rpConfig: RpConfig? = null,
     novelConfig: NovelConfig? = null,
     isStreaming: Boolean,
+    streamingStatusHint: String? = null,
     isRefreshingChoices: Boolean = false,
     attachmentPathResolver: (String) -> File,
     onOpenModelSheet: () -> Unit = {},
@@ -141,6 +143,7 @@ fun ChatMessageList(
     onSwitchVariant: (String, Int) -> Unit,
     onToast: (String) -> Unit,
     onFrontendAction: (String) -> Unit = {},
+    onFrontendFillInput: (String) -> Unit = onFrontendAction,
     onFrontendSetFlag: (String, String) -> Unit = { _, _ -> },
     onFrontendAdjustAffinity: (String, Int) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier,
@@ -320,6 +323,7 @@ fun ChatMessageList(
                         rpConfig = rpConfig,
                         isLatestAssistant = isLatestAssistant,
                         isStreaming = isStreaming,
+                        streamingStatusHint = streamingStatusHint,
                         isRefreshingChoices = isRefreshingChoices,
                         onSelectNovelChoice = onSelectNovelChoice,
                         onSelectRpChoice = onSelectRpChoice,
@@ -339,6 +343,7 @@ fun ChatMessageList(
                             onToast(strings.common.copied)
                         },
                         onFrontendAction = onFrontendAction,
+                        onFrontendFillInput = onFrontendFillInput,
                         onFrontendSetFlag = onFrontendSetFlag,
                         onFrontendAdjustAffinity = onFrontendAdjustAffinity,
                         onToast = onToast,
@@ -984,6 +989,7 @@ private fun AssistantMessageBlock(
     rpConfig: RpConfig?,
     isLatestAssistant: Boolean,
     isStreaming: Boolean,
+    streamingStatusHint: String? = null,
     isRefreshingChoices: Boolean,
     onSelectNovelChoice: (String) -> Unit,
     onSelectRpChoice: (RpChoice, Boolean) -> Unit,
@@ -996,6 +1002,7 @@ private fun AssistantMessageBlock(
     onSwitchVariant: (Int) -> Unit,
     onCopyText: (String) -> Unit,
     onFrontendAction: (String) -> Unit,
+    onFrontendFillInput: (String) -> Unit = onFrontendAction,
     onFrontendSetFlag: (String, String) -> Unit,
     onFrontendAdjustAffinity: (String, Int) -> Unit,
     onToast: (String) -> Unit,
@@ -1081,6 +1088,7 @@ private fun AssistantMessageBlock(
                         cleanBody = cleanBody,
                         msg = msg,
                         isStreaming = isStreaming,
+                        streamingStatusHint = streamingStatusHint,
                         useSerif = rpTheme?.useSerif ?: false,
                         fontSize = rpFontSizeSp.sp,
                         lineHeight = (rpFontSizeSp * 1.6f).sp,
@@ -1088,6 +1096,7 @@ private fun AssistantMessageBlock(
                         isRpMode = true,
                         onRetry = onRegenerate,
                         onFrontendAction = onFrontendAction,
+                        onFrontendFillInput = onFrontendFillInput,
                         onFrontendSetFlag = onFrontendSetFlag,
                         onFrontendAdjustAffinity = onFrontendAdjustAffinity,
                         onToast = onToast,
@@ -1172,6 +1181,7 @@ private fun AssistantMessageBlock(
                         cleanBody = cleanBody,
                         msg = msg,
                         isStreaming = isStreaming,
+                        streamingStatusHint = streamingStatusHint,
                         useSerif = true,
                         fontSize = 16.sp,
                         lineHeight = 27.sp,
@@ -1244,6 +1254,7 @@ private fun AssistantMessageBlock(
                     cleanBody = cleanBody,
                     msg = msg,
                     isStreaming = isStreaming,
+                    streamingStatusHint = streamingStatusHint,
                     useSerif = false,
                     fontSize = 15.5.sp,
                     lineHeight = 25.sp,
@@ -1275,6 +1286,7 @@ private fun AssistantBodyAndNotices(
     cleanBody: String,
     msg: ChatMessage,
     isStreaming: Boolean,
+    streamingStatusHint: String? = null,
     useSerif: Boolean,
     fontSize: androidx.compose.ui.unit.TextUnit,
     lineHeight: androidx.compose.ui.unit.TextUnit,
@@ -1283,6 +1295,7 @@ private fun AssistantBodyAndNotices(
     rpConfig: RpConfig? = null,
     isRpMode: Boolean = false,
     onFrontendAction: (String) -> Unit = {},
+    onFrontendFillInput: (String) -> Unit = onFrontendAction,
     onFrontendSetFlag: (String, String) -> Unit = { _, _ -> },
     onFrontendAdjustAffinity: (String, Int) -> Unit = { _, _ -> },
 ) {
@@ -1307,6 +1320,7 @@ private fun AssistantBodyAndNotices(
                 useSerif = useSerif,
                 onCopyToast = onToast,
                 onFrontendAction = onFrontendAction,
+                onFrontendFillInput = onFrontendFillInput,
                 onFrontendSetFlag = onFrontendSetFlag,
                 onFrontendAdjustAffinity = onFrontendAdjustAffinity,
             )
@@ -1320,7 +1334,53 @@ private fun AssistantBodyAndNotices(
             )
         }
     } else if (msg.status == "streaming") {
-        Text(strings.chat.streamingWriting, color = c.muted, fontSize = 13.5.sp)
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (!streamingStatusHint.isNullOrBlank()) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(14.dp),
+                    strokeWidth = 2.dp,
+                    color = c.warning,
+                )
+                Text(
+                    text = streamingStatusHint,
+                    color = c.warning,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            } else {
+                Text(strings.chat.streamingWriting, color = c.muted, fontSize = 13.5.sp)
+            }
+        }
+    }
+
+    if (msg.status == "streaming" && cleanBody.isNotBlank() && !streamingStatusHint.isNullOrBlank()) {
+        Surface(
+            shape = RoundedCornerShape(10.dp),
+            color = c.warningBg,
+            border = BorderStroke(theme.borderWidth, c.warning.copy(alpha = 0.42f)),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(13.dp),
+                    strokeWidth = 2.dp,
+                    color = c.warning,
+                )
+                Text(
+                    text = streamingStatusHint,
+                    color = c.warning,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
     }
 
     if (!msg.error.isNullOrBlank()) {

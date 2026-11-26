@@ -180,8 +180,17 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
             ?: sortedModels.firstOrNull { it.id == saved.lastImageModel }
             ?: sortedModels.firstOrNull()
         _ui.update { state ->
+            val prevModel = state.models.firstOrNull { it.id == state.selectedModelId }
             val nextNai = if (OnlineImageStudioUtils.isNovelAIModel(chosen)) {
-                OnlineImageNovelAI.defaultParamsForVersion(OnlineImageNovelAI.detectVersion(chosen!!.id))
+                val targetVersion = OnlineImageNovelAI.detectVersion(
+                    chosen!!.id,
+                    chosen.parameter_schema?.upstream_model,
+                )
+                if (OnlineImageStudioUtils.isNovelAIModel(prevModel)) {
+                    OnlineImageNovelAI.adaptParamsForVersion(state.novelaiParams, targetVersion)
+                } else {
+                    OnlineImageNovelAI.defaultParamsForVersion(targetVersion)
+                }
             } else {
                 state.novelaiParams
             }
@@ -200,8 +209,17 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
         val keyId = _ui.value.selectedKeyId
         val modelObj = _ui.value.models.firstOrNull { it.id == modelId }
         _ui.update { state ->
+            val prevModel = state.models.firstOrNull { it.id == state.selectedModelId }
             val nextNai = if (OnlineImageStudioUtils.isNovelAIModel(modelObj)) {
-                OnlineImageNovelAI.defaultParamsForVersion(OnlineImageNovelAI.detectVersion(modelId))
+                val targetVersion = OnlineImageNovelAI.detectVersion(
+                    modelId,
+                    modelObj?.parameter_schema?.upstream_model,
+                )
+                if (OnlineImageStudioUtils.isNovelAIModel(prevModel)) {
+                    OnlineImageNovelAI.adaptParamsForVersion(state.novelaiParams, targetVersion)
+                } else {
+                    OnlineImageNovelAI.defaultParamsForVersion(targetVersion)
+                }
             } else {
                 state.novelaiParams
             }
@@ -324,6 +342,7 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
                         modelId = modelObj.id,
                         hasReferenceImages = state.referenceUploads.isNotEmpty() || state.referenceAssets.isNotEmpty(),
                         isImg2Img = false,
+                        upstreamModel = modelObj.parameter_schema?.upstream_model,
                     )
                 } else {
                     null
@@ -432,6 +451,7 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
                         modelId = modelObj.id,
                         hasReferenceImages = false,
                         isImg2Img = target.mode == ImageEditMode.VARIATION,
+                        upstreamModel = modelObj.parameter_schema?.upstream_model,
                     )
                 } else {
                     null
@@ -608,7 +628,7 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
             selectKey(gen.api_key_id)
         }
         val parsedNai = gen.novelai?.let { raw ->
-            runCatching { AppJson.decodeFromString(NovelAIParams.serializer(), raw.toString()) }.getOrNull()
+            runCatching { OnlineImageNovelAI.parseNovelAIParams(raw, modelId = gen.model) }.getOrNull()
         }
         _ui.update { state ->
             state.copy(
@@ -781,7 +801,16 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
                     requested_count = state.count,
                     include_prompt = includePrompt,
                     prompt = if (includePrompt) state.prompt else null,
-                    novelai = if (isNai) OnlineImageNovelAI.buildNovelAIPayloadJsonObject(state.prompt, state.novelaiParams, modelObj.id) else null,
+                    novelai = if (isNai) {
+                        OnlineImageNovelAI.buildNovelAIPayloadJsonObject(
+                            prompt = state.prompt,
+                            params = state.novelaiParams,
+                            modelId = modelObj.id,
+                            upstreamModel = modelObj.parameter_schema?.upstream_model,
+                        )
+                    } else {
+                        null
+                    },
                 )
                 val created = container.onlineImagesApi.createPreset(input)
                 _ui.update { cur -> cur.copy(presets = listOf(created) + cur.presets) }
@@ -798,7 +827,7 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
             selectKey(targetKey)
         }
         val parsedNai = preset.novelai?.let { raw ->
-            runCatching { AppJson.decodeFromString(NovelAIParams.serializer(), raw.toString()) }.getOrNull()
+            runCatching { OnlineImageNovelAI.parseNovelAIParams(raw, modelId = preset.model) }.getOrNull()
         }
         _ui.update { state ->
             state.copy(

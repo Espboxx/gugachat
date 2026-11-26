@@ -308,6 +308,15 @@ fun ImageDetailSheet(
                         if (generation.resolution.isNotBlank()) {
                             GuBadge(generation.resolution, variant = GuBadgeVariant.NEUTRAL)
                         }
+                        val naiCharCount = remember(generation.novelai) {
+                            com.gugachat.app.domain.images.OnlineImageNovelAI.countCharactersInPayload(generation.novelai)
+                        }
+                        if (naiCharCount > 0) {
+                            GuBadge(
+                                text = if (isZh) "${naiCharCount} 个角色" else "$naiCharCount chars",
+                                variant = GuBadgeVariant.HONEY,
+                            )
+                        }
                         GuBadge(
                             strings.images.statuses[generation.status] ?: generation.status,
                             variant = if (generation.status == "completed") GuBadgeVariant.EMERALD else GuBadgeVariant.AMBER,

@@ -28,6 +28,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Autorenew
 import androidx.compose.material.icons.filled.BrightnessAuto
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DarkMode
@@ -40,6 +41,7 @@ import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material3.CircularProgressIndicator
@@ -564,6 +566,117 @@ fun ProfileScreen(
                                 .fillMaxWidth()
                                 .padding(start = 56.dp, end = 14.dp),
                         )
+                    }
+
+                    HorizontalDivider(
+                        modifier = Modifier.padding(start = 56.dp),
+                        thickness = theme.borderWidth,
+                        color = c.border.copy(alpha = 0.78f),
+                    )
+
+                    // Row 5: SSE Stream Auto-Retry Count (default 3, range 0..10)
+                    val retryCount = state.settings.sseAutoRetryCount
+                    val retryPresets = remember { listOf(0, 1, 3, 5) }
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 12.dp),
+                    ) {
+                        GuSettingsRow(
+                            title = strings.profile.sseRetryLabel,
+                            subtitle = strings.profile.sseRetrySubtitle,
+                            icon = Icons.Default.Autorenew,
+                            iconTint = c.accent,
+                            iconBg = c.accentSoft,
+                            showDivider = false,
+                            trailing = {
+                                GuBadge(
+                                    text = if (retryCount == 0) {
+                                        strings.profile.sseRetryOff
+                                    } else {
+                                        strings.profile.sseRetryTimes.fmt("count" to retryCount)
+                                    },
+                                    variant = if (retryCount == 0) GuBadgeVariant.NEUTRAL else GuBadgeVariant.BLUE,
+                                )
+                            },
+                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 56.dp, end = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            retryPresets.forEach { presetVal ->
+                                val selected = retryCount == presetVal
+                                Surface(
+                                    onClick = { viewModel.setSseAutoRetryCount(presetVal) },
+                                    shape = RoundedCornerShape(999.dp),
+                                    color = if (selected) c.primarySoft else c.surfaceSoft,
+                                    border = BorderStroke(
+                                        theme.borderWidth,
+                                        if (selected) c.primary.copy(alpha = 0.48f) else c.border,
+                                    ),
+                                    modifier = Modifier.heightIn(min = 32.dp),
+                                ) {
+                                    Box(
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        Text(
+                                            text = if (presetVal == 0) {
+                                                strings.profile.sseRetryOff
+                                            } else {
+                                                strings.profile.sseRetryTimes.fmt("count" to presetVal)
+                                            },
+                                            color = if (selected) c.primarySoftInk else c.muted,
+                                            fontSize = 11.5.sp,
+                                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                        )
+                                    }
+                                }
+                            }
+                            Spacer(Modifier.weight(1f))
+                            Surface(
+                                shape = RoundedCornerShape(999.dp),
+                                color = c.surfaceSoft,
+                                border = BorderStroke(theme.borderWidth, c.border),
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    IconButton(
+                                        onClick = { viewModel.setSseAutoRetryCount((retryCount - 1).coerceAtLeast(0)) },
+                                        enabled = retryCount > 0,
+                                        modifier = Modifier.size(32.dp),
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Remove,
+                                            contentDescription = null,
+                                            tint = if (retryCount > 0) c.ink else c.muted.copy(alpha = 0.35f),
+                                            modifier = Modifier.size(15.dp),
+                                        )
+                                    }
+                                    Text(
+                                        text = "$retryCount",
+                                        color = c.ink,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        modifier = Modifier.padding(horizontal = 4.dp),
+                                    )
+                                    IconButton(
+                                        onClick = { viewModel.setSseAutoRetryCount((retryCount + 1).coerceAtMost(10)) },
+                                        enabled = retryCount < 10,
+                                        modifier = Modifier.size(32.dp),
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Add,
+                                            contentDescription = null,
+                                            tint = if (retryCount < 10) c.ink else c.muted.copy(alpha = 0.35f),
+                                            modifier = Modifier.size(15.dp),
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }

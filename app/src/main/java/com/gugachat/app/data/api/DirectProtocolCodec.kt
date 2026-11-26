@@ -502,13 +502,16 @@ object DirectProtocolCodec {
         val reasonBuf = StringBuilder()
         extractGeminiPartsText(obj, textBuf, reasonBuf)
         val usage = (obj["usageMetadata"] as? JsonObject)?.let(::parseGeminiUsage)
+        val finishReason = ((obj["candidates"] as? JsonArray)?.firstOrNull() as? JsonObject)
+            ?.get("finishReason")?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
 
-        if (textBuf.isEmpty() && reasonBuf.isEmpty() && usage == null) return null
+        if (textBuf.isEmpty() && reasonBuf.isEmpty() && usage == null && finishReason == null) return null
         return SseLineOutcome(
             done = false,
             deltaText = textBuf.toString(),
             deltaReasoning = reasonBuf.toString(),
             usage = usage,
+            finishReason = finishReason,
         )
     }
 

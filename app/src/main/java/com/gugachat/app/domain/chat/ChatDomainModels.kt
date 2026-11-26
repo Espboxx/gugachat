@@ -118,6 +118,7 @@ data class RpRegexScript(
     val markdownOnly: Boolean = true,
     val promptOnly: Boolean = false,
     val flags: String = "gms",
+    val trimStrings: List<String> = emptyList(),
 )
 
 @Serializable

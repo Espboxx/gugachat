@@ -59,6 +59,7 @@ private class GuGuSandboxBridge(
     private val mainHandler: Handler,
     private val onHeightState: State<(Int) -> Unit>,
     private val onActionState: State<(String) -> Unit>,
+    private val onFillInputState: State<(String) -> Unit>,
     private val onSetFlagState: State<(String, String) -> Unit>,
     private val onAdjustAffinityState: State<(String, Int) -> Unit>,
 ) {
@@ -73,6 +74,13 @@ private class GuGuSandboxBridge(
         val clean = text?.trim().orEmpty()
         if (clean.isEmpty()) return
         mainHandler.post { onActionState.value.invoke(clean) }
+    }
+
+    @JavascriptInterface
+    fun fillInput(text: String?) {
+        val clean = text?.trim().orEmpty()
+        if (clean.isEmpty()) return
+        mainHandler.post { onFillInputState.value.invoke(clean) }
     }
 
     @JavascriptInterface
@@ -99,6 +107,7 @@ fun RpHtmlCardSandbox(
     minHeightDp: Int = 44,
     maxHeightDp: Int = 520,
     onFrontendAction: (String) -> Unit = {},
+    onFrontendFillInput: (String) -> Unit = onFrontendAction,
     onFrontendSetFlag: (String, String) -> Unit = { _, _ -> },
     onFrontendAdjustAffinity: (String, Int) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier,
@@ -111,6 +120,7 @@ fun RpHtmlCardSandbox(
         maxHeightDp = maxHeightDp,
         forceDark = null,
         onFrontendAction = onFrontendAction,
+        onFrontendFillInput = onFrontendFillInput,
         onFrontendSetFlag = onFrontendSetFlag,
         onFrontendAdjustAffinity = onFrontendAdjustAffinity,
         modifier = modifier.clip(RoundedCornerShape(14.dp)),
@@ -127,6 +137,7 @@ internal fun RpHtmlCardSandboxInternal(
     maxHeightDp: Int = 520,
     forceDark: Boolean? = null,
     onFrontendAction: (String) -> Unit = {},
+    onFrontendFillInput: (String) -> Unit = onFrontendAction,
     onFrontendSetFlag: (String, String) -> Unit = { _, _ -> },
     onFrontendAdjustAffinity: (String, Int) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier,
@@ -219,6 +230,7 @@ internal fun RpHtmlCardSandboxInternal(
         }
     }
     val onActionState = rememberUpdatedState(onFrontendAction)
+    val onFillInputState = rememberUpdatedState(onFrontendFillInput)
     val onSetFlagState = rememberUpdatedState(onFrontendSetFlag)
     val onAdjustAffinityState = rememberUpdatedState(onFrontendAdjustAffinity)
 
@@ -228,6 +240,7 @@ internal fun RpHtmlCardSandboxInternal(
             mainHandler = mainHandler,
             onHeightState = onHeightState,
             onActionState = onActionState,
+            onFillInputState = onFillInputState,
             onSetFlagState = onSetFlagState,
             onAdjustAffinityState = onAdjustAffinityState,
         )
@@ -261,7 +274,7 @@ internal fun RpHtmlCardSandboxInternal(
                 overScrollMode = View.OVER_SCROLL_NEVER
                 settings.apply {
                     javaScriptEnabled = true
-                    domStorageEnabled = false
+                    domStorageEnabled = true
                     allowFileAccess = false
                     allowContentAccess = false
                     @Suppress("DEPRECATION")
@@ -351,6 +364,7 @@ fun RpRichMessageContent(
     useSerif: Boolean,
     onCopyToast: (String) -> Unit,
     onFrontendAction: (String) -> Unit = {},
+    onFrontendFillInput: (String) -> Unit = onFrontendAction,
     onFrontendSetFlag: (String, String) -> Unit = { _, _ -> },
     onFrontendAdjustAffinity: (String, Int) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier,
@@ -366,6 +380,7 @@ fun RpRichMessageContent(
         forceDarkSandbox = null,
         onCopyToast = onCopyToast,
         onFrontendAction = onFrontendAction,
+        onFrontendFillInput = onFrontendFillInput,
         onFrontendSetFlag = onFrontendSetFlag,
         onFrontendAdjustAffinity = onFrontendAdjustAffinity,
         modifier = modifier,
@@ -384,6 +399,7 @@ internal fun RpRichMessageContentThemed(
     forceDarkSandbox: Boolean?,
     onCopyToast: (String) -> Unit,
     onFrontendAction: (String) -> Unit = {},
+    onFrontendFillInput: (String) -> Unit = onFrontendAction,
     onFrontendSetFlag: (String, String) -> Unit = { _, _ -> },
     onFrontendAdjustAffinity: (String, Int) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier,
@@ -417,8 +433,10 @@ internal fun RpRichMessageContentThemed(
                         htmlFragment = seg.content,
                         rp = rp,
                         customCss = rp?.visualTheme?.customCss.orEmpty(),
+                        maxHeightDp = 1800,
                         forceDark = forceDarkSandbox,
                         onFrontendAction = onFrontendAction,
+                        onFrontendFillInput = onFrontendFillInput,
                         onFrontendSetFlag = onFrontendSetFlag,
                         onFrontendAdjustAffinity = onFrontendAdjustAffinity,
                     )

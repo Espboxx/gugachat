@@ -577,6 +577,7 @@ fun ImageCreateSheet(
                         modelId = activeModel?.id.orEmpty(),
                         params = state.novelaiParams,
                         onChange = onUpdateNovelAI,
+                        upstreamModel = activeModel?.parameter_schema?.upstream_model,
                     )
                 }
 

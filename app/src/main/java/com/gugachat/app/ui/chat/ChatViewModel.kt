@@ -118,6 +118,7 @@ data class ChatUiState(
     val draftRpKind: RpInputKind = RpInputKind.action,
     val draftDiceRoll: RpDiceRoll? = null,
     val isStreaming: Boolean = false,
+    val streamingStatusHint: String? = null,
     val isImpersonating: Boolean = false,
     val isRefreshingChoices: Boolean = false,
     val isGeneratingRpArt: Boolean = false,
@@ -555,7 +556,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
 
     fun stopStreaming() {
         streamJob?.cancel()
-        _ui.update { it.copy(isStreaming = false) }
+        _ui.update { it.copy(isStreaming = false, streamingStatusHint = null) }
     }
 
     fun regenerateFromAssistant(assistantMsgId: String) {
@@ -724,7 +725,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
 
         streamJob?.cancel()
         streamJob = viewModelScope.launch {
-            _ui.update { it.copy(isStreaming = true) }
+            _ui.update { it.copy(isStreaming = true, streamingStatusHint = null) }
 
             val allMsgs = chatDao.getMessagesForConversation(conv.id).map { it.toDomain() }
             val isContinue = continuePrefixText != null
@@ -774,6 +775,8 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             val streamLock = Any()
             val contentBuf = StringBuilder()
             val reasoningBuf = StringBuilder()
+            var bestPartialContent = ""
+            var bestPartialReasoning = ""
             var latestUsage: MessageUsage? = null
             var lastUiEmitMs = 0L
             var lastDbFlushMs = System.currentTimeMillis()
@@ -802,6 +805,9 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             }
 
             fun onChunkAppended(deltaText: String? = null, deltaReasoning: String? = null) {
+                if (_ui.value.streamingStatusHint != null) {
+                    _ui.update { it.copy(streamingStatusHint = null) }
+                }
                 val immediateSnap: ChatMessage? = synchronized(streamLock) {
                     if (!deltaText.isNullOrEmpty()) contentBuf.append(deltaText)
                     if (!deltaReasoning.isNullOrEmpty()) reasoningBuf.append(deltaReasoning)
@@ -818,6 +824,35 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                 if (immediateSnap != null) {
                     publishStreamingSnapshot(immediateSnap)
                 }
+            }
+
+            fun onRetryScheduled(attempt: Int, maxRetries: Int) {
+                _ui.update {
+                    it.copy(
+                        streamingStatusHint = strings().chat.streamingRetrying.fmt(
+                            "attempt" to attempt,
+                            "max" to maxRetries,
+                        ),
+                    )
+                }
+            }
+
+            fun onResetBuffersForRetry() {
+                val resetSnap = synchronized(streamLock) {
+                    if (contentBuf.length > bestPartialContent.length) {
+                        bestPartialContent = contentBuf.toString()
+                    }
+                    if (reasoningBuf.length > bestPartialReasoning.length) {
+                        bestPartialReasoning = reasoningBuf.toString()
+                    }
+                    contentBuf.clear()
+                    reasoningBuf.clear()
+                    latestUsage = null
+                    lastUiEmitMs = System.currentTimeMillis()
+                    uiDirty = false
+                    buildSnapshotLocked()
+                }
+                publishStreamingSnapshot(resetSnap)
             }
 
             val flushTickerJob = viewModelScope.launch {
@@ -867,6 +902,8 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                         onTextDelta = { delta -> onChunkAppended(deltaText = delta) },
                         onReasoningDelta = { r -> onChunkAppended(deltaReasoning = r) },
                         onUsageSet = { u -> synchronized(streamLock) { latestUsage = u } },
+                        onRetryAttempt = { attempt, maxRetries, _ -> onRetryScheduled(attempt, maxRetries) },
+                        onResetForRetry = ::onResetBuffersForRetry,
                     )
                 } catch (e: ApiException) {
                     val isBufEmpty = synchronized(streamLock) { contentBuf.isEmpty() }
@@ -886,6 +923,8 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                                 onTextDelta = { delta -> onChunkAppended(deltaText = delta) },
                                 onReasoningDelta = { r -> onChunkAppended(deltaReasoning = r) },
                                 onUsageSet = { u -> synchronized(streamLock) { latestUsage = u } },
+                                onRetryAttempt = { attempt, maxRetries, _ -> onRetryScheduled(attempt, maxRetries) },
+                                onResetForRetry = ::onResetBuffersForRetry,
                             )
                         } else {
                             throw e
@@ -910,7 +949,15 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             } catch (_: CancellationException) {
                 flushTickerJob.cancel()
                 withContext(NonCancellable) {
-                    val isBufEmpty = synchronized(streamLock) { contentBuf.isEmpty() }
+                    val isBufEmpty = synchronized(streamLock) {
+                        if (contentBuf.isEmpty() && bestPartialContent.isNotEmpty()) {
+                            contentBuf.append(bestPartialContent)
+                        }
+                        if (reasoningBuf.isEmpty() && bestPartialReasoning.isNotEmpty()) {
+                            reasoningBuf.append(bestPartialReasoning)
+                        }
+                        contentBuf.isEmpty()
+                    }
                     val aborted = if (isContinue && existingMessageForVariant != null && isBufEmpty) {
                         existingMessageForVariant
                     } else {
@@ -921,7 +968,15 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                 }
             } catch (e: Throwable) {
                 flushTickerJob.cancel()
-                val isBufEmpty = synchronized(streamLock) { contentBuf.isEmpty() }
+                val isBufEmpty = synchronized(streamLock) {
+                    if (contentBuf.isEmpty() && bestPartialContent.isNotEmpty()) {
+                        contentBuf.append(bestPartialContent)
+                    }
+                    if (reasoningBuf.isEmpty() && bestPartialReasoning.isNotEmpty()) {
+                        reasoningBuf.append(bestPartialReasoning)
+                    }
+                    contentBuf.isEmpty()
+                }
                 val failed = if (isContinue && existingMessageForVariant != null && isBufEmpty) {
                     existingMessageForVariant
                 } else {
@@ -932,7 +987,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                 container.toastController.show(e.message ?: "Generation failed", isError = true)
             } finally {
                 flushTickerJob.cancel()
-                _ui.update { it.copy(isStreaming = false) }
+                _ui.update { it.copy(isStreaming = false, streamingStatusHint = null) }
             }
         }
     }
@@ -977,6 +1032,8 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         onTextDelta: (String) -> Unit,
         onReasoningDelta: (String) -> Unit,
         onUsageSet: (MessageUsage) -> Unit,
+        onRetryAttempt: (attempt: Int, maxRetries: Int, error: Throwable) -> Unit = { _, _, _ -> },
+        onResetForRetry: () -> Unit = {},
     ) {
         container.onlineChatApi.streamCompletion(
             request = request,
@@ -992,6 +1049,8 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                     ),
                 )
             },
+            onRetryAttempt = onRetryAttempt,
+            onResetForRetry = onResetForRetry,
         )
     }
 
@@ -2522,6 +2581,12 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             sendMessage(overrideText = clean)
         }
+    }
+
+    fun handleRpFrontendFillInput(text: String) {
+        val clean = text.trim()
+        if (clean.isEmpty()) return
+        updateDraftText(clean)
     }
 
     fun handleRpFrontendSetFlag(key: String, value: String) {

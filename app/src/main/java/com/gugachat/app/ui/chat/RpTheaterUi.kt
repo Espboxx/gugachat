@@ -1084,6 +1084,7 @@ fun RpTheaterStageView(
     rp: RpConfig,
     messages: List<ChatMessage>,
     isStreaming: Boolean,
+    streamingStatusHint: String? = null,
     isRefreshingChoices: Boolean,
     hasModelSelected: Boolean,
     isGeneratingArt: Boolean = false,
@@ -1101,6 +1102,7 @@ fun RpTheaterStageView(
     onEditAssistantMessage: (String, String) -> Unit,
     onSwitchVariant: (String, Int) -> Unit,
     onFrontendAction: (String) -> Unit = {},
+    onFrontendFillInput: (String) -> Unit = onFrontendAction,
     onFrontendSetFlag: (String, String) -> Unit = { _, _ -> },
     onFrontendAdjustAffinity: (String, Int) -> Unit = { _, _ -> },
     onToast: (String) -> Unit,
@@ -1525,11 +1527,12 @@ fun RpTheaterStageView(
                                         )
                                     }
 
-                                    // Scrollable Narrative Viewport (capped height so long text never clips or hides choices)
+                                    // Scrollable Narrative Viewport (taller in hidden-sprite mode; capped at 280dp when stage/portrait card is shown so quick-action bar stays visible)
+                                    val dialogueMaxHeight = if (theme.spriteLayout == "hidden") 420.dp else 280.dp
                                     Column(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .heightIn(min = 96.dp, max = 300.dp)
+                                            .heightIn(min = 96.dp, max = dialogueMaxHeight)
                                             .verticalScroll(dialogueScrollState)
                                             .padding(horizontal = 14.dp, vertical = 12.dp),
                                         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -1553,6 +1556,7 @@ fun RpTheaterStageView(
                                                 forceDarkSandbox = skin.isDarkSurface,
                                                 onCopyToast = onToast,
                                                 onFrontendAction = onFrontendAction,
+                                                onFrontendFillInput = onFrontendFillInput,
                                                 onFrontendSetFlag = onFrontendSetFlag,
                                                 onFrontendAdjustAffinity = onFrontendAdjustAffinity,
                                             )
@@ -1564,12 +1568,13 @@ fun RpTheaterStageView(
                                                 CircularProgressIndicator(
                                                     modifier = Modifier.size(14.dp),
                                                     strokeWidth = 2.dp,
-                                                    color = stageAccent,
+                                                    color = if (!streamingStatusHint.isNullOrBlank()) c.warning else stageAccent,
                                                 )
                                                 Text(
-                                                    text = strings.chat.streamingWriting,
-                                                    color = skin.mutedText,
+                                                    text = streamingStatusHint ?: strings.chat.streamingWriting,
+                                                    color = if (!streamingStatusHint.isNullOrBlank()) c.warning else skin.mutedText,
                                                     fontSize = 13.sp,
+                                                    fontWeight = if (!streamingStatusHint.isNullOrBlank()) FontWeight.SemiBold else FontWeight.Normal,
                                                 )
                                             }
                                         } else {
@@ -1580,6 +1585,28 @@ fun RpTheaterStageView(
                                                 fontSize = 13.5.sp,
                                                 lineHeight = 20.sp,
                                             )
+                                        }
+
+                                        if ((isStreaming || latestAssistant?.status == "streaming") &&
+                                            cleanBody.isNotBlank() &&
+                                            !streamingStatusHint.isNullOrBlank()
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            ) {
+                                                CircularProgressIndicator(
+                                                    modifier = Modifier.size(13.dp),
+                                                    strokeWidth = 2.dp,
+                                                    color = c.warning,
+                                                )
+                                                Text(
+                                                    text = streamingStatusHint,
+                                                    color = c.warning,
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                )
+                                            }
                                         }
 
                                         val failedMsg = latestAssistant

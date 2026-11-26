@@ -282,4 +282,94 @@ class RpRegexEngineTest {
         assertTrue(tavernDoc.contains("听懂江晚柠藏在特调"))
         assertFalse(tavernDoc.contains("听懂{{char}}"))
     }
+
+    @Test
+    fun splitMarkdownAndHtml_rendersRealTavernHelperCardsInBareIndentedUnclosedAndScriptFences() {
+        // 1. Bare untagged ``` fence containing a full TavernHelper HTML/JS interactive card (matching user feedback)
+        val bareFenceTavernCard = """
+            戒律店铺的门铃轻轻响起。
+
+            ```
+            <!DOCTYPE html>
+            <html>
+            <head><style>.action-hint{color:#fff;}</style></head>
+            <body>
+            <div id="options"></div>
+            </body>
+            <script>
+            const opts = ['默认选项1', '默认选项2', '默认选项3'];
+            function fillInput(value) {
+              if (window.parent && window.parent.setInputBoxText) {
+                window.parent.setInputBoxText(value);
+              } else if (window.TavernHelper && window.TavernHelper.triggerSlash) {
+                window.TavernHelper.triggerSlash('/setinput ' + value);
+              }
+            }
+            </script>
+            </html>
+            ```
+        """.trimIndent()
+
+        val segs1 = RpRegexEngine.splitMarkdownAndHtml(bareFenceTavernCard, enableHtmlCards = true)
+        assertEquals(2, segs1.size)
+        assertFalse(segs1[0].isHtml)
+        assertTrue(segs1[1].isHtml)
+        assertTrue(segs1[1].content.contains("function fillInput(value)"))
+
+        // Verify buildSandboxHtmlDocument preserves trailing <script> outside <body> AND injects TavernHelper polyfills
+        val doc = RpRegexEngine.buildSandboxHtmlDocument(segs1[1].content, rp = null, isDark = true)
+        assertTrue(doc.contains("function fillInput(value)"))
+        assertTrue(doc.contains("window.setInputBoxText="))
+        assertTrue(doc.contains("window.TavernHelper="))
+        assertTrue(doc.contains("GuGuBridge.fillInput"))
+
+        // 2. 4-space indented ```html fence with ``` inside a JS string literal
+        val indentedWithInnerFence = """
+                ```html
+                <div class="hud">Status</div>
+                <script>
+                const marker = `
+                ```
+                `;
+                console.log(marker);
+                </script>
+                ```
+        """.trimIndent()
+        val segs2 = RpRegexEngine.splitMarkdownAndHtml(indentedWithInnerFence, enableHtmlCards = true)
+        assertEquals(1, segs2.size)
+        assertTrue(segs2[0].isHtml)
+        assertTrue(segs2[0].content.contains("console.log(marker)"))
+
+        // 3. Unclosed ```html fence at EOF
+        val unclosedHtmlFence = "开场剧情\n```html\n<div class=\"panel\">Unclosed card</div>\n<script>var a=1;</script>"
+        val segs3 = RpRegexEngine.splitMarkdownAndHtml(unclosedHtmlFence, enableHtmlCards = true)
+        assertEquals(2, segs3.size)
+        assertFalse(segs3[0].isHtml)
+        assertTrue(segs3[1].isHtml)
+        assertTrue(segs3[1].content.contains("Unclosed card"))
+
+        // 4. Plain non-HTML untagged code fence stays Markdown
+        val plainCode = "示例代码：\n```\nval x = 1 + 2\nprintln(x)\n```"
+        val segs4 = RpRegexEngine.splitMarkdownAndHtml(plainCode, enableHtmlCards = true)
+        assertEquals(1, segs4.size)
+        assertFalse(segs4[0].isHtml)
+
+        // 5. JS [^] wildcard and trimStrings in regex scripts
+        val jsScript = RpRegexScript(
+            id = "js_any",
+            name = "JS wildcard + trimStrings",
+            findRegex = "/<card>([^]*?)<\\/card>/g",
+            replaceString = "<div class=\"card\">$1</div>",
+            trimStrings = listOf("[TRIM]"),
+            placement = "ai_output",
+            markdownOnly = true,
+        )
+        val out = RpRegexEngine.applyScripts(
+            text = "<card>[TRIM]你好\n世界</card>",
+            scripts = listOf(jsScript),
+            placement = "ai_output",
+            forDisplay = true,
+        )
+        assertEquals("<div class=\"card\">你好\n世界</div>", out)
+    }
 }

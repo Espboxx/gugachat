@@ -13,12 +13,19 @@ import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.InterruptedIOException
+import java.net.SocketTimeoutException
+import java.util.concurrent.TimeUnit
 
 class DirectApiClient(
     private val standardClient: OkHttpClient,
     private val streamingClient: OkHttpClient,
     private val parseHttpError: (Int, String) -> ApiException,
+    private val sseReadTimeoutMs: Long = SseRetryPolicy.DEFAULT_SSE_READ_TIMEOUT_MS,
 ) {
+    private val sseStreamingClient: OkHttpClient = streamingClient.newBuilder()
+        .readTimeout(sseReadTimeoutMs.coerceAtLeast(100L), TimeUnit.MILLISECONDS)
+        .build()
     suspend fun testAndFetchModels(provider: ApiProviderConfig): List<OnlineChatModelDto> {
         validateProvider(provider)
         val url = modelsEndpoint(provider)
@@ -78,7 +85,7 @@ class DirectApiClient(
             .header("Cache-Control", "no-cache")
             .header("Content-Type", "application/json")
 
-        val response = streamingClient.awaitCall(reqBuilder.build())
+        val response = sseStreamingClient.awaitCall(reqBuilder.build())
         return withContext(Dispatchers.IO) {
             response.use { resp ->
                 if (!resp.isSuccessful) {
@@ -101,6 +108,8 @@ class DirectApiClient(
                 val reasoningBuf = StringBuilder()
                 var lastUsage: ChatTokenUsageDto? = null
                 var currentEvent: String? = null
+                var sawDone = false
+                var sawFinishReason = false
                 val ctx = currentCoroutineContext()
                 val cancelHandle = ctx.job.invokeOnCompletion { cause ->
                     if (cause != null) runCatching { resp.close() }
@@ -127,6 +136,9 @@ class DirectApiClient(
                                 ApiProtocol.GEMINI -> DirectProtocolCodec.parseGeminiSseData(rawData)
                             } ?: continue
 
+                            if (!outcome.finishReason.isNullOrBlank()) {
+                                sawFinishReason = true
+                            }
                             if (outcome.usage != null) {
                                 lastUsage = SseParser.mergeUsage(lastUsage, outcome.usage)
                                 lastUsage?.let(onUsage)
@@ -139,18 +151,37 @@ class DirectApiClient(
                                 contentBuf.append(outcome.deltaText)
                                 onDelta(outcome.deltaText)
                             }
-                            if (outcome.done) break
+                            if (outcome.done) {
+                                sawDone = true
+                                break
+                            }
                         }
                     }
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: ApiException) {
                     throw e
+                } catch (e: SocketTimeoutException) {
+                    ctx.ensureActive()
+                    throw ApiException(504, "STREAM_TIMEOUT", e.message ?: "SSE stream timed out")
+                } catch (e: InterruptedIOException) {
+                    ctx.ensureActive()
+                    throw ApiException(504, "STREAM_TIMEOUT", e.message ?: "SSE stream timed out")
                 } catch (e: Exception) {
                     ctx.ensureActive()
                     throw ApiException(502, "STREAM_READ_ERROR", e.message ?: "Failed to read stream")
                 } finally {
                     cancelHandle.dispose()
+                }
+
+                val isPrematureEof = when (provider.protocol) {
+                    ApiProtocol.GEMINI -> !sawDone && !sawFinishReason && contentBuf.isEmpty() && reasoningBuf.isEmpty()
+                    ApiProtocol.OPENAI_CHAT,
+                    ApiProtocol.OPENAI_RESPONSES,
+                    ApiProtocol.ANTHROPIC -> !sawDone && !sawFinishReason
+                }
+                if (isPrematureEof) {
+                    throw ApiException(502, "STREAM_UNEXPECTED_EOF", "SSE stream interrupted: unexpected EOF")
                 }
 
                 CompletionResult(

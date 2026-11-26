@@ -5,6 +5,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -12,6 +13,7 @@ import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.theme.ColorMode
 import com.gugachat.app.core.theme.ThemeStyle
 import com.gugachat.app.core.util.ServerUrlUtils
+import com.gugachat.app.data.api.SseRetryPolicy
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -24,6 +26,7 @@ data class AppSettings(
     val colorMode: ColorMode = ColorMode.SYSTEM,
     val language: AppLanguage = AppLanguage.ZH,
     val memoryBudget: String = "4K",
+    val sseAutoRetryCount: Int = SseRetryPolicy.DEFAULT_SSE_AUTO_RETRY_COUNT,
     val lastChatGroupId: Long = 0L,
     val lastChatModel: String = "",
     val lastImageKeyId: Long = 0L,
@@ -40,6 +43,7 @@ class SettingsStore(private val context: Context) {
         val COLOR_MODE = stringPreferencesKey("color_mode")
         val LANGUAGE = stringPreferencesKey("language")
         val MEMORY_BUDGET = stringPreferencesKey("memory_budget")
+        val SSE_AUTO_RETRY_COUNT = intPreferencesKey("sse_auto_retry_count")
         val LAST_CHAT_GROUP_ID = longPreferencesKey("last_chat_group_id")
         val LAST_CHAT_MODEL = stringPreferencesKey("last_chat_model")
         val LAST_IMAGE_KEY_ID = longPreferencesKey("last_image_key_id")
@@ -56,6 +60,9 @@ class SettingsStore(private val context: Context) {
             colorMode = ColorMode.fromWire(prefs[Keys.COLOR_MODE]),
             language = AppLanguage.fromTag(prefs[Keys.LANGUAGE]),
             memoryBudget = prefs[Keys.MEMORY_BUDGET] ?: "4K",
+            sseAutoRetryCount = SseRetryPolicy.clampRetryCount(
+                prefs[Keys.SSE_AUTO_RETRY_COUNT] ?: SseRetryPolicy.DEFAULT_SSE_AUTO_RETRY_COUNT,
+            ),
             lastChatGroupId = prefs[Keys.LAST_CHAT_GROUP_ID] ?: 0L,
             lastChatModel = prefs[Keys.LAST_CHAT_MODEL].orEmpty(),
             lastImageKeyId = prefs[Keys.LAST_IMAGE_KEY_ID] ?: 0L,
@@ -88,6 +95,11 @@ class SettingsStore(private val context: Context) {
 
     suspend fun setMemoryBudget(budget: String) {
         context.settingsDataStore.edit { it[Keys.MEMORY_BUDGET] = budget }
+    }
+
+    suspend fun setSseAutoRetryCount(count: Int) {
+        val clamped = SseRetryPolicy.clampRetryCount(count)
+        context.settingsDataStore.edit { it[Keys.SSE_AUTO_RETRY_COUNT] = clamped }
     }
 
     suspend fun setLastChatSelection(groupId: Long, model: String) {
