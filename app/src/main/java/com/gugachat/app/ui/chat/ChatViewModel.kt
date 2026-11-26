@@ -13,9 +13,13 @@ import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.i18n.EnStrings
 import com.gugachat.app.core.i18n.ZhStrings
 import com.gugachat.app.core.i18n.fmt
+import com.gugachat.app.core.storage.ApiProtocol
+import com.gugachat.app.core.storage.ApiProviderConfig
+import com.gugachat.app.core.storage.AppSettings
 import com.gugachat.app.core.util.newIdempotencyKey
 import com.gugachat.app.data.api.ApiException
 import com.gugachat.app.data.api.AppJson
+import com.gugachat.app.data.api.ChatTokenUsageDto
 import com.gugachat.app.data.api.DirectProtocolCodec
 import com.gugachat.app.data.api.ExternalImportService
 import com.gugachat.app.data.api.ImageBinaryUpload
@@ -28,9 +32,11 @@ import com.gugachat.app.data.api.OnlineImageSubmitInput
 import com.gugachat.app.data.api.WireChatContentPartDto
 import com.gugachat.app.data.api.WireChatMessageDto
 import com.gugachat.app.data.api.WireImageUrlDto
+import com.gugachat.app.data.chat.RetrievalCoordinator
 import com.gugachat.app.data.local.AttachmentSaveResult
 import com.gugachat.app.data.local.toDomain
 import com.gugachat.app.data.local.toEntity
+import com.gugachat.app.domain.chat.BuiltChatContext
 import com.gugachat.app.domain.chat.ChatAttachmentMeta
 import com.gugachat.app.domain.chat.ChatConversation
 import com.gugachat.app.domain.chat.ChatMessage
@@ -59,6 +65,7 @@ import com.gugachat.app.domain.chat.NovelInputKind
 import com.gugachat.app.domain.chat.NovelLoreEntry
 import com.gugachat.app.domain.chat.NovelPresets
 import com.gugachat.app.domain.chat.ParsedTavernAsset
+import com.gugachat.app.domain.chat.RetrievalMode
 import com.gugachat.app.domain.chat.RpCardCodec
 import com.gugachat.app.domain.chat.RpCgRecord
 import com.gugachat.app.domain.chat.RpCharacter
@@ -76,8 +83,10 @@ import com.gugachat.app.domain.chat.RpSaveSlot
 import com.gugachat.app.domain.chat.RpVisualTheme
 import com.gugachat.app.domain.chat.TavernAssetCodec
 import com.gugachat.app.domain.chat.TimelineReconciler
+import com.gugachat.app.domain.chat.TokenEstimator
 import com.gugachat.app.domain.chat.UserMemory
 import com.gugachat.app.domain.chat.UuSaveCodec
+import com.gugachat.app.domain.chat.VectorIndexProgress
 import com.gugachat.app.domain.chat.WireChatMessage
 import com.gugachat.app.domain.chat.activeVariant
 import com.gugachat.app.domain.images.OnlineImageNovelAI
@@ -103,6 +112,8 @@ import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+import kotlin.math.roundToInt
 
 data class PendingScannedPdf(
     val fileName: String,
@@ -160,6 +171,10 @@ data class ChatUiState(
     val defaultMaxHistoryMessages: Int? = null,
     val defaultMaxOutputTokens: Int? = null,
     val waterline: ContextWaterlineSummary = ContextWaterlineSummary(),
+    val mutedRecallKeys: Set<String> = emptySet(),
+    val vectorIndexProgress: VectorIndexProgress = VectorIndexProgress(),
+    val activeRetrievalMode: RetrievalMode = RetrievalMode.LEXICAL_ONLY,
+    val compactingProgressText: String? = null,
 ) {
     val effectiveChatParams: ChatParams
         get() = activeConversation?.params ?: ChatParams(
@@ -171,15 +186,36 @@ data class ChatUiState(
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ChatViewModel(private val container: AppContainer) : ViewModel() {
+    private data class SentPayloadTracking(
+        val calibrationKey: String,
+        val protocol: ApiProtocol,
+        val estimatedRawTokens: Int,
+        val hasUndecayedImages: Boolean,
+    )
+
+    private data class BuiltWirePayload(
+        val request: OnlineChatCompletionRequestDto,
+        val builtContext: BuiltChatContext,
+        val tracking: SentPayloadTracking,
+    )
+
     private val chatDao = container.database.chatDao()
     private val userMemoryDao = container.database.userMemoryDao()
 
     private val _activeConvId = MutableStateFlow<String?>(null)
     private val _streamingMessage = MutableStateFlow<ChatMessage?>(null)
-    private val _ui = MutableStateFlow(ChatUiState())
+    private val _ui = MutableStateFlow(
+        ChatUiState(
+            activeRetrievalMode = container.settingsState.value.retrievalSettings.mode,
+            vectorIndexProgress = container.retrievalCoordinator.indexProgress.value,
+        ),
+    )
     val ui: StateFlow<ChatUiState> = _ui.asStateFlow()
 
     private var streamJob: Job? = null
+    private var waterlineJob: Job? = null
+    private var lastBuiltTracking: SentPayloadTracking? = null
+    private val consolidatingConvIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
     init {
         viewModelScope.launch {
@@ -303,7 +339,10 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         }
 
         viewModelScope.launch {
+            var prevSettings: AppSettings? = null
             container.settingsStore.settingsFlow.collect { s ->
+                val prev = prevSettings
+                prevSettings = s
                 _ui.update {
                     it.copy(
                         readerPaper = s.readerPaper,
@@ -314,7 +353,34 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                         defaultContextWindowOverride = s.defaultContextWindowOverride,
                         defaultMaxHistoryMessages = s.defaultMaxHistoryMessages,
                         defaultMaxOutputTokens = s.defaultMaxOutputTokens,
+                        activeRetrievalMode = s.retrievalSettings.mode,
                     )
+                }
+                if (prev == null ||
+                    prev.memoryBudget != s.memoryBudget ||
+                    prev.retrievalSettings != s.retrievalSettings ||
+                    prev.tokenCalibrationMap != s.tokenCalibrationMap
+                ) {
+                    scheduleWaterlineRecompute(debounceMs = 0L)
+                }
+                if (prev != null && prev.retrievalSettings != s.retrievalSettings &&
+                    s.retrievalSettings.mode != RetrievalMode.LEXICAL_ONLY
+                ) {
+                    scheduleActiveConversationIndexing()
+                }
+            }
+        }
+
+        viewModelScope.launch {
+            container.retrievalCoordinator.indexProgress.collect { progress ->
+                _ui.update { it.copy(vectorIndexProgress = progress) }
+            }
+        }
+
+        viewModelScope.launch {
+            _activeConvId.collect { convId ->
+                if (!convId.isNullOrBlank()) {
+                    scheduleActiveConversationIndexing(convId)
                 }
             }
         }
@@ -421,7 +487,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
 
     fun updateDraftText(text: String) {
         _ui.update { it.copy(draftText = text) }
-        recomputeWaterline()
+        scheduleWaterlineRecompute(debounceMs = 180L)
     }
 
     fun setDraftNovelKind(kind: NovelInputKind) {
@@ -626,6 +692,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                 threePathDrafts = if (changed) emptyList() else it.threePathDrafts,
                 outlineChatReply = if (changed) "" else it.outlineChatReply,
                 polishResult = if (changed) "" else it.polishResult,
+                mutedRecallKeys = if (changed) emptySet() else it.mutedRecallKeys,
             )
         }
         if (conv != null) {
@@ -884,44 +951,50 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                 loreEntries = _ui.value.novelLore,
                 episodes = _ui.value.memoryEpisodes,
                 chapters = _ui.value.novelChapters,
+                summarizedUntilSeq = conv.summarizedUntilSeq,
+                activeWindowStartSeq = conv.params.activeWindowStartSeq,
             )
             persistReconciliation(reconciled)
+            val rolledConv = TimelineReconciler.applyRollbackToConversation(conv, reconciled)
+            if (rolledConv != conv) {
+                chatDao.upsertConversation(rolledConv.toEntity())
+            }
             val convForGen = when {
-                conv.mode == ConversationMode.rp && conv.rp != null -> {
+                rolledConv.mode == ConversationMode.rp && rolledConv.rp != null -> {
                     val prevAssistant = msgs
                         .filter { it.role == "assistant" && it.seq < target.seq && it.deletedAt == null && it.supersededAtSeq == null }
                         .maxByOrNull { it.seq }
                     val prevVar = prevAssistant?.activeVariant()
                     if (prevVar != null && (prevVar.rpStateSnapshot != null || prevVar.rpCastSnapshot != null)) {
-                        conv.copy(
-                            rp = conv.rp.copy(
-                                state = prevVar.rpStateSnapshot ?: conv.rp.state,
-                                cast = prevVar.rpCastSnapshot ?: conv.rp.cast,
+                        rolledConv.copy(
+                            rp = rolledConv.rp.copy(
+                                state = prevVar.rpStateSnapshot ?: rolledConv.rp.state,
+                                cast = prevVar.rpCastSnapshot ?: rolledConv.rp.cast,
                             ),
                         )
                     } else {
-                        conv
+                        rolledConv
                     }
                 }
-                conv.mode == ConversationMode.novel && conv.novel != null -> {
+                rolledConv.mode == ConversationMode.novel && rolledConv.novel != null -> {
                     val prevAssistant = msgs
                         .filter { it.role == "assistant" && it.seq < target.seq && it.deletedAt == null && it.supersededAtSeq == null }
                         .maxByOrNull { it.seq }
                     val prevVar = prevAssistant?.activeVariant()
                     if (prevVar?.novelStatusSnapshot != null) {
-                        conv.copy(novel = conv.novel.copy(currentStatus = prevVar.novelStatusSnapshot))
+                        rolledConv.copy(novel = rolledConv.novel.copy(currentStatus = prevVar.novelStatusSnapshot))
                     } else {
-                        conv
+                        rolledConv
                     }
                 }
-                else -> conv
+                else -> rolledConv
             }
-            if (conv.mode == ConversationMode.novel) {
-                syncNovelChapterWordCounts(conv.id)
+            if (rolledConv.mode == ConversationMode.novel) {
+                syncNovelChapterWordCounts(rolledConv.id)
             }
             launchCompletionForConversation(
                 conv = convForGen,
-                existingMessageForVariant = if (conv.mode == ConversationMode.rp || conv.mode == ConversationMode.novel) target else null,
+                existingMessageForVariant = if (rolledConv.mode == ConversationMode.rp || rolledConv.mode == ConversationMode.novel) target else null,
             )
         }
     }
@@ -942,9 +1015,15 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                 loreEntries = _ui.value.novelLore,
                 episodes = _ui.value.memoryEpisodes,
                 chapters = _ui.value.novelChapters,
+                summarizedUntilSeq = conv.summarizedUntilSeq,
+                activeWindowStartSeq = conv.params.activeWindowStartSeq,
             )
             persistReconciliation(reconciled)
-            launchCompletionForConversation(conv)
+            val rolledConv = TimelineReconciler.applyRollbackToConversation(conv, reconciled)
+            if (rolledConv != conv) {
+                chatDao.upsertConversation(rolledConv.toEntity())
+            }
+            launchCompletionForConversation(rolledConv)
         }
     }
 
@@ -1031,10 +1110,31 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                 n.copy(activeChapterId = remappedActive)
             }
 
+            val existingEpisodes = chatDao.getMemoryEpisodesForConversation(conv.id).map { it.toDomain() }
+                .filter { !it.stale && it.toSeq <= target.seq }
+            val forkedSummarizedUntil = if (conv.summarizedUntilSeq > target.seq) {
+                existingEpisodes.maxOfOrNull { it.toSeq } ?: 0
+            } else {
+                conv.summarizedUntilSeq
+            }
+            val forkedArchivedSummary = if (forkedSummarizedUntil == 0 && conv.summarizedUntilSeq > target.seq) {
+                ""
+            } else {
+                conv.archivedSummary
+            }
+            val forkedParams = if (conv.params.activeWindowStartSeq != null && conv.params.activeWindowStartSeq > target.seq) {
+                conv.params.copy(activeWindowStartSeq = null)
+            } else {
+                conv.params
+            }
+
             val forkedConv = conv.copy(
                 id = newConvId,
                 title = "${conv.title} (分支)",
+                params = forkedParams,
                 novel = nextNovel,
+                archivedSummary = forkedArchivedSummary,
+                summarizedUntilSeq = forkedSummarizedUntil,
                 createdAt = now,
                 updatedAt = now,
                 pinned = false,
@@ -1053,8 +1153,6 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             if (existingLedger.isNotEmpty()) {
                 chatDao.upsertMemoryLedgerList(existingLedger.map { it.copy(id = UUID.randomUUID().toString(), conversationId = newConvId).toEntity() })
             }
-            val existingEpisodes = chatDao.getMemoryEpisodesForConversation(conv.id).map { it.toDomain() }
-                .filter { !it.stale && it.toSeq <= target.seq }
             if (existingEpisodes.isNotEmpty()) {
                 chatDao.upsertMemoryEpisodes(existingEpisodes.map { it.copy(id = UUID.randomUUID().toString(), conversationId = newConvId).toEntity() })
             }
@@ -1276,19 +1374,25 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             }
 
             try {
+                var activeConv = conv
+                var payloadTracking: SentPayloadTracking? = null
                 var built = if (overrideMessages != null) {
+                    lastBuiltTracking = null
                     OnlineChatCompletionRequestDto(
                         group_id = groupId,
                         model = modelId,
                         messages = overrideMessages,
                         stream = true,
-                        temperature = conv.params.temperature,
-                        top_p = conv.params.topP,
-                        max_tokens = conv.params.maxTokens,
-                        reasoning_effort = if (conv.params.enableReasoning) conv.params.reasoningEffort else null,
+                        temperature = activeConv.params.temperature,
+                        top_p = activeConv.params.topP,
+                        max_tokens = activeConv.params.maxTokens,
+                        reasoning_effort = if (activeConv.params.enableReasoning) activeConv.params.reasoningEffort else null,
                     )
                 } else {
-                    buildWirePayload(conv, allMsgs, groupId, modelId)
+                    val prepared = buildWirePayload(activeConv, allMsgs, groupId, modelId)
+                    payloadTracking = prepared.tracking
+                    lastBuiltTracking = prepared.tracking
+                    prepared.request
                 }
                 try {
                     streamOnce(
@@ -1302,16 +1406,39 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                 } catch (e: ApiException) {
                     val isBufEmpty = synchronized(streamLock) { contentBuf.isEmpty() }
                     if (e.isContextTooLong && isBufEmpty && overrideMessages == null) {
-                        container.toastController.show("Context too long, auto-compacting...")
-                        val outcome = ContextCompactor.compactConversation(container.onlineChatApi, conv, allMsgs)
+                        container.toastController.show(strings().chat.compactingProgress)
+                        val outcome = ContextCompactor.compactNow(
+                            chatApi = container.onlineChatApi,
+                            conversation = activeConv,
+                            messages = allMsgs,
+                            fallbackGroupId = groupId,
+                            fallbackModel = modelId,
+                        )
                         if (outcome != null) {
-                            val updatedConv = conv.copy(
+                            val updatedConv = activeConv.copy(
                                 archivedSummary = outcome.archivedSummary,
                                 summarizedUntilSeq = outcome.summarizedUntilSeq,
+                                updatedAt = System.currentTimeMillis(),
                             )
+                            activeConv = updatedConv
                             chatDao.upsertConversation(updatedConv.toEntity())
-                            outcome.newEpisode?.let { chatDao.upsertMemoryEpisode(it.toEntity()) }
-                            built = buildWirePayload(updatedConv, allMsgs, groupId, modelId)
+                            if (outcome.newEpisodes.isNotEmpty()) {
+                                chatDao.upsertMemoryEpisodes(outcome.newEpisodes.map { it.toEntity() })
+                            } else {
+                                outcome.newEpisode?.let { chatDao.upsertMemoryEpisode(it.toEntity()) }
+                            }
+                            val freshEpisodes = chatDao.getMemoryEpisodesForConversation(updatedConv.id).map { it.toDomain() }
+                            scheduleActiveConversationIndexing(updatedConv.id)
+                            val retryPrepared = buildWirePayload(
+                                conv = updatedConv,
+                                msgs = allMsgs,
+                                groupId = groupId,
+                                modelId = modelId,
+                                episodesOverride = freshEpisodes,
+                            )
+                            built = retryPrepared.request
+                            payloadTracking = retryPrepared.tracking
+                            lastBuiltTracking = retryPrepared.tracking
                             streamOnce(
                                 request = built,
                                 onTextDelta = { delta -> onChunkAppended(deltaText = delta) },
@@ -1332,8 +1459,33 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                 val (finalRawContent, finalReasoning, finalUsage) = synchronized(streamLock) {
                     Triple(contentBuf.toString(), reasoningBuf.toString(), latestUsage)
                 }
+
+                // C3 Fix: live cross-chat EMA calibration using actual prompt tokens (handling Anthropic cache tokens)
+                val track = payloadTracking
+                if (finalUsage != null && track != null && !track.hasUndecayedImages && track.estimatedRawTokens > 0) {
+                    val usageDto = ChatTokenUsageDto(
+                        prompt_tokens = finalUsage.promptTokens,
+                        completion_tokens = finalUsage.completionTokens,
+                        total_tokens = finalUsage.totalTokens,
+                        cache_read_input_tokens = finalUsage.cacheReadInputTokens,
+                    )
+                    val actualInput = DirectProtocolCodec.totalInputTokens(track.protocol, usageDto)
+                    if (actualInput != null && actualInput >= 200) {
+                        val currentFactor = container.settingsState.value.tokenCalibrationMap[track.calibrationKey]
+                            ?: activeConv.tokenCalibration.takeIf { it in 0.60..1.60 }
+                            ?: 1.0
+                        val updatedFactor = TokenEstimator.updateCalibrationEma(
+                            currentFactor = currentFactor,
+                            actualPromptTokens = actualInput,
+                            estimatedRawTokens = track.estimatedRawTokens,
+                        )
+                        container.settingsStore.updateTokenCalibration(track.calibrationKey, updatedFactor)
+                        activeConv = activeConv.copy(tokenCalibration = updatedFactor)
+                    }
+                }
+
                 finalizeCompletedAssistantTurn(
-                    conv = conv,
+                    conv = activeConv,
                     assistantTemplate = assistantStart,
                     rawContent = finalRawContent,
                     reasoning = finalReasoning,
@@ -1391,33 +1543,134 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         msgs: List<ChatMessage>,
         groupId: Long,
         modelId: String,
-    ): OnlineChatCompletionRequestDto {
+        episodesOverride: List<MemoryEpisode>? = null,
+    ): BuiltWirePayload {
         val settings = container.settingsStore.currentSettings()
         val budget = parseMemoryBudget(settings.memoryBudget)
         val modelMeta = _ui.value.models.firstOrNull { it.id == modelId }
+            ?: DirectProtocolCodec.inferChatModelMeta(modelId)
         val allAttIds = msgs.asSequence().flatMap { it.attachmentIds.asSequence() }.distinct().toList()
         val attMap = if (allAttIds.isNotEmpty()) {
             _ui.value.attachmentsById + container.attachmentStore.loadAttachmentsMap(allAttIds)
         } else {
             _ui.value.attachmentsById
         }
-        val built = ContextBuilder.buildChatContext(
-            ContextBuildInput(
-                conversation = conv,
-                messages = msgs,
-                memories = _ui.value.userMemories,
-                memoryBudget = budget,
-                modelContextWindow = modelMeta?.context_window ?: 128000,
-                novelChapters = _ui.value.novelChapters,
-                novelLore = _ui.value.novelLore,
-                memoryLedger = _ui.value.memoryLedger,
-                memoryEpisodes = _ui.value.memoryEpisodes,
-                attachmentsById = attMap,
-                resolveAttachmentDataUrl = { attId -> container.attachmentStore.resolveDataUrl(attId) },
-                resolveAttachmentText = { attId -> container.attachmentStore.readExtractedText(attId) },
-            ),
+        val loreList = _ui.value.novelLore
+        val ledgerList = _ui.value.memoryLedger
+        val episodeList = episodesOverride ?: _ui.value.memoryEpisodes
+        val userMemList = _ui.value.userMemories
+        val chapterList = _ui.value.novelChapters
+        val activeMuted = _ui.value.mutedRecallKeys
+
+        val queryText = buildSemanticQueryText(conv = conv, msgs = msgs, draftText = _ui.value.draftText)
+        val candidateIds = collectSemanticCandidateIds(
+            conv = conv,
+            lore = loreList,
+            ledger = ledgerList,
+            episodes = episodeList,
+            userMemories = userMemList,
         )
-        return OnlineChatCompletionRequestDto(
+        val (semanticScores, minCosineFloor) = container.retrievalCoordinator.prepareSendSemanticScores(
+            conversationId = conv.id,
+            queryText = queryText,
+            candidateIds = candidateIds,
+        )
+
+        val extCal = lookupExternalCalibration(settings, groupId, modelId)
+        val effectiveCal = when {
+            extCal != null && extCal in 0.4..2.5 -> extCal
+            conv.tokenCalibration in 0.4..2.5 -> conv.tokenCalibration
+            else -> 1.0
+        }
+
+        val baseInput = ContextBuildInput(
+            conversation = conv,
+            messages = msgs,
+            memories = userMemList,
+            memoryBudget = budget,
+            modelContextWindow = modelMeta.context_window,
+            novelChapters = chapterList,
+            novelLore = loreList,
+            memoryLedger = ledgerList,
+            memoryEpisodes = episodeList,
+            attachmentsById = attMap,
+            resolveAttachmentDataUrl = { attId -> container.attachmentStore.resolveDataUrl(attId) },
+            resolveAttachmentText = { attId -> container.attachmentStore.readExtractedText(attId) },
+            precomputedSemanticScores = semanticScores.ifEmpty { null },
+            mutedRecallKeys = activeMuted,
+            modelId = modelId,
+            externalCalibration = extCal,
+            minSemanticCosine = minCosineFloor,
+        )
+
+        var built = ContextBuilder.buildChatContext(baseInput)
+
+        // Optional remote rerank pass when enabled and >2 dynamic candidates were recalled
+        if (container.retrievalCoordinator.isRerankEnabled(settings.retrievalSettings)) {
+            val dynamicItems = built.summary.recalledItems.filter {
+                it.triggerKind != "constant" && it.triggerKind != "pinned_ledger"
+            }
+            if (dynamicItems.size > 2) {
+                val loreById = loreList.associateBy { it.id }
+                val ledgerById = ledgerList.associateBy { it.id }
+                val epById = episodeList.associateBy { it.id }
+                val memById = userMemList.associateBy { it.id }
+                val rerankPairs = dynamicItems.map { item ->
+                    val key = "${item.source}:${item.id}"
+                    val docText = when (item.source) {
+                        "novel_lore" -> loreById[item.id]?.let { "${it.title}: ${it.content}" }
+                        "rp_ledger" -> ledgerById[item.id]?.let { "${it.title}: ${it.content}" }
+                        "episode_archived" -> epById[item.id]?.let { "${it.title}: ${it.summary}" }
+                        "user_memory_archival" -> memById[item.id]?.content
+                        else -> null
+                    }?.takeIf { it.isNotBlank() } ?: "${item.title}: ${item.contentPreview}"
+                    key to docText
+                }
+                val rerankScores = container.retrievalCoordinator.rerankCandidatesIfEnabled(queryText, rerankPairs)
+                if (rerankScores.isNotEmpty()) {
+                    val droppedNoiseKeys = HashSet<String>()
+                    val adjustedScores = HashMap<String, Double>(semanticScores)
+                    val floorBase = maxOf(minCosineFloor, 0.50)
+                    for (item in dynamicItems) {
+                        val key = "${item.source}:${item.id}"
+                        val rScore = rerankScores[key] ?: continue
+                        if (rScore < 0.15) {
+                            droppedNoiseKeys.add(key)
+                            adjustedScores.remove(item.id)
+                        } else {
+                            // Map rerank score [0.15, 1.0] monotonically into [floorBase, 1.0]
+                            adjustedScores[item.id] = (floorBase + (1.0 - floorBase) * rScore).coerceIn(floorBase, 1.0)
+                        }
+                    }
+                    val refined = ContextBuilder.buildChatContext(
+                        baseInput.copy(
+                            precomputedSemanticScores = adjustedScores.ifEmpty { null },
+                            mutedRecallKeys = activeMuted + droppedNoiseKeys,
+                        ),
+                    )
+                    built = refined.copy(
+                        summary = refined.summary.copy(
+                            retrievalModeUsed = RetrievalCoordinator.MODE_REMOTE_VECTOR_RERANK,
+                            droppedRecallCount = refined.summary.droppedRecallCount + droppedNoiseKeys.size,
+                        ),
+                    )
+                }
+            }
+        }
+
+        _ui.update { it.copy(waterline = built.summary) }
+
+        val hasUndecayedImages = built.wireMessages.any { msg ->
+            msg.parts?.any { it.type == "image_url" && !it.imageUrl.isNullOrBlank() } == true
+        }
+        val estimatedRawTokens = (built.summary.sentTokens.toDouble() / effectiveCal).roundToInt().coerceAtLeast(0)
+        val tracking = SentPayloadTracking(
+            calibrationKey = calibrationKey(groupId, modelId),
+            protocol = resolveProtocolForGroup(groupId),
+            estimatedRawTokens = estimatedRawTokens,
+            hasUndecayedImages = hasUndecayedImages,
+        )
+        val req = OnlineChatCompletionRequestDto(
             group_id = groupId,
             model = modelId,
             messages = built.wireMessages.map(::toWireDto),
@@ -1427,6 +1680,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             max_tokens = conv.params.maxTokens,
             reasoning_effort = if (conv.params.enableReasoning) conv.params.reasoningEffort else null,
         )
+        return BuiltWirePayload(request = req, builtContext = built, tracking = tracking)
     }
 
     private suspend fun streamOnce(
@@ -1489,6 +1743,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             }
             if (outcome.loreUpserts.isNotEmpty()) {
                 chatDao.upsertNovelLoreList(outcome.loreUpserts.map { it.toEntity() })
+                scheduleActiveConversationIndexing(conv.id)
             }
             val nextStatus = outcome.statusHud ?: conv.novel.currentStatus
             var novelCfg = conv.novel.copy(
@@ -1554,6 +1809,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             }
             if (outcome.ledgerUpserts.isNotEmpty()) {
                 chatDao.upsertMemoryLedgerList(outcome.ledgerUpserts.map { it.toEntity() })
+                scheduleActiveConversationIndexing(conv.id)
             }
             val finalState = if (outcome.unlockedEnding != null &&
                 outcome.updatedState.unlockedEndings.none {
@@ -1609,6 +1865,9 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         _streamingMessage.update { cur -> if (cur == null || cur.id == finalMsg.id) finalMsg else cur }
         chatDao.upsertMessage(finalMsg.toEntity())
         chatDao.upsertConversation(nextConv.copy(updatedAt = System.currentTimeMillis()).toEntity())
+        if (_ui.value.mutedRecallKeys.isNotEmpty()) {
+            _ui.update { it.copy(mutedRecallKeys = emptySet()) }
+        }
         if (nextConv.mode == ConversationMode.novel) {
             syncNovelChapterWordCounts(nextConv.id)
         }
@@ -1623,8 +1882,10 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     private fun runBackgroundMemoryExtraction(conv: ChatConversation) {
-        val gid = conv.groupId ?: return
-        val model = conv.model ?: return
+        val gid = conv.groupId ?: _ui.value.selectedGroupId ?: return
+        val model = conv.model?.takeIf { it.isNotBlank() }
+            ?: _ui.value.selectedModelId?.takeIf { it.isNotBlank() }
+            ?: return
         viewModelScope.launch(Dispatchers.IO) {
             runCatching {
                 val msgs = TimelineReconciler.activeMessages(chatDao.getMessagesForConversation(conv.id).map { it.toDomain() })
@@ -1637,34 +1898,72 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                 val extracted = MemoryExtractor.parseExtractedMemories(res.content)
                 if (extracted.isNotEmpty()) {
                     val (merged, added) = MemoryExtractor.mergeExtractedMemories(existing, extracted)
-                    if (added > 0) userMemoryDao.upsertAll(merged.map { it.toEntity() })
+                    if (added > 0) {
+                        userMemoryDao.upsertAll(merged.map { it.toEntity() })
+                        scheduleActiveConversationIndexing(conv.id)
+                    }
                 }
             }
         }
     }
 
     private fun runBackgroundEpisodeConsolidation(conv: ChatConversation) {
-        val gid = conv.groupId ?: return
-        val model = conv.model ?: return
+        val gid = conv.groupId ?: _ui.value.selectedGroupId ?: return
+        val model = conv.model?.takeIf { it.isNotBlank() }
+            ?: _ui.value.selectedModelId?.takeIf { it.isNotBlank() }
+            ?: return
+        if (!consolidatingConvIds.add(conv.id)) return
         viewModelScope.launch(Dispatchers.IO) {
-            runCatching {
-                val msgs = TimelineReconciler.activeMessages(chatDao.getMessagesForConversation(conv.id).map { it.toDomain() })
-                val eps = chatDao.getMemoryEpisodesForConversation(conv.id).map { it.toDomain() }
-                val batch = EpisodeConsolidator.findNextMessagesBatch(msgs, eps)
-                if (batch != null) {
-                    val prompt = EpisodeConsolidator.buildEpisodeConsolidationPrompt(conv.title, batch)
-                    val res = container.onlineChatApi.completeOnce(
-                        OnlineChatCompletionRequestDto(gid, model, prompt, stream = false, temperature = 0.25, max_tokens = 600),
-                    )
-                    val newEp = EpisodeConsolidator.parseConsolidationResponse(
-                        raw = res.content,
-                        conversationId = conv.id,
-                        fromSeq = batch.fromSeq,
-                        toSeq = batch.toSeq,
-                        level = 1,
-                    )
-                    chatDao.upsertMemoryEpisode(newEp.toEntity())
+            try {
+                runCatching {
+                    val msgs = TimelineReconciler.activeMessages(chatDao.getMessagesForConversation(conv.id).map { it.toDomain() })
+                    val eps = chatDao.getMemoryEpisodesForConversation(conv.id).map { it.toDomain() }
+                    val batch = EpisodeConsolidator.findNextMessagesBatch(msgs, eps)
+                    var changed = false
+                    if (batch != null) {
+                        val prompt = EpisodeConsolidator.buildEpisodeConsolidationPrompt(conv.title, batch)
+                        val res = container.onlineChatApi.completeOnce(
+                            OnlineChatCompletionRequestDto(gid, model, prompt, stream = false, temperature = 0.25, max_tokens = 600),
+                        )
+                        val newEp = EpisodeConsolidator.parseConsolidationResponse(
+                            raw = res.content,
+                            conversationId = conv.id,
+                            fromSeq = batch.fromSeq,
+                            toSeq = batch.toSeq,
+                            level = 1,
+                        )
+                        chatDao.upsertMemoryEpisode(newEp.toEntity())
+                        changed = true
+                    }
+
+                    // Roll up L1 -> L2 arc summary when enough episodes accumulate
+                    val updatedEps = if (changed) {
+                        chatDao.getMemoryEpisodesForConversation(conv.id).map { it.toDomain() }
+                    } else {
+                        eps
+                    }
+                    val arcCandidates = EpisodeConsolidator.findEpisodesForArcRollup(updatedEps)
+                    if (arcCandidates.isNotEmpty()) {
+                        val rollupPrompt = EpisodeConsolidator.buildRollupPrompt(arcCandidates, targetLevel = 2)
+                        val res = container.onlineChatApi.completeOnce(
+                            OnlineChatCompletionRequestDto(gid, model, rollupPrompt, stream = false, temperature = 0.25, max_tokens = 650),
+                        )
+                        val arcEp = EpisodeConsolidator.parseConsolidationResponse(
+                            raw = res.content,
+                            conversationId = conv.id,
+                            fromSeq = arcCandidates.first().fromSeq,
+                            toSeq = arcCandidates.last().toSeq,
+                            level = 2,
+                        )
+                        chatDao.upsertMemoryEpisode(arcEp.toEntity())
+                        changed = true
+                    }
+                    if (changed) {
+                        scheduleActiveConversationIndexing(conv.id)
+                    }
                 }
+            } finally {
+                consolidatingConvIds.remove(conv.id)
             }
         }
     }
@@ -1686,11 +1985,14 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                 )
                 val extracted = MemoryExtractor.parseExtractedMemories(res.content)
                 if (extracted.isEmpty()) {
-                    container.toastController.show("No new long-term memories extracted")
+                    val isZh = container.settingsState.value.language == AppLanguage.ZH
+                    container.toastController.show(if (isZh) "未提炼出新的长期记忆" else "No new long-term memories extracted")
                 } else {
                     val (merged, added) = MemoryExtractor.mergeExtractedMemories(existing, extracted)
                     userMemoryDao.upsertAll(merged.map { it.toEntity() })
-                    container.toastController.show("Added $added memories")
+                    if (added > 0) scheduleActiveConversationIndexing(conv.id)
+                    val isZh = container.settingsState.value.language == AppLanguage.ZH
+                    container.toastController.show(if (isZh) "已新增 $added 条长期记忆" else "Added $added memories")
                 }
             } catch (e: Throwable) {
                 container.toastController.show(e.message ?: "Extraction failed", isError = true)
@@ -1716,6 +2018,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                 estimatedTokens = MemoryExtractor.estimateUserMemoryTokens(clean),
             )
             userMemoryDao.upsert(item.toEntity())
+            scheduleActiveConversationIndexing()
         }
     }
 
@@ -1730,11 +2033,15 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             val m = _ui.value.userMemories.firstOrNull { it.id == id } ?: return@launch
             userMemoryDao.upsert(m.copy(enabled = !m.enabled, updatedAt = System.currentTimeMillis()).toEntity())
+            if (!m.enabled) scheduleActiveConversationIndexing()
         }
     }
 
     fun deleteUserMemory(id: String) {
-        viewModelScope.launch { userMemoryDao.deleteById(id) }
+        viewModelScope.launch {
+            userMemoryDao.deleteById(id)
+            container.retrievalCoordinator.deleteOwnerVector(RetrievalCoordinator.OWNER_USER_MEMORY, id, conversationId = "")
+        }
     }
 
     fun addLedgerItem(kind: String, title: String, content: String) {
@@ -1756,6 +2063,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                 estimatedTokens = ContextBuilder.estimateTextTokens("$title: $content") + 8,
             )
             chatDao.upsertMemoryLedger(item.toEntity())
+            scheduleActiveConversationIndexing(conv.id)
         }
     }
 
@@ -1767,17 +2075,107 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun deleteLedgerItem(id: String) {
-        viewModelScope.launch { chatDao.deleteMemoryLedger(id) }
+        val convId = _ui.value.activeConversation?.id
+        viewModelScope.launch {
+            chatDao.deleteMemoryLedger(id)
+            container.retrievalCoordinator.deleteOwnerVector(RetrievalCoordinator.OWNER_RP_LEDGER, id, conversationId = convId)
+        }
+    }
+
+    // ==================== Recall Inspector Quick Controls & Vector Reindex ====================
+
+    fun toggleMuteRecallKey(key: String) {
+        val clean = key.trim()
+        if (clean.isEmpty()) return
+        _ui.update { st ->
+            val next = if (clean in st.mutedRecallKeys) st.mutedRecallKeys - clean else st.mutedRecallKeys + clean
+            st.copy(mutedRecallKeys = next)
+        }
+        scheduleWaterlineRecompute(debounceMs = 0L)
+    }
+
+    fun togglePinRecallItem(source: String, id: String) {
+        when (source) {
+            "user_memory_archival" -> toggleUserMemoryPin(id)
+            "rp_ledger" -> toggleLedgerPin(id)
+            "novel_lore" -> toggleNovelLoreAlwaysActive(id)
+        }
+    }
+
+    fun disableRecallItem(source: String, id: String) {
+        val isZh = container.settingsState.value.language == AppLanguage.ZH
+        viewModelScope.launch {
+            when (source) {
+                "user_memory_archival" -> {
+                    val m = _ui.value.userMemories.firstOrNull { it.id == id } ?: return@launch
+                    if (m.enabled) {
+                        userMemoryDao.upsert(m.copy(enabled = false, updatedAt = System.currentTimeMillis()).toEntity())
+                    }
+                }
+                "rp_ledger" -> {
+                    val item = _ui.value.memoryLedger.firstOrNull { it.id == id } ?: return@launch
+                    if (item.enabled) {
+                        chatDao.upsertMemoryLedger(item.copy(enabled = false, updatedAt = System.currentTimeMillis()).toEntity())
+                    }
+                }
+                "novel_lore" -> {
+                    val entry = _ui.value.novelLore.firstOrNull { it.id == id } ?: return@launch
+                    if (entry.enabled) {
+                        chatDao.upsertNovelLore(entry.copy(enabled = false, updatedAt = System.currentTimeMillis()).toEntity())
+                    }
+                }
+                else -> return@launch
+            }
+            scheduleWaterlineRecompute(debounceMs = 0L)
+            container.toastController.show(if (isZh) "已停用该记忆条目" else "Disabled memory item")
+        }
+    }
+
+    fun reindexActiveConversationVectors() {
+        val convId = _ui.value.activeConversation?.id ?: return
+        val isZh = container.settingsState.value.language == AppLanguage.ZH
+        val settings = container.settingsState.value.retrievalSettings
+        if (settings.mode == RetrievalMode.LEXICAL_ONLY) {
+            container.toastController.show(
+                if (isZh) "当前为纯词法检索模式，请先在设置中启用向量检索" else "Switch retrieval mode to Local or Cloud Vector in settings first",
+            )
+            return
+        }
+        if (container.retrievalCoordinator.resolveActiveEmbeddingEngine(settings) == null) {
+            container.toastController.show(
+                if (isZh) "向量模型尚未就绪，请检查下载或接口配置" else "Vector model is not ready yet; check download or API settings",
+                isError = true,
+            )
+            return
+        }
+        scheduleActiveConversationIndexing(convId)
     }
 
     fun triggerManualCompaction() {
         val conv = _ui.value.activeConversation ?: return
+        val s = strings().chat
         viewModelScope.launch {
-            _ui.update { it.copy(isCompacting = true) }
+            _ui.update { it.copy(isCompacting = true, compactingProgressText = s.compactingProgress) }
             try {
-                val out = ContextCompactor.compactConversation(container.onlineChatApi, conv, _ui.value.messages)
+                val out = ContextCompactor.compactNow(
+                    chatApi = container.onlineChatApi,
+                    conversation = conv,
+                    messages = _ui.value.messages,
+                    fallbackGroupId = _ui.value.selectedGroupId,
+                    fallbackModel = _ui.value.selectedModelId,
+                    onChunkProgress = { completed, total ->
+                        _ui.update {
+                            it.copy(
+                                compactingProgressText = s.compactingChunkProgress.fmt(
+                                    "current" to completed,
+                                    "total" to total,
+                                ),
+                            )
+                        }
+                    },
+                )
                 if (out == null) {
-                    container.toastController.show("Not enough history to compact")
+                    container.toastController.show(s.compactNotEnough)
                 } else {
                     chatDao.upsertConversation(
                         conv.copy(
@@ -1786,13 +2184,20 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                             updatedAt = System.currentTimeMillis(),
                         ).toEntity(),
                     )
-                    out.newEpisode?.let { chatDao.upsertMemoryEpisode(it.toEntity()) }
-                    container.toastController.show("Context compacted")
+                    if (out.newEpisodes.isNotEmpty()) {
+                        chatDao.upsertMemoryEpisodes(out.newEpisodes.map { it.toEntity() })
+                    } else {
+                        out.newEpisode?.let { chatDao.upsertMemoryEpisode(it.toEntity()) }
+                    }
+                    scheduleActiveConversationIndexing(conv.id)
+                    scheduleWaterlineRecompute(debounceMs = 0L)
+                    container.toastController.show(s.compactSuccess)
                 }
             } catch (e: Throwable) {
-                container.toastController.show(e.message ?: "Compaction failed", isError = true)
+                val reason = e.message?.takeIf { it.isNotBlank() } ?: strings().common.unknownError
+                container.toastController.show(s.compactFailedFallback.fmt("reason" to reason), isError = true)
             } finally {
-                _ui.update { it.copy(isCompacting = false) }
+                _ui.update { it.copy(isCompacting = false, compactingProgressText = null) }
             }
         }
     }
@@ -2275,6 +2680,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                 updatedAt = now,
             )
             chatDao.upsertNovelLore(entry.copy(estimatedTokens = NovelEngine.estimateLoreTokens(entry)).toEntity())
+            scheduleActiveConversationIndexing(conv.id)
             recomputeWaterline()
         }
     }
@@ -2323,6 +2729,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                     container.toastController.show(strings().novel.loreExtractNoNew)
                 } else {
                     chatDao.upsertNovelLoreList(extracted.map { it.toEntity() })
+                    scheduleActiveConversationIndexing(conv.id)
                     recomputeWaterline()
                     val isZh = container.settingsState.value.language == AppLanguage.ZH
                     container.toastController.show(
@@ -2338,8 +2745,10 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun deleteNovelLore(id: String) {
+        val convId = _ui.value.activeConversation?.id
         viewModelScope.launch {
             chatDao.deleteNovelLore(id)
+            container.retrievalCoordinator.deleteOwnerVector(RetrievalCoordinator.OWNER_NOVEL_LORE, id, conversationId = convId)
             recomputeWaterline()
         }
     }
@@ -2353,6 +2762,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                     updatedAt = System.currentTimeMillis(),
                 ).toEntity(),
             )
+            if (!existing.enabled) scheduleActiveConversationIndexing(existing.conversationId)
             recomputeWaterline()
         }
     }
@@ -2387,6 +2797,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             chatDao.upsertNovelLore(
                 normalized.copy(estimatedTokens = NovelEngine.estimateLoreTokens(normalized)).toEntity(),
             )
+            scheduleActiveConversationIndexing(normalized.conversationId)
             recomputeWaterline()
         }
     }
@@ -2782,11 +3193,20 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                         val bundle = withContext(Dispatchers.Default) {
                             UuSaveCodec.parseJsonElement(rootElem, displayName)
                         }
+                        val defaults = defaultChatParams()
                         val prepared = bundle.items.map { item ->
+                            val ic = item.conversation
+                            val mergedParams = ic.params.copy(
+                                maxTokens = ic.params.maxTokens ?: defaults.maxTokens,
+                                contextWindowOverride = ic.params.contextWindowOverride ?: defaults.contextWindowOverride,
+                                maxHistoryMessages = ic.params.maxHistoryMessages ?: defaults.maxHistoryMessages,
+                                activeWindowStartSeq = ic.params.activeWindowStartSeq,
+                            )
                             item.copy(
-                                conversation = item.conversation.copy(
-                                    groupId = _ui.value.selectedGroupId,
-                                    model = _ui.value.selectedModelId,
+                                conversation = ic.copy(
+                                    groupId = ic.groupId ?: _ui.value.selectedGroupId,
+                                    model = ic.model?.takeIf { it.isNotBlank() } ?: _ui.value.selectedModelId,
+                                    params = mergedParams,
                                 ),
                             )
                         }
@@ -2869,6 +3289,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                     }
                     if (fresh.isNotEmpty()) {
                         chatDao.upsertNovelLoreList(fresh.map { it.toEntity() })
+                        scheduleActiveConversationIndexing(conv.id)
                     }
                     return fresh.size
                 }
@@ -4296,31 +4717,158 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     private fun recomputeWaterline() {
-        val conv = _ui.value.activeConversation ?: return
-        val budget = parseMemoryBudget(container.settingsState.value.memoryBudget)
-        val modelWin = _ui.value.models.firstOrNull { it.id == (_ui.value.selectedModelId ?: conv.model) }?.context_window ?: 128000
-        val wl = ContextBuilder.computeContextWaterline(
-            ContextBuildInput(
+        scheduleWaterlineRecompute(debounceMs = 0L)
+    }
+
+    private fun scheduleWaterlineRecompute(debounceMs: Long = 0L) {
+        waterlineJob?.cancel()
+        waterlineJob = viewModelScope.launch {
+            if (debounceMs > 0L) delay(debounceMs)
+            val st = _ui.value
+            val conv = st.activeConversation ?: return@launch
+            val settings = container.settingsState.value
+            val budget = parseMemoryBudget(settings.memoryBudget)
+            val effectiveModelId = conv.model?.takeIf { it.isNotBlank() } ?: st.selectedModelId
+            val effectiveGroupId = conv.groupId ?: st.selectedGroupId
+            val modelWin = st.models.firstOrNull { it.id == effectiveModelId }?.context_window
+                ?: effectiveModelId?.let { DirectProtocolCodec.inferChatModelMeta(it).context_window }
+                ?: 128000
+            val extCal = lookupExternalCalibration(settings, effectiveGroupId, effectiveModelId)
+            val input = ContextBuildInput(
                 conversation = conv,
-                messages = _ui.value.messages,
-                memories = _ui.value.userMemories,
+                messages = st.messages,
+                memories = st.userMemories,
                 memoryBudget = budget,
                 modelContextWindow = modelWin,
-                novelChapters = _ui.value.novelChapters,
-                novelLore = _ui.value.novelLore,
-                memoryLedger = _ui.value.memoryLedger,
-                memoryEpisodes = _ui.value.memoryEpisodes,
-                draftText = _ui.value.draftText,
-                draftImageCount = _ui.value.draftAttachments.count { it.isImage },
-                draftAttachments = _ui.value.draftAttachments,
-                attachmentsById = _ui.value.attachmentsById + _ui.value.draftAttachments.associateBy { it.id },
-            ),
-        )
-        _ui.update { it.copy(waterline = wl) }
+                novelChapters = st.novelChapters,
+                novelLore = st.novelLore,
+                memoryLedger = st.memoryLedger,
+                memoryEpisodes = st.memoryEpisodes,
+                draftText = st.draftText,
+                draftImageCount = st.draftAttachments.count { it.isImage },
+                draftAttachments = st.draftAttachments,
+                attachmentsById = st.attachmentsById + st.draftAttachments.associateBy { it.id },
+                mutedRecallKeys = st.mutedRecallKeys,
+                modelId = effectiveModelId,
+                externalCalibration = extCal,
+                minSemanticCosine = settings.retrievalSettings.minCosineOverride ?: RetrievalCoordinator.DEFAULT_MIN_COSINE_FLOOR,
+            )
+            val wl = withContext(Dispatchers.Default) {
+                ContextBuilder.computeContextWaterline(input)
+            }
+            _ui.update { it.copy(waterline = wl) }
+        }
+    }
+
+    private fun scheduleActiveConversationIndexing(convIdOverride: String? = null) {
+        val convId = convIdOverride ?: _ui.value.activeConversation?.id ?: _activeConvId.value ?: return
+        val settings = container.settingsState.value.retrievalSettings
+        if (settings.mode == RetrievalMode.LEXICAL_ONLY) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val lore = chatDao.getNovelLoreForConversation(convId).map { it.toDomain() }
+            val ledger = chatDao.getMemoryLedgerForConversation(convId).map { it.toDomain() }
+            val episodes = chatDao.getMemoryEpisodesForConversation(convId).map { it.toDomain() }
+            val userMems = userMemoryDao.getAll().map { it.toDomain() }
+            container.retrievalCoordinator.scheduleConversationIndexing(
+                scope = viewModelScope,
+                conversationId = convId,
+                lore = lore,
+                ledger = ledger,
+                episodes = episodes,
+                userMemories = userMems,
+            )
+        }
+    }
+
+    private fun buildSemanticQueryText(
+        conv: ChatConversation,
+        msgs: List<ChatMessage>,
+        draftText: String,
+    ): String {
+        val active = TimelineReconciler.activeMessages(msgs)
+        val presentNames = when (conv.mode) {
+            ConversationMode.novel -> conv.novel?.currentStatus?.present.orEmpty()
+            ConversationMode.rp -> conv.rp?.cast?.filter { it.inScene }?.map { it.name }.orEmpty()
+            ConversationMode.chat -> emptyList()
+        }
+        val recentTail = active.takeLast(3)
+            .mapNotNull { m -> m.content.trim().takeIf { it.isNotEmpty() } }
+            .joinToString("\n")
+            .takeLast(500)
+        return buildList {
+            draftText.trim().takeIf { it.isNotEmpty() }?.let { add(it) }
+            recentTail.takeIf { it.isNotEmpty() }?.let { add(it) }
+            if (presentNames.isNotEmpty()) add(presentNames.joinToString(" "))
+        }.joinToString("\n").trim()
+    }
+
+    private fun collectSemanticCandidateIds(
+        conv: ChatConversation,
+        lore: List<NovelLoreEntry>,
+        ledger: List<MemoryLedgerItem>,
+        episodes: List<MemoryEpisode>,
+        userMemories: List<UserMemory>,
+    ): Set<String> {
+        val ids = LinkedHashSet<String>()
+        if (conv.mode == ConversationMode.novel || conv.mode == ConversationMode.rp) {
+            for (entry in lore) {
+                if (!entry.alwaysActive && entry.enabled && !entry.stale) {
+                    ids.add(entry.id)
+                }
+            }
+        }
+        if (conv.mode == ConversationMode.rp) {
+            for (item in ledger) {
+                if (item.enabled && !item.stale) {
+                    ids.add(item.id)
+                }
+            }
+        }
+        for (ep in episodes) {
+            if (!ep.stale) {
+                ids.add(ep.id)
+            }
+        }
+        if (conv.params.enableAutoMemory) {
+            for (mem in userMemories) {
+                if (mem.enabled && mem.content.isNotBlank()) {
+                    ids.add(mem.id)
+                }
+            }
+        }
+        return ids
+    }
+
+    private fun calibrationKey(groupId: Long?, modelId: String?): String {
+        val providerKey = when {
+            groupId == null -> "default"
+            ApiProviderConfig.isCustomProviderId(groupId) ->
+                container.apiProviderStore.findBySyntheticId(groupId)?.id ?: "custom_$groupId"
+            else -> "server_$groupId"
+        }
+        val family = TokenEstimator.modelFamilyKey(modelId)
+        return "$providerKey|$family"
+    }
+
+    private fun lookupExternalCalibration(
+        settings: AppSettings,
+        groupId: Long?,
+        modelId: String?,
+    ): Double? {
+        if (settings.tokenCalibrationMap.isEmpty() || modelId.isNullOrBlank()) return null
+        val key = calibrationKey(groupId, modelId)
+        return settings.tokenCalibrationMap[key]?.takeIf { it in 0.60..1.60 }
+    }
+
+    private fun resolveProtocolForGroup(groupId: Long): ApiProtocol {
+        if (ApiProviderConfig.isCustomProviderId(groupId)) {
+            return container.apiProviderStore.findBySyntheticId(groupId)?.protocol ?: ApiProtocol.OPENAI_CHAT
+        }
+        return ApiProtocol.OPENAI_CHAT
     }
 
     private fun parseMemoryBudget(raw: String): MemoryBudget =
-        when (raw.lowercase()) {
+        when (raw.trim().lowercase()) {
             "low", "2k" -> MemoryBudget.low
             "high", "8k" -> MemoryBudget.high
             else -> MemoryBudget.standard

@@ -21,9 +21,15 @@ import com.gugachat.app.data.api.OnlineImagesApi
 import com.gugachat.app.data.api.PublicSettingsDto
 import com.gugachat.app.data.api.UpdateChannel
 import com.gugachat.app.data.api.UserDto
+import com.gugachat.app.data.chat.RetrievalCoordinator
+import com.gugachat.app.data.chat.VectorMemoryIndex
 import com.gugachat.app.data.local.AppDatabase
 import com.gugachat.app.data.local.AttachmentFileStore
 import com.gugachat.app.data.local.DirectImageStore
+import com.gugachat.app.data.local.LocalEmbeddingModelManager
+import com.gugachat.app.data.local.LocalOnnxEmbeddingEngine
+import com.gugachat.app.domain.chat.AndroidIcuCjkSegmenter
+import com.gugachat.app.domain.chat.CjkSearch
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -109,7 +115,25 @@ class AppContainer(context: Context) {
         onChannelChanged = { ch -> setUpdateChannel(ch) },
     )
 
+    val localEmbeddingModelManager = LocalEmbeddingModelManager(appContext)
+    val localOnnxEmbeddingEngine = LocalOnnxEmbeddingEngine(
+        modelManager = localEmbeddingModelManager,
+        activeModelIdProvider = { settingsState.value.retrievalSettings.localModelId },
+        lifecycleScope = scope,
+    )
+    val vectorMemoryIndex = VectorMemoryIndex(dao = database.memoryEmbeddingDao())
+    val retrievalCoordinator = RetrievalCoordinator(
+        settingsStore = settingsStore,
+        settingsState = settingsState,
+        apiProviderStore = apiProviderStore,
+        directApiClient = directApiClient,
+        localModelManager = localEmbeddingModelManager,
+        localOnnxEngine = localOnnxEmbeddingEngine,
+        vectorMemoryIndex = vectorMemoryIndex,
+    )
+
     init {
+        CjkSearch.segmenter = AndroidIcuCjkSegmenter()
         scope.launch {
             restoreSession()
         }

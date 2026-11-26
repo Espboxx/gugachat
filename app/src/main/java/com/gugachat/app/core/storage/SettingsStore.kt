@@ -15,11 +15,15 @@ import com.gugachat.app.core.theme.ColorMode
 import com.gugachat.app.core.theme.ThemeStyle
 import com.gugachat.app.core.theme.UiScalePreset
 import com.gugachat.app.core.util.ServerUrlUtils
+import com.gugachat.app.data.api.AppJson
 import com.gugachat.app.data.api.SseRetryPolicy
 import com.gugachat.app.data.api.UpdateChannel
+import com.gugachat.app.domain.chat.RetrievalSettings
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.serialization.builtins.MapSerializer
+import kotlinx.serialization.builtins.serializer
 
 private val Context.settingsDataStore: DataStore<Preferences> by preferencesDataStore(name = "gugachat_settings")
 
@@ -47,6 +51,8 @@ data class AppSettings(
     val defaultContextWindowOverride: Int? = null,
     val defaultMaxHistoryMessages: Int? = null,
     val defaultMaxOutputTokens: Int? = null,
+    val retrievalSettings: RetrievalSettings = RetrievalSettings(),
+    val tokenCalibrationMap: Map<String, Double> = emptyMap(),
 )
 
 class SettingsStore(private val context: Context) {
@@ -74,6 +80,8 @@ class SettingsStore(private val context: Context) {
         val DEFAULT_CONTEXT_WINDOW_OVERRIDE = intPreferencesKey("default_context_window_override")
         val DEFAULT_MAX_HISTORY_MESSAGES = intPreferencesKey("default_max_history_messages")
         val DEFAULT_MAX_OUTPUT_TOKENS = intPreferencesKey("default_max_output_tokens")
+        val RETRIEVAL_SETTINGS_JSON = stringPreferencesKey("retrieval_settings_json")
+        val TOKEN_CALIBRATION_MAP_JSON = stringPreferencesKey("token_calibration_map_json")
     }
 
     val settingsFlow: Flow<AppSettings> = context.settingsDataStore.data.map { prefs ->
@@ -83,7 +91,7 @@ class SettingsStore(private val context: Context) {
             colorMode = ColorMode.fromWire(prefs[Keys.COLOR_MODE]),
             uiScale = UiScalePreset.fromWire(prefs[Keys.UI_SCALE]),
             language = AppLanguage.fromTag(prefs[Keys.LANGUAGE]),
-            memoryBudget = prefs[Keys.MEMORY_BUDGET] ?: "4K",
+            memoryBudget = normalizeMemoryBudget(prefs[Keys.MEMORY_BUDGET]),
             sseAutoRetryCount = SseRetryPolicy.clampRetryCount(
                 prefs[Keys.SSE_AUTO_RETRY_COUNT] ?: SseRetryPolicy.DEFAULT_SSE_AUTO_RETRY_COUNT,
             ),
@@ -103,6 +111,8 @@ class SettingsStore(private val context: Context) {
             defaultContextWindowOverride = prefs[Keys.DEFAULT_CONTEXT_WINDOW_OVERRIDE]?.takeIf { it >= 4096 },
             defaultMaxHistoryMessages = prefs[Keys.DEFAULT_MAX_HISTORY_MESSAGES]?.takeIf { it > 0 },
             defaultMaxOutputTokens = prefs[Keys.DEFAULT_MAX_OUTPUT_TOKENS]?.takeIf { it >= 256 },
+            retrievalSettings = decodeRetrievalSettings(prefs[Keys.RETRIEVAL_SETTINGS_JSON]),
+            tokenCalibrationMap = decodeTokenCalibrationMap(prefs[Keys.TOKEN_CALIBRATION_MAP_JSON]),
         )
     }
 
@@ -131,7 +141,7 @@ class SettingsStore(private val context: Context) {
     }
 
     suspend fun setMemoryBudget(budget: String) {
-        context.settingsDataStore.edit { it[Keys.MEMORY_BUDGET] = budget }
+        context.settingsDataStore.edit { it[Keys.MEMORY_BUDGET] = normalizeMemoryBudget(budget) }
     }
 
     suspend fun setSseAutoRetryCount(count: Int) {
@@ -196,6 +206,89 @@ class SettingsStore(private val context: Context) {
             prefs[Keys.DEFAULT_CONTEXT_WINDOW_OVERRIDE] = cleanWin
             prefs[Keys.DEFAULT_MAX_HISTORY_MESSAGES] = cleanHist
             prefs[Keys.DEFAULT_MAX_OUTPUT_TOKENS] = cleanOut
+        }
+    }
+
+    suspend fun setRetrievalSettings(settings: RetrievalSettings) {
+        val encoded = AppJson.encodeToString(RetrievalSettings.serializer(), settings)
+        context.settingsDataStore.edit { prefs ->
+            prefs[Keys.RETRIEVAL_SETTINGS_JSON] = encoded
+        }
+    }
+
+    suspend fun updateTokenCalibration(key: String, factor: Double) {
+        val cleanKey = key.trim()
+        if (cleanKey.isEmpty() || !factor.isFinite()) return
+        context.settingsDataStore.edit { prefs ->
+            val existing = decodeTokenCalibrationMap(prefs[Keys.TOKEN_CALIBRATION_MAP_JSON])
+            val updated = updateTokenCalibrationMap(existing, cleanKey, factor)
+            prefs[Keys.TOKEN_CALIBRATION_MAP_JSON] = AppJson.encodeToString(
+                TOKEN_CAL_MAP_SERIALIZER,
+                updated,
+            )
+        }
+    }
+
+    companion object {
+        const val MIN_TOKEN_CALIBRATION = 0.60
+        const val MAX_TOKEN_CALIBRATION = 1.60
+        const val MAX_TOKEN_CALIBRATION_ENTRIES = 32
+
+        private val TOKEN_CAL_MAP_SERIALIZER = MapSerializer(String.serializer(), Double.serializer())
+
+        fun normalizeMemoryBudget(raw: String?): String = when (raw?.trim()?.lowercase()) {
+            "low", "2k" -> "2K"
+            "high", "8k" -> "8K"
+            else -> "4K"
+        }
+
+        internal fun decodeRetrievalSettings(raw: String?): RetrievalSettings {
+            val clean = raw?.trim().orEmpty()
+            if (clean.isEmpty()) return RetrievalSettings()
+            return runCatching {
+                AppJson.decodeFromString(RetrievalSettings.serializer(), clean)
+            }.getOrDefault(RetrievalSettings())
+        }
+
+        internal fun decodeTokenCalibrationMap(raw: String?): Map<String, Double> {
+            val clean = raw?.trim().orEmpty()
+            if (clean.isEmpty()) return emptyMap()
+            val parsed = runCatching {
+                AppJson.decodeFromString(TOKEN_CAL_MAP_SERIALIZER, clean)
+            }.getOrDefault(emptyMap())
+            if (parsed.isEmpty()) return emptyMap()
+            val out = LinkedHashMap<String, Double>(parsed.size)
+            for ((k, v) in parsed) {
+                val trimmedKey = k.trim()
+                if (trimmedKey.isNotEmpty() && v.isFinite()) {
+                    out[trimmedKey] = v.coerceIn(MIN_TOKEN_CALIBRATION, MAX_TOKEN_CALIBRATION)
+                }
+            }
+            return out
+        }
+
+        internal fun updateTokenCalibrationMap(
+            existing: Map<String, Double>,
+            key: String,
+            factor: Double,
+            maxEntries: Int = MAX_TOKEN_CALIBRATION_ENTRIES,
+        ): Map<String, Double> {
+            val cleanKey = key.trim()
+            if (cleanKey.isEmpty() || !factor.isFinite()) return existing
+            val clamped = factor.coerceIn(MIN_TOKEN_CALIBRATION, MAX_TOKEN_CALIBRATION)
+            val ordered = LinkedHashMap<String, Double>(existing.size + 1)
+            for ((k, v) in existing) {
+                if (k != cleanKey && k.isNotBlank() && v.isFinite()) {
+                    ordered[k] = v.coerceIn(MIN_TOKEN_CALIBRATION, MAX_TOKEN_CALIBRATION)
+                }
+            }
+            ordered[cleanKey] = clamped
+            val limit = maxEntries.coerceAtLeast(1)
+            while (ordered.size > limit) {
+                val eldestKey = ordered.entries.firstOrNull()?.key ?: break
+                ordered.remove(eldestKey)
+            }
+            return ordered
         }
     }
 }

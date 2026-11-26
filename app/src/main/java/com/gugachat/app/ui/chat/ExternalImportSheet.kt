@@ -114,6 +114,8 @@ fun ExternalImportSheet(
     container: AppContainer,
     onImported: (firstConversationId: String?) -> Unit,
     onDismiss: () -> Unit,
+    selectedGroupId: Long? = null,
+    selectedModelId: String? = null,
 ) {
     val strings = LocalAppStrings.current
     val theme = LocalAppTheme.current
@@ -952,8 +954,30 @@ fun ExternalImportSheet(
                                         0
                                     }
                                     if (toImport.isNotEmpty()) {
-                                        val res = ExternalImportService.persistSelected(container.database, toImport)
-                                        val rpConvIds = toImport
+                                        val settings = container.settingsStore.currentSettings()
+                                        val fallbackGroupId = selectedGroupId
+                                            ?: settings.lastChatGroupId.takeIf { it != 0L }
+                                            ?: container.apiProviderStore.enabledProviders().firstOrNull()?.syntheticGroupId
+                                        val fallbackModelId = selectedModelId?.takeIf { it.isNotBlank() }
+                                            ?: settings.lastChatModel.takeIf { it.isNotBlank() }
+                                        val prepared = toImport.map { item ->
+                                            val conv = item.conversation
+                                            val mergedParams = conv.params.copy(
+                                                maxTokens = conv.params.maxTokens ?: settings.defaultMaxOutputTokens,
+                                                contextWindowOverride = conv.params.contextWindowOverride ?: settings.defaultContextWindowOverride,
+                                                maxHistoryMessages = conv.params.maxHistoryMessages ?: settings.defaultMaxHistoryMessages,
+                                                activeWindowStartSeq = conv.params.activeWindowStartSeq,
+                                            )
+                                            item.copy(
+                                                conversation = conv.copy(
+                                                    groupId = conv.groupId ?: fallbackGroupId,
+                                                    model = conv.model?.takeIf { it.isNotBlank() } ?: fallbackModelId,
+                                                    params = mergedParams,
+                                                ),
+                                            )
+                                        }
+                                        val res = ExternalImportService.persistSelected(container.database, prepared)
+                                        val rpConvIds = prepared
                                             .filter { it.conversation.rp != null }
                                             .map { it.conversation.id }
                                         if (rpConvIds.isNotEmpty()) {

@@ -10,15 +10,25 @@ import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.i18n.EnStrings
 import com.gugachat.app.core.i18n.ZhStrings
 import com.gugachat.app.core.i18n.fmt
+import com.gugachat.app.core.storage.ApiProtocol
 import com.gugachat.app.core.storage.ApiProviderConfig
 import com.gugachat.app.core.storage.AppSettings
+import com.gugachat.app.core.storage.SettingsStore
 import com.gugachat.app.core.theme.ColorMode
 import com.gugachat.app.core.theme.ThemeStyle
 import com.gugachat.app.core.theme.UiScalePreset
 import com.gugachat.app.data.api.ApiException
+import com.gugachat.app.data.api.DiscoveredRetrievalModel
 import com.gugachat.app.data.api.UpdateChannel
 import com.gugachat.app.data.api.UserDto
 import com.gugachat.app.data.local.ChatBackupCodec
+import com.gugachat.app.data.local.LocalModelDownloadState
+import com.gugachat.app.data.local.LocalModelSpec
+import com.gugachat.app.domain.chat.RemoteEmbeddingConfig
+import com.gugachat.app.domain.chat.RemoteRerankConfig
+import com.gugachat.app.domain.chat.RetrievalMode
+import com.gugachat.app.domain.chat.RetrievalSettings
+import com.gugachat.app.domain.chat.VectorIndexProgress
 import com.gugachat.app.ui.providers.ApiProviderDraft
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -40,6 +50,16 @@ data class ProfileUiState(
     val providerTestError: String? = null,
     val isRefreshing: Boolean = false,
     val isBackupBusy: Boolean = false,
+    val retrievalSettings: RetrievalSettings = RetrievalSettings(),
+    val localModelSpecs: List<LocalModelSpec> = emptyList(),
+    val localModelStates: Map<String, LocalModelDownloadState> = emptyMap(),
+    val vectorIndexProgress: VectorIndexProgress = VectorIndexProgress(),
+    val indexedVectorCount: Int = 0,
+    val isLocalEmbedLoaded: Boolean = false,
+    val embeddingTestStatus: String? = null,
+    val isTestingEmbedding: Boolean = false,
+    val discoveredRetrievalModels: List<DiscoveredRetrievalModel> = emptyList(),
+    val isFetchingRetrievalModels: Boolean = false,
 )
 
 class ProfileViewModel(private val container: AppContainer) : ViewModel() {
@@ -50,6 +70,11 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
             settings = container.settingsState.value,
             worksCount = container.imageWorksTotal.value,
             providers = container.apiProviderStore.currentProviders(),
+            retrievalSettings = container.settingsState.value.retrievalSettings,
+            localModelSpecs = container.localEmbeddingModelManager.catalog(),
+            localModelStates = container.localEmbeddingModelManager.states.value,
+            vectorIndexProgress = container.retrievalCoordinator.indexProgress.value,
+            isLocalEmbedLoaded = container.retrievalCoordinator.isLocalSessionLoaded(),
         ),
     )
     val ui: StateFlow<ProfileUiState> = _ui.asStateFlow()
@@ -69,7 +94,14 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
         }
         viewModelScope.launch {
             container.settingsState.collect { st ->
-                _ui.update { it.copy(settings = st) }
+                _ui.update {
+                    it.copy(
+                        settings = st,
+                        retrievalSettings = st.retrievalSettings,
+                        isLocalEmbedLoaded = container.retrievalCoordinator.isLocalSessionLoaded(),
+                    )
+                }
+                refreshVectorStats()
             }
         }
         viewModelScope.launch {
@@ -83,6 +115,30 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
                 refreshImageGroupsCount()
             }
         }
+        viewModelScope.launch {
+            container.localEmbeddingModelManager.states.collect { states ->
+                _ui.update {
+                    it.copy(
+                        localModelStates = states,
+                        isLocalEmbedLoaded = container.retrievalCoordinator.isLocalSessionLoaded(),
+                    )
+                }
+            }
+        }
+        viewModelScope.launch {
+            container.retrievalCoordinator.indexProgress.collect { progress ->
+                _ui.update {
+                    it.copy(
+                        vectorIndexProgress = progress,
+                        isLocalEmbedLoaded = container.retrievalCoordinator.isLocalSessionLoaded(),
+                    )
+                }
+                if (!progress.running) {
+                    refreshVectorStats()
+                }
+            }
+        }
+        refreshVectorStats()
     }
 
     private fun refreshImageGroupsCount() {
@@ -178,11 +234,203 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
     fun setLanguage(lang: AppLanguage) = container.setLanguage(lang)
     fun setUpdateChannel(channel: UpdateChannel) = container.setUpdateChannel(channel)
     fun setMemoryBudget(budget: String) {
-        viewModelScope.launch { container.settingsStore.setMemoryBudget(budget) }
+        val normalized = SettingsStore.normalizeMemoryBudget(budget)
+        viewModelScope.launch { container.settingsStore.setMemoryBudget(normalized) }
     }
 
     fun setSseAutoRetryCount(count: Int) {
         viewModelScope.launch { container.settingsStore.setSseAutoRetryCount(count) }
+    }
+
+    // ==================== Hybrid Semantic Retrieval Settings & Actions ====================
+
+    fun setRetrievalMode(mode: RetrievalMode) {
+        viewModelScope.launch {
+            val updated = _ui.value.retrievalSettings.copy(mode = mode)
+            container.settingsStore.setRetrievalSettings(updated)
+            if (mode != RetrievalMode.LOCAL_SMALL_MODEL && container.retrievalCoordinator.isLocalSessionLoaded()) {
+                container.retrievalCoordinator.unloadLocalModelNow()
+            }
+            _ui.update {
+                it.copy(
+                    retrievalSettings = updated,
+                    isLocalEmbedLoaded = container.retrievalCoordinator.isLocalSessionLoaded(),
+                )
+            }
+            refreshVectorStats()
+        }
+    }
+
+    fun selectLocalModel(modelId: String) {
+        val clean = modelId.trim()
+        if (clean.isEmpty()) return
+        viewModelScope.launch {
+            val prev = _ui.value.retrievalSettings
+            if (prev.localModelId != clean && container.retrievalCoordinator.isLocalSessionLoaded()) {
+                container.retrievalCoordinator.unloadLocalModelNow()
+            }
+            val updated = prev.copy(localModelId = clean)
+            container.settingsStore.setRetrievalSettings(updated)
+            _ui.update {
+                it.copy(
+                    retrievalSettings = updated,
+                    isLocalEmbedLoaded = container.retrievalCoordinator.isLocalSessionLoaded(),
+                )
+            }
+            refreshVectorStats()
+        }
+    }
+
+    fun downloadLocalModel(modelId: String) {
+        val clean = modelId.trim()
+        if (clean.isEmpty()) return
+        container.localEmbeddingModelManager.startDownload(clean, container.scope)
+    }
+
+    fun cancelLocalModelDownload(modelId: String) {
+        container.localEmbeddingModelManager.cancelDownload(modelId)
+    }
+
+    fun deleteLocalModel(modelId: String) {
+        viewModelScope.launch {
+            if (_ui.value.retrievalSettings.localModelId == modelId && container.retrievalCoordinator.isLocalSessionLoaded()) {
+                container.retrievalCoordinator.unloadLocalModelNow()
+            }
+            val deleted = withContext(Dispatchers.IO) {
+                container.localEmbeddingModelManager.deleteModel(modelId)
+            }
+            _ui.update { it.copy(isLocalEmbedLoaded = container.retrievalCoordinator.isLocalSessionLoaded()) }
+            val isZh = container.settingsState.value.language == AppLanguage.ZH
+            if (deleted) {
+                container.toastController.show(if (isZh) "已删除本地向量模型" else "Deleted local embedding model")
+            }
+            refreshVectorStats()
+        }
+    }
+
+    fun unloadLocalModelNow() {
+        container.retrievalCoordinator.unloadLocalModelNow()
+        _ui.update { it.copy(isLocalEmbedLoaded = container.retrievalCoordinator.isLocalSessionLoaded()) }
+        val isZh = container.settingsState.value.language == AppLanguage.ZH
+        container.toastController.show(if (isZh) "已释放本地向量模型内存" else "Unloaded local embedding model from memory")
+    }
+
+    fun updateRemoteEmbeddingConfig(config: RemoteEmbeddingConfig) {
+        viewModelScope.launch {
+            val updated = _ui.value.retrievalSettings.copy(remoteEmbedding = config)
+            container.settingsStore.setRetrievalSettings(updated)
+            _ui.update {
+                it.copy(
+                    retrievalSettings = updated,
+                    embeddingTestStatus = null,
+                )
+            }
+            refreshVectorStats()
+        }
+    }
+
+    fun updateRemoteRerankConfig(config: RemoteRerankConfig) {
+        viewModelScope.launch {
+            val updated = _ui.value.retrievalSettings.copy(remoteRerank = config)
+            container.settingsStore.setRetrievalSettings(updated)
+            _ui.update { it.copy(retrievalSettings = updated) }
+        }
+    }
+
+    fun clearEmbeddingTestStatus() {
+        _ui.update { it.copy(embeddingTestStatus = null) }
+    }
+
+    fun testRemoteEmbedding() {
+        if (_ui.value.isTestingEmbedding) return
+        val cfg = _ui.value.retrievalSettings.remoteEmbedding
+        val isZh = container.settingsState.value.language == AppLanguage.ZH
+        viewModelScope.launch {
+            _ui.update { it.copy(isTestingEmbedding = true, embeddingTestStatus = null) }
+            val result = container.retrievalCoordinator.testRemoteEmbedding(cfg)
+            result.fold(
+                onSuccess = { res ->
+                    val status = if (isZh) {
+                        "连接成功 · ${res.dimension} 维 · ${res.latencyMs}ms"
+                    } else {
+                        "Connected · ${res.dimension}d · ${res.latencyMs}ms"
+                    }
+                    _ui.update { it.copy(isTestingEmbedding = false, embeddingTestStatus = status) }
+                },
+                onFailure = { err ->
+                    val msg = (err as? ApiException)?.message ?: err.message ?: if (isZh) "测试失败" else "Test failed"
+                    val status = if (isZh) "失败：$msg" else "Failed: $msg"
+                    _ui.update { it.copy(isTestingEmbedding = false, embeddingTestStatus = status) }
+                },
+            )
+        }
+    }
+
+    fun fetchRemoteRetrievalModels(
+        providerId: String,
+        customBaseUrl: String,
+        customApiKey: String,
+        protocol: ApiProtocol,
+    ) {
+        if (_ui.value.isFetchingRetrievalModels) return
+        val isZh = container.settingsState.value.language == AppLanguage.ZH
+        viewModelScope.launch {
+            _ui.update { it.copy(isFetchingRetrievalModels = true) }
+            val result = container.retrievalCoordinator.fetchRemoteRetrievalModels(
+                providerId = providerId,
+                customBaseUrl = customBaseUrl,
+                customApiKey = customApiKey,
+                protocol = protocol,
+            )
+            result.fold(
+                onSuccess = { models ->
+                    _ui.update {
+                        it.copy(
+                            isFetchingRetrievalModels = false,
+                            discoveredRetrievalModels = models,
+                        )
+                    }
+                    if (models.isEmpty()) {
+                        container.toastController.show(
+                            if (isZh) "未发现可用的向量或精排模型" else "No embedding or rerank models found",
+                        )
+                    }
+                },
+                onFailure = { err ->
+                    _ui.update { it.copy(isFetchingRetrievalModels = false) }
+                    container.toastController.show(
+                        (err as? ApiException)?.message ?: err.message ?: if (isZh) "获取模型列表失败" else "Failed to fetch models",
+                        isError = true,
+                    )
+                },
+            )
+        }
+    }
+
+    fun clearVectorCache() {
+        val isZh = container.settingsState.value.language == AppLanguage.ZH
+        viewModelScope.launch {
+            container.retrievalCoordinator.clearAllVectors()
+            _ui.update {
+                it.copy(
+                    indexedVectorCount = 0,
+                    vectorIndexProgress = VectorIndexProgress(),
+                )
+            }
+            container.toastController.show(if (isZh) "已清空本地向量索引缓存" else "Cleared local vector index cache")
+        }
+    }
+
+    fun refreshVectorStats() {
+        viewModelScope.launch {
+            val count = container.retrievalCoordinator.countIndexedVectors()
+            _ui.update {
+                it.copy(
+                    indexedVectorCount = count,
+                    isLocalEmbedLoaded = container.retrievalCoordinator.isLocalSessionLoaded(),
+                )
+            }
+        }
     }
 
     fun exportBackup(uri: Uri, contentResolver: ContentResolver, successMessage: String) {
