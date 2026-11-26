@@ -235,6 +235,7 @@ private fun localizeRpLoreCategory(category: String, loreCats: Map<String, Strin
         "item" -> if (isZh) "道具" else "Item"
         "faction" -> if (isZh) "势力" else "Faction"
         "rule" -> if (isZh) "规则" else "Rule"
+        "event" -> if (isZh) "事件" else "Event"
         "concept" -> if (isZh) "概念" else "Concept"
         "other" -> if (isZh) "其他" else "Other"
         else -> category

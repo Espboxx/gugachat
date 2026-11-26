@@ -212,6 +212,9 @@ interface AttachmentDao {
     @Query("SELECT * FROM attachment_meta WHERE id IN (:ids)")
     suspend fun getByIds(ids: List<String>): List<AttachmentMetaEntity>
 
+    @Query("UPDATE attachment_meta SET injectMode = :injectMode WHERE id = :id")
+    suspend fun updateInjectMode(id: String, injectMode: String)
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(entity: AttachmentMetaEntity)
 

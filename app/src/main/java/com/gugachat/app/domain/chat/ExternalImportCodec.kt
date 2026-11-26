@@ -37,6 +37,7 @@ enum class ExternalImportSource {
     CLAUDE,
     RIKKAHUB,
     CHERRY_STUDIO,
+    UU_GAME,
     GENERIC,
 }
 
@@ -47,6 +48,8 @@ data class ExternalImportedItem(
     val messages: List<ChatMessage>,
     val loreEntries: List<NovelLoreEntry> = emptyList(),
     val novelChapters: List<NovelChapter> = emptyList(),
+    val memoryLedger: List<MemoryLedgerItem> = emptyList(),
+    val memoryEpisodes: List<MemoryEpisode> = emptyList(),
     val hasReasoning: Boolean = false,
 )
 
@@ -377,6 +380,11 @@ object ExternalImportCodec {
             AppJson.parseToJsonElement(rawJson)
         } catch (e: Exception) {
             throw IllegalArgumentException("无效的 JSON 格式：${e.message}")
+        }
+
+        // 0. UUGame interactive RPG / life-sim save (`format: "uu-game-save"` or unwrapped `gameState`)
+        if (root is JsonObject && UuSaveCodec.isUuGameSave(root)) {
+            return UuSaveCodec.parseJsonElement(root, fileName)
         }
 
         // 1. RikkaHub native ExportData (`type: "lorebook" | "mode_injection"`)

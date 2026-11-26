@@ -27,8 +27,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.AutoStories
@@ -38,8 +38,11 @@ import androidx.compose.material.icons.filled.Casino
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.PhotoCamera
+import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -73,6 +76,8 @@ import com.gugachat.app.core.theme.LocalAppTheme
 import com.gugachat.app.domain.chat.ChatAttachmentMeta
 import com.gugachat.app.domain.chat.ContextWaterlineSummary
 import com.gugachat.app.domain.chat.ConversationMode
+import com.gugachat.app.domain.chat.FileContextBudgeter
+import com.gugachat.app.domain.chat.FileInjectMode
 import com.gugachat.app.domain.chat.NovelInputKind
 import com.gugachat.app.domain.chat.RpDiceRoll
 import com.gugachat.app.domain.chat.RpInputKind
@@ -92,13 +97,20 @@ fun ChatComposerBar(
     enableAutoMemory: Boolean,
     isStreaming: Boolean,
     supportsVision: Boolean,
+    isImportingAttachment: Boolean = false,
     onDraftChange: (String) -> Unit,
     onSelectNovelKind: (NovelInputKind) -> Unit,
     onSelectRpKind: (RpInputKind) -> Unit,
     onToggleReasoning: () -> Unit,
     onToggleMemory: () -> Unit,
     onPickImage: () -> Unit,
+    onTakePhoto: () -> Unit = {},
+    onPickFile: () -> Unit = {},
     onRemoveAttachment: (String) -> Unit,
+    onUpdateAttachmentInjectMode: (String, FileInjectMode) -> Unit = { _, _ -> },
+    onReadAttachmentText: (suspend (String) -> String?)? = null,
+    onOpenModelSheet: () -> Unit = {},
+    onToast: (String) -> Unit = {},
     onOpenDiceDialog: () -> Unit,
     onClearDiceRoll: () -> Unit,
     onOpenRecallInspector: () -> Unit,
@@ -118,6 +130,42 @@ fun ChatComposerBar(
 
     var showToolsPanel by remember { mutableStateOf(false) }
     var showKindMenu by remember(mode) { mutableStateOf(false) }
+    var previewFileTarget by remember { mutableStateOf<ChatAttachmentMeta?>(null) }
+    var previewImageTarget by remember { mutableStateOf<ChatAttachmentMeta?>(null) }
+
+    val draftFiles = remember(draftAttachments) { draftAttachments.filter { it.isFile } }
+    val draftHasImages = remember(draftAttachments) { draftAttachments.any { it.isImage } }
+    val reservedEst = remember(waterline) {
+        (waterline.memoryTokens + waterline.summaryTokens + waterline.novelLoreTokens + 1000).coerceAtLeast(1500)
+    }
+
+    previewFileTarget?.let { target ->
+        val guarded = FileContextBudgeter.willCompressFile(
+            meta = target,
+            allDraftFiles = draftFiles,
+            effectiveLimitTokens = waterline.effectiveLimitTokens,
+            reservedFixedTokens = reservedEst,
+        )
+        FilePreviewAndStrategyDialog(
+            meta = target,
+            isSmartGuarded = guarded,
+            onReadText = { id -> onReadAttachmentText?.invoke(id) },
+            onSelectInjectMode = { newMode ->
+                onUpdateAttachmentInjectMode(target.id, newMode)
+                previewFileTarget = target.copy(injectMode = newMode)
+            },
+            onDismiss = { previewFileTarget = null },
+            onCopiedToast = { onToast(strings.common.copied) },
+        )
+    }
+
+    previewImageTarget?.let { target ->
+        LocalImageLightboxDialog(
+            file = File(target.localPath),
+            title = target.fileName,
+            onDismiss = { previewImageTarget = null },
+        )
+    }
 
     BackHandler(enabled = showToolsPanel) {
         showToolsPanel = false
@@ -152,10 +200,52 @@ fun ChatComposerBar(
                     modifier = Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    FlowRow(
+                    // Chatbox / pure-chat style 3-card quick upload row (always visible, never hidden on non-vision models)
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 2.dp, vertical = 2.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        ComposerAttachmentActionTile(
+                            label = strings.attachments.albumImages,
+                            icon = Icons.Default.PhotoLibrary,
+                            tint = c.primarySoftInk,
+                            iconBg = c.primarySoft,
+                            onClick = {
+                                showToolsPanel = false
+                                onPickImage()
+                            },
+                            modifier = Modifier.weight(1f),
+                        )
+                        ComposerAttachmentActionTile(
+                            label = strings.attachments.takePhoto,
+                            icon = Icons.Default.PhotoCamera,
+                            tint = c.accent,
+                            iconBg = c.accentSoft,
+                            onClick = {
+                                showToolsPanel = false
+                                onTakePhoto()
+                            },
+                            modifier = Modifier.weight(1f),
+                        )
+                        ComposerAttachmentActionTile(
+                            label = strings.attachments.uploadFiles,
+                            icon = Icons.Default.AttachFile,
+                            tint = c.success,
+                            iconBg = c.successBg,
+                            onClick = {
+                                showToolsPanel = false
+                                onPickFile()
+                            },
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+
+                    FlowRow(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 2.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
@@ -170,17 +260,6 @@ fun ChatComposerBar(
                             active = enableAutoMemory,
                             onClick = onToggleMemory,
                         )
-                        if (supportsVision || draftAttachments.isNotEmpty()) {
-                            ComposerChip(
-                                label = strings.chat.uploadImages,
-                                icon = Icons.Default.AddPhotoAlternate,
-                                active = draftAttachments.isNotEmpty(),
-                                onClick = {
-                                    showToolsPanel = false
-                                    onPickImage()
-                                },
-                            )
-                        }
                         if (mode == ConversationMode.novel) {
                             ComposerChip(
                                 label = strings.novel.continueBtn,
@@ -308,44 +387,132 @@ fun ChatComposerBar(
                 }
             }
 
+            // Non-vision model warning banner with 1-tap switch
+            if (draftHasImages && !supportsVision) {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = c.warning.copy(alpha = if (theme.isDark) 0.16f else 0.11f),
+                    border = BorderStroke(theme.borderWidth, c.warning.copy(alpha = 0.45f)),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.WarningAmber,
+                            contentDescription = null,
+                            tint = c.warning,
+                            modifier = Modifier.size(15.dp),
+                        )
+                        Text(
+                            text = strings.attachments.visionUnsupportedBanner,
+                            color = c.warning,
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Surface(
+                            onClick = onOpenModelSheet,
+                            shape = RoundedCornerShape(999.dp),
+                            color = c.warning,
+                        ) {
+                            Text(
+                                text = strings.attachments.switchVisionModel,
+                                color = Color.White,
+                                fontSize = 10.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Parsing spinner strip
+            if (isImportingAttachment) {
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(c.surfaceSoft)
+                        .border(theme.borderWidth, c.border, RoundedCornerShape(999.dp))
+                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(12.dp),
+                        strokeWidth = 1.8.dp,
+                        color = c.primary,
+                    )
+                    Text(
+                        text = strings.attachments.parsingFile,
+                        color = c.muted,
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.Medium,
+                    )
+                }
+            }
+
             if (draftAttachments.isNotEmpty()) {
                 Row(
                     modifier = Modifier.horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
                     draftAttachments.forEach { att ->
-                        Box(modifier = Modifier.size(60.dp)) {
-                            Image(
-                                painter = rememberAsyncImagePainter(File(att.localPath)),
-                                contentDescription = null,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier
-                                    .size(54.dp)
-                                    .align(Alignment.BottomStart)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .border(theme.borderWidth, c.border, RoundedCornerShape(12.dp)),
+                        if (att.isFile) {
+                            val guarded = FileContextBudgeter.willCompressFile(
+                                meta = att,
+                                allDraftFiles = draftFiles,
+                                effectiveLimitTokens = waterline.effectiveLimitTokens,
+                                reservedFixedTokens = reservedEst,
                             )
-                            Box(
-                                modifier = Modifier
-                                    .align(Alignment.TopEnd)
-                                    .size(28.dp)
-                                    .clip(CircleShape)
-                                    .clickable { onRemoveAttachment(att.id) },
-                                contentAlignment = Alignment.Center,
-                            ) {
+                            FileAttachmentCard(
+                                meta = att,
+                                isSmartGuarded = guarded,
+                                onClick = { previewFileTarget = att },
+                                onRemove = { onRemoveAttachment(att.id) },
+                                compact = true,
+                            )
+                        } else {
+                            Box(modifier = Modifier.size(60.dp)) {
+                                Image(
+                                    painter = rememberAsyncImagePainter(File(att.localPath)),
+                                    contentDescription = att.fileName.ifBlank { null },
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier
+                                        .size(54.dp)
+                                        .align(Alignment.BottomStart)
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .border(theme.borderWidth, c.border, RoundedCornerShape(12.dp))
+                                        .clickable { previewImageTarget = att },
+                                )
                                 Box(
                                     modifier = Modifier
-                                        .size(20.dp)
+                                        .align(Alignment.TopEnd)
+                                        .size(28.dp)
                                         .clip(CircleShape)
-                                        .background(c.danger),
+                                        .clickable { onRemoveAttachment(att.id) },
                                     contentAlignment = Alignment.Center,
                                 ) {
-                                    Icon(
-                                        Icons.Default.Close,
-                                        contentDescription = strings.common.delete,
-                                        tint = Color.White,
-                                        modifier = Modifier.size(12.dp),
-                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .size(20.dp)
+                                            .clip(CircleShape)
+                                            .background(c.danger),
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Close,
+                                            contentDescription = strings.common.delete,
+                                            tint = Color.White,
+                                            modifier = Modifier.size(12.dp),
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -423,6 +590,7 @@ fun ChatComposerBar(
                     val dotColor = when {
                         showToolsPanel -> null
                         waterline.exceedsModelWindow -> c.danger
+                        draftHasImages && !supportsVision -> c.warning
                         draftDiceRoll != null -> c.warning
                         else -> null
                     }
@@ -663,6 +831,55 @@ fun ChatComposerBar(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ComposerAttachmentActionTile(
+    label: String,
+    icon: ImageVector,
+    tint: Color,
+    iconBg: Color,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val theme = LocalAppTheme.current
+    val c = theme.colors
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(14.dp),
+        color = c.surfaceSoft,
+        border = BorderStroke(theme.borderWidth, c.border),
+        modifier = modifier.height(54.dp),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(7.dp, Alignment.CenterHorizontally),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(28.dp)
+                    .clip(RoundedCornerShape(9.dp))
+                    .background(iconBg),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = tint,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+            Text(
+                text = label,
+                color = c.ink,
+                fontSize = 11.5.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }

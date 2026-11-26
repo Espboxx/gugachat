@@ -18,10 +18,13 @@ data class ContextBuildInput(
     val memoryEpisodes: List<MemoryEpisode> = emptyList(),
     val draftText: String = "",
     val draftImageCount: Int = 0,
+    val draftAttachments: List<ChatAttachmentMeta> = emptyList(),
+    val attachmentsById: Map<String, ChatAttachmentMeta> = emptyMap(),
     val draftInputKind: NovelInputKind? = null,
     val draftRpInputKind: RpInputKind? = null,
     val semanticScorer: SemanticScorer? = null,
     val resolveAttachmentDataUrl: (suspend (String) -> String?)? = null,
+    val resolveAttachmentText: (suspend (String) -> String?)? = null,
 )
 
 data class CoreMemoryBlockResult(
@@ -140,6 +143,7 @@ object ContextBuilder {
         val active: List<ChatMessage>,
         val effectiveTipSeq: Int,
         val decayedImageMessageIds: Set<String>,
+        val decayedFileMessageIds: Set<String>,
         val activeChapter: NovelChapter?,
     )
 
@@ -147,20 +151,38 @@ object ContextBuilder {
         conversation: ChatConversation,
         messages: List<ChatMessage>,
         novelChapters: List<NovelChapter>,
+        attachmentsById: Map<String, ChatAttachmentMeta> = emptyMap(),
     ): ActiveWindowSlice {
         val active = TimelineReconciler.activeMessages(messages)
         val tipSeq = active.maxOfOrNull { it.seq } ?: 0
         val maxImgTurns = max(0, conversation.params.maxImageTurns)
+        val maxFileTurns = max(0, conversation.params.maxFileTurns)
 
         val imgMsgIds = active
-            .filter { it.role == "user" && it.attachmentIds.isNotEmpty() }
+            .filter { msg ->
+                msg.role == "user" && msg.attachmentIds.any { id -> attachmentsById[id]?.isFile != true }
+            }
             .map { it.id }
 
-        val decayed = if (imgMsgIds.size > maxImgTurns) {
+        val decayedImages = if (imgMsgIds.size > maxImgTurns) {
             imgMsgIds.dropLast(maxImgTurns).toSet()
         } else {
             emptySet()
         }
+
+        val recentUserIdsForFiles = if (maxFileTurns > 0) {
+            active.filter { it.role == "user" }.takeLast(maxFileTurns).map { it.id }.toSet()
+        } else {
+            emptySet()
+        }
+
+        val fileMsgIds = active
+            .filter { msg ->
+                msg.role == "user" && msg.attachmentIds.any { id -> attachmentsById[id]?.isFile == true }
+            }
+            .map { it.id }
+
+        val decayedFiles = fileMsgIds.filter { it !in recentUserIdsForFiles }.toSet()
 
         val activeChapter = if (conversation.mode == ConversationMode.novel && conversation.novel != null) {
             val id = conversation.novel.activeChapterId
@@ -169,7 +191,7 @@ object ContextBuilder {
             null
         }
 
-        return ActiveWindowSlice(active, tipSeq, decayed, activeChapter)
+        return ActiveWindowSlice(active, tipSeq, decayedImages, decayedFiles, activeChapter)
     }
 
     fun buildSystemPrefix(
@@ -540,7 +562,7 @@ object ContextBuilder {
 
     private fun runSharedPipeline(input: ContextBuildInput, allowScorer: Boolean): ComputedPipeline {
         val conv = input.conversation
-        val slice = sliceActiveWindow(conv, input.messages, input.novelChapters)
+        val slice = sliceActiveWindow(conv, input.messages, input.novelChapters, input.attachmentsById)
         val requestedWindow = conv.params.contextWindowOverride?.takeIf { it >= 4096 } ?: input.modelContextWindow
         val windowLimit = max(4096, requestedWindow)
         val budgetTokens = max(2048, (windowLimit * 0.80).toInt())
@@ -631,11 +653,41 @@ object ContextBuilder {
             else -> tailBundle.tailRecallTokens
         }
 
-        val msgCosts = slice.active.map { msg ->
-            resolveMsgTokenCost(msg, msg.id in slice.decayedImageMessageIds)
+        val effectiveDraftImages = if (input.draftAttachments.isNotEmpty()) {
+            input.draftAttachments.count { it.isImage }
+        } else {
+            input.draftImageCount
         }
-        val draftTokens = if (input.draftText.isNotBlank() || input.draftImageCount > 0) {
-            estimateMessageTokens(input.draftText, input.draftImageCount)
+        val effectiveDraftFiles = input.draftAttachments.filter { it.isFile }
+        val fileTurnBudget = FileContextBudgeter.computeFileTurnBudget(
+            effectiveLimitTokens = effectiveLimitTokens,
+            reservedFixedTokens = prefix.systemTokens + dynamicOverhead,
+        )
+
+        val msgCosts = slice.active.map { msg ->
+            resolveMsgTokenCost(
+                msg = msg,
+                imageDecayed = msg.id in slice.decayedImageMessageIds,
+                fileDecayed = msg.id in slice.decayedFileMessageIds,
+                attachmentsById = input.attachmentsById,
+                perTurnFileBudget = fileTurnBudget,
+            )
+        }
+        val activeFileTokensTotal = slice.active.sumOf { msg ->
+            resolveMsgFileTokens(
+                msg = msg,
+                fileDecayed = msg.id in slice.decayedFileMessageIds,
+                attachmentsById = input.attachmentsById,
+                perTurnFileBudget = fileTurnBudget,
+            )
+        }
+        val draftFileTokens = FileContextBudgeter.estimateDraftFilesInjectedTokens(
+            files = effectiveDraftFiles,
+            effectiveLimitTokens = effectiveLimitTokens,
+            reservedFixedTokens = prefix.systemTokens + dynamicOverhead,
+        )
+        val draftTokens = if (input.draftText.isNotBlank() || effectiveDraftImages > 0 || effectiveDraftFiles.isNotEmpty()) {
+            estimateMessageTokens(input.draftText, effectiveDraftImages) + draftFileTokens
         } else {
             0
         }
@@ -680,6 +732,8 @@ object ContextBuilder {
             activeMessageCount = slice.active.size,
             trimmedMessageCount = max(0, slice.active.size - kept),
             decayedImageMessageIds = slice.decayedImageMessageIds,
+            decayedFileMessageIds = slice.decayedFileMessageIds,
+            fileTokens = activeFileTokensTotal + draftFileTokens,
             memoryTokens = prefix.memoryTokens + tailBundle.chatRecallTokens,
             summaryTokens = prefix.summaryTokens,
             triggeredLoreIds = loreMatch.triggered.map { it.id },
@@ -708,10 +762,36 @@ object ContextBuilder {
         )
     }
 
-    private fun resolveMsgTokenCost(msg: ChatMessage, imageDecayed: Boolean): Int {
-        val imgCount = if (msg.role == "user" && !imageDecayed) msg.attachmentIds.size else 0
-        val base = estimateMessageTokens(msg.content, imgCount)
-        return if (imageDecayed && msg.attachmentIds.isNotEmpty()) base + 12 else base
+    private fun resolveMsgFileTokens(
+        msg: ChatMessage,
+        fileDecayed: Boolean,
+        attachmentsById: Map<String, ChatAttachmentMeta>,
+        perTurnFileBudget: Int,
+    ): Int {
+        if (msg.role != "user" || msg.attachmentIds.isEmpty()) return 0
+        val files = msg.attachmentIds.mapNotNull { attachmentsById[it]?.takeIf { a -> a.isFile } }
+        if (files.isEmpty()) return 0
+        if (fileDecayed) return files.size * FileContextBudgeter.DECAYED_STUB_TOKENS
+        val rawSum = files.sumOf { max(32, it.estimatedTokens) + 48 }
+        return min(rawSum, perTurnFileBudget)
+    }
+
+    private fun resolveMsgTokenCost(
+        msg: ChatMessage,
+        imageDecayed: Boolean,
+        fileDecayed: Boolean,
+        attachmentsById: Map<String, ChatAttachmentMeta>,
+        perTurnFileBudget: Int,
+    ): Int {
+        val imageIds = if (msg.role == "user") {
+            msg.attachmentIds.filter { id -> attachmentsById[id]?.isFile != true }
+        } else {
+            emptyList()
+        }
+        val imgCount = if (!imageDecayed) imageIds.size else 0
+        val fileTok = resolveMsgFileTokens(msg, fileDecayed, attachmentsById, perTurnFileBudget)
+        val base = estimateMessageTokens(msg.content, imgCount) + fileTok
+        return if (imageDecayed && imageIds.isNotEmpty()) base + 12 else base
     }
 
     fun computeContextWaterline(input: ContextBuildInput): ContextWaterlineSummary =
@@ -721,12 +801,23 @@ object ContextBuilder {
         val pipe = runSharedPipeline(input, allowScorer = true)
         val conv = input.conversation
         val active = pipe.active
-        val decayed = pipe.waterline.decayedImageMessageIds.toMutableSet()
+        val decayedImages = pipe.waterline.decayedImageMessageIds.toMutableSet()
+        val decayedFiles = pipe.waterline.decayedFileMessageIds.toMutableSet()
+        val fileTurnBudget = FileContextBudgeter.computeFileTurnBudget(
+            effectiveLimitTokens = pipe.effectiveLimitTokens,
+            reservedFixedTokens = pipe.prefix.systemTokens + pipe.dynamicOverhead,
+        )
 
         fun calcTotal(): Int {
             var tok = pipe.prefix.systemTokens + pipe.dynamicOverhead
             for (msg in active) {
-                tok += resolveMsgTokenCost(msg, msg.id in decayed)
+                tok += resolveMsgTokenCost(
+                    msg = msg,
+                    imageDecayed = msg.id in decayedImages,
+                    fileDecayed = msg.id in decayedFiles,
+                    attachmentsById = input.attachmentsById,
+                    perTurnFileBudget = fileTurnBudget,
+                )
             }
             return (tok * pipe.calibration).roundToInt()
         }
@@ -734,8 +825,14 @@ object ContextBuilder {
         if (calcTotal() > pipe.effectiveLimitTokens) {
             for (i in 0 until max(0, active.size - 1)) {
                 val msg = active[i]
-                if (msg.attachmentIds.isNotEmpty() && msg.id !in decayed) {
-                    decayed.add(msg.id)
+                val hasFiles = msg.attachmentIds.any { input.attachmentsById[it]?.isFile == true }
+                val hasImgs = msg.attachmentIds.any { input.attachmentsById[it]?.isFile != true }
+                if (hasFiles && msg.id !in decayedFiles) {
+                    decayedFiles.add(msg.id)
+                    if (calcTotal() <= pipe.effectiveLimitTokens) break
+                }
+                if (hasImgs && msg.id !in decayedImages) {
+                    decayedImages.add(msg.id)
                     if (calcTotal() <= pipe.effectiveLimitTokens) break
                 }
             }
@@ -747,7 +844,15 @@ object ContextBuilder {
         for (i in active.indices.reversed()) {
             if (maxHistoryLimit != null && selected.size >= maxHistoryLimit) break
             val msg = active[i]
-            val msgTok = (resolveMsgTokenCost(msg, msg.id in decayed) * pipe.calibration).roundToInt()
+            val msgTok = (
+                resolveMsgTokenCost(
+                    msg = msg,
+                    imageDecayed = msg.id in decayedImages,
+                    fileDecayed = msg.id in decayedFiles,
+                    attachmentsById = input.attachmentsById,
+                    perTurnFileBudget = fileTurnBudget,
+                ) * pipe.calibration
+                ).roundToInt()
             if (selected.isNotEmpty() && used + msgTok > pipe.effectiveLimitTokens) break
             used += msgTok
             selected.add(0, msg)
@@ -759,7 +864,23 @@ object ContextBuilder {
         }
 
         val lastUserIdx = selected.indexOfLast { it.role == "user" }
+        val latestUserQuery = if (lastUserIdx >= 0) selected[lastUserIdx].content else input.draftText
         val existingLoreTitles = if (pipe.isNovel) pipe.novelLore.map { it.title } else emptyList()
+
+        // Cross-turn follow-up: if the latest user turn explicitly mentions a decayed earlier file, re-retrieve it on demand
+        val reRecalledDecayedFiles = if (lastUserIdx >= 0 && latestUserQuery.isNotBlank()) {
+            val latestOwnIds = selected[lastUserIdx].attachmentIds.toSet()
+            active
+                .filter { it.role == "user" && it.id in decayedFiles }
+                .flatMap { it.attachmentIds }
+                .filter { it !in latestOwnIds }
+                .mapNotNull { input.attachmentsById[it]?.takeIf { m -> m.isFile } }
+                .filter { meta -> FileContextBudgeter.messageMentionsFile(latestUserQuery, meta) }
+                .distinctBy { it.id }
+                .take(2)
+        } else {
+            emptyList()
+        }
 
         for (idx in selected.indices) {
             val msg = selected[idx]
@@ -812,34 +933,103 @@ object ContextBuilder {
             }
 
             val attIds = msg.attachmentIds
-            if (attIds.isNotEmpty() && msg.role == "user") {
-                if (msg.id in decayed || input.resolveAttachmentDataUrl == null) {
-                    val notice = "[${attIds.size} 张历史图片已省略]"
+            val fileMetas = if (msg.role == "user") {
+                attIds.mapNotNull { input.attachmentsById[it]?.takeIf { a -> a.isFile } }
+            } else {
+                emptyList()
+            }
+            val imageIds = if (msg.role == "user") {
+                attIds.filter { id -> input.attachmentsById[id]?.isFile != true }
+            } else {
+                emptyList()
+            }
+
+            val extraFilesForTurn = if (idx == lastUserIdx) reRecalledDecayedFiles else emptyList()
+            val fileBlocksText = buildString {
+                if (fileMetas.isNotEmpty()) {
+                    if (msg.id in decayedFiles || input.resolveAttachmentText == null) {
+                        fileMetas.forEach { fm ->
+                            appendLine(FileContextBudgeter.buildDecayedFileStub(fm))
+                        }
+                    } else {
+                        val allTurnFiles = fileMetas + extraFilesForTurn
+                        val allocations = FileContextBudgeter.allocateFileBudgets(allTurnFiles, fileTurnBudget)
+                        val queryForTurn = if (idx == lastUserIdx) latestUserQuery else rawContent
+                        for (fm in fileMetas) {
+                            val rawFileText = input.resolveAttachmentText.invoke(fm.id)
+                            if (!rawFileText.isNullOrBlank()) {
+                                val fitted = FileContextBudgeter.fitFileToBudget(
+                                    meta = fm,
+                                    fullText = rawFileText,
+                                    queryText = queryForTurn,
+                                    budgetTokens = allocations[fm.id] ?: fileTurnBudget,
+                                )
+                                appendLine(fitted.formattedBlock)
+                                appendLine()
+                            } else {
+                                appendLine(FileContextBudgeter.buildDecayedFileStub(fm))
+                            }
+                        }
+                    }
+                }
+                if (extraFilesForTurn.isNotEmpty() && input.resolveAttachmentText != null) {
+                    val allocations = FileContextBudgeter.allocateFileBudgets(
+                        fileMetas + extraFilesForTurn,
+                        fileTurnBudget,
+                    )
+                    for (fm in extraFilesForTurn) {
+                        val rawFileText = input.resolveAttachmentText.invoke(fm.id)
+                        if (!rawFileText.isNullOrBlank()) {
+                            val fitted = FileContextBudgeter.fitFileToBudget(
+                                meta = fm,
+                                fullText = rawFileText,
+                                queryText = latestUserQuery,
+                                budgetTokens = allocations[fm.id] ?: (fileTurnBudget / 2),
+                                modeOverride = FileInjectMode.retrieve,
+                            )
+                            appendLine(fitted.formattedBlock)
+                            appendLine()
+                        }
+                    }
+                }
+            }.trim()
+
+            val mergedText = buildString {
+                if (fileBlocksText.isNotBlank()) {
+                    append(fileBlocksText)
+                    if (finalText.isNotBlank()) append("\n\n")
+                }
+                append(finalText)
+            }.trim()
+
+            if (imageIds.isNotEmpty() && msg.role == "user") {
+                if (msg.id in decayedImages || input.resolveAttachmentDataUrl == null) {
+                    val notice = "[${imageIds.size} 张历史图片已省略]"
                     wireMessages.add(
                         WireChatMessage(
                             role = "user",
-                            textContent = if (finalText.isNotBlank()) "$notice\n$finalText" else notice,
+                            textContent = if (mergedText.isNotBlank()) "$notice\n$mergedText" else notice,
                         ),
                     )
                 } else {
                     val parts = ArrayList<WireChatContentPart>()
-                    if (finalText.isNotBlank()) {
-                        parts.add(WireChatContentPart(type = "text", text = finalText))
+                    if (mergedText.isNotBlank()) {
+                        parts.add(WireChatContentPart(type = "text", text = mergedText))
                     }
-                    for (id in attIds) {
+                    for (id in imageIds) {
                         val url = input.resolveAttachmentDataUrl.invoke(id)
                         if (!url.isNullOrBlank()) {
                             parts.add(WireChatContentPart(type = "image_url", imageUrl = url))
                         }
                     }
                     if (parts.isEmpty()) {
-                        wireMessages.add(WireChatMessage(role = "user", textContent = finalText.ifBlank { "[图片]" }))
+                        wireMessages.add(WireChatMessage(role = "user", textContent = mergedText.ifBlank { "[图片]" }))
                     } else {
                         wireMessages.add(WireChatMessage(role = "user", parts = parts))
                     }
                 }
             } else {
-                wireMessages.add(WireChatMessage(role = msg.role, textContent = finalText))
+                wireMessages.add(WireChatMessage(role = msg.role, textContent = mergedText))
             }
         }
 
@@ -887,7 +1077,8 @@ object ContextBuilder {
         return BuiltChatContext(
             wireMessages = wireMessages,
             summary = pipe.waterline.copy(
-                decayedImageMessageIds = decayed,
+                decayedImageMessageIds = decayedImages,
+                decayedFileMessageIds = decayedFiles,
                 trimmedMessageCount = max(0, active.size - selected.size),
             ),
         )

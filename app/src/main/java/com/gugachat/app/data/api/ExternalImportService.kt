@@ -1,7 +1,9 @@
 package com.gugachat.app.data.api
 
+import android.content.Context
 import androidx.room.withTransaction
 import com.gugachat.app.data.local.AppDatabase
+import com.gugachat.app.data.local.toDomain
 import com.gugachat.app.data.local.toEntity
 import com.gugachat.app.domain.chat.ConversationMode
 import com.gugachat.app.domain.chat.DeepSeekImportCodec
@@ -14,6 +16,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.util.concurrent.TimeUnit
 
 data class ExternalPersistSummary(
@@ -22,6 +25,7 @@ data class ExternalPersistSummary(
     val loreCount: Int,
     val chaptersCount: Int,
     val firstConversationId: String?,
+    val memoryCount: Int = 0,
 )
 
 object ExternalImportService {
@@ -101,12 +105,14 @@ object ExternalImportService {
         selectedItems: List<ExternalImportedItem>,
     ): ExternalPersistSummary {
         if (selectedItems.isEmpty()) {
-            return ExternalPersistSummary(0, 0, 0, 0, null)
+            return ExternalPersistSummary(0, 0, 0, 0, null, 0)
         }
         val chatDao = db.chatDao()
         val convEntities = selectedItems.map { it.conversation.toEntity() }
         val msgEntities = selectedItems.flatMap { item -> item.messages.map { it.toEntity() } }
         val loreEntities = selectedItems.flatMap { item -> item.loreEntries.map { it.toEntity() } }
+        val ledgerEntities = selectedItems.flatMap { item -> item.memoryLedger.map { it.toEntity() } }
+        val episodeEntities = selectedItems.flatMap { item -> item.memoryEpisodes.map { it.toEntity() } }
         val chapterEntities = selectedItems
             .filter { it.conversation.mode == ConversationMode.novel }
             .flatMap { item -> item.novelChapters.map { it.toEntity() } }
@@ -116,9 +122,20 @@ object ExternalImportService {
                 chatDao.upsertConversations(convEntities)
                 selectedItems.forEach { item ->
                     chatDao.deleteMessagesForConversation(item.conversation.id)
+                    if (item.loreEntries.isNotEmpty()) {
+                        chatDao.deleteNovelLoreForConversation(item.conversation.id)
+                    }
+                    if (item.memoryLedger.isNotEmpty()) {
+                        chatDao.deleteMemoryLedgerForConversation(item.conversation.id)
+                    }
+                    if (item.memoryEpisodes.isNotEmpty()) {
+                        chatDao.deleteMemoryEpisodesForConversation(item.conversation.id)
+                    }
                 }
                 if (msgEntities.isNotEmpty()) chatDao.upsertMessages(msgEntities)
                 if (loreEntities.isNotEmpty()) chatDao.upsertNovelLoreList(loreEntities)
+                if (ledgerEntities.isNotEmpty()) chatDao.upsertMemoryLedgerList(ledgerEntities)
+                if (episodeEntities.isNotEmpty()) chatDao.upsertMemoryEpisodes(episodeEntities)
                 if (chapterEntities.isNotEmpty()) chatDao.upsertNovelChapters(chapterEntities)
             }
         }
@@ -129,6 +146,126 @@ object ExternalImportService {
             loreCount = loreEntities.size,
             chaptersCount = chapterEntities.size,
             firstConversationId = selectedItems.firstOrNull()?.conversation?.id,
+            memoryCount = ledgerEntities.size + episodeEntities.size,
         )
+    }
+
+    /**
+     * Best-effort background downloader for remote NPC avatar/cutout URLs carried by imported saves
+     * (e.g. UUGame `avatarCutoutUrl`). Gracefully skips offline, slow, or non-image URLs.
+     */
+    suspend fun cacheRemoteRpAvatars(
+        appContext: Context,
+        httpClient: OkHttpClient,
+        db: AppDatabase,
+        conversationIds: List<String>,
+    ) {
+        if (conversationIds.isEmpty()) return
+        val maxImageBytes = 6 * 1024 * 1024
+        val mediaDir = File(appContext.filesDir, "rp_media").apply { if (!exists()) mkdirs() }
+        val fetchClient = httpClient.newBuilder()
+            .followRedirects(true)
+            .followSslRedirects(true)
+            .connectTimeout(8, TimeUnit.SECONDS)
+            .readTimeout(12, TimeUnit.SECONDS)
+            .build()
+        val chatDao = db.chatDao()
+
+        withContext(Dispatchers.IO) {
+            conversationIds.distinct().forEach { convId ->
+                val conv = chatDao.getConversationById(convId)?.toDomain() ?: return@forEach
+                val rp = conv.rp ?: return@forEach
+                val pending = rp.cast.filter { c ->
+                    c.avatarPath.isNullOrBlank() &&
+                        !c.avatar.isNullOrBlank() &&
+                        (c.avatar.startsWith("https://", ignoreCase = true) || c.avatar.startsWith("http://", ignoreCase = true))
+                }
+                if (pending.isEmpty()) return@forEach
+
+                val downloaded = HashMap<String, String>()
+                pending.forEach { npc ->
+                    val url = npc.avatar ?: return@forEach
+                    runCatching {
+                        val req = Request.Builder()
+                            .url(url)
+                            .get()
+                            .header("Accept", "image/png, image/webp, image/jpeg, image/*")
+                            .build()
+                        fetchClient.awaitCall(req).use { resp ->
+                            if (!resp.isSuccessful) return@use
+                            val ctype = resp.header("Content-Type").orEmpty().lowercase()
+                            val body = resp.body ?: return@use
+                            val out = ByteArrayOutputStream()
+                            val buf = ByteArray(8192)
+                            var total = 0
+                            body.byteStream().use { ins ->
+                                while (true) {
+                                    val n = ins.read(buf)
+                                    if (n <= 0) break
+                                    total += n
+                                    if (total > maxImageBytes) return@use
+                                    out.write(buf, 0, n)
+                                }
+                            }
+                            val bytes = out.toByteArray()
+                            if (bytes.size < 16) return@use
+                            val ext = inferRemoteImageExt(bytes, ctype, url) ?: return@use
+                            val safeCharId = npc.id.replace(Regex("[^A-Za-z0-9_-]"), "_").take(32)
+                            val safeConv = convId.replace(Regex("[^A-Za-z0-9_-]"), "_").take(24)
+                            val file = File(mediaDir, "imp_${safeConv}_${safeCharId}.$ext")
+                            file.writeBytes(bytes)
+                            downloaded[npc.id] = file.absolutePath
+                        }
+                    }
+                }
+
+                if (downloaded.isNotEmpty()) {
+                    val fresh = chatDao.getConversationById(convId)?.toDomain() ?: return@forEach
+                    val freshRp = fresh.rp ?: return@forEach
+                    val updatedCast = freshRp.cast.map { c ->
+                        val localPath = downloaded[c.id] ?: return@map c
+                        c.copy(
+                            avatarPath = c.avatarPath?.takeIf { it.isNotBlank() } ?: localPath,
+                            spritePath = c.spritePath?.takeIf { it.isNotBlank() } ?: localPath,
+                        )
+                    }
+                    chatDao.upsertConversation(
+                        fresh.copy(rp = freshRp.copy(cast = updatedCast)).toEntity(),
+                    )
+                }
+            }
+        }
+    }
+
+    private fun inferRemoteImageExt(bytes: ByteArray, contentType: String, url: String): String? {
+        if (bytes.size >= 8 &&
+            bytes[0] == 0x89.toByte() && bytes[1] == 0x50.toByte() &&
+            bytes[2] == 0x4E.toByte() && bytes[3] == 0x47.toByte()
+        ) {
+            return "png"
+        }
+        if (bytes.size >= 3 &&
+            bytes[0] == 0xFF.toByte() && bytes[1] == 0xD8.toByte() && bytes[2] == 0xFF.toByte()
+        ) {
+            return "jpg"
+        }
+        if (bytes.size >= 12 &&
+            bytes[0] == 'R'.code.toByte() && bytes[1] == 'I'.code.toByte() &&
+            bytes[2] == 'F'.code.toByte() && bytes[3] == 'F'.code.toByte() &&
+            bytes[8] == 'W'.code.toByte() && bytes[9] == 'E'.code.toByte() &&
+            bytes[10] == 'B'.code.toByte() && bytes[11] == 'P'.code.toByte()
+        ) {
+            return "webp"
+        }
+        return when {
+            contentType.contains("png") -> "png"
+            contentType.contains("webp") -> "webp"
+            contentType.contains("jpeg") || contentType.contains("jpg") -> "jpg"
+            url.lowercase().substringBefore('?').endsWith(".png") -> "png"
+            url.lowercase().substringBefore('?').endsWith(".webp") -> "webp"
+            url.lowercase().substringBefore('?').endsWith(".jpg") ||
+                url.lowercase().substringBefore('?').endsWith(".jpeg") -> "jpg"
+            else -> null
+        }
     }
 }

@@ -301,4 +301,183 @@ class ContextBuilderTest {
         assertEquals(256_000, wlLarge.modelContextWindow)
         assertEquals(0, wlLarge.trimmedMessageCount)
     }
+
+    @Test
+    fun buildChatContext_budgetsGiantFileAndCombinesWithImageSafely() = runBlocking {
+        val conv = ChatConversation(
+            id = "conv-file-img",
+            title = "大文件加图片",
+            mode = ConversationMode.chat,
+            params = ChatParams(maxTokens = 1024, maxFileTurns = 2),
+            createdAt = 1L,
+            updatedAt = 2L,
+        )
+        val hugeDoc = buildString {
+            appendLine("# 系统架构手册")
+            for (i in 1..100) {
+                appendLine("## 模块 $i")
+                if (i == 66) {
+                    appendLine("关键熔断阈值：网关单节点 QPS 超过 12800 时触发令牌桶降级，恢复窗口 45 秒。")
+                } else {
+                    appendLine("常规接口监控日志与例行巡检参数描述数据记录。".repeat(16))
+                }
+            }
+        }
+        val rawTok = ContextBuilder.estimateTextTokens(hugeDoc)
+        val fileMeta = ChatAttachmentMeta(
+            id = "att-doc",
+            mimeType = "text/markdown",
+            sizeBytes = hugeDoc.length.toLong(),
+            localPath = "/tmp/att-doc.txt",
+            kind = AttachmentKind.file,
+            fileName = "arch_manual.md",
+            textPath = "/tmp/att-doc.txt",
+            charCount = hugeDoc.length,
+            estimatedTokens = rawTok,
+            previewSnippet = "系统架构手册",
+        )
+        val imgMeta = ChatAttachmentMeta(
+            id = "att-img",
+            mimeType = "image/jpeg",
+            width = 1024,
+            height = 768,
+            sizeBytes = 120_000,
+            localPath = "/tmp/att-img.jpg",
+            kind = AttachmentKind.image,
+            fileName = "diagram.jpg",
+        )
+        val messages = listOf(
+            ChatMessage(
+                id = "u1",
+                conversationId = conv.id,
+                role = "user",
+                content = "请结合截图告诉我网关熔断阈值 QPS 是多少？",
+                createdAt = 1L,
+                seq = 1,
+                attachmentIds = listOf("att-doc", "att-img"),
+            ),
+        )
+
+        val built = ContextBuilder.buildChatContext(
+            ContextBuildInput(
+                conversation = conv,
+                messages = messages,
+                modelContextWindow = 16_384,
+                attachmentsById = mapOf("att-doc" to fileMeta, "att-img" to imgMeta),
+                resolveAttachmentDataUrl = { id -> if (id == "att-img") "data:image/jpeg;base64,IMG" else null },
+                resolveAttachmentText = { id -> if (id == "att-doc") hugeDoc else null },
+            ),
+        )
+
+        val userMsg = built.wireMessages.last { it.role == "user" }
+        val textPart = userMsg.parts?.firstOrNull { it.type == "text" }?.text.orEmpty()
+        val imgPart = userMsg.parts?.firstOrNull { it.type == "image_url" }?.imageUrl
+
+        assertEquals("data:image/jpeg;base64,IMG", imgPart)
+        assertTrue(textPart.contains("<attached_file name=\"arch_manual.md\""))
+        assertTrue(textPart.contains("mode=\"smart_rag\""))
+        assertTrue(textPart.contains("12800"))
+        assertTrue(
+            "Actual wire text tokens should never blow up the 16K window",
+            ContextBuilder.estimateTextTokens(textPart) < built.summary.effectiveLimitTokens,
+        )
+    }
+
+    @Test
+    fun buildChatContext_decaysOldFileToStubAndReRecallsWhenMentioned() = runBlocking {
+        val conv = ChatConversation(
+            id = "conv-file-decay",
+            title = "多轮文件衰减",
+            mode = ConversationMode.chat,
+            params = ChatParams(maxTokens = 1024, maxFileTurns = 1),
+            createdAt = 1L,
+            updatedAt = 5L,
+        )
+        val docText = buildString {
+            appendLine("# 2026 Q3 财报")
+            for (i in 1..50) {
+                appendLine("## 章节 $i")
+                if (i == 31) {
+                    appendLine("海外云服务毛利率提升至 68.4%，成为增长第一引擎。")
+                } else {
+                    appendLine("季度财务例行说明和基础折旧摊销条目汇总。".repeat(14))
+                }
+            }
+        }
+        val fileMeta = ChatAttachmentMeta(
+            id = "att-q3",
+            mimeType = "application/pdf",
+            sizeBytes = docText.length.toLong(),
+            localPath = "/tmp/att-q3.txt",
+            kind = AttachmentKind.file,
+            fileName = "Q3_Report.pdf",
+            textPath = "/tmp/att-q3.txt",
+            charCount = docText.length,
+            estimatedTokens = ContextBuilder.estimateTextTokens(docText),
+            pageCount = 18,
+            previewSnippet = "2026 Q3 财报概览",
+        )
+        val messages = listOf(
+            ChatMessage(
+                id = "u1",
+                conversationId = conv.id,
+                role = "user",
+                content = "帮我看下这份财报",
+                createdAt = 1L,
+                seq = 1,
+                attachmentIds = listOf("att-q3"),
+            ),
+            ChatMessage(
+                id = "a1",
+                conversationId = conv.id,
+                role = "assistant",
+                content = "好的，整体营收表现稳健。",
+                createdAt = 2L,
+                seq = 2,
+            ),
+            ChatMessage(
+                id = "u2",
+                conversationId = conv.id,
+                role = "user",
+                content = "另外帮我列个明天会议议程",
+                createdAt = 3L,
+                seq = 3,
+            ),
+            ChatMessage(
+                id = "a2",
+                conversationId = conv.id,
+                role = "assistant",
+                content = "这是明天的会议议程草案。",
+                createdAt = 4L,
+                seq = 4,
+            ),
+            ChatMessage(
+                id = "u3",
+                conversationId = conv.id,
+                role = "user",
+                content = "再查一下刚才 Q3_Report 里的海外云服务毛利率是多少？",
+                createdAt = 5L,
+                seq = 5,
+            ),
+        )
+
+        val built = ContextBuilder.buildChatContext(
+            ContextBuildInput(
+                conversation = conv,
+                messages = messages,
+                modelContextWindow = 32_768,
+                attachmentsById = mapOf("att-q3" to fileMeta),
+                resolveAttachmentText = { id -> if (id == "att-q3") docText else null },
+            ),
+        )
+
+        assertTrue(built.summary.decayedFileMessageIds.contains("u1"))
+        val firstUserWire = built.wireMessages.first { it.role == "user" }
+        assertTrue(firstUserWire.textContent!!.contains("历史文件已折叠"))
+        assertFalse(firstUserWire.textContent!!.contains("<attached_file"))
+
+        val latestUserWire = built.wireMessages.last { it.role == "user" }
+        assertTrue(latestUserWire.textContent!!.contains("<attached_file name=\"Q3_Report.pdf\""))
+        assertTrue(latestUserWire.textContent!!.contains("68.4%"))
+    }
 }

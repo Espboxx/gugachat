@@ -1065,6 +1065,37 @@ data class UpdateStrings(
 )
 
 @Immutable
+data class AttachmentStrings(
+    val albumImages: String,
+    val takePhoto: String,
+    val uploadFiles: String,
+    val parsingFile: String,
+    val visionUnsupportedBanner: String,
+    val switchVisionModel: String,
+    val visionSendBlocked: String,
+    val scannedPdfTitle: String,
+    val scannedPdfMsg: String,
+    val scannedPdfConvertBtn: String,
+    val fileFullBadge: String,
+    val fileSmartGuardBadge: String,
+    val decayedFileNotice: String,
+    val filePreviewTitle: String,
+    val fileInjectModeLabel: String,
+    val fileModeAuto: String,
+    val fileModeRetrieve: String,
+    val fileModeHeadTail: String,
+    val fileModeFull: String,
+    val fileModeAutoDesc: String,
+    val fileModeRetrieveDesc: String,
+    val fileModeHeadTailDesc: String,
+    val fileModeFullDesc: String,
+    val fileBudgetSummary: String,
+    val fileLimitHint: String,
+    val cameraPermDenied: String,
+    val filePreviewEmpty: String,
+)
+
+@Immutable
 data class AppStrings(
     val language: AppLanguage,
     val common: CommonStrings,
@@ -1072,6 +1103,7 @@ data class AppStrings(
     val nav: NavStrings,
     val profile: ProfileStrings,
     val chat: ChatStrings,
+    val attachments: AttachmentStrings,
     val novel: NovelStrings,
     val rp: RpStrings,
     val images: ImageStrings,

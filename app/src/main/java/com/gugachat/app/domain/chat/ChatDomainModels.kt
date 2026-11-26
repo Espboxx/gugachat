@@ -43,12 +43,27 @@ enum class MemoryBudget {
 }
 
 @Serializable
+enum class AttachmentKind {
+    image,
+    file,
+}
+
+@Serializable
+enum class FileInjectMode {
+    auto,
+    retrieve,
+    head_tail,
+    full,
+}
+
+@Serializable
 data class ChatParams(
     val temperature: Double = 0.7,
     val topP: Double = 1.0,
     val maxTokens: Int? = null,
     val reasoningEffort: String? = null,
     val maxImageTurns: Int = 3,
+    val maxFileTurns: Int = 2,
     val enableReasoning: Boolean = true,
     val enableAutoMemory: Boolean = true,
     val enableAutoConsolidate: Boolean = true,
@@ -64,7 +79,19 @@ data class ChatAttachmentMeta(
     val height: Int = 0,
     val sizeBytes: Long = 0L,
     val localPath: String = "",
-)
+    val kind: AttachmentKind = AttachmentKind.image,
+    val fileName: String = "",
+    val textPath: String = "",
+    val charCount: Int = 0,
+    val estimatedTokens: Int = 0,
+    val pageCount: Int = 0,
+    val previewSnippet: String = "",
+    val extractionNote: String = "",
+    val injectMode: FileInjectMode = FileInjectMode.auto,
+) {
+    val isImage: Boolean get() = kind == AttachmentKind.image
+    val isFile: Boolean get() = kind == AttachmentKind.file
+}
 
 @Serializable
 data class MessageUsage(
@@ -492,6 +519,8 @@ data class ContextWaterlineSummary(
     val activeMessageCount: Int = 0,
     val trimmedMessageCount: Int = 0,
     val decayedImageMessageIds: Set<String> = emptySet(),
+    val decayedFileMessageIds: Set<String> = emptySet(),
+    val fileTokens: Int = 0,
     val memoryTokens: Int = 0,
     val summaryTokens: Int = 0,
     val triggeredLoreIds: List<String> = emptyList(),

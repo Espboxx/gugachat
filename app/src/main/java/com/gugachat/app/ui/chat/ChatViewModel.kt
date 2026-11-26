@@ -17,6 +17,7 @@ import com.gugachat.app.core.util.newIdempotencyKey
 import com.gugachat.app.data.api.ApiException
 import com.gugachat.app.data.api.AppJson
 import com.gugachat.app.data.api.DirectProtocolCodec
+import com.gugachat.app.data.api.ExternalImportService
 import com.gugachat.app.data.api.ImageBinaryUpload
 import com.gugachat.app.data.api.OnlineChatCompletionRequestDto
 import com.gugachat.app.data.api.OnlineChatGroupDto
@@ -27,6 +28,7 @@ import com.gugachat.app.data.api.OnlineImageSubmitInput
 import com.gugachat.app.data.api.WireChatContentPartDto
 import com.gugachat.app.data.api.WireChatMessageDto
 import com.gugachat.app.data.api.WireImageUrlDto
+import com.gugachat.app.data.local.AttachmentSaveResult
 import com.gugachat.app.data.local.toDomain
 import com.gugachat.app.data.local.toEntity
 import com.gugachat.app.domain.chat.ChatAttachmentMeta
@@ -39,6 +41,7 @@ import com.gugachat.app.domain.chat.ContextCompactor
 import com.gugachat.app.domain.chat.ContextWaterlineSummary
 import com.gugachat.app.domain.chat.ConversationMode
 import com.gugachat.app.domain.chat.EpisodeConsolidator
+import com.gugachat.app.domain.chat.FileInjectMode
 import com.gugachat.app.domain.chat.FreeQuotaUtils
 import com.gugachat.app.domain.chat.MemoryBudget
 import com.gugachat.app.domain.chat.MemoryCategory
@@ -74,6 +77,7 @@ import com.gugachat.app.domain.chat.RpVisualTheme
 import com.gugachat.app.domain.chat.TavernAssetCodec
 import com.gugachat.app.domain.chat.TimelineReconciler
 import com.gugachat.app.domain.chat.UserMemory
+import com.gugachat.app.domain.chat.UuSaveCodec
 import com.gugachat.app.domain.chat.WireChatMessage
 import com.gugachat.app.domain.chat.activeVariant
 import com.gugachat.app.domain.images.OnlineImageNovelAI
@@ -100,6 +104,12 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.UUID
 
+data class PendingScannedPdf(
+    val fileName: String,
+    val pageCount: Int,
+    val uri: Uri,
+)
+
 data class ChatUiState(
     val enabled: Boolean = true,
     val isLoadingCapabilities: Boolean = false,
@@ -110,6 +120,7 @@ data class ChatUiState(
     val conversations: List<ChatConversation> = emptyList(),
     val activeConversation: ChatConversation? = null,
     val messages: List<ChatMessage> = emptyList(),
+    val attachmentsById: Map<String, ChatAttachmentMeta> = emptyMap(),
     val userMemories: List<UserMemory> = emptyList(),
     val novelChapters: List<NovelChapter> = emptyList(),
     val novelLore: List<NovelLoreEntry> = emptyList(),
@@ -118,6 +129,8 @@ data class ChatUiState(
     val rpSaveSlots: List<RpSaveSlot> = emptyList(),
     val draftText: String = "",
     val draftAttachments: List<ChatAttachmentMeta> = emptyList(),
+    val isImportingAttachment: Boolean = false,
+    val pendingScannedPdf: PendingScannedPdf? = null,
     val draftNovelKind: NovelInputKind = NovelInputKind.director,
     val draftRpKind: RpInputKind = RpInputKind.action,
     val draftDiceRoll: RpDiceRoll? = null,
@@ -219,6 +232,20 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                     dbMsgs
                 }
                 _ui.update { it.copy(messages = merged) }
+                val missingAttIds = merged.asSequence()
+                    .flatMap { it.attachmentIds.asSequence() }
+                    .filter { it.isNotBlank() && it !in _ui.value.attachmentsById }
+                    .distinct()
+                    .toList()
+                if (missingAttIds.isNotEmpty()) {
+                    viewModelScope.launch {
+                        val loaded = container.attachmentStore.loadAttachmentsMap(missingAttIds)
+                        if (loaded.isNotEmpty()) {
+                            _ui.update { st -> st.copy(attachmentsById = st.attachmentsById + loaded) }
+                            recomputeWaterline()
+                        }
+                    }
+                }
                 if (live == null || live.status != "streaming") {
                     recomputeWaterline()
                 }
@@ -406,20 +433,181 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun addAttachmentUri(uri: Uri) {
+        addImageUris(listOf(uri))
+    }
+
+    fun addImageUris(uris: List<Uri>) {
+        if (uris.isEmpty()) return
         viewModelScope.launch {
-            if (_ui.value.draftAttachments.size >= 4) {
-                container.toastController.show("Max 4 images per message", isError = true)
+            val s = if (container.settingsState.value.language == AppLanguage.EN) EnStrings else ZhStrings
+            val maxImages = 6
+            val currentImgCount = _ui.value.draftAttachments.count { it.isImage }
+            val slots = (maxImages - currentImgCount).coerceAtLeast(0)
+            if (slots <= 0) {
+                container.toastController.show(s.chat.imageLimitHint.fmt("max" to maxImages), isError = true)
                 return@launch
             }
-            val entity = container.attachmentStore.saveFromUri(uri)
-            if (entity == null) {
-                container.toastController.show("Invalid image", isError = true)
+            _ui.update { it.copy(isImportingAttachment = true) }
+            try {
+                val added = ArrayList<ChatAttachmentMeta>()
+                var failedCount = 0
+                for (uri in uris.take(slots)) {
+                    val entity = container.attachmentStore.saveFromUri(uri)
+                    if (entity != null) {
+                        added.add(entity.toDomain())
+                    } else {
+                        failedCount++
+                    }
+                }
+                if (added.isNotEmpty()) {
+                    _ui.update { st ->
+                        st.copy(
+                            draftAttachments = st.draftAttachments + added,
+                            attachmentsById = st.attachmentsById + added.associateBy { it.id },
+                        )
+                    }
+                    recomputeWaterline()
+                }
+                if (uris.size > slots) {
+                    container.toastController.show(s.chat.imageLimitHint.fmt("max" to maxImages), isError = true)
+                } else if (failedCount > 0 && added.isEmpty()) {
+                    container.toastController.show(s.chat.invalidImage, isError = true)
+                }
+            } finally {
+                _ui.update { it.copy(isImportingAttachment = false) }
+            }
+        }
+    }
+
+    fun addFileUris(uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        viewModelScope.launch {
+            val s = if (container.settingsState.value.language == AppLanguage.EN) EnStrings else ZhStrings
+            val maxFiles = 5
+            val maxImages = 6
+            var fileSlots = (maxFiles - _ui.value.draftAttachments.count { it.isFile }).coerceAtLeast(0)
+            var imageSlots = (maxImages - _ui.value.draftAttachments.count { it.isImage }).coerceAtLeast(0)
+            if (fileSlots <= 0 && imageSlots <= 0) {
+                container.toastController.show(s.attachments.fileLimitHint.fmt("max" to maxFiles), isError = true)
                 return@launch
             }
-            _ui.update { it.copy(draftAttachments = it.draftAttachments + entity.toDomain()) }
+            _ui.update { it.copy(isImportingAttachment = true) }
+            try {
+                val added = ArrayList<ChatAttachmentMeta>()
+                var firstError: String? = null
+                var hitLimit = false
+                for (uri in uris) {
+                    when (val res = container.attachmentStore.saveDocumentFromUri(uri)) {
+                        is AttachmentSaveResult.Success -> {
+                            val meta = res.meta
+                            if (meta.isImage) {
+                                if (imageSlots > 0) {
+                                    added.add(meta)
+                                    imageSlots--
+                                } else {
+                                    hitLimit = true
+                                }
+                            } else {
+                                if (fileSlots > 0) {
+                                    added.add(meta)
+                                    fileSlots--
+                                } else {
+                                    hitLimit = true
+                                }
+                            }
+                        }
+                        is AttachmentSaveResult.ScannedPdf -> {
+                            _ui.update {
+                                it.copy(
+                                    pendingScannedPdf = PendingScannedPdf(
+                                        fileName = res.fileName,
+                                        pageCount = res.pageCount,
+                                        uri = res.uri,
+                                    ),
+                                )
+                            }
+                        }
+                        is AttachmentSaveResult.Error -> {
+                            if (firstError == null) firstError = res.message
+                        }
+                    }
+                }
+                if (added.isNotEmpty()) {
+                    _ui.update { st ->
+                        st.copy(
+                            draftAttachments = st.draftAttachments + added,
+                            attachmentsById = st.attachmentsById + added.associateBy { it.id },
+                        )
+                    }
+                    recomputeWaterline()
+                }
+                if (firstError != null) {
+                    container.toastController.show(firstError, isError = true)
+                } else if (hitLimit) {
+                    container.toastController.show(s.attachments.fileLimitHint.fmt("max" to maxFiles), isError = true)
+                }
+            } finally {
+                _ui.update { it.copy(isImportingAttachment = false) }
+            }
+        }
+    }
+
+    fun updateDraftAttachmentInjectMode(id: String, mode: FileInjectMode) {
+        _ui.update { st ->
+            val updatedDraft = st.draftAttachments.map { if (it.id == id) it.copy(injectMode = mode) else it }
+            val existing = st.attachmentsById[id]
+            val updatedMap = if (existing != null) {
+                st.attachmentsById + (id to existing.copy(injectMode = mode))
+            } else {
+                st.attachmentsById
+            }
+            st.copy(draftAttachments = updatedDraft, attachmentsById = updatedMap)
+        }
+        viewModelScope.launch {
+            container.attachmentStore.updateInjectMode(id, mode)
             recomputeWaterline()
         }
     }
+
+    fun dismissPendingScannedPdf() {
+        _ui.update { it.copy(pendingScannedPdf = null) }
+    }
+
+    fun convertPendingScannedPdfToImages(maxPages: Int = 4) {
+        val pending = _ui.value.pendingScannedPdf ?: return
+        _ui.update { it.copy(pendingScannedPdf = null) }
+        viewModelScope.launch {
+            val s = if (container.settingsState.value.language == AppLanguage.EN) EnStrings else ZhStrings
+            val maxImages = 6
+            val slots = (maxImages - _ui.value.draftAttachments.count { it.isImage }).coerceAtLeast(0)
+            if (slots <= 0) {
+                container.toastController.show(s.chat.imageLimitHint.fmt("max" to maxImages), isError = true)
+                return@launch
+            }
+            _ui.update { it.copy(isImportingAttachment = true) }
+            try {
+                val rendered = container.attachmentStore.renderScannedPdfPagesAsImages(
+                    uri = pending.uri,
+                    maxPages = minOf(maxPages, slots),
+                )
+                if (rendered.isNotEmpty()) {
+                    _ui.update { st ->
+                        st.copy(
+                            draftAttachments = st.draftAttachments + rendered,
+                            attachmentsById = st.attachmentsById + rendered.associateBy { it.id },
+                        )
+                    }
+                    recomputeWaterline()
+                } else {
+                    container.toastController.show(s.chat.invalidImage, isError = true)
+                }
+            } finally {
+                _ui.update { it.copy(isImportingAttachment = false) }
+            }
+        }
+    }
+
+    suspend fun readAttachmentText(id: String): String? = container.attachmentStore.readExtractedText(id)
 
     fun removeDraftAttachment(id: String) {
         _ui.update { it.copy(draftAttachments = it.draftAttachments.filterNot { a -> a.id == id }) }
@@ -592,6 +780,15 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         val attachments = if (overrideText == null) _ui.value.draftAttachments else emptyList()
         if (text.isEmpty() && attachments.isEmpty()) return
 
+        if (attachments.any { it.isImage }) {
+            val activeModel = _ui.value.models.firstOrNull { it.id == modelId }
+            if (activeModel != null && !activeModel.supports_vision) {
+                val s = if (container.settingsState.value.language == AppLanguage.EN) EnStrings else ZhStrings
+                container.toastController.show(s.attachments.visionSendBlocked, isError = true)
+                return
+            }
+        }
+
         viewModelScope.launch {
             val conv = ensureActiveConversation()
             val effectiveText = if (conv.mode == ConversationMode.rp && conv.rp != null && conv.rp.regexScripts.isNotEmpty() && text.isNotEmpty()) {
@@ -617,6 +814,8 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             val curMsgs = chatDao.getMessagesForConversation(conv.id).map { it.toDomain() }
             val nextSeq = (curMsgs.maxOfOrNull { it.seq } ?: 0) + 1
             val now = System.currentTimeMillis()
+            val imgCount = attachments.count { it.isImage }
+            val fileTokSum = attachments.filter { it.isFile }.sumOf { it.estimatedTokens }
 
             val userMsg = ChatMessage(
                 id = UUID.randomUUID().toString(),
@@ -630,12 +829,20 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                 rpInputKind = if (conv.mode == ConversationMode.rp) _ui.value.draftRpKind else null,
                 rpDiceRoll = if (conv.mode == ConversationMode.rp) _ui.value.draftDiceRoll else null,
                 status = "done",
-                tokenEstimate = ContextBuilder.estimateMessageTokens(effectiveText, attachments.size),
+                tokenEstimate = ContextBuilder.estimateMessageTokens(effectiveText, imgCount) + fileTokSum,
             )
             chatDao.upsertMessage(userMsg.toEntity())
 
-            val updatedTitle = if (conv.mode == ConversationMode.chat && conv.title == "新对话" && effectiveText.isNotBlank()) {
-                effectiveText.lineSequence().firstOrNull()?.take(22)?.trim().orEmpty().ifBlank { conv.title }
+            val updatedTitle = if (conv.mode == ConversationMode.chat && conv.title == "新对话") {
+                when {
+                    effectiveText.isNotBlank() ->
+                        effectiveText.lineSequence().firstOrNull()?.take(22)?.trim().orEmpty().ifBlank { conv.title }
+                    attachments.any { it.isFile } ->
+                        attachments.first { it.isFile }.fileName.take(22).ifBlank { conv.title }
+                    attachments.isNotEmpty() ->
+                        if (container.settingsState.value.language == AppLanguage.EN) "Image Chat" else "图片对话"
+                    else -> conv.title
+                }
             } else {
                 conv.title
             }
@@ -643,7 +850,14 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             chatDao.upsertConversation(updatedConv.toEntity())
 
             if (overrideText == null) {
-                _ui.update { it.copy(draftText = "", draftAttachments = emptyList(), draftDiceRoll = null) }
+                _ui.update { st ->
+                    st.copy(
+                        draftText = "",
+                        draftAttachments = emptyList(),
+                        attachmentsById = st.attachmentsById + attachments.associateBy { it.id },
+                        draftDiceRoll = null,
+                    )
+                }
             } else {
                 _ui.update { it.copy(draftDiceRoll = null) }
             }
@@ -1181,6 +1395,12 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         val settings = container.settingsStore.currentSettings()
         val budget = parseMemoryBudget(settings.memoryBudget)
         val modelMeta = _ui.value.models.firstOrNull { it.id == modelId }
+        val allAttIds = msgs.asSequence().flatMap { it.attachmentIds.asSequence() }.distinct().toList()
+        val attMap = if (allAttIds.isNotEmpty()) {
+            _ui.value.attachmentsById + container.attachmentStore.loadAttachmentsMap(allAttIds)
+        } else {
+            _ui.value.attachmentsById
+        }
         val built = ContextBuilder.buildChatContext(
             ContextBuildInput(
                 conversation = conv,
@@ -1192,7 +1412,9 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                 novelLore = _ui.value.novelLore,
                 memoryLedger = _ui.value.memoryLedger,
                 memoryEpisodes = _ui.value.memoryEpisodes,
+                attachmentsById = attMap,
                 resolveAttachmentDataUrl = { attId -> container.attachmentStore.resolveDataUrl(attId) },
+                resolveAttachmentText = { attId -> container.attachmentStore.readExtractedText(attId) },
             ),
         )
         return OnlineChatCompletionRequestDto(
@@ -2551,6 +2773,43 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                     zipCard != null -> zipCard.cardJson
                     else -> bytes.toString(Charsets.UTF_8).removePrefix("\uFEFF")
                 }
+
+                // Also accept UUGame saves (`format: "uu-game-save"`) directly from RP Wizard import!
+                if (!isPng && zipCard == null) {
+                    val rootElem = runCatching { AppJson.parseToJsonElement(jsonText.trim()) }.getOrNull()
+                    if (rootElem is kotlinx.serialization.json.JsonObject && UuSaveCodec.isUuGameSave(rootElem)) {
+                        val displayName = withContext(Dispatchers.IO) { resolveUriDisplayName(contentResolver, uri) }
+                        val bundle = withContext(Dispatchers.Default) {
+                            UuSaveCodec.parseJsonElement(rootElem, displayName)
+                        }
+                        val prepared = bundle.items.map { item ->
+                            item.copy(
+                                conversation = item.conversation.copy(
+                                    groupId = _ui.value.selectedGroupId,
+                                    model = _ui.value.selectedModelId,
+                                ),
+                            )
+                        }
+                        val res = ExternalImportService.persistSelected(container.database, prepared)
+                        val convIds = prepared.map { it.conversation.id }
+                        container.scope.launch {
+                            ExternalImportService.cacheRemoteRpAvatars(
+                                appContext = container.appContext,
+                                httpClient = container.apiClient.standardClient,
+                                db = container.database,
+                                conversationIds = convIds,
+                            )
+                        }
+                        res.firstConversationId?.let { cid ->
+                            _ui.update { it.copy(draftDiceRoll = null) }
+                            _activeConvId.value = cid
+                        }
+                        val title = prepared.firstOrNull()?.conversation?.title.orEmpty()
+                        container.toastController.show(strings().rp.importSuccess.fmt("name" to title))
+                        return@launch
+                    }
+                }
+
                 val imported = RpCardCodec.parseCardJson(jsonText, conversationId = "pending")
                 val avatarPayload: Pair<ByteArray, String>? = when {
                     isPng -> bytes to "png"
@@ -4052,7 +4311,9 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                 memoryLedger = _ui.value.memoryLedger,
                 memoryEpisodes = _ui.value.memoryEpisodes,
                 draftText = _ui.value.draftText,
-                draftImageCount = _ui.value.draftAttachments.size,
+                draftImageCount = _ui.value.draftAttachments.count { it.isImage },
+                draftAttachments = _ui.value.draftAttachments,
+                attachmentsById = _ui.value.attachmentsById + _ui.value.draftAttachments.associateBy { it.id },
             ),
         )
         _ui.update { it.copy(waterline = wl) }

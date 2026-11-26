@@ -1,9 +1,13 @@
 package com.gugachat.app.ui.chat
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.size
@@ -44,8 +48,11 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.gugachat.app.AppContainer
 import com.gugachat.app.core.i18n.LocalAppStrings
+import com.gugachat.app.core.i18n.fmt
+import com.gugachat.app.core.theme.GuConfirmDialog
 import com.gugachat.app.core.theme.GuPopupMenu
 import com.gugachat.app.core.theme.LocalAppTheme
+import com.gugachat.app.data.local.AttachmentFileStore
 import com.gugachat.app.domain.chat.ConversationMode
 import com.gugachat.app.domain.chat.TimelineReconciler
 import kotlinx.coroutines.launch
@@ -83,9 +90,48 @@ fun ChatWorkspaceScreen(
     }
 
     val imagePicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickVisualMedia(),
-    ) { uri ->
-        if (uri != null) viewModel.addAttachmentUri(uri)
+        contract = ActivityResultContracts.PickMultipleVisualMedia(6),
+    ) { uris ->
+        if (uris.isNotEmpty()) viewModel.addImageUris(uris)
+    }
+
+    val filePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenMultipleDocuments(),
+    ) { uris ->
+        if (uris.isNotEmpty()) viewModel.addFileUris(uris)
+    }
+
+    var pendingCameraUri by remember { mutableStateOf<Uri?>(null) }
+    val cameraLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicture(),
+    ) { success ->
+        val uri = pendingCameraUri
+        pendingCameraUri = null
+        if (success && uri != null) {
+            viewModel.addImageUris(listOf(uri))
+        }
+    }
+
+    val launchCameraCapture: () -> Unit = {
+        runCatching {
+            val (_, uri) = container.attachmentStore.createCameraTempFile()
+            pendingCameraUri = uri
+            cameraLauncher.launch(uri)
+        }.onFailure { err ->
+            pendingCameraUri = null
+            container.toastController.show(err.message ?: strings.common.unknownError, isError = true)
+        }
+        Unit
+    }
+
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) {
+            launchCameraCapture()
+        } else {
+            container.toastController.show(strings.attachments.cameraPermDenied, isError = true)
+        }
     }
 
     val attachmentPathResolver = remember(ctx) {
@@ -651,8 +697,35 @@ fun ChatWorkspaceScreen(
         }
     }
 
+    state.pendingScannedPdf?.let { scanned ->
+        val renderPages = minOf(scanned.pageCount.coerceAtLeast(1), AttachmentFileStore.MAX_SCANNED_PDF_PAGES)
+        GuConfirmDialog(
+            title = strings.attachments.scannedPdfTitle,
+            message = strings.attachments.scannedPdfMsg.fmt(
+                "name" to scanned.fileName,
+                "pages" to scanned.pageCount,
+                "renderPages" to renderPages,
+            ),
+            confirmText = strings.attachments.scannedPdfConvertBtn,
+            cancelText = strings.common.cancel,
+            isDestructive = false,
+            onConfirm = { viewModel.convertPendingScannedPdfToImages(renderPages) },
+            onDismiss = viewModel::dismissPendingScannedPdf,
+        )
+    }
+
     val onPickImage = {
         imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+    }
+    val onTakePhoto = {
+        if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            launchCameraCapture()
+        } else {
+            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+        }
+    }
+    val onPickFile = {
+        filePicker.launch(arrayOf("*/*"))
     }
 
     ModalNavigationDrawer(
@@ -686,6 +759,8 @@ fun ChatWorkspaceScreen(
                     supportsVision = supportsVision,
                     draftText = state.draftText,
                     draftAttachments = state.draftAttachments,
+                    attachmentsById = state.attachmentsById,
+                    isImportingAttachment = state.isImportingAttachment,
                     draftNovelKind = state.draftNovelKind,
                     isStreaming = state.isStreaming,
                     streamingStatusHint = state.streamingStatusHint,
@@ -719,7 +794,11 @@ fun ChatWorkspaceScreen(
                     onToggleReasoning = viewModel::toggleActiveReasoning,
                     onToggleMemory = viewModel::toggleActiveMemory,
                     onPickImage = onPickImage,
+                    onTakePhoto = onTakePhoto,
+                    onPickFile = onPickFile,
                     onRemoveAttachment = viewModel::removeDraftAttachment,
+                    onUpdateAttachmentInjectMode = viewModel::updateDraftAttachmentInjectMode,
+                    onReadAttachmentText = viewModel::readAttachmentText,
                     onOpenRecallInspector = {
                         memorySheetInitialTab = 3
                         showMemorySheet = true
@@ -743,6 +822,8 @@ fun ChatWorkspaceScreen(
                     supportsVision = supportsVision,
                     draftText = state.draftText,
                     draftAttachments = state.draftAttachments,
+                    attachmentsById = state.attachmentsById,
+                    isImportingAttachment = state.isImportingAttachment,
                     draftRpKind = state.draftRpKind,
                     draftDiceRoll = state.draftDiceRoll,
                     isStreaming = state.isStreaming,
@@ -787,7 +868,11 @@ fun ChatWorkspaceScreen(
                     onToggleReasoning = viewModel::toggleActiveReasoning,
                     onToggleMemory = viewModel::toggleActiveMemory,
                     onPickImage = onPickImage,
+                    onTakePhoto = onTakePhoto,
+                    onPickFile = onPickFile,
                     onRemoveAttachment = viewModel::removeDraftAttachment,
+                    onUpdateAttachmentInjectMode = viewModel::updateDraftAttachmentInjectMode,
+                    onReadAttachmentText = viewModel::readAttachmentText,
                     onOpenDiceDialog = { showDiceDialog = true },
                     onClearDiceRoll = viewModel::clearDraftDiceRoll,
                     onOpenRecallInspector = {
@@ -813,6 +898,8 @@ fun ChatWorkspaceScreen(
                     supportsVision = supportsVision,
                     draftText = state.draftText,
                     draftAttachments = state.draftAttachments,
+                    attachmentsById = state.attachmentsById,
+                    isImportingAttachment = state.isImportingAttachment,
                     isStreaming = state.isStreaming,
                     streamingStatusHint = state.streamingStatusHint,
                     attachmentPathResolver = attachmentPathResolver,
@@ -832,7 +919,11 @@ fun ChatWorkspaceScreen(
                     onToggleReasoning = viewModel::toggleActiveReasoning,
                     onToggleMemory = viewModel::toggleActiveMemory,
                     onPickImage = onPickImage,
+                    onTakePhoto = onTakePhoto,
+                    onPickFile = onPickFile,
                     onRemoveAttachment = viewModel::removeDraftAttachment,
+                    onUpdateAttachmentInjectMode = viewModel::updateDraftAttachmentInjectMode,
+                    onReadAttachmentText = viewModel::readAttachmentText,
                     onOpenRecallInspector = {
                         memorySheetInitialTab = 3
                         showMemorySheet = true

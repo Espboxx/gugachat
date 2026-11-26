@@ -105,9 +105,11 @@ import com.gugachat.app.core.theme.GuGroupedCard
 import com.gugachat.app.core.theme.GuIconTile
 import com.gugachat.app.core.theme.GuTextField
 import com.gugachat.app.core.theme.LocalAppTheme
+import com.gugachat.app.domain.chat.ChatAttachmentMeta
 import com.gugachat.app.domain.chat.ChatMessage
 import com.gugachat.app.domain.chat.ContextWaterlineSummary
 import com.gugachat.app.domain.chat.ConversationMode
+import com.gugachat.app.domain.chat.FileContextBudgeter
 import com.gugachat.app.domain.chat.NovelChapter
 import com.gugachat.app.domain.chat.NovelConfig
 import com.gugachat.app.domain.chat.NovelExport
@@ -137,6 +139,8 @@ fun ChatMessageList(
     streamingStatusHint: String? = null,
     isRefreshingChoices: Boolean = false,
     attachmentPathResolver: (String) -> File,
+    attachmentsById: Map<String, ChatAttachmentMeta> = emptyMap(),
+    onReadAttachmentText: (suspend (String) -> String?)? = null,
     onOpenModelSheet: () -> Unit = {},
     onStarterPrompt: (String) -> Unit,
     onSelectNovelChoice: (String) -> Unit,
@@ -171,6 +175,28 @@ fun ChatMessageList(
     var editAssistantTarget by remember { mutableStateOf<ChatMessage?>(null) }
     var editAssistantBuffer by remember { mutableStateOf("") }
     var deleteTarget by remember { mutableStateOf<ChatMessage?>(null) }
+    var previewFileTarget by remember { mutableStateOf<ChatAttachmentMeta?>(null) }
+    var previewImageTarget by remember { mutableStateOf<Pair<File, String>?>(null) }
+
+    previewFileTarget?.let { target ->
+        val turnBudget = FileContextBudgeter.computeFileTurnBudget(waterline.effectiveLimitTokens, 2000)
+        FilePreviewAndStrategyDialog(
+            meta = target,
+            isSmartGuarded = target.estimatedTokens > turnBudget,
+            onReadText = { id -> onReadAttachmentText?.invoke(id) },
+            onSelectInjectMode = null,
+            onDismiss = { previewFileTarget = null },
+            onCopiedToast = { onToast(strings.common.copied) },
+        )
+    }
+
+    previewImageTarget?.let { (file, title) ->
+        LocalImageLightboxDialog(
+            file = file,
+            title = title,
+            onDismiss = { previewImageTarget = null },
+        )
+    }
 
     val lastMsg = active.lastOrNull()
     LaunchedEffect(active.size, lastMsg?.content?.length, lastMsg?.reasoning?.length) {
@@ -330,16 +356,22 @@ fun ChatMessageList(
 
             items(active, key = { it.id }) { msg ->
                 val isUser = msg.role == "user"
-                val isDecayed = msg.id in waterline.decayedImageMessageIds
+                val isImageDecayed = msg.id in waterline.decayedImageMessageIds
+                val isFileDecayed = msg.id in waterline.decayedFileMessageIds
                 val isLatestAssistant = !isUser && msg.id == active.lastOrNull { it.role == "assistant" }?.id
 
                 if (isUser) {
                     UserMessageBlock(
                         mode = mode,
                         msg = msg,
-                        isDecayed = isDecayed,
+                        isImageDecayed = isImageDecayed,
+                        isFileDecayed = isFileDecayed,
+                        effectiveLimitTokens = waterline.effectiveLimitTokens,
                         isStreaming = isStreaming,
                         attachmentPathResolver = attachmentPathResolver,
+                        attachmentsById = attachmentsById,
+                        onOpenFilePreview = { previewFileTarget = it },
+                        onOpenImagePreview = { f, title -> previewImageTarget = f to title },
                         onEdit = { editBuffer = msg.content; editTarget = msg },
                         onBranch = { onBranchFromMessage(msg.id) },
                         onDelete = { deleteTarget = msg },
@@ -973,9 +1005,14 @@ private fun StarterGridCard(
 private fun UserMessageBlock(
     mode: ConversationMode,
     msg: ChatMessage,
-    isDecayed: Boolean,
+    isImageDecayed: Boolean,
+    isFileDecayed: Boolean,
+    effectiveLimitTokens: Int,
     isStreaming: Boolean,
     attachmentPathResolver: (String) -> File,
+    attachmentsById: Map<String, ChatAttachmentMeta>,
+    onOpenFilePreview: (ChatAttachmentMeta) -> Unit,
+    onOpenImagePreview: (File, String) -> Unit,
     onEdit: () -> Unit,
     onBranch: () -> Unit,
     onDelete: () -> Unit,
@@ -1009,8 +1046,13 @@ private fun UserMessageBlock(
                 ) {
                     UserMessageBody(
                         msg = msg,
-                        isDecayed = isDecayed,
+                        isImageDecayed = isImageDecayed,
+                        isFileDecayed = isFileDecayed,
+                        effectiveLimitTokens = effectiveLimitTokens,
                         attachmentPathResolver = attachmentPathResolver,
+                        attachmentsById = attachmentsById,
+                        onOpenFilePreview = onOpenFilePreview,
+                        onOpenImagePreview = onOpenImagePreview,
                         fontSizeSp = 14f,
                         lineHeightSp = 21f,
                     )
@@ -1041,8 +1083,13 @@ private fun UserMessageBlock(
                 ) {
                     UserMessageBody(
                         msg = msg,
-                        isDecayed = isDecayed,
+                        isImageDecayed = isImageDecayed,
+                        isFileDecayed = isFileDecayed,
+                        effectiveLimitTokens = effectiveLimitTokens,
                         attachmentPathResolver = attachmentPathResolver,
+                        attachmentsById = attachmentsById,
+                        onOpenFilePreview = onOpenFilePreview,
+                        onOpenImagePreview = onOpenImagePreview,
                         fontSizeSp = 14.5f,
                         lineHeightSp = 22f,
                     )
@@ -1076,8 +1123,13 @@ private fun UserMessageBlock(
                 ) {
                     UserMessageBody(
                         msg = msg,
-                        isDecayed = isDecayed,
+                        isImageDecayed = isImageDecayed,
+                        isFileDecayed = isFileDecayed,
+                        effectiveLimitTokens = effectiveLimitTokens,
                         attachmentPathResolver = attachmentPathResolver,
+                        attachmentsById = attachmentsById,
+                        onOpenFilePreview = onOpenFilePreview,
+                        onOpenImagePreview = onOpenImagePreview,
                         fontSizeSp = 15f,
                         lineHeightSp = 22.5f,
                     )
@@ -1096,8 +1148,13 @@ private fun UserMessageBlock(
 @Composable
 private fun UserMessageBody(
     msg: ChatMessage,
-    isDecayed: Boolean,
+    isImageDecayed: Boolean,
+    isFileDecayed: Boolean,
+    effectiveLimitTokens: Int,
     attachmentPathResolver: (String) -> File,
+    attachmentsById: Map<String, ChatAttachmentMeta>,
+    onOpenFilePreview: (ChatAttachmentMeta) -> Unit,
+    onOpenImagePreview: (File, String) -> Unit,
     fontSizeSp: Float,
     lineHeightSp: Float,
 ) {
@@ -1124,23 +1181,50 @@ private fun UserMessageBody(
         GuBadge(tagText, variant = GuBadgeVariant.BLUE)
     }
     if (msg.attachmentIds.isNotEmpty()) {
-        Row(
-            modifier = Modifier.horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            msg.attachmentIds.forEach { id ->
-                Image(
-                    painter = rememberAsyncImagePainter(attachmentPathResolver(id)),
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .size(66.dp)
-                        .clip(RoundedCornerShape(12.dp)),
-                )
+        val imageIds = msg.attachmentIds.filter { id -> attachmentsById[id]?.isFile != true }
+        val fileMetas = msg.attachmentIds.mapNotNull { id -> attachmentsById[id]?.takeIf { it.isFile } }
+        val turnBudget = remember(effectiveLimitTokens) {
+            FileContextBudgeter.computeFileTurnBudget(effectiveLimitTokens, 2000)
+        }
+
+        if (imageIds.isNotEmpty()) {
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                imageIds.forEach { id ->
+                    val meta = attachmentsById[id]
+                    val file = meta?.localPath?.takeIf { it.isNotBlank() }?.let { File(it) } ?: attachmentPathResolver(id)
+                    Image(
+                        painter = rememberAsyncImagePainter(file),
+                        contentDescription = meta?.fileName?.ifBlank { null },
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .size(68.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable { onOpenImagePreview(file, meta?.fileName.orEmpty()) },
+                    )
+                }
+            }
+            if (isImageDecayed) {
+                GuBadge(strings.chat.decayedImageNotice, variant = GuBadgeVariant.AMBER)
             }
         }
-        if (isDecayed) {
-            GuBadge(strings.chat.decayedImageNotice, variant = GuBadgeVariant.AMBER)
+
+        if (fileMetas.isNotEmpty()) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                fileMetas.forEach { meta ->
+                    FileAttachmentCard(
+                        meta = meta,
+                        isSmartGuarded = meta.estimatedTokens > turnBudget,
+                        onClick = { onOpenFilePreview(meta) },
+                        compact = true,
+                    )
+                }
+            }
+            if (isFileDecayed) {
+                GuBadge(strings.attachments.decayedFileNotice, variant = GuBadgeVariant.AMBER)
+            }
         }
     }
     if (msg.rpDiceRoll != null) {

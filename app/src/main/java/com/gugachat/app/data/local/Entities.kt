@@ -4,11 +4,13 @@ import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
 import com.gugachat.app.data.api.AppJson
+import com.gugachat.app.domain.chat.AttachmentKind
 import com.gugachat.app.domain.chat.ChatAttachmentMeta
 import com.gugachat.app.domain.chat.ChatConversation
 import com.gugachat.app.domain.chat.ChatMessage
 import com.gugachat.app.domain.chat.ChatParams
 import com.gugachat.app.domain.chat.ConversationMode
+import com.gugachat.app.domain.chat.FileInjectMode
 import com.gugachat.app.domain.chat.MemoryCategory
 import com.gugachat.app.domain.chat.MemoryEpisode
 import com.gugachat.app.domain.chat.MemoryLedgerItem
@@ -206,6 +208,15 @@ data class AttachmentMetaEntity(
     val sizeBytes: Long,
     val localPath: String,
     val createdAt: Long,
+    val kind: String = "image",
+    val fileName: String = "",
+    val textPath: String = "",
+    val charCount: Int = 0,
+    val estimatedTokens: Int = 0,
+    val pageCount: Int = 0,
+    val previewSnippet: String = "",
+    val extractionNote: String = "",
+    val injectMode: String = "auto",
 )
 
 private inline fun <reified T> decodeOrDefault(raw: String?, fallback: T): T {
@@ -514,4 +525,13 @@ fun AttachmentMetaEntity.toDomain(): ChatAttachmentMeta = ChatAttachmentMeta(
     height = height,
     sizeBytes = sizeBytes,
     localPath = localPath,
+    kind = AttachmentKind.entries.firstOrNull { it.name.equals(kind, ignoreCase = true) } ?: AttachmentKind.image,
+    fileName = fileName,
+    textPath = textPath,
+    charCount = charCount,
+    estimatedTokens = estimatedTokens,
+    pageCount = pageCount,
+    previewSnippet = previewSnippet,
+    extractionNote = extractionNote,
+    injectMode = FileInjectMode.entries.firstOrNull { it.name.equals(injectMode, ignoreCase = true) } ?: FileInjectMode.auto,
 )

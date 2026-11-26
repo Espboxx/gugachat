@@ -14,8 +14,8 @@ android {
         applicationId = "com.gugachat.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 7
-        versionName = "0.3.4"
+        versionCode = 8
+        versionName = "0.3.5"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -93,6 +93,7 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.coil.compose)
+    implementation(libs.pdfbox.android)
 
     debugImplementation(libs.androidx.compose.ui.tooling)
 

@@ -69,6 +69,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.gugachat.app.AppContainer
+import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.i18n.AppStrings
 import com.gugachat.app.core.i18n.LocalAppStrings
 import com.gugachat.app.core.i18n.fmt
@@ -812,8 +813,10 @@ fun ExternalImportSheet(
                                         ConversationMode.chat -> strings.novel.filterChat
                                     }
                                     val regexCount = item.conversation.rp?.regexScripts?.size ?: 0
+                                    val memoryCount = item.memoryLedger.size + item.memoryEpisodes.size
                                     val hasBadges = item.hasReasoning ||
                                         item.loreEntries.isNotEmpty() ||
+                                        memoryCount > 0 ||
                                         regexCount > 0 ||
                                         item.novelChapters.size > 1 ||
                                         (effectiveMode == ConversationMode.novel && item.novelChapters.isNotEmpty())
@@ -882,6 +885,14 @@ fun ExternalImportSheet(
                                                         if (item.loreEntries.isNotEmpty()) {
                                                             GuBadge(strings.chat.importHasLore.fmt("count" to item.loreEntries.size), variant = GuBadgeVariant.BLUE)
                                                         }
+                                                        if (memoryCount > 0) {
+                                                            val memLabel = if (strings.language == AppLanguage.ZH) {
+                                                                "记忆 $memoryCount"
+                                                            } else {
+                                                                "$memoryCount mem"
+                                                            }
+                                                            GuBadge(memLabel, variant = GuBadgeVariant.HONEY)
+                                                        }
                                                         if (regexCount > 0) {
                                                             GuBadge(strings.providers.importHasRegex.fmt("count" to regexCount), variant = GuBadgeVariant.EMERALD)
                                                         }
@@ -942,6 +953,19 @@ fun ExternalImportSheet(
                                     }
                                     if (toImport.isNotEmpty()) {
                                         val res = ExternalImportService.persistSelected(container.database, toImport)
+                                        val rpConvIds = toImport
+                                            .filter { it.conversation.rp != null }
+                                            .map { it.conversation.id }
+                                        if (rpConvIds.isNotEmpty()) {
+                                            container.scope.launch {
+                                                ExternalImportService.cacheRemoteRpAvatars(
+                                                    appContext = container.appContext,
+                                                    httpClient = container.apiClient.standardClient,
+                                                    db = container.database,
+                                                    conversationIds = rpConvIds,
+                                                )
+                                            }
+                                        }
                                         val baseToast = strings.chat.importExternalSuccess.fmt(
                                             "convs" to res.conversationsCount,
                                             "msgs" to res.messagesCount,
@@ -997,6 +1021,7 @@ private fun sourceDisplayName(source: ExternalImportSource, strings: AppStrings)
     ExternalImportSource.CLAUDE -> "Claude"
     ExternalImportSource.RIKKAHUB -> "RikkaHub"
     ExternalImportSource.CHERRY_STUDIO -> "Cherry Studio"
+    ExternalImportSource.UU_GAME -> if (strings.language == AppLanguage.ZH) "UU 存档" else "UU Save"
     ExternalImportSource.GENERIC -> strings.chat.importSourceOther
 }
 

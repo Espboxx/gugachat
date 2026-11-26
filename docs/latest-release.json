@@ -1,14 +1,14 @@
 {
-  "tag_name": "v0.3.4",
-  "version_name": "0.3.4",
-  "name": "GuGuChat v0.3.4",
-  "published_at": "2026-11-26T10:21:30Z",
-  "html_url": "https://github.com/Espboxx/gugachat/releases/tag/v0.3.4",
+  "tag_name": "v0.3.5",
+  "version_name": "0.3.5",
+  "name": "GuGuChat v0.3.5",
+  "published_at": "2026-11-26T11:41:00Z",
+  "html_url": "https://github.com/Espboxx/gugachat/releases/tag/v0.3.5",
   "cn_download_page": "",
-  "apk_name": "GuGuChat-v0.3.4-android.apk",
-  "apk_size": 17935121,
-  "apk_sha256": "83f51495ad6788be3b3c4b96506b60ce4f181bc77d41e8803527b28ada8b2d1b",
-  "apk_url": "https://github.com/Espboxx/gugachat/releases/download/v0.3.4/GuGuChat-v0.3.4-android.apk",
+  "apk_name": "GuGuChat-v0.3.5-android.apk",
+  "apk_size": 26516335,
+  "apk_sha256": "532c6f4af93553ba05f5f91c584938a5a5a603e84ff8e5af6515715715ab9ab4",
+  "apk_url": "https://github.com/Espboxx/gugachat/releases/download/v0.3.5/GuGuChat-v0.3.5-android.apk",
   "cn_apk_urls": [],
   "cn_proxies": [
     "https://gh-proxy.com/",
@@ -17,5 +17,5 @@
     "https://gh-proxy.org/",
     "https://ghfast.top/"
   ],
-  "body": "## GuGuChat v0.3.4\n\n### 重点新特性与优化\n\n#### 1. 全量 JSON / 归档导入升级（全面对标 RikkaHub）\n- **酒馆与 RikkaHub 资产**：角色卡解析全链路空安全加固，彻底修复 Chub 含显式 `null` 字段卡片崩溃；新增 `.charx` / `.byaf` ZIP 角色卡（含内嵌头像）、旧版无 `spec` V1 卡片与 `depth_prompt`；新增独立导入 **RikkaHub `ExportData`（世界书 / 模式注入）**、**SillyTavern 聊天预设（`prompt_order` 顺序与内嵌正则）**、**Tavern Helper 世界书 / 下划线正则脚本**、**Quick Replies** 及整包 `.zip`。\n- **多平台 API 供应商导入**：「我的 → 自定义 API 通道」新增「导入」入口，支持粘贴 **RikkaHub `ai-provider:v1:` 分享串**，或导入 **RikkaHub / Cherry Studio / Chatbox Backup v2** 备份与通用 JSON，预览勾选后自动去重入库。\n- **Chatbox Backup v2 & 通用对话 JSON**：完整支持 Chatbox Backup v2 `.zip`（多分支变体、星标置顶、思考链分离与 API 供应商同步），新增 **ShareGPT** 与宽松通用对话 JSON 兜底，并加固 GuGuChat 本地备份 BOM 与格式校验。\n- **文游台 / 小说工坊快捷入口**：文游台「世界书」新增「导入世界书/预设」、「前端美化」新增「导入正则 JSON」，小说工坊「世界书」新增直接导入。\n\n#### 2. 国内加速更新通道 & SHA-256 完整性校验\n- 新增「自动 / 国内加速 / GitHub」三档更新渠道，内置多节点镜像自动故障转移与流式 SHA-256 校验，下载与检查更新更稳更快。\n\n#### 3. 三模式独立界面与全局缩放\n- 拆分对话 / 小说 / 文游三套独立全屏背景与精简单行输入栏，新增全局界面缩放、文游剧场升级与模型上下文设置。"
+  "body": "## GuGuChat v0.3.5\n\n### 重点新特性与升级\n\n#### 1. 完整兼容 UU 互动文游存档（`uu-game-save`）\n- **文游一键接管续玩**：支持在「导入外部对话 / 剧本」及「玩文游 → 导入」中直接解析 UU 互动文游存档 JSON，完整还原全部主线剧情消息、当前待选剧情分支（开箱即可点击续玩）、主角人设、现金与具名属性、持有物品、进行中事件与快捷行动。\n- **人物立绘与内心独白**：完整还原人物关系网、NPC 内心评价（`opinion` → 秘密）、最新具名关系数值（羁绊/信任/亲密度等），导入后自动在后台静默拉取并缓存 NPC 远程立绘。\n- **长期记忆与世界书**：自动将 `sideEventFacts` 写入文游「记忆账本」、将主线阶段总结与支线编年史写入「剧情编年史」；物品详情、事件档案、NPC 微信私聊、朋友圈动态与社区论坛热帖自动整理为关键词触发的「世界书」条目，既省 Token 又精准回忆。\n- **聊天附件智能提炼**：直接通过输入框「上传文件」附加 UU 存档 JSON 时，自动剔除冗余地图 ID 与状态快照噪音，提炼为精简结构化 Markdown 喂给模型。\n\n#### 2. 多格式文件附件上传与智能上下文预算\n- **全格式文档直传**：对话 / 小说 / 文游输入框均新增「上传文件」与「拍照」入口，支持本地离线解析 **PDF（含扫描件识别提示）、DOCX、XLSX、PPTX、EPUB、HTML、JSON、Markdown 及各类代码与文本文件**。\n- **智能 Token 预算守卫**：内置文档注入模式切换（自动 / 按需检索 / 首尾摘要 / 全文）与附件预览抽屉，大文档不爆上下文，并支持多模态模型视觉能力校验提醒。"
 }

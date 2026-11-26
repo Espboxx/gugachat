@@ -70,6 +70,7 @@ import com.gugachat.app.domain.chat.ChatAttachmentMeta
 import com.gugachat.app.domain.chat.ChatMessage
 import com.gugachat.app.domain.chat.ContextWaterlineSummary
 import com.gugachat.app.domain.chat.ConversationMode
+import com.gugachat.app.domain.chat.FileInjectMode
 import com.gugachat.app.domain.chat.NovelChapter
 import com.gugachat.app.domain.chat.NovelConfig
 import com.gugachat.app.domain.chat.NovelInputKind
@@ -105,6 +106,8 @@ fun NovelWorkspaceScreen(
     supportsVision: Boolean,
     draftText: String,
     draftAttachments: List<ChatAttachmentMeta>,
+    attachmentsById: Map<String, ChatAttachmentMeta> = emptyMap(),
+    isImportingAttachment: Boolean = false,
     draftNovelKind: NovelInputKind,
     isStreaming: Boolean,
     streamingStatusHint: String?,
@@ -135,7 +138,11 @@ fun NovelWorkspaceScreen(
     onToggleReasoning: () -> Unit,
     onToggleMemory: () -> Unit,
     onPickImage: () -> Unit,
+    onTakePhoto: () -> Unit = {},
+    onPickFile: () -> Unit = {},
     onRemoveAttachment: (String) -> Unit,
+    onUpdateAttachmentInjectMode: (String, FileInjectMode) -> Unit = { _, _ -> },
+    onReadAttachmentText: (suspend (String) -> String?)? = null,
     onOpenRecallInspector: () -> Unit,
     onSend: () -> Unit,
     onStop: () -> Unit,
@@ -607,6 +614,8 @@ fun NovelWorkspaceScreen(
                     streamingStatusHint = streamingStatusHint,
                     isRefreshingChoices = isRefreshingChoices,
                     attachmentPathResolver = attachmentPathResolver,
+                    attachmentsById = attachmentsById,
+                    onReadAttachmentText = onReadAttachmentText,
                     onOpenModelSheet = onOpenModelSheet,
                     onStarterPrompt = onStarterPrompt,
                     onSelectNovelChoice = onSelectNovelChoice,
@@ -639,13 +648,20 @@ fun NovelWorkspaceScreen(
                     enableAutoMemory = memoryEnabled,
                     isStreaming = isStreaming,
                     supportsVision = supportsVision,
+                    isImportingAttachment = isImportingAttachment,
                     onDraftChange = onDraftChange,
                     onSelectNovelKind = onSelectNovelKind,
                     onSelectRpKind = {},
                     onToggleReasoning = onToggleReasoning,
                     onToggleMemory = onToggleMemory,
                     onPickImage = onPickImage,
+                    onTakePhoto = onTakePhoto,
+                    onPickFile = onPickFile,
                     onRemoveAttachment = onRemoveAttachment,
+                    onUpdateAttachmentInjectMode = onUpdateAttachmentInjectMode,
+                    onReadAttachmentText = onReadAttachmentText,
+                    onOpenModelSheet = onOpenModelSheet,
+                    onToast = onToast,
                     onOpenDiceDialog = {},
                     onClearDiceRoll = {},
                     onOpenRecallInspector = onOpenRecallInspector,
