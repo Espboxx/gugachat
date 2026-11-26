@@ -2,6 +2,7 @@ package com.gugachat.app.data.api
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
@@ -738,12 +739,56 @@ object AppUpdateService {
         }
     }
 
-    fun openDownloadPage(context: Context, url: String = RELEASES_PAGE_URL) {
+    fun openDownloadPage(context: Context, url: String = RELEASES_PAGE_URL): Boolean {
         val safeUrl = url.takeIf { it.startsWith("http://") || it.startsWith("https://") } ?: RELEASES_PAGE_URL
-        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(safeUrl)).apply {
+        val uri = Uri.parse(safeUrl)
+        val viewIntent = Intent(Intent.ACTION_VIEW, uri).apply {
+            addCategory(Intent.CATEGORY_BROWSABLE)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
-        runCatching { context.startActivity(intent) }
+
+        // Probe installed external web browsers via a generic HTTPS intent so non-browser
+        // deep-link handlers (e.g. GitHub app / in-app WebView wrappers) don't hijack the URL.
+        val pm = context.packageManager
+        val probe = Intent(Intent.ACTION_VIEW, Uri.parse("https://example.com")).apply {
+            addCategory(Intent.CATEGORY_BROWSABLE)
+        }
+        val browserPackages = runCatching {
+            pm.queryIntentActivities(probe, PackageManager.MATCH_DEFAULT_ONLY)
+                .mapNotNull { it.activityInfo?.packageName?.takeIf { pkg -> pkg.isNotBlank() && pkg != context.packageName } }
+                .distinct()
+        }.getOrDefault(emptyList())
+
+        val defaultBrowserPkg = runCatching {
+            pm.resolveActivity(probe, PackageManager.MATCH_DEFAULT_ONLY)
+                ?.activityInfo
+                ?.packageName
+                ?.takeIf { pkg -> pkg in browserPackages }
+        }.getOrNull()
+
+        // 1. If the user has an explicit default external browser, launch it directly.
+        if (defaultBrowserPkg != null) {
+            val direct = Intent(viewIntent).setPackage(defaultBrowserPkg)
+            if (runCatching { context.startActivity(direct) }.isSuccess) return true
+        }
+
+        // 2. If multiple external browsers are installed without a default, show an external browser chooser.
+        if (browserPackages.size > 1) {
+            val targets = browserPackages.map { pkg ->
+                Intent(viewIntent).setPackage(pkg)
+            }
+            val chooser = Intent.createChooser(targets.first(), null).apply {
+                putExtra(Intent.EXTRA_INITIAL_INTENTS, targets.drop(1).toTypedArray())
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            if (runCatching { context.startActivity(chooser) }.isSuccess) return true
+        } else if (browserPackages.size == 1) {
+            val single = Intent(viewIntent).setPackage(browserPackages.first())
+            if (runCatching { context.startActivity(single) }.isSuccess) return true
+        }
+
+        // 3. Generic fallback
+        return runCatching { context.startActivity(viewIntent) }.isSuccess
     }
 
     private fun JsonObject.str(key: String): String? =
