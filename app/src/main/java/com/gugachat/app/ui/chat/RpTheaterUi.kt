@@ -1159,6 +1159,12 @@ fun RpTheaterStageView(
     onFrontendSetFlag: (String, String) -> Unit = { _, _ -> },
     onFrontendAdjustAffinity: (String, Int) -> Unit = { _, _ -> },
     onToast: (String) -> Unit,
+    drawOwnBackdrop: Boolean = true,
+    showInternalTopBar: Boolean = true,
+    externalHideUi: Boolean? = null,
+    onExternalHideUiChange: ((Boolean) -> Unit)? = null,
+    externalShowHistory: Boolean? = null,
+    onExternalShowHistoryChange: ((Boolean) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val strings = LocalAppStrings.current
@@ -1185,8 +1191,19 @@ fun RpTheaterStageView(
     val latestAssistant = remember(activeMessages) { activeMessages.lastOrNull { it.role == "assistant" } }
     val latestVariant = latestAssistant?.activeVariant()
 
-    var hideUi by remember { mutableStateOf(false) }
-    var showHistorySheet by remember { mutableStateOf(false) }
+    var internalHideUi by remember { mutableStateOf(false) }
+    val hideUi = externalHideUi ?: internalHideUi
+    val setHideUi: (Boolean) -> Unit = { next ->
+        internalHideUi = next
+        onExternalHideUiChange?.invoke(next)
+    }
+
+    var internalShowHistory by remember { mutableStateOf(false) }
+    val showHistorySheet = externalShowHistory ?: internalShowHistory
+    val setShowHistorySheet: (Boolean) -> Unit = { next ->
+        internalShowHistory = next
+        onExternalShowHistoryChange?.invoke(next)
+    }
     var editBuffer by remember { mutableStateOf("") }
     var showEditDialog by remember { mutableStateOf(false) }
 
@@ -1243,7 +1260,7 @@ fun RpTheaterStageView(
     if (showEditDialog && latestAssistant != null) {
         AlertDialog(
             onDismissRequest = { showEditDialog = false },
-            containerColor = c.surfaceElevated,
+            containerColor = c.surfaceElevated.copy(alpha = 1f),
             title = { Text(strings.rp.editReplyTitle, color = c.ink, fontWeight = FontWeight.ExtraBold) },
             text = {
                 GuTextField(
@@ -1278,41 +1295,45 @@ fun RpTheaterStageView(
         TheaterHistoryLogSheet(
             rp = rp,
             messages = activeMessages,
-            onDismiss = { showHistorySheet = false },
+            onDismiss = { setShowHistorySheet(false) },
         )
     }
 
     Box(
         modifier = modifier
             .fillMaxSize()
-            .clickable(enabled = hideUi) { hideUi = false },
+            .clickable(enabled = hideUi && showInternalTopBar) { setHideUi(false) },
     ) {
         // 1. 3-Layer Scene Backdrop (Custom CG or Curated Atmosphere + Active Speaker Radial Spotlight + Reading Vignette)
-        TheaterStageBackdrop(
-            rp = rp,
-            stageAccent = stageAccent,
-            activeSlot = activeSpeakerSlot,
-            backdropDim = theme.backdropDim,
-            dimForReading = !hideUi,
-            modifier = Modifier.fillMaxSize(),
-        )
-
-        // 2. Immersive CG Appreciation Mode: Show UI Floating Pill Only
-        AnimatedVisibility(
-            visible = hideUi,
-            enter = fadeIn(),
-            exit = fadeOut(),
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(12.dp),
-        ) {
-            StageGlassPill(
-                label = strings.rp.theaterShowUi,
-                icon = Icons.Default.Visibility,
-                accent = true,
-                accentColor = stageAccent,
-                onClick = { hideUi = false },
+        if (drawOwnBackdrop) {
+            TheaterStageBackdrop(
+                rp = rp,
+                stageAccent = stageAccent,
+                activeSlot = activeSpeakerSlot,
+                backdropDim = theme.backdropDim,
+                dimForReading = !hideUi,
+                modifier = Modifier.fillMaxSize(),
             )
+        }
+
+        // 2. Immersive CG Appreciation Mode: Show UI Floating Pill Only (when stage owns its chrome)
+        if (showInternalTopBar) {
+            AnimatedVisibility(
+                visible = hideUi,
+                enter = fadeIn(),
+                exit = fadeOut(),
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(12.dp),
+            ) {
+                StageGlassPill(
+                    label = strings.rp.theaterShowUi,
+                    icon = Icons.Default.Visibility,
+                    accent = true,
+                    accentColor = stageAccent,
+                    onClick = { setHideUi(false) },
+                )
+            }
         }
 
         // 3. Full Interactive Chengguang Stage Chrome (avoid AnimatedVisibility graphicsLayer wrapper so transparent WebView paints immediately on cold start)
@@ -1320,18 +1341,20 @@ fun RpTheaterStageView(
             val hasCustomStatusWidget = theme.showCustomStatusWidget && theme.customStatusHtml.isNotBlank()
             CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
             Column(modifier = Modifier.fillMaxSize()) {
-                // Top Stage Bar (with 1-tap Frontend Customizer button)
-                TheaterTopStageBar(
-                    rp = rp,
-                    isZh = isZh,
-                    stageAccent = stageAccent,
-                    hideSecondaryEnvRow = hasCustomStatusWidget,
-                    onExitTheater = onExitTheater,
-                    onOpenHistory = { showHistorySheet = true },
-                    onOpenFrontendEditor = onOpenFrontendEditor,
-                    onHideUi = { hideUi = true },
-                    onOpenStudio = onOpenStudio,
-                )
+                // Top Stage Bar (skipped when RpWorkspaceScreen renders unified full-bleed HUD)
+                if (showInternalTopBar) {
+                    TheaterTopStageBar(
+                        rp = rp,
+                        isZh = isZh,
+                        stageAccent = stageAccent,
+                        hideSecondaryEnvRow = hasCustomStatusWidget,
+                        onExitTheater = onExitTheater,
+                        onOpenHistory = { setShowHistorySheet(true) },
+                        onOpenFrontendEditor = onOpenFrontendEditor,
+                        onHideUi = { setHideUi(true) },
+                        onOpenStudio = onOpenStudio,
+                    )
+                }
 
                 // Floating AI Art Generation Status Chip
                 AnimatedVisibility(
@@ -2456,7 +2479,7 @@ private fun StageCastMiniStrip(
 }
 
 @Composable
-private fun TheaterStageBackdrop(
+internal fun TheaterStageBackdrop(
     rp: RpConfig,
     stageAccent: Color,
     activeSlot: String?,
@@ -2595,7 +2618,7 @@ private fun resolveStageAtmosphere(rp: RpConfig): StageAtmosphere {
 
 private val ACT_PREFIX_RE = Regex("^(第.{1,3}幕|Act\\s+\\d+)", RegexOption.IGNORE_CASE)
 
-private fun formatRpActHeader(actNumber: Int, chapterTitle: String, isZh: Boolean): String {
+internal fun formatRpActHeader(actNumber: Int, chapterTitle: String, isZh: Boolean): String {
     val cleanTitle = chapterTitle.trim()
     if (cleanTitle.isNotEmpty() && ACT_PREFIX_RE.containsMatchIn(cleanTitle)) {
         return cleanTitle
@@ -2767,7 +2790,7 @@ private fun TheaterTopStageBar(
 }
 
 @Composable
-private fun StageGlassPill(
+internal fun StageGlassPill(
     label: String,
     icon: ImageVector,
     onClick: () -> Unit,
@@ -2804,7 +2827,7 @@ private fun StageGlassPill(
 }
 
 @Composable
-private fun StageGlassIconPill(
+internal fun StageGlassIconPill(
     icon: ImageVector,
     contentDescription: String,
     onClick: () -> Unit,
@@ -3238,13 +3261,15 @@ private fun TheaterHistoryLogSheet(
     onDismiss: () -> Unit,
 ) {
     val strings = LocalAppStrings.current
-    val c = LocalAppTheme.current.colors
+    val appTheme = LocalAppTheme.current
+    val c = appTheme.colors
+    val sheetBg = if (c.page.alpha < 0.95f) Color(0xFF0E1320) else c.page
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = c.page,
+        containerColor = sheetBg,
         modifier = Modifier.statusBarsPadding(),
     ) {
         Column(
@@ -3341,7 +3366,10 @@ private fun TheaterHistoryLogSheet(
                             if (!isUser) {
                                 val deltas = msg.activeVariant()?.rpDeltas.orEmpty()
                                 if (rp.visualTheme.showTurnDeltas && deltas.isNotEmpty()) {
-                                    RpTurnDeltaStrip(deltas = deltas)
+                                    RpTurnDeltaStrip(
+                                        deltas = deltas,
+                                        onDarkStage = appTheme.isDark,
+                                    )
                                 }
                                 msg.activeVariant()?.rpEndingUnlocked?.let { ending ->
                                     RpEndingCard(ending = ending)

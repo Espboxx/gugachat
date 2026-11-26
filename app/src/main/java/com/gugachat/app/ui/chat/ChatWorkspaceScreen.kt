@@ -4,20 +4,9 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.Add
@@ -26,47 +15,37 @@ import androidx.compose.material.icons.filled.Bookmarks
 import androidx.compose.material.icons.filled.Casino
 import androidx.compose.material.icons.filled.FolderZip
 import androidx.compose.material.icons.filled.Forum
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Theaters
 import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalNavigationDrawer
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.gugachat.app.AppContainer
 import com.gugachat.app.core.i18n.LocalAppStrings
-import com.gugachat.app.core.theme.GuAwningHeader
 import com.gugachat.app.core.theme.GuPopupMenu
 import com.gugachat.app.core.theme.LocalAppTheme
-import com.gugachat.app.domain.chat.ChatParams
 import com.gugachat.app.domain.chat.ConversationMode
 import com.gugachat.app.domain.chat.TimelineReconciler
 import kotlinx.coroutines.launch
@@ -79,8 +58,7 @@ fun ChatWorkspaceScreen(
 ) {
     val state by viewModel.ui.collectAsStateWithLifecycle()
     val strings = LocalAppStrings.current
-    val theme = LocalAppTheme.current
-    val c = theme.colors
+    val outerTheme = LocalAppTheme.current
     val ctx = LocalContext.current
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -110,13 +88,24 @@ fun ChatWorkspaceScreen(
         if (uri != null) viewModel.addAttachmentUri(uri)
     }
 
+    val attachmentPathResolver = remember(ctx) {
+        { id: String -> File(ctx.filesDir, "chat_attachments/$id.jpg") }
+    }
+
     val activeModel = state.models.firstOrNull { it.id == state.selectedModelId }
     val activeConv = state.activeConversation
     val mode = activeConv?.mode ?: ConversationMode.chat
+    val activeGroupName = state.groups.firstOrNull { it.id == state.selectedGroupId }?.name.orEmpty()
+    val novelConfig = activeConv?.novel
+    val rpConfig = activeConv?.rp
+    val isFreeQuota = activeModel?.free_quota != null
+    val enableReasoning = activeConv?.params?.enableReasoning ?: true
+    val enableAutoMemory = activeConv?.params?.enableAutoMemory ?: true
+    val supportsVision = activeModel?.supports_vision ?: true
 
-    if (state.pureReadingMode && activeConv?.novel != null) {
+    if (state.pureReadingMode && novelConfig != null) {
         PureReadingOverlay(
-            novel = activeConv.novel,
+            novel = novelConfig,
             chapters = state.novelChapters,
             messages = state.messages,
             paper = state.readerPaper,
@@ -231,9 +220,9 @@ fun ChatWorkspaceScreen(
         )
     }
 
-    if (showNovelStudio && activeConv?.novel != null) {
+    if (showNovelStudio && novelConfig != null) {
         NovelStudioSheet(
-            novel = activeConv.novel,
+            novel = novelConfig,
             chapters = state.novelChapters,
             lore = state.novelLore,
             messages = state.messages,
@@ -296,15 +285,15 @@ fun ChatWorkspaceScreen(
 
     if (showDiceDialog) {
         RpDiceDialog(
-            rp = activeConv?.rp,
+            rp = rpConfig,
             onDismiss = { showDiceDialog = false },
             onRoll = viewModel::rollDiceForDraft,
         )
     }
 
-    if (showRpStudio && activeConv?.rp != null) {
+    if (showRpStudio && rpConfig != null) {
         RpStudioSheet(
-            rp = activeConv.rp,
+            rp = rpConfig,
             lore = state.novelLore,
             triggeredLoreIds = state.waterline.triggeredLoreIds.toSet(),
             saveSlots = state.rpSaveSlots,
@@ -371,6 +360,298 @@ fun ChatWorkspaceScreen(
         )
     }
 
+    val moreMenu: @Composable () -> Unit = {
+        CompositionLocalProvider(LocalAppTheme provides outerTheme) {
+            val mc = outerTheme.colors
+            GuPopupMenu(
+                expanded = showMoreMenu,
+                onDismissRequest = { showMoreMenu = false },
+            ) {
+                if (mode == ConversationMode.rp && rpConfig != null) {
+                    DropdownMenuItem(
+                        leadingIcon = {
+                            Icon(
+                                Icons.Default.Add,
+                                contentDescription = null,
+                                tint = mc.primary,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        },
+                        text = {
+                            Text(
+                                strings.chat.newChat,
+                                color = mc.ink,
+                                fontSize = 13.5.sp,
+                                fontWeight = FontWeight.Medium,
+                            )
+                        },
+                        onClick = {
+                            showMoreMenu = false
+                            showNewSessionSheet = true
+                        },
+                    )
+                    HorizontalDivider(
+                        thickness = outerTheme.borderWidth,
+                        color = mc.border.copy(alpha = 0.75f),
+                    )
+                }
+                DropdownMenuItem(
+                    leadingIcon = {
+                        Icon(
+                            Icons.Default.Psychology,
+                            contentDescription = null,
+                            tint = mc.primary,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    },
+                    text = {
+                        Text(
+                            strings.chat.memoryTitle,
+                            color = mc.ink,
+                            fontSize = 13.5.sp,
+                            fontWeight = FontWeight.Medium,
+                        )
+                    },
+                    onClick = {
+                        showMoreMenu = false
+                        memorySheetInitialTab = 0
+                        showMemorySheet = true
+                    },
+                )
+                DropdownMenuItem(
+                    leadingIcon = {
+                        Icon(
+                            Icons.Default.Tune,
+                            contentDescription = null,
+                            tint = mc.primary,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    },
+                    text = {
+                        Text(
+                            strings.chat.paramsTitle,
+                            color = mc.ink,
+                            fontSize = 13.5.sp,
+                            fontWeight = FontWeight.Medium,
+                        )
+                    },
+                    onClick = {
+                        showMoreMenu = false
+                        showParamsSheet = true
+                    },
+                )
+                DropdownMenuItem(
+                    leadingIcon = {
+                        Icon(
+                            Icons.Default.Bookmarks,
+                            contentDescription = null,
+                            tint = if (state.waterline.exceedsModelWindow) mc.danger else mc.muted,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    },
+                    text = {
+                        Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                            Text(
+                                strings.chat.recallTitle,
+                                color = mc.ink,
+                                fontSize = 13.5.sp,
+                                fontWeight = FontWeight.Medium,
+                            )
+                            Text(
+                                text = "${state.waterline.percentage}% · ${state.waterline.usedTokens / 1000}K / ${state.waterline.effectiveLimitTokens / 1000}K",
+                                color = if (state.waterline.exceedsModelWindow) mc.danger else mc.muted,
+                                fontSize = 11.sp,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                    },
+                    onClick = {
+                        showMoreMenu = false
+                        memorySheetInitialTab = 3
+                        showMemorySheet = true
+                    },
+                )
+                HorizontalDivider(
+                    thickness = outerTheme.borderWidth,
+                    color = mc.border.copy(alpha = 0.75f),
+                )
+                DropdownMenuItem(
+                    leadingIcon = {
+                        Icon(
+                            Icons.Default.FolderZip,
+                            contentDescription = null,
+                            tint = mc.accent,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    },
+                    text = {
+                        Text(
+                            strings.chat.importExternalTitle,
+                            color = mc.ink,
+                            fontSize = 13.5.sp,
+                            fontWeight = FontWeight.Medium,
+                        )
+                    },
+                    onClick = {
+                        showMoreMenu = false
+                        showDeepSeekImport = true
+                    },
+                )
+                if (mode == ConversationMode.novel && novelConfig != null) {
+                    HorizontalDivider(
+                        thickness = outerTheme.borderWidth,
+                        color = mc.border.copy(alpha = 0.75f),
+                    )
+                    DropdownMenuItem(
+                        leadingIcon = {
+                            Icon(
+                                Icons.Default.Book,
+                                contentDescription = null,
+                                tint = mc.accent,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        },
+                        text = {
+                            Text(
+                                strings.novel.studioTitle,
+                                color = mc.ink,
+                                fontSize = 13.5.sp,
+                                fontWeight = FontWeight.Medium,
+                            )
+                        },
+                        onClick = {
+                            showMoreMenu = false
+                            novelStudioInitialTab = 0
+                            showNovelStudio = true
+                        },
+                    )
+                    DropdownMenuItem(
+                        leadingIcon = {
+                            Icon(
+                                Icons.AutoMirrored.Filled.MenuBook,
+                                contentDescription = null,
+                                tint = mc.primary,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        },
+                        text = {
+                            Text(
+                                strings.novel.pureReading,
+                                color = mc.ink,
+                                fontSize = 13.5.sp,
+                                fontWeight = FontWeight.Medium,
+                            )
+                        },
+                        onClick = {
+                            showMoreMenu = false
+                            viewModel.setPureReadingMode(true)
+                        },
+                    )
+                } else if (mode == ConversationMode.rp && rpConfig != null) {
+                    HorizontalDivider(
+                        thickness = outerTheme.borderWidth,
+                        color = mc.border.copy(alpha = 0.75f),
+                    )
+                    DropdownMenuItem(
+                        leadingIcon = {
+                            Icon(
+                                imageVector = if (rpConfig.theaterMode) Icons.Default.Forum else Icons.Default.Theaters,
+                                contentDescription = null,
+                                tint = mc.primary,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        },
+                        text = {
+                            Text(
+                                text = if (rpConfig.theaterMode) strings.rp.chatModeBtn else strings.rp.theaterModeBtn,
+                                color = mc.ink,
+                                fontSize = 13.5.sp,
+                                fontWeight = FontWeight.Medium,
+                            )
+                        },
+                        onClick = {
+                            showMoreMenu = false
+                            viewModel.toggleRpTheaterMode()
+                        },
+                    )
+                    DropdownMenuItem(
+                        leadingIcon = {
+                            Icon(
+                                Icons.Default.Casino,
+                                contentDescription = null,
+                                tint = mc.accent,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        },
+                        text = {
+                            Text(
+                                strings.rp.studioBtn,
+                                color = mc.ink,
+                                fontSize = 13.5.sp,
+                                fontWeight = FontWeight.Medium,
+                            )
+                        },
+                        onClick = {
+                            showMoreMenu = false
+                            rpStudioInitialTab = 0
+                            showRpStudio = true
+                        },
+                    )
+                    DropdownMenuItem(
+                        leadingIcon = {
+                            Icon(
+                                Icons.Default.Palette,
+                                contentDescription = null,
+                                tint = mc.primary,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        },
+                        text = {
+                            Text(
+                                strings.rp.frontendTab,
+                                color = mc.ink,
+                                fontSize = 13.5.sp,
+                                fontWeight = FontWeight.Medium,
+                            )
+                        },
+                        onClick = {
+                            showMoreMenu = false
+                            rpStudioInitialTab = 3
+                            showRpStudio = true
+                        },
+                    )
+                    DropdownMenuItem(
+                        leadingIcon = {
+                            Icon(
+                                Icons.Default.Save,
+                                contentDescription = null,
+                                tint = mc.primary,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        },
+                        text = {
+                            Text(
+                                strings.rp.quickSaveBtn,
+                                color = mc.ink,
+                                fontSize = 13.5.sp,
+                                fontWeight = FontWeight.Medium,
+                            )
+                        },
+                        onClick = {
+                            showMoreMenu = false
+                            viewModel.createRpSaveSlot(strings.rp.quickSaveBtn)
+                        },
+                    )
+                }
+            }
+        }
+    }
+
+    val onPickImage = {
+        imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+    }
+
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
@@ -386,463 +667,94 @@ fun ChatWorkspaceScreen(
             )
         },
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(c.page),
-        ) {
-            GuAwningHeader {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(46.dp)
-                        .padding(horizontal = 4.dp),
-                ) {
-                    IconButton(
-                        onClick = { scope.launch { drawerState.open() } },
-                        modifier = Modifier
-                            .align(Alignment.CenterStart)
-                            .size(38.dp),
-                    ) {
-                        Icon(
-                            Icons.Default.Menu,
-                            contentDescription = strings.chat.sessions,
-                            tint = c.ink,
-                            modifier = Modifier.size(20.dp),
-                        )
-                    }
-
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.Center)
-                            .padding(horizontal = 82.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        val hasModel = !state.selectedModelId.isNullOrBlank()
-                        val dotColor = when {
-                            activeModel?.free_quota != null -> c.success
-                            hasModel -> c.primary
-                            else -> c.muted.copy(alpha = 0.55f)
-                        }
-                        Surface(
-                            onClick = { showModelSheet = true },
-                            shape = RoundedCornerShape(999.dp),
-                            color = if (hasModel) c.surfaceSoft else c.surface,
-                            border = BorderStroke(
-                                width = theme.borderWidth,
-                                color = if (hasModel) c.border else c.outline.copy(alpha = 0.8f),
-                            ),
-                            modifier = Modifier.heightIn(min = 32.dp),
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(5.dp),
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(6.5.dp)
-                                        .clip(CircleShape)
-                                        .background(dotColor),
-                                )
-                                Text(
-                                    text = state.selectedModelId ?: strings.chat.selectModel,
-                                    color = if (hasModel) c.ink else c.muted,
-                                    fontSize = 12.5.sp,
-                                    fontWeight = if (hasModel) FontWeight.Bold else FontWeight.SemiBold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f, fill = false),
-                                )
-                                Icon(
-                                    Icons.Default.KeyboardArrowDown,
-                                    contentDescription = null,
-                                    tint = c.muted,
-                                    modifier = Modifier.size(15.dp),
-                                )
-                            }
-                        }
-                    }
-
-                    Row(
-                        modifier = Modifier.align(Alignment.CenterEnd),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        IconButton(
-                            onClick = { showNewSessionSheet = true },
-                            modifier = Modifier.size(38.dp),
-                        ) {
-                            Icon(
-                                Icons.Default.Add,
-                                contentDescription = strings.chat.newChat,
-                                tint = c.ink,
-                                modifier = Modifier.size(20.dp),
-                            )
-                        }
-
-                        Box {
-                            IconButton(
-                                onClick = { showMoreMenu = true },
-                                modifier = Modifier.size(38.dp),
-                            ) {
-                                Icon(
-                                    Icons.Default.MoreVert,
-                                    contentDescription = strings.chat.moreActions,
-                                    tint = c.ink,
-                                    modifier = Modifier.size(19.dp),
-                                )
-                            }
-                            GuPopupMenu(
-                                expanded = showMoreMenu,
-                                onDismissRequest = { showMoreMenu = false },
-                            ) {
-                                DropdownMenuItem(
-                                    leadingIcon = {
-                                        Icon(
-                                            Icons.Default.Psychology,
-                                            contentDescription = null,
-                                            tint = c.primary,
-                                            modifier = Modifier.size(18.dp),
-                                        )
-                                    },
-                                    text = {
-                                        Text(
-                                            strings.chat.memoryTitle,
-                                            color = c.ink,
-                                            fontSize = 13.5.sp,
-                                            fontWeight = FontWeight.Medium,
-                                        )
-                                    },
-                                    onClick = {
-                                        showMoreMenu = false
-                                        memorySheetInitialTab = 0
-                                        showMemorySheet = true
-                                    },
-                                )
-                                DropdownMenuItem(
-                                    leadingIcon = {
-                                        Icon(
-                                            Icons.Default.Tune,
-                                            contentDescription = null,
-                                            tint = c.primary,
-                                            modifier = Modifier.size(18.dp),
-                                        )
-                                    },
-                                    text = {
-                                        Text(
-                                            strings.chat.paramsTitle,
-                                            color = c.ink,
-                                            fontSize = 13.5.sp,
-                                            fontWeight = FontWeight.Medium,
-                                        )
-                                    },
-                                    onClick = {
-                                        showMoreMenu = false
-                                        showParamsSheet = true
-                                    },
-                                )
-                                DropdownMenuItem(
-                                    leadingIcon = {
-                                        Icon(
-                                            Icons.Default.Bookmarks,
-                                            contentDescription = null,
-                                            tint = if (state.waterline.exceedsModelWindow) c.danger else c.muted,
-                                            modifier = Modifier.size(18.dp),
-                                        )
-                                    },
-                                    text = {
-                                        Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                                            Text(
-                                                strings.chat.recallTitle,
-                                                color = c.ink,
-                                                fontSize = 13.5.sp,
-                                                fontWeight = FontWeight.Medium,
-                                            )
-                                            Text(
-                                                text = "${state.waterline.percentage}% · ${state.waterline.usedTokens / 1000}K / ${state.waterline.effectiveLimitTokens / 1000}K",
-                                                color = if (state.waterline.exceedsModelWindow) c.danger else c.muted,
-                                                fontSize = 11.sp,
-                                                fontFamily = FontFamily.Monospace,
-                                                fontWeight = FontWeight.SemiBold,
-                                            )
-                                        }
-                                    },
-                                    onClick = {
-                                        showMoreMenu = false
-                                        memorySheetInitialTab = 3
-                                        showMemorySheet = true
-                                    },
-                                )
-                                HorizontalDivider(
-                                    thickness = theme.borderWidth,
-                                    color = c.border.copy(alpha = 0.75f),
-                                )
-                                DropdownMenuItem(
-                                    leadingIcon = {
-                                        Icon(
-                                            Icons.Default.FolderZip,
-                                            contentDescription = null,
-                                            tint = c.accent,
-                                            modifier = Modifier.size(18.dp),
-                                        )
-                                    },
-                                    text = {
-                                        Text(
-                                            strings.chat.importExternalTitle,
-                                            color = c.ink,
-                                            fontSize = 13.5.sp,
-                                            fontWeight = FontWeight.Medium,
-                                        )
-                                    },
-                                    onClick = {
-                                        showMoreMenu = false
-                                        showDeepSeekImport = true
-                                    },
-                                )
-                                if (mode == ConversationMode.novel && activeConv?.novel != null) {
-                                    HorizontalDivider(
-                                        thickness = theme.borderWidth,
-                                        color = c.border.copy(alpha = 0.75f),
-                                    )
-                                    DropdownMenuItem(
-                                        leadingIcon = {
-                                            Icon(
-                                                Icons.Default.Book,
-                                                contentDescription = null,
-                                                tint = c.accent,
-                                                modifier = Modifier.size(18.dp),
-                                            )
-                                        },
-                                        text = {
-                                            Text(
-                                                strings.novel.studioTitle,
-                                                color = c.ink,
-                                                fontSize = 13.5.sp,
-                                                fontWeight = FontWeight.Medium,
-                                            )
-                                        },
-                                        onClick = {
-                                            showMoreMenu = false
-                                            novelStudioInitialTab = 0
-                                            showNovelStudio = true
-                                        },
-                                    )
-                                    DropdownMenuItem(
-                                        leadingIcon = {
-                                            Icon(
-                                                Icons.AutoMirrored.Filled.MenuBook,
-                                                contentDescription = null,
-                                                tint = c.primary,
-                                                modifier = Modifier.size(18.dp),
-                                            )
-                                        },
-                                        text = {
-                                            Text(
-                                                strings.novel.pureReading,
-                                                color = c.ink,
-                                                fontSize = 13.5.sp,
-                                                fontWeight = FontWeight.Medium,
-                                            )
-                                        },
-                                        onClick = {
-                                            showMoreMenu = false
-                                            viewModel.setPureReadingMode(true)
-                                        },
-                                    )
-                                } else if (mode == ConversationMode.rp && activeConv?.rp != null) {
-                                    HorizontalDivider(
-                                        thickness = theme.borderWidth,
-                                        color = c.border.copy(alpha = 0.75f),
-                                    )
-                                    DropdownMenuItem(
-                                        leadingIcon = {
-                                            Icon(
-                                                imageVector = if (activeConv.rp.theaterMode) Icons.Default.Forum else Icons.Default.Theaters,
-                                                contentDescription = null,
-                                                tint = c.primary,
-                                                modifier = Modifier.size(18.dp),
-                                            )
-                                        },
-                                        text = {
-                                            Text(
-                                                text = if (activeConv.rp.theaterMode) strings.rp.chatModeBtn else strings.rp.theaterModeBtn,
-                                                color = c.ink,
-                                                fontSize = 13.5.sp,
-                                                fontWeight = FontWeight.Medium,
-                                            )
-                                        },
-                                        onClick = {
-                                            showMoreMenu = false
-                                            viewModel.toggleRpTheaterMode()
-                                        },
-                                    )
-                                    DropdownMenuItem(
-                                        leadingIcon = {
-                                            Icon(
-                                                Icons.Default.Casino,
-                                                contentDescription = null,
-                                                tint = c.accent,
-                                                modifier = Modifier.size(18.dp),
-                                            )
-                                        },
-                                        text = {
-                                            Text(
-                                                strings.rp.studioBtn,
-                                                color = c.ink,
-                                                fontSize = 13.5.sp,
-                                                fontWeight = FontWeight.Medium,
-                                            )
-                                        },
-                                        onClick = {
-                                            showMoreMenu = false
-                                            rpStudioInitialTab = 0
-                                            showRpStudio = true
-                                        },
-                                    )
-                                    DropdownMenuItem(
-                                        leadingIcon = {
-                                            Icon(
-                                                Icons.Default.Palette,
-                                                contentDescription = null,
-                                                tint = c.primary,
-                                                modifier = Modifier.size(18.dp),
-                                            )
-                                        },
-                                        text = {
-                                            Text(
-                                                strings.rp.frontendTab,
-                                                color = c.ink,
-                                                fontSize = 13.5.sp,
-                                                fontWeight = FontWeight.Medium,
-                                            )
-                                        },
-                                        onClick = {
-                                            showMoreMenu = false
-                                            rpStudioInitialTab = 3
-                                            showRpStudio = true
-                                        },
-                                    )
-                                    DropdownMenuItem(
-                                        leadingIcon = {
-                                            Icon(
-                                                Icons.Default.Save,
-                                                contentDescription = null,
-                                                tint = c.primary,
-                                                modifier = Modifier.size(18.dp),
-                                            )
-                                        },
-                                        text = {
-                                            Text(
-                                                strings.rp.quickSaveBtn,
-                                                color = c.ink,
-                                                fontSize = 13.5.sp,
-                                                fontWeight = FontWeight.Medium,
-                                            )
-                                        },
-                                        onClick = {
-                                            showMoreMenu = false
-                                            viewModel.createRpSaveSlot(strings.rp.quickSaveBtn)
-                                        },
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (mode == ConversationMode.novel && activeConv?.novel != null) {
-                NovelStatusHudBar(
-                    novel = activeConv.novel,
+        when {
+            mode == ConversationMode.novel && novelConfig != null -> {
+                NovelWorkspaceScreen(
+                    novel = novelConfig,
                     chapters = state.novelChapters,
-                    triggeredLoreCount = state.waterline.triggeredLoreIds.size,
-                    onOpenStudio = { tab ->
+                    messages = state.messages,
+                    waterline = state.waterline,
+                    readerPaper = state.readerPaper,
+                    selectedModelId = state.selectedModelId,
+                    activeModelFreeQuota = isFreeQuota,
+                    selectedGroupLabel = activeGroupName,
+                    memoryEnabled = enableAutoMemory,
+                    enableReasoning = enableReasoning,
+                    supportsVision = supportsVision,
+                    draftText = state.draftText,
+                    draftAttachments = state.draftAttachments,
+                    draftNovelKind = state.draftNovelKind,
+                    isStreaming = state.isStreaming,
+                    streamingStatusHint = state.streamingStatusHint,
+                    isRefreshingChoices = state.isRefreshingChoices,
+                    attachmentPathResolver = attachmentPathResolver,
+                    onOpenDrawer = { scope.launch { drawerState.open() } },
+                    onOpenModelSheet = { showModelSheet = true },
+                    onNewSession = { showNewSessionSheet = true },
+                    onOpenMoreMenu = { showMoreMenu = true },
+                    moreMenuContent = moreMenu,
+                    onSelectPaper = { viewModel.updateReaderPrefs(paper = it) },
+                    onOpenNovelStudio = { tab ->
                         novelStudioInitialTab = tab
                         showNovelStudio = true
                     },
                     onEnterPureReading = { viewModel.setPureReadingMode(true) },
                     onFinishChapterAndAdvance = viewModel::finishActiveChapterAndAdvance,
                     onUpdateAuthorNote = { note -> viewModel.updateNovelConfig { it.copy(authorNote = note) } },
+                    onStarterPrompt = viewModel::applyStarterPrompt,
+                    onSelectNovelChoice = { viewModel.sendMessage(overrideText = it) },
+                    onRefreshNovelChoices = viewModel::refreshNovelChoices,
+                    onContinueNovel = { viewModel.continueLastAssistantMessage() },
+                    onRegenerate = viewModel::regenerateFromAssistant,
+                    onEditUserMessage = viewModel::editAndResendUserMessage,
+                    onEditAssistantMessage = viewModel::editAssistantMessage,
+                    onBranchFromMessage = viewModel::branchFromMessage,
+                    onDeleteMessage = viewModel::deleteMessage,
+                    onSwitchVariant = viewModel::switchMessageVariant,
+                    onDraftChange = viewModel::updateDraftText,
+                    onSelectNovelKind = viewModel::setDraftNovelKind,
+                    onToggleReasoning = viewModel::toggleActiveReasoning,
+                    onToggleMemory = viewModel::toggleActiveMemory,
+                    onPickImage = onPickImage,
+                    onRemoveAttachment = viewModel::removeDraftAttachment,
+                    onOpenRecallInspector = {
+                        memorySheetInitialTab = 3
+                        showMemorySheet = true
+                    },
+                    onSend = { viewModel.sendMessage() },
+                    onStop = viewModel::stopStreaming,
+                    onToast = { container.toastController.show(it) },
                 )
-            } else if (mode == ConversationMode.rp && activeConv?.rp != null && !activeConv.rp.theaterMode) {
-                if (activeConv.rp.enableStateHud) {
-                    RpStatusHudBar(
-                        rp = activeConv.rp,
-                        triggeredLoreCount = state.waterline.triggeredLoreIds.size,
-                        onToggleTheaterMode = viewModel::toggleRpTheaterMode,
-                        onQuickSave = { viewModel.createRpSaveSlot(strings.rp.quickSaveBtn) },
-                        onOpenStudio = {
-                            rpStudioInitialTab = 0
-                            showRpStudio = true
-                        },
-                        onUpdateAuthorNote = { note -> viewModel.updateRpConfig { it.copy(authorNote = note) } },
-                    )
-                }
-                if (state.isGeneratingRpArt) {
-                    Surface(
-                        color = c.primarySoft,
-                        border = BorderStroke(theme.borderWidth, c.primary.copy(alpha = 0.3f)),
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 4.dp),
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(14.dp),
-                                strokeWidth = 2.dp,
-                                color = c.primary,
-                            )
-                            Text(
-                                text = "✨ ${state.rpArtStatusLabel.ifBlank { strings.rp.aiGeneratingArt }}",
-                                color = c.primarySoftInk,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                    }
-                }
-                val rpTheme = activeConv.rp.visualTheme
-                if (rpTheme.showCustomStatusWidget && rpTheme.customStatusHtml.isNotBlank()) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 6.dp),
-                    ) {
-                        RpHtmlCardSandbox(
-                            htmlFragment = rpTheme.customStatusHtml,
-                            rp = activeConv.rp,
-                            customCss = rpTheme.customCss,
-                            minHeightDp = 52,
-                            maxHeightDp = 220,
-                            onFrontendAction = viewModel::handleRpFrontendAction,
-                            onFrontendFillInput = viewModel::handleRpFrontendFillInput,
-                            onFrontendSetFlag = viewModel::handleRpFrontendSetFlag,
-                            onFrontendAdjustAffinity = viewModel::handleRpFrontendAdjustAffinity,
-                        )
-                    }
-                }
             }
 
-            val activeGroupName = state.groups.firstOrNull { it.id == state.selectedGroupId }?.name.orEmpty()
-            if (mode == ConversationMode.rp && activeConv?.rp != null && activeConv.rp.theaterMode) {
-                RpTheaterStageView(
-                    rp = activeConv.rp,
+            mode == ConversationMode.rp && rpConfig != null -> {
+                RpWorkspaceScreen(
+                    rp = rpConfig,
                     messages = state.messages,
+                    waterline = state.waterline,
+                    selectedModelId = state.selectedModelId,
+                    activeModelFreeQuota = isFreeQuota,
+                    selectedGroupLabel = activeGroupName,
+                    memoryEnabled = enableAutoMemory,
+                    enableReasoning = enableReasoning,
+                    supportsVision = supportsVision,
+                    draftText = state.draftText,
+                    draftAttachments = state.draftAttachments,
+                    draftRpKind = state.draftRpKind,
+                    draftDiceRoll = state.draftDiceRoll,
                     isStreaming = state.isStreaming,
                     streamingStatusHint = state.streamingStatusHint,
                     isRefreshingChoices = state.isRefreshingChoices,
-                    hasModelSelected = !state.selectedModelId.isNullOrBlank(),
+                    isImpersonating = state.isImpersonating,
                     isGeneratingArt = state.isGeneratingRpArt,
                     artStatusLabel = state.rpArtStatusLabel,
+                    attachmentPathResolver = attachmentPathResolver,
+                    onOpenDrawer = { scope.launch { drawerState.open() } },
                     onOpenModelSheet = { showModelSheet = true },
-                    onExitTheater = { viewModel.setRpTheaterMode(false) },
+                    onOpenMoreMenu = { showMoreMenu = true },
+                    moreMenuContent = moreMenu,
+                    onToggleTheaterMode = viewModel::toggleRpTheaterMode,
+                    onSetTheaterMode = viewModel::setRpTheaterMode,
                     onOpenStudio = {
                         rpStudioInitialTab = 0
                         showRpStudio = true
@@ -852,99 +764,81 @@ fun ChatWorkspaceScreen(
                         showRpStudio = true
                     },
                     onQuickSave = { viewModel.createRpSaveSlot(strings.rp.quickSaveBtn) },
+                    onUpdateAuthorNote = { note -> viewModel.updateRpConfig { it.copy(authorNote = note) } },
                     onStarterPrompt = viewModel::applyStarterPrompt,
                     onSelectChoice = { choice, bypassLock -> viewModel.triggerRpChoice(choice, bypassLock) },
                     onRefreshChoices = viewModel::refreshRpChoices,
                     onContinue = { viewModel.continueLastAssistantMessage() },
-                    onRegenerate = viewModel::regenerateFromAssistant,
-                    onEditAssistantMessage = viewModel::editAssistantMessage,
-                    onSwitchVariant = viewModel::switchMessageVariant,
-                    onFrontendAction = viewModel::handleRpFrontendAction,
-                    onFrontendFillInput = viewModel::handleRpFrontendFillInput,
-                    onFrontendSetFlag = viewModel::handleRpFrontendSetFlag,
-                    onFrontendAdjustAffinity = viewModel::handleRpFrontendAdjustAffinity,
-                    onToast = { container.toastController.show(it) },
-                    modifier = Modifier.weight(1f),
-                )
-            } else {
-                ChatMessageList(
-                    mode = mode,
-                    messages = state.messages,
-                    waterline = state.waterline,
-                    hasModelSelected = !state.selectedModelId.isNullOrBlank(),
-                    selectedModelLabel = state.selectedModelId.orEmpty(),
-                    selectedGroupLabel = activeGroupName,
-                    memoryEnabled = activeConv?.params?.enableAutoMemory ?: true,
-                    rpConfig = activeConv?.rp,
-                    novelConfig = activeConv?.novel,
-                    novelChapters = state.novelChapters,
-                    isStreaming = state.isStreaming,
-                    streamingStatusHint = state.streamingStatusHint,
-                    isRefreshingChoices = state.isRefreshingChoices,
-                    attachmentPathResolver = { id -> File(ctx.filesDir, "chat_attachments/$id.jpg") },
-                    onOpenModelSheet = { showModelSheet = true },
-                    onStarterPrompt = viewModel::applyStarterPrompt,
-                    onSelectNovelChoice = { viewModel.sendMessage(overrideText = it) },
-                    onRefreshNovelChoices = viewModel::refreshNovelChoices,
-                    onContinueNovel = { viewModel.continueLastAssistantMessage() },
-                    onOpenNovelStudio = { tab ->
-                        novelStudioInitialTab = tab
-                        showNovelStudio = true
-                    },
-                    onSelectRpChoice = { choice, bypassLock -> viewModel.triggerRpChoice(choice, bypassLock) },
-                    onRefreshRpChoices = viewModel::refreshRpChoices,
-                    onContinueRp = { viewModel.continueLastAssistantMessage() },
                     onRegenerate = viewModel::regenerateFromAssistant,
                     onEditUserMessage = viewModel::editAndResendUserMessage,
                     onEditAssistantMessage = viewModel::editAssistantMessage,
                     onBranchFromMessage = viewModel::branchFromMessage,
                     onDeleteMessage = viewModel::deleteMessage,
                     onSwitchVariant = viewModel::switchMessageVariant,
-                    onToast = { container.toastController.show(it) },
                     onFrontendAction = viewModel::handleRpFrontendAction,
                     onFrontendFillInput = viewModel::handleRpFrontendFillInput,
                     onFrontendSetFlag = viewModel::handleRpFrontendSetFlag,
                     onFrontendAdjustAffinity = viewModel::handleRpFrontendAdjustAffinity,
-                    modifier = Modifier.weight(1f),
+                    onDraftChange = viewModel::updateDraftText,
+                    onSelectRpKind = viewModel::setDraftRpKind,
+                    onToggleReasoning = viewModel::toggleActiveReasoning,
+                    onToggleMemory = viewModel::toggleActiveMemory,
+                    onPickImage = onPickImage,
+                    onRemoveAttachment = viewModel::removeDraftAttachment,
+                    onOpenDiceDialog = { showDiceDialog = true },
+                    onClearDiceRoll = viewModel::clearDraftDiceRoll,
+                    onOpenRecallInspector = {
+                        memorySheetInitialTab = 3
+                        showMemorySheet = true
+                    },
+                    onImpersonate = viewModel::impersonatePlayerDraft,
+                    onSend = { viewModel.sendMessage() },
+                    onStop = viewModel::stopStreaming,
+                    onToast = { container.toastController.show(it) },
                 )
             }
 
-            ChatComposerBar(
-                mode = mode,
-                draftText = state.draftText,
-                draftAttachments = state.draftAttachments,
-                draftNovelKind = state.draftNovelKind,
-                draftRpKind = state.draftRpKind,
-                draftDiceRoll = state.draftDiceRoll,
-                waterline = state.waterline,
-                enableReasoning = activeConv?.params?.enableReasoning ?: true,
-                enableAutoMemory = activeConv?.params?.enableAutoMemory ?: true,
-                isStreaming = state.isStreaming,
-                supportsVision = activeModel?.supports_vision ?: true,
-                onDraftChange = viewModel::updateDraftText,
-                onSelectNovelKind = viewModel::setDraftNovelKind,
-                onSelectRpKind = viewModel::setDraftRpKind,
-                onToggleReasoning = viewModel::toggleActiveReasoning,
-                onToggleMemory = viewModel::toggleActiveMemory,
-                onPickImage = {
-                    imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-                },
-                onRemoveAttachment = viewModel::removeDraftAttachment,
-                onOpenDiceDialog = { showDiceDialog = true },
-                onClearDiceRoll = viewModel::clearDraftDiceRoll,
-                onOpenRecallInspector = { memorySheetInitialTab = 3; showMemorySheet = true },
-                onSend = { viewModel.sendMessage() },
-                onStop = viewModel::stopStreaming,
-                isImpersonating = state.isImpersonating,
-                onImpersonate = viewModel::impersonatePlayerDraft,
-                onContinueRp = { viewModel.continueLastAssistantMessage() },
-                onContinueNovel = { viewModel.continueLastAssistantMessage() },
-                onOpenNovelStudio = { tab ->
-                    novelStudioInitialTab = tab
-                    showNovelStudio = true
-                },
-                onEnterPureReading = { viewModel.setPureReadingMode(true) },
-            )
+            else -> {
+                StandardChatWorkspace(
+                    messages = state.messages,
+                    waterline = state.waterline,
+                    selectedModelId = state.selectedModelId,
+                    activeModelFreeQuota = isFreeQuota,
+                    selectedGroupLabel = activeGroupName,
+                    memoryEnabled = enableAutoMemory,
+                    enableReasoning = enableReasoning,
+                    supportsVision = supportsVision,
+                    draftText = state.draftText,
+                    draftAttachments = state.draftAttachments,
+                    isStreaming = state.isStreaming,
+                    streamingStatusHint = state.streamingStatusHint,
+                    attachmentPathResolver = attachmentPathResolver,
+                    onOpenDrawer = { scope.launch { drawerState.open() } },
+                    onOpenModelSheet = { showModelSheet = true },
+                    onNewSession = { showNewSessionSheet = true },
+                    onOpenMoreMenu = { showMoreMenu = true },
+                    moreMenuContent = moreMenu,
+                    onStarterPrompt = viewModel::applyStarterPrompt,
+                    onRegenerate = viewModel::regenerateFromAssistant,
+                    onEditUserMessage = viewModel::editAndResendUserMessage,
+                    onEditAssistantMessage = viewModel::editAssistantMessage,
+                    onBranchFromMessage = viewModel::branchFromMessage,
+                    onDeleteMessage = viewModel::deleteMessage,
+                    onSwitchVariant = viewModel::switchMessageVariant,
+                    onDraftChange = viewModel::updateDraftText,
+                    onToggleReasoning = viewModel::toggleActiveReasoning,
+                    onToggleMemory = viewModel::toggleActiveMemory,
+                    onPickImage = onPickImage,
+                    onRemoveAttachment = viewModel::removeDraftAttachment,
+                    onOpenRecallInspector = {
+                        memorySheetInitialTab = 3
+                        showMemorySheet = true
+                    },
+                    onSend = { viewModel.sendMessage() },
+                    onStop = viewModel::stopStreaming,
+                    onToast = { container.toastController.show(it) },
+                )
+            }
         }
     }
 }

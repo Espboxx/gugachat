@@ -162,8 +162,6 @@ fun NovelStatusHudBar(
     val activeCh = chapters.firstOrNull { it.id == novel.activeChapterId } ?: chapters.lastOrNull()
     val hud = if (novel.enableStatusHud) novel.currentStatus else null
     var expanded by remember(novel.title, novel.activeChapterId) { mutableStateOf(false) }
-    var editingNote by remember(novel.title, novel.activeChapterId) { mutableStateOf(false) }
-    var noteDraft by remember(novel.authorNote) { mutableStateOf(novel.authorNote) }
     var showFinishDialog by remember { mutableStateOf(false) }
 
     if (showFinishDialog && activeCh != null) {
@@ -182,7 +180,6 @@ fun NovelStatusHudBar(
 
     val chapterWords = activeCh?.wordCount ?: 0
     val targetWords = novel.targetWordsPerChapter.coerceAtLeast(500)
-    val totalBookWords = remember(chapters) { chapters.sumOf { it.wordCount } }
     val progressRatio = (chapterWords.toFloat() / targetWords.toFloat()).coerceIn(0f, 1f)
     val progressLabel = if (isZh) "$chapterWords / $targetWords 字" else "$chapterWords / ${targetWords}w"
     val summarySub = buildString {
@@ -200,7 +197,7 @@ fun NovelStatusHudBar(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(c.surface),
+            .background(c.awning),
     ) {
         Row(
             modifier = Modifier
@@ -313,235 +310,282 @@ fun NovelStatusHudBar(
         )
 
         AnimatedVisibility(visible = expanded) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = c.surfaceSoft,
-                    border = BorderStroke(theme.borderWidth, c.border),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
-                        verticalArrangement = Arrangement.spacedBy(7.dp),
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            Text(
-                                text = "《${novel.title}》",
-                                color = c.ink,
-                                fontSize = 13.5.sp,
-                                fontWeight = FontWeight.ExtraBold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f, fill = false),
-                            )
-                            if (novel.genre.isNotBlank()) {
-                                GuBadge(novel.genre.substringBefore(" /"), variant = GuBadgeVariant.HONEY)
-                            }
-                            GuBadge(
-                                text = if (isZh) "全书 $totalBookWords 字" else "Total ${totalBookWords}w",
-                                variant = GuBadgeVariant.BLUE,
-                            )
-                        }
-
-                        // Chapter progress
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            LinearProgressIndicator(
-                                progress = { progressRatio },
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(5.dp)
-                                    .clip(RoundedCornerShape(999.dp)),
-                                color = if (progressRatio >= 1f) c.success else c.primary,
-                                trackColor = c.border.copy(alpha = 0.45f),
-                            )
-                            Text(
-                                text = progressLabel,
-                                color = c.muted,
-                                fontSize = 11.sp,
-                                fontFamily = FontFamily.Monospace,
-                                fontWeight = FontWeight.SemiBold,
-                            )
-                        }
-
-                        if (!activeCh?.outline.isNullOrBlank()) {
-                            Text(
-                                text = "${strings.novel.chapterOutline}：${activeCh!!.outline}",
-                                color = c.muted,
-                                fontSize = 11.5.sp,
-                                lineHeight = 16.5.sp,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-
-                        if (hud != null) {
-                            val chips = buildList {
-                                if (hud.location.isNotBlank()) add("📍 ${hud.location}")
-                                if (hud.time.isNotBlank()) add("🕒 ${hud.time}")
-                                if (hud.mood.isNotBlank()) add("🎭 ${hud.mood}")
-                                if (hud.conflict.isNotBlank()) add("⚡ ${hud.conflict}")
-                            }
-                            if (chips.isNotEmpty()) {
-                                FlowRow(
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                    verticalArrangement = Arrangement.spacedBy(5.dp),
-                                ) {
-                                    chips.forEach { tag ->
-                                        GuBadge(tag, variant = GuBadgeVariant.NEUTRAL)
-                                    }
-                                }
-                            }
-                            if (hud.present.isNotEmpty()) {
-                                Text(
-                                    text = "👥 ${strings.novel.hudPresent}：${hud.present.joinToString("、")}",
-                                    color = c.ink,
-                                    fontSize = 11.5.sp,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            }
-                            if (hud.foreshadows.isNotEmpty()) {
-                                Text(
-                                    text = "🧵 ${if (isZh) "伏笔" else "Clues"}：${hud.foreshadows.joinToString(" · ")}",
-                                    color = c.primarySoftInk,
-                                    fontSize = 11.5.sp,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            }
-                        }
-
-                        // Quick inline Author Note editor
-                        if (editingNote) {
-                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                GuTextField(
-                                    value = noteDraft,
-                                    onValueChange = { noteDraft = it },
-                                    placeholder = strings.novel.notePlaceholder,
-                                    singleLine = false,
-                                    minLines = 2,
-                                    maxLines = 3,
-                                )
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.End,
-                                ) {
-                                    TextButton(onClick = { editingNote = false; noteDraft = novel.authorNote }) {
-                                        Text(strings.common.cancel, fontSize = 11.5.sp, color = c.muted)
-                                    }
-                                    GuButton(
-                                        onClick = {
-                                            onUpdateAuthorNote(noteDraft.trim())
-                                            editingNote = false
-                                        },
-                                        compact = true,
-                                    ) {
-                                        Text(strings.common.save, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
-                                    }
-                                }
-                            }
-                        } else {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(c.surface)
-                                    .border(theme.borderWidth, c.border.copy(alpha = 0.7f), RoundedCornerShape(8.dp))
-                                    .clickable { noteDraft = novel.authorNote; editingNote = true }
-                                    .padding(horizontal = 9.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            ) {
-                                Icon(Icons.Default.Edit, contentDescription = null, tint = c.accent, modifier = Modifier.size(13.dp))
-                                Text(
-                                    text = if (novel.authorNote.isNotBlank()) {
-                                        "${strings.novel.noteShort}：${novel.authorNote}"
-                                    } else {
-                                        if (isZh) "点击添加作者导演备注（每轮自动注入）…" else "Tap to add Author Director Note…"
-                                    },
-                                    color = if (novel.authorNote.isNotBlank()) c.ink else c.muted,
-                                    fontSize = 11.5.sp,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f),
-                                )
-                            }
-                        }
-
-                        if (triggeredLoreCount > 0) {
-                            Surface(
-                                onClick = { onOpenStudio(1) },
-                                shape = RoundedCornerShape(999.dp),
-                                color = c.successBg,
-                                border = BorderStroke(theme.borderWidth, c.success.copy(alpha = 0.4f)),
-                            ) {
-                                Text(
-                                    text = if (isZh) "✦ 本轮命中 $triggeredLoreCount 条世界书设定（点此管理）" else "✦ $triggeredLoreCount Worldbook entries active",
-                                    color = c.success,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
-                                )
-                            }
-                        }
-                    }
-                }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(7.dp),
-                ) {
-                    GuButton(
-                        onClick = onEnterPureReading,
-                        compact = true,
-                        variant = GuButtonVariant.SUBTLE,
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = null, modifier = Modifier.size(14.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text(if (isZh) "纯净阅读" else "Reader", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
-                    }
-                    GuButton(
-                        onClick = { showFinishDialog = true },
-                        enabled = activeCh != null,
-                        compact = true,
-                        variant = GuButtonVariant.SUBTLE,
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(14.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text(if (isZh) "完结切章" else "Next Ch.", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
-                    }
-                    GuButton(
-                        onClick = { onOpenStudio(0) },
-                        compact = true,
-                        variant = GuButtonVariant.HONEY,
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        Icon(Icons.Default.Book, contentDescription = null, modifier = Modifier.size(14.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text(strings.novel.studioBtn, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
-                    }
-                }
-            }
+            NovelChapterQuickDrawerContent(
+                novel = novel,
+                chapters = chapters,
+                activeCh = activeCh,
+                triggeredLoreCount = triggeredLoreCount,
+                onOpenStudio = onOpenStudio,
+                onEnterPureReading = onEnterPureReading,
+                onRequestFinishChapter = { showFinishDialog = true },
+                onUpdateAuthorNote = onUpdateAuthorNote,
+            )
         }
         HorizontalDivider(
             thickness = theme.borderWidth,
             color = c.border.copy(alpha = 0.85f),
         )
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+internal fun NovelChapterQuickDrawerContent(
+    novel: NovelConfig,
+    chapters: List<NovelChapter>,
+    activeCh: NovelChapter?,
+    triggeredLoreCount: Int,
+    onOpenStudio: (Int) -> Unit,
+    onEnterPureReading: () -> Unit,
+    onRequestFinishChapter: () -> Unit,
+    onUpdateAuthorNote: (String) -> Unit,
+    onEditAuthorNoteClick: (() -> Unit)? = null,
+    modifier: Modifier = Modifier,
+) {
+    val strings = LocalAppStrings.current
+    val theme = LocalAppTheme.current
+    val c = theme.colors
+    val isZh = strings.language == AppLanguage.ZH
+    val hud = if (novel.enableStatusHud) novel.currentStatus else null
+    var editingNote by remember(novel.title, novel.activeChapterId) { mutableStateOf(false) }
+    var noteDraft by remember(novel.authorNote) { mutableStateOf(novel.authorNote) }
+
+    val chapterWords = activeCh?.wordCount ?: 0
+    val targetWords = novel.targetWordsPerChapter.coerceAtLeast(500)
+    val totalBookWords = remember(chapters) { chapters.sumOf { it.wordCount } }
+    val progressRatio = (chapterWords.toFloat() / targetWords.toFloat()).coerceIn(0f, 1f)
+    val progressLabel = if (isZh) "$chapterWords / $targetWords 字" else "$chapterWords / ${targetWords}w"
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = c.surfaceSoft,
+            border = BorderStroke(theme.borderWidth, c.border),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(7.dp),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        text = "《${novel.title}》",
+                        color = c.ink,
+                        fontSize = 13.5.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    if (novel.genre.isNotBlank()) {
+                        GuBadge(novel.genre.substringBefore(" /"), variant = GuBadgeVariant.HONEY)
+                    }
+                    GuBadge(
+                        text = if (isZh) "全书 $totalBookWords 字" else "Total ${totalBookWords}w",
+                        variant = GuBadgeVariant.BLUE,
+                    )
+                }
+
+                // Chapter progress
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    LinearProgressIndicator(
+                        progress = { progressRatio },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(5.dp)
+                            .clip(RoundedCornerShape(999.dp)),
+                        color = if (progressRatio >= 1f) c.success else c.accent,
+                        trackColor = c.border.copy(alpha = 0.45f),
+                    )
+                    Text(
+                        text = progressLabel,
+                        color = c.muted,
+                        fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+
+                if (!activeCh?.outline.isNullOrBlank()) {
+                    Text(
+                        text = "${strings.novel.chapterOutline}：${activeCh!!.outline}",
+                        color = c.muted,
+                        fontSize = 11.5.sp,
+                        lineHeight = 16.5.sp,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+
+                if (hud != null) {
+                    val chips = buildList {
+                        if (hud.location.isNotBlank()) add("📍 ${hud.location}")
+                        if (hud.time.isNotBlank()) add("🕒 ${hud.time}")
+                        if (hud.mood.isNotBlank()) add("🎭 ${hud.mood}")
+                        if (hud.conflict.isNotBlank()) add("⚡ ${hud.conflict}")
+                    }
+                    if (chips.isNotEmpty()) {
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(5.dp),
+                        ) {
+                            chips.forEach { tag ->
+                                GuBadge(tag, variant = GuBadgeVariant.NEUTRAL)
+                            }
+                        }
+                    }
+                    if (hud.present.isNotEmpty()) {
+                        Text(
+                            text = "👥 ${strings.novel.hudPresent}：${hud.present.joinToString("、")}",
+                            color = c.ink,
+                            fontSize = 11.5.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    if (hud.foreshadows.isNotEmpty()) {
+                        Text(
+                            text = "🧵 ${if (isZh) "伏笔" else "Clues"}：${hud.foreshadows.joinToString(" · ")}",
+                            color = c.primarySoftInk,
+                            fontSize = 11.5.sp,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+
+                // Quick Author Director Note editor (inline or delegated dialog)
+                if (editingNote && onEditAuthorNoteClick == null) {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        GuTextField(
+                            value = noteDraft,
+                            onValueChange = { noteDraft = it },
+                            placeholder = strings.novel.notePlaceholder,
+                            singleLine = false,
+                            minLines = 2,
+                            maxLines = 3,
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End,
+                        ) {
+                            TextButton(onClick = { editingNote = false; noteDraft = novel.authorNote }) {
+                                Text(strings.common.cancel, fontSize = 11.5.sp, color = c.muted)
+                            }
+                            GuButton(
+                                onClick = {
+                                    onUpdateAuthorNote(noteDraft.trim())
+                                    editingNote = false
+                                },
+                                compact = true,
+                            ) {
+                                Text(strings.common.save, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                } else {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(c.surface)
+                            .border(theme.borderWidth, c.border.copy(alpha = 0.7f), RoundedCornerShape(8.dp))
+                            .clickable {
+                                if (onEditAuthorNoteClick != null) {
+                                    onEditAuthorNoteClick()
+                                } else {
+                                    noteDraft = novel.authorNote
+                                    editingNote = true
+                                }
+                            }
+                            .padding(horizontal = 9.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Icon(Icons.Default.Edit, contentDescription = null, tint = c.accent, modifier = Modifier.size(13.dp))
+                        Text(
+                            text = if (novel.authorNote.isNotBlank()) {
+                                "${strings.novel.noteShort}：${novel.authorNote}"
+                            } else {
+                                if (isZh) "点击添加作者导演备注（每轮自动注入）…" else "Tap to add Author Director Note…"
+                            },
+                            color = if (novel.authorNote.isNotBlank()) c.ink else c.muted,
+                            fontSize = 11.5.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
+
+                if (triggeredLoreCount > 0) {
+                    Surface(
+                        onClick = { onOpenStudio(1) },
+                        shape = RoundedCornerShape(999.dp),
+                        color = c.successBg,
+                        border = BorderStroke(theme.borderWidth, c.success.copy(alpha = 0.4f)),
+                    ) {
+                        Text(
+                            text = if (isZh) "✦ 本轮命中 $triggeredLoreCount 条世界书设定（点此管理）" else "✦ $triggeredLoreCount Worldbook entries active",
+                            color = c.success,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+                        )
+                    }
+                }
+            }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
+        ) {
+            GuButton(
+                onClick = onEnterPureReading,
+                compact = true,
+                variant = GuButtonVariant.SUBTLE,
+                modifier = Modifier.weight(1f),
+            ) {
+                Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = null, modifier = Modifier.size(14.dp))
+                Spacer(Modifier.width(4.dp))
+                Text(if (isZh) "纯净阅读" else "Reader", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+            }
+            GuButton(
+                onClick = onRequestFinishChapter,
+                enabled = activeCh != null,
+                compact = true,
+                variant = GuButtonVariant.SUBTLE,
+                modifier = Modifier.weight(1f),
+            ) {
+                Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(14.dp))
+                Spacer(Modifier.width(4.dp))
+                Text(if (isZh) "完结切章" else "Next Ch.", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+            }
+            GuButton(
+                onClick = { onOpenStudio(0) },
+                compact = true,
+                variant = GuButtonVariant.HONEY,
+                modifier = Modifier.weight(1f),
+            ) {
+                Icon(Icons.Default.Book, contentDescription = null, modifier = Modifier.size(14.dp))
+                Spacer(Modifier.width(4.dp))
+                Text(strings.novel.studioBtn, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+            }
+        }
     }
 }
 

@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -111,6 +110,7 @@ fun ChatComposerBar(
     onContinueNovel: () -> Unit = {},
     onOpenNovelStudio: (Int) -> Unit = {},
     onEnterPureReading: () -> Unit = {},
+    modifier: Modifier = Modifier,
 ) {
     val strings = LocalAppStrings.current
     val theme = LocalAppTheme.current
@@ -123,12 +123,19 @@ fun ChatComposerBar(
         showToolsPanel = false
     }
 
+    val containerColor = if (theme.isDark) c.surfaceElevated else c.surface
+    val elevation = when {
+        containerColor.alpha < 0.99f -> 0.dp
+        theme.isDark -> 2.dp
+        else -> 3.dp
+    }
+
     Surface(
-        color = if (theme.isDark) c.surfaceElevated else c.surface,
-        shape = RoundedCornerShape(20.dp),
+        color = containerColor,
+        shape = RoundedCornerShape(24.dp),
         border = BorderStroke(theme.borderWidth, c.border),
-        shadowElevation = if (theme.isDark) 3.dp else 4.dp,
-        modifier = Modifier
+        shadowElevation = elevation,
+        modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 10.dp, vertical = 4.dp)
             .imePadding(),
@@ -136,349 +143,27 @@ fun ChatComposerBar(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 6.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+                .padding(horizontal = 8.dp, vertical = 5.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            if (draftAttachments.isNotEmpty()) {
-                Row(
-                    modifier = Modifier.horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    draftAttachments.forEach { att ->
-                        Box(modifier = Modifier.size(60.dp)) {
-                            Image(
-                                painter = rememberAsyncImagePainter(File(att.localPath)),
-                                contentDescription = null,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier
-                                    .size(54.dp)
-                                    .align(Alignment.BottomStart)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .border(theme.borderWidth, c.border, RoundedCornerShape(12.dp)),
-                            )
-                            Box(
-                                modifier = Modifier
-                                    .align(Alignment.TopEnd)
-                                    .size(28.dp)
-                                    .clip(CircleShape)
-                                    .clickable { onRemoveAttachment(att.id) },
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(20.dp)
-                                        .clip(CircleShape)
-                                        .background(c.danger),
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    Icon(
-                                        Icons.Default.Close,
-                                        contentDescription = strings.common.delete,
-                                        tint = Color.White,
-                                        modifier = Modifier.size(12.dp),
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (mode == ConversationMode.rp && draftDiceRoll != null) {
-                Row(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(999.dp))
-                        .background(c.tag)
-                        .border(theme.borderWidth, c.accent.copy(alpha = 0.45f), RoundedCornerShape(999.dp))
-                        .padding(start = 10.dp, end = 4.dp, top = 3.dp, bottom = 3.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    Text(
-                        text = "🎲 ${draftDiceRoll.skill ?: ""} ${draftDiceRoll.expression} = ${draftDiceRoll.total}".trim(),
-                        color = c.tagInk,
-                        fontSize = 11.5.sp,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    Box(
-                        modifier = Modifier
-                            .size(26.dp)
-                            .clip(CircleShape)
-                            .clickable(onClick = onClearDiceRoll),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            Icons.Default.Close,
-                            contentDescription = strings.common.clear,
-                            tint = c.tagInk,
-                            modifier = Modifier.size(14.dp),
-                        )
-                    }
-                }
-            }
-
-            val placeholder = when (mode) {
-                ConversationMode.novel -> strings.novel.composerPlaceholder
-                ConversationMode.rp -> strings.rp.composerPlaceholder
-                else -> strings.chat.composerPlaceholder
-            }
-
-            // Row 1: Compact full-width input area
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 32.dp)
-                    .padding(horizontal = 4.dp, vertical = 1.dp),
-                contentAlignment = Alignment.CenterStart,
-            ) {
-                if (draftText.isEmpty()) {
-                    Text(
-                        text = placeholder,
-                        color = c.muted,
-                        fontSize = 14.5.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                BasicTextField(
-                    value = draftText,
-                    onValueChange = onDraftChange,
-                    maxLines = 6,
-                    textStyle = TextStyle(
-                        color = c.ink,
-                        fontSize = 14.5.sp,
-                        lineHeight = 20.5.sp,
-                    ),
-                    cursorBrush = SolidColor(c.primary),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-
-            // Row 2: Compact balanced bottom toolbar
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(5.dp),
-            ) {
-                Box(modifier = Modifier.size(32.dp)) {
-                    Box(
-                        modifier = Modifier
-                            .size(32.dp)
-                            .clip(CircleShape)
-                            .background(if (showToolsPanel) c.primarySoft else c.surfaceSoft)
-                            .border(
-                                width = theme.borderWidth,
-                                color = if (showToolsPanel) c.primary.copy(alpha = 0.55f) else c.border,
-                                shape = CircleShape,
-                            )
-                            .clickable { showToolsPanel = !showToolsPanel },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            imageVector = if (showToolsPanel) Icons.Default.Close else Icons.Default.Add,
-                            contentDescription = strings.chat.composerTools,
-                            tint = if (showToolsPanel) c.primarySoftInk else c.muted,
-                            modifier = Modifier.size(17.dp),
-                        )
-                    }
-                    if (!showToolsPanel && waterline.exceedsModelWindow) {
-                        Box(
-                            modifier = Modifier
-                                .align(Alignment.TopEnd)
-                                .padding(1.dp)
-                                .size(7.dp)
-                                .clip(CircleShape)
-                                .background(c.danger),
-                        )
-                    }
-                }
-
-                if (mode == ConversationMode.novel || mode == ConversationMode.rp) {
-                    val isZh = strings.language == AppLanguage.ZH
-                    val novelBranchLabel = if (isZh) "分支" else "Branch"
-                    val activeKindLabel = if (mode == ConversationMode.novel) {
-                        when (draftNovelKind) {
-                            NovelInputKind.director -> strings.novel.inputDirector
-                            NovelInputKind.`continue` -> strings.novel.inputContinue
-                            NovelInputKind.branch -> novelBranchLabel
-                            NovelInputKind.dialogue -> strings.novel.inputDialogue
-                        }
-                    } else {
-                        when (draftRpKind) {
-                            RpInputKind.action -> strings.rp.inputAction
-                            RpInputKind.speech -> strings.rp.inputSay
-                            RpInputKind.thought -> strings.rp.inputThought
-                            RpInputKind.gm_command -> strings.rp.inputOoc
-                        }
-                    }
-                    val pillBg = if (mode == ConversationMode.novel) c.tag else c.primarySoft
-                    val pillFg = if (mode == ConversationMode.novel) c.tagInk else c.primarySoftInk
-                    val pillBorder = (if (mode == ConversationMode.novel) c.accent else c.primary).copy(alpha = 0.42f)
-
-                    Box {
-                        Row(
-                            modifier = Modifier
-                                .height(30.dp)
-                                .clip(RoundedCornerShape(999.dp))
-                                .background(pillBg)
-                                .border(theme.borderWidth, pillBorder, RoundedCornerShape(999.dp))
-                                .clickable { showKindMenu = true }
-                                .padding(horizontal = 9.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(2.dp),
-                        ) {
-                            Text(
-                                text = activeKindLabel,
-                                color = pillFg,
-                                fontSize = 11.5.sp,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1,
-                            )
-                            Icon(
-                                Icons.Default.KeyboardArrowDown,
-                                contentDescription = null,
-                                tint = pillFg,
-                                modifier = Modifier.size(14.dp),
-                            )
-                        }
-
-                        GuPopupMenu(
-                            expanded = showKindMenu,
-                            onDismissRequest = { showKindMenu = false },
-                        ) {
-                            if (mode == ConversationMode.novel) {
-                                listOf(
-                                    NovelInputKind.director to strings.novel.inputDirector,
-                                    NovelInputKind.`continue` to strings.novel.inputContinue,
-                                    NovelInputKind.branch to novelBranchLabel,
-                                    NovelInputKind.dialogue to strings.novel.inputDialogue,
-                                ).forEach { (kind, label) ->
-                                    val selected = draftNovelKind == kind
-                                    DropdownMenuItem(
-                                        text = {
-                                            Text(
-                                                text = label,
-                                                color = if (selected) c.accent else c.ink,
-                                                fontSize = 13.5.sp,
-                                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                                            )
-                                        },
-                                        trailingIcon = if (selected) {
-                                            { Icon(Icons.Default.Check, contentDescription = null, tint = c.accent, modifier = Modifier.size(16.dp)) }
-                                        } else null,
-                                        onClick = {
-                                            onSelectNovelKind(kind)
-                                            showKindMenu = false
-                                        },
-                                    )
-                                }
-                            } else {
-                                listOf(
-                                    RpInputKind.action to strings.rp.inputAction,
-                                    RpInputKind.speech to strings.rp.inputSay,
-                                    RpInputKind.thought to strings.rp.inputThought,
-                                    RpInputKind.gm_command to strings.rp.inputOoc,
-                                ).forEach { (kind, label) ->
-                                    val selected = draftRpKind == kind
-                                    DropdownMenuItem(
-                                        text = {
-                                            Text(
-                                                text = label,
-                                                color = if (selected) c.primarySoftInk else c.ink,
-                                                fontSize = 13.5.sp,
-                                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                                            )
-                                        },
-                                        trailingIcon = if (selected) {
-                                            { Icon(Icons.Default.Check, contentDescription = null, tint = c.primary, modifier = Modifier.size(16.dp)) }
-                                        } else null,
-                                        onClick = {
-                                            onSelectRpKind(kind)
-                                            showKindMenu = false
-                                        },
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Iconic DeepSeek DeepThink cobalt pill
-                DeepThinkTogglePill(
-                    label = strings.chat.deepThinkToggle,
-                    active = enableReasoning,
-                    onClick = onToggleReasoning,
-                )
-
-                if (mode == ConversationMode.chat) {
-                    ComposerChip(
-                        label = strings.chat.memoryShort,
-                        icon = Icons.Default.Bookmarks,
-                        active = enableAutoMemory,
-                        onClick = onToggleMemory,
-                    )
-                }
-
-                Spacer(Modifier.weight(1f))
-
-                if (isStreaming) {
-                    Box(
-                        modifier = Modifier
-                            .size(32.dp)
-                            .clip(CircleShape)
-                            .background(c.danger)
-                            .clickable(onClick = onStop),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            Icons.Default.Stop,
-                            contentDescription = strings.chat.stop,
-                            tint = Color.White,
-                            modifier = Modifier.size(16.dp),
-                        )
-                    }
-                } else {
-                    val canSend = draftText.isNotBlank() || draftAttachments.isNotEmpty()
-                    val sendBg by animateColorAsState(
-                        targetValue = if (canSend) c.primary else c.surfaceSoft,
-                        label = "composer_send_bg",
-                    )
-                    Box(
-                        modifier = Modifier
-                            .size(32.dp)
-                            .clip(CircleShape)
-                            .background(sendBg)
-                            .border(
-                                width = theme.borderWidth,
-                                color = if (canSend) c.primary else c.border,
-                                shape = CircleShape,
-                            )
-                            .clickable(enabled = canSend, onClick = onSend),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            Icons.Default.ArrowUpward,
-                            contentDescription = strings.chat.send,
-                            tint = if (canSend) Color.White else c.muted,
-                            modifier = Modifier.size(17.dp),
-                        )
-                    }
-                }
-            }
-
+            // Expandable tools drawer renders ABOVE the single input row when opened
             AnimatedVisibility(visible = showToolsPanel) {
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    HorizontalDivider(
-                        thickness = theme.borderWidth,
-                        color = c.border.copy(alpha = 0.7f),
-                    )
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
                     FlowRow(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(top = 8.dp),
+                            .padding(horizontal = 2.dp, vertical = 2.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
+                        DeepThinkTogglePill(
+                            label = strings.chat.deepThinkToggle,
+                            active = enableReasoning,
+                            onClick = onToggleReasoning,
+                        )
                         ComposerChip(
                             label = strings.chat.memoryShort,
                             icon = Icons.Default.Bookmarks,
@@ -614,6 +299,366 @@ fun ChatComposerBar(
                                 showToolsPanel = false
                                 onOpenRecallInspector()
                             },
+                        )
+                    }
+                    HorizontalDivider(
+                        thickness = theme.borderWidth,
+                        color = c.border.copy(alpha = 0.7f),
+                    )
+                }
+            }
+
+            if (draftAttachments.isNotEmpty()) {
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    draftAttachments.forEach { att ->
+                        Box(modifier = Modifier.size(60.dp)) {
+                            Image(
+                                painter = rememberAsyncImagePainter(File(att.localPath)),
+                                contentDescription = null,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .size(54.dp)
+                                    .align(Alignment.BottomStart)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .border(theme.borderWidth, c.border, RoundedCornerShape(12.dp)),
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .size(28.dp)
+                                    .clip(CircleShape)
+                                    .clickable { onRemoveAttachment(att.id) },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(20.dp)
+                                        .clip(CircleShape)
+                                        .background(c.danger),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Icon(
+                                        Icons.Default.Close,
+                                        contentDescription = strings.common.delete,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(12.dp),
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (mode == ConversationMode.rp && draftDiceRoll != null) {
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(c.tag)
+                        .border(theme.borderWidth, c.accent.copy(alpha = 0.45f), RoundedCornerShape(999.dp))
+                        .padding(start = 10.dp, end = 4.dp, top = 3.dp, bottom = 3.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Text(
+                        text = "🎲 ${draftDiceRoll.skill ?: ""} ${draftDiceRoll.expression} = ${draftDiceRoll.total}".trim(),
+                        color = c.tagInk,
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Box(
+                        modifier = Modifier
+                            .size(26.dp)
+                            .clip(CircleShape)
+                            .clickable(onClick = onClearDiceRoll),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = strings.common.clear,
+                            tint = c.tagInk,
+                            modifier = Modifier.size(14.dp),
+                        )
+                    }
+                }
+            }
+
+            val placeholder = when (mode) {
+                ConversationMode.novel -> strings.novel.composerPlaceholder
+                ConversationMode.rp -> strings.rp.composerPlaceholder
+                else -> strings.chat.composerPlaceholder
+            }
+
+            // Single-row compact composer (~46-48dp idle, grows upward cleanly up to 5 lines)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.Bottom,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                // Left: 32dp circle (+) tools trigger with status dot
+                Box(modifier = Modifier.size(32.dp)) {
+                    Box(
+                        modifier = Modifier
+                            .size(32.dp)
+                            .clip(CircleShape)
+                            .background(if (showToolsPanel) c.primarySoft else c.surfaceSoft)
+                            .border(
+                                width = theme.borderWidth,
+                                color = if (showToolsPanel) c.primary.copy(alpha = 0.55f) else c.border,
+                                shape = CircleShape,
+                            )
+                            .clickable { showToolsPanel = !showToolsPanel },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = if (showToolsPanel) Icons.Default.Close else Icons.Default.Add,
+                            contentDescription = strings.chat.composerTools,
+                            tint = if (showToolsPanel) c.primarySoftInk else c.muted,
+                            modifier = Modifier.size(17.dp),
+                        )
+                    }
+                    val dotColor = when {
+                        showToolsPanel -> null
+                        waterline.exceedsModelWindow -> c.danger
+                        draftDiceRoll != null -> c.warning
+                        else -> null
+                    }
+                    if (dotColor != null) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(1.dp)
+                                .size(7.dp)
+                                .clip(CircleShape)
+                                .background(dotColor),
+                        )
+                    }
+                }
+
+                // Novel / RP ultra-compact kind selector pill (28dp)
+                if (mode == ConversationMode.novel || mode == ConversationMode.rp) {
+                    val isZh = strings.language == AppLanguage.ZH
+                    val novelBranchLabel = if (isZh) "分支" else "Branch"
+                    val activeKindLabel = if (mode == ConversationMode.novel) {
+                        when (draftNovelKind) {
+                            NovelInputKind.director -> strings.novel.inputDirector
+                            NovelInputKind.`continue` -> strings.novel.inputContinue
+                            NovelInputKind.branch -> novelBranchLabel
+                            NovelInputKind.dialogue -> strings.novel.inputDialogue
+                        }
+                    } else {
+                        when (draftRpKind) {
+                            RpInputKind.action -> strings.rp.inputAction
+                            RpInputKind.speech -> strings.rp.inputSay
+                            RpInputKind.thought -> strings.rp.inputThought
+                            RpInputKind.gm_command -> strings.rp.inputOoc
+                        }
+                    }
+                    val pillBg = if (mode == ConversationMode.novel) c.tag else c.primarySoft
+                    val pillFg = if (mode == ConversationMode.novel) c.tagInk else c.primarySoftInk
+                    val pillBorder = (if (mode == ConversationMode.novel) c.accent else c.primary).copy(alpha = 0.42f)
+
+                    Box(
+                        modifier = Modifier.height(32.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .height(28.dp)
+                                .clip(RoundedCornerShape(999.dp))
+                                .background(pillBg)
+                                .border(theme.borderWidth, pillBorder, RoundedCornerShape(999.dp))
+                                .clickable { showKindMenu = true }
+                                .padding(horizontal = 7.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(1.dp),
+                        ) {
+                            Text(
+                                text = activeKindLabel,
+                                color = pillFg,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                            )
+                            Icon(
+                                Icons.Default.KeyboardArrowDown,
+                                contentDescription = null,
+                                tint = pillFg,
+                                modifier = Modifier.size(13.dp),
+                            )
+                        }
+
+                        GuPopupMenu(
+                            expanded = showKindMenu,
+                            onDismissRequest = { showKindMenu = false },
+                        ) {
+                            if (mode == ConversationMode.novel) {
+                                listOf(
+                                    NovelInputKind.director to strings.novel.inputDirector,
+                                    NovelInputKind.`continue` to strings.novel.inputContinue,
+                                    NovelInputKind.branch to novelBranchLabel,
+                                    NovelInputKind.dialogue to strings.novel.inputDialogue,
+                                ).forEach { (kind, label) ->
+                                    val selected = draftNovelKind == kind
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                text = label,
+                                                color = if (selected) c.accent else c.ink,
+                                                fontSize = 13.5.sp,
+                                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                            )
+                                        },
+                                        trailingIcon = if (selected) {
+                                            { Icon(Icons.Default.Check, contentDescription = null, tint = c.accent, modifier = Modifier.size(16.dp)) }
+                                        } else null,
+                                        onClick = {
+                                            onSelectNovelKind(kind)
+                                            showKindMenu = false
+                                        },
+                                    )
+                                }
+                            } else {
+                                listOf(
+                                    RpInputKind.action to strings.rp.inputAction,
+                                    RpInputKind.speech to strings.rp.inputSay,
+                                    RpInputKind.thought to strings.rp.inputThought,
+                                    RpInputKind.gm_command to strings.rp.inputOoc,
+                                ).forEach { (kind, label) ->
+                                    val selected = draftRpKind == kind
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                text = label,
+                                                color = if (selected) c.primarySoftInk else c.ink,
+                                                fontSize = 13.5.sp,
+                                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                            )
+                                        },
+                                        trailingIcon = if (selected) {
+                                            { Icon(Icons.Default.Check, contentDescription = null, tint = c.primary, modifier = Modifier.size(16.dp)) }
+                                        } else null,
+                                        onClick = {
+                                            onSelectRpKind(kind)
+                                            showKindMenu = false
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Center: vertically centered 1-line BasicTextField that expands cleanly up to 5 lines
+                BasicTextField(
+                    value = draftText,
+                    onValueChange = onDraftChange,
+                    maxLines = 5,
+                    textStyle = TextStyle(
+                        color = c.ink,
+                        fontSize = 14.sp,
+                        lineHeight = 19.5.sp,
+                    ),
+                    cursorBrush = SolidColor(c.primary),
+                    modifier = Modifier.weight(1f),
+                    decorationBox = { innerTextField ->
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 32.dp)
+                                .padding(horizontal = 2.dp, vertical = 4.dp),
+                            contentAlignment = Alignment.CenterStart,
+                        ) {
+                            if (draftText.isEmpty()) {
+                                Text(
+                                    text = placeholder,
+                                    color = c.muted,
+                                    fontSize = 14.sp,
+                                    lineHeight = 19.5.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            innerTextField()
+                        }
+                    },
+                )
+
+                // Right: 30dp compact DeepThink icon toggle
+                val thinkBg by animateColorAsState(
+                    targetValue = if (enableReasoning) c.primary else c.surfaceSoft,
+                    label = "composer_think_bg",
+                )
+                val thinkFg by animateColorAsState(
+                    targetValue = if (enableReasoning) Color.White else c.muted,
+                    label = "composer_think_fg",
+                )
+                Box(
+                    modifier = Modifier
+                        .padding(bottom = 1.dp)
+                        .size(30.dp)
+                        .clip(CircleShape)
+                        .background(thinkBg)
+                        .border(
+                            width = theme.borderWidth,
+                            color = if (enableReasoning) c.primary else c.border,
+                            shape = CircleShape,
+                        )
+                        .clickable(onClick = onToggleReasoning),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.AutoAwesome,
+                        contentDescription = strings.chat.deepThinkToggle,
+                        tint = thinkFg,
+                        modifier = Modifier.size(15.dp),
+                    )
+                }
+
+                // Right: 32dp Send / Stop button
+                if (isStreaming) {
+                    Box(
+                        modifier = Modifier
+                            .size(32.dp)
+                            .clip(CircleShape)
+                            .background(c.danger)
+                            .clickable(onClick = onStop),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            Icons.Default.Stop,
+                            contentDescription = strings.chat.stop,
+                            tint = Color.White,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                } else {
+                    val canSend = draftText.isNotBlank() || draftAttachments.isNotEmpty()
+                    val sendBg by animateColorAsState(
+                        targetValue = if (canSend) c.primary else c.surfaceSoft,
+                        label = "composer_send_bg",
+                    )
+                    Box(
+                        modifier = Modifier
+                            .size(32.dp)
+                            .clip(CircleShape)
+                            .background(sendBg)
+                            .border(
+                                width = theme.borderWidth,
+                                color = if (canSend) c.primary else c.border,
+                                shape = CircleShape,
+                            )
+                            .clickable(enabled = canSend, onClick = onSend),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            Icons.Default.ArrowUpward,
+                            contentDescription = strings.chat.send,
+                            tint = if (canSend) Color.White else c.muted,
+                            modifier = Modifier.size(17.dp),
                         )
                     }
                 }

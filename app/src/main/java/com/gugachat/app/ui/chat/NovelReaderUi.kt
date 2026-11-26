@@ -116,18 +116,6 @@ private sealed interface ReaderRowItem {
     ) : ReaderRowItem
 }
 
-private data class ReaderPaperTheme(
-    val bg: Color,
-    val surface: Color,
-    val chromeBg: Color,
-    val ink: Color,
-    val muted: Color,
-    val accent: Color,
-    val border: Color,
-    val codeBg: Color,
-    val codeHeaderBg: Color,
-)
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PureReadingOverlay(
@@ -149,60 +137,12 @@ fun PureReadingOverlay(
 ) {
     val strings = LocalAppStrings.current
     val isZh = strings.language == AppLanguage.ZH
-    val isNight = paper == "night"
+    val readerColors = remember(paper) { resolveNovelPaperTheme(paper) }
+    val isNight = readerColors.isNight
     var showChrome by remember { mutableStateOf(true) }
     var showTocSheet by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
-
-    val readerColors = remember(paper) {
-        when (paper) {
-            "parchment" -> ReaderPaperTheme(
-                bg = Color(0xFFF3E6C8),
-                surface = Color(0xFFEAD9B4),
-                chromeBg = Color(0xF2EFE1C0),
-                ink = Color(0xFF3A2818),
-                muted = Color(0xFF6F563E),
-                accent = Color(0xFFB45309),
-                border = Color(0xFFD2B888),
-                codeBg = Color(0xFFE6D4AC),
-                codeHeaderBg = Color(0xFFDDC797),
-            )
-            "sage" -> ReaderPaperTheme(
-                bg = Color(0xFFE7F0E6),
-                surface = Color(0xFFD8E6D7),
-                chromeBg = Color(0xF2E2ECE1),
-                ink = Color(0xFF1D2F23),
-                muted = Color(0xFF4F6B58),
-                accent = Color(0xFF2D6A4F),
-                border = Color(0xFFBDD2BC),
-                codeBg = Color(0xFFDCE9DB),
-                codeHeaderBg = Color(0xFFCCE0CB),
-            )
-            "night" -> ReaderPaperTheme(
-                bg = Color(0xFF0E121B),
-                surface = Color(0xFF171E2E),
-                chromeBg = Color(0xF2151B29),
-                ink = Color(0xFFE4E9F4),
-                muted = Color(0xFF8F9DB6),
-                accent = Color(0xFF5B7BF6),
-                border = Color(0xFF253047),
-                codeBg = Color(0xFF0A0D14),
-                codeHeaderBg = Color(0xFF141B29),
-            )
-            else -> ReaderPaperTheme(
-                bg = Color(0xFFFDFBF6),
-                surface = Color(0xFFF3EFE6),
-                chromeBg = Color(0xF2FAF7F0),
-                ink = Color(0xFF1F1C1B),
-                muted = Color(0xFF68625C),
-                accent = Color(0xFF4361EE),
-                border = Color(0xFFE3DDD1),
-                codeBg = Color(0xFFF2EEE6),
-                codeHeaderBg = Color(0xFFE7E1D5),
-            )
-        }
-    }
 
     val mdPalette = remember(readerColors) {
         MarkdownPalette(
@@ -682,7 +622,7 @@ fun PureReadingOverlay(
                             ReaderPaperSwatchPill(
                                 label = if (isZh) "奶油" else "Cream",
                                 swatchColor = Color(0xFFFDFBF6),
-                                selected = paper == "cream",
+                                selected = readerColors.id == "cream",
                                 palette = readerColors,
                                 onClick = { onPaperChange("cream") },
                                 modifier = Modifier.weight(1f),
@@ -690,7 +630,7 @@ fun PureReadingOverlay(
                             ReaderPaperSwatchPill(
                                 label = if (isZh) "羊皮" else "Warm",
                                 swatchColor = Color(0xFFF3E6C8),
-                                selected = paper == "parchment",
+                                selected = readerColors.id == "parchment",
                                 palette = readerColors,
                                 onClick = { onPaperChange("parchment") },
                                 modifier = Modifier.weight(1f),
@@ -698,7 +638,7 @@ fun PureReadingOverlay(
                             ReaderPaperSwatchPill(
                                 label = if (isZh) "护眼" else "Sage",
                                 swatchColor = Color(0xFFE7F0E6),
-                                selected = paper == "sage",
+                                selected = readerColors.id == "sage",
                                 palette = readerColors,
                                 onClick = { onPaperChange("sage") },
                                 modifier = Modifier.weight(1f),
@@ -706,7 +646,7 @@ fun PureReadingOverlay(
                             ReaderPaperSwatchPill(
                                 label = if (isZh) "夜蓝" else "Night",
                                 swatchColor = Color(0xFF141824),
-                                selected = paper == "night",
+                                selected = readerColors.id == "night",
                                 palette = readerColors,
                                 onClick = { onPaperChange("night") },
                                 modifier = Modifier.weight(1f),
@@ -927,7 +867,7 @@ private fun ReaderActionPill(
     label: String,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     highlighted: Boolean,
-    palette: ReaderPaperTheme,
+    palette: NovelPaperTheme,
     onClick: () -> Unit,
 ) {
     Surface(
@@ -964,7 +904,7 @@ private fun ReaderPaperSwatchPill(
     label: String,
     swatchColor: Color,
     selected: Boolean,
-    palette: ReaderPaperTheme,
+    palette: NovelPaperTheme,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -1020,7 +960,7 @@ private fun ReaderPaperSwatchPill(
 private fun ReaderChip(
     label: String,
     selected: Boolean,
-    palette: ReaderPaperTheme,
+    palette: NovelPaperTheme,
     onClick: () -> Unit,
 ) {
     val bg = if (selected) palette.accent else palette.surface
@@ -1049,7 +989,7 @@ private fun ReaderChip(
 @Composable
 private fun ReaderFontStepBtn(
     label: String,
-    palette: ReaderPaperTheme,
+    palette: NovelPaperTheme,
     onClick: () -> Unit,
 ) {
     Box(

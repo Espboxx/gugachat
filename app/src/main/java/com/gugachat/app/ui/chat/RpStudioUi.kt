@@ -414,6 +414,7 @@ fun RpStatusHudBar(
     onQuickSave: () -> Unit,
     onOpenStudio: () -> Unit,
     onUpdateAuthorNote: (String) -> Unit,
+    showHeaderActions: Boolean = true,
 ) {
     val strings = LocalAppStrings.current
     val theme = LocalAppTheme.current
@@ -450,115 +451,134 @@ fun RpStatusHudBar(
         if (leadNpc != null) {
             append(" · ♥${leadNpc.affinity}")
             if (!leadTierLabel.isNullOrBlank()) append(" $leadTierLabel")
-        } else {
+        }
+        if (leadNpc == null || rp.state.gold > 0) {
             append(" · 🪙${rp.state.gold}")
         }
         if (triggeredLoreCount > 0) {
             append(" · 📖$triggeredLoreCount")
+        }
+        if (rp.authorNote.isNotBlank()) {
+            append(" · 📝")
         }
     }
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(c.surface),
+            .background(c.awning),
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(min = 38.dp)
+                .heightIn(min = if (showHeaderActions) 38.dp else 30.dp)
                 .clickable { expanded = !expanded }
-                .padding(horizontal = 10.dp, vertical = 4.dp),
+                .padding(
+                    horizontal = 10.dp,
+                    vertical = if (showHeaderActions) 4.dp else 3.dp,
+                ),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(1.dp),
-            ) {
-                Text(
-                    text = headerLine,
-                    color = c.ink,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                if (!expanded) {
+            if (showHeaderActions) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(1.dp),
+                ) {
                     Text(
-                        text = compactStatusLine,
-                        color = c.muted,
-                        fontSize = 10.5.sp,
-                        fontWeight = FontWeight.Medium,
+                        text = headerLine,
+                        color = c.ink,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
+                    if (!expanded) {
+                        Text(
+                            text = compactStatusLine,
+                            color = c.muted,
+                            fontSize = 10.5.sp,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                 }
-            }
 
-            Surface(
-                modifier = Modifier
-                    .heightIn(min = 28.dp)
-                    .clip(RoundedCornerShape(999.dp))
-                    .clickable(onClick = onToggleTheaterMode),
-                shape = RoundedCornerShape(999.dp),
-                color = if (rp.theaterMode) c.primary else c.surfaceSoft,
-                border = BorderStroke(
-                    width = theme.borderWidth,
-                    color = if (rp.theaterMode) c.primary else c.border,
-                ),
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.5.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(3.5.dp),
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Theaters,
-                        contentDescription = null,
-                        tint = if (rp.theaterMode) Color.White else c.ink,
-                        modifier = Modifier.size(13.dp),
-                    )
-                    Text(
-                        text = if (rp.theaterMode) strings.rp.chatModeBtn else strings.rp.theaterModeBtn,
-                        color = if (rp.theaterMode) Color.White else c.ink,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                    )
-                }
-            }
-
-            if (!expanded) {
                 Surface(
                     modifier = Modifier
                         .heightIn(min = 28.dp)
                         .clip(RoundedCornerShape(999.dp))
-                        .clickable(onClick = onOpenStudio),
+                        .clickable(onClick = onToggleTheaterMode),
                     shape = RoundedCornerShape(999.dp),
-                    color = c.tag,
-                    border = BorderStroke(theme.borderWidth, c.accent.copy(alpha = 0.45f)),
+                    color = if (rp.theaterMode) c.primary else c.surfaceSoft,
+                    border = BorderStroke(
+                        width = theme.borderWidth,
+                        color = if (rp.theaterMode) c.primary else c.border,
+                    ),
                 ) {
-                    Box(
+                    Row(
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.5.dp),
-                        contentAlignment = Alignment.Center,
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(3.5.dp),
                     ) {
+                        Icon(
+                            imageVector = Icons.Default.Theaters,
+                            contentDescription = null,
+                            tint = if (rp.theaterMode) Color.White else c.ink,
+                            modifier = Modifier.size(13.dp),
+                        )
                         Text(
-                            text = strings.rp.studioBtn,
-                            color = c.tagInk,
+                            text = if (rp.theaterMode) strings.rp.chatModeBtn else strings.rp.theaterModeBtn,
+                            color = if (rp.theaterMode) Color.White else c.ink,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             maxLines = 1,
                         )
                     }
                 }
+
+                if (!expanded) {
+                    Surface(
+                        modifier = Modifier
+                            .heightIn(min = 28.dp)
+                            .clip(RoundedCornerShape(999.dp))
+                            .clickable(onClick = onOpenStudio),
+                        shape = RoundedCornerShape(999.dp),
+                        color = c.tag,
+                        border = BorderStroke(theme.borderWidth, c.accent.copy(alpha = 0.45f)),
+                    ) {
+                        Box(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.5.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = strings.rp.studioBtn,
+                                color = c.tagInk,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                            )
+                        }
+                    }
+                }
+            } else {
+                Text(
+                    text = compactStatusLine,
+                    color = c.ink.copy(alpha = 0.9f),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
             }
 
             Icon(
                 imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
                 contentDescription = null,
                 tint = c.muted,
-                modifier = Modifier.size(19.dp),
+                modifier = Modifier.size(18.dp),
             )
         }
 
@@ -571,7 +591,11 @@ fun RpStatusHudBar(
             ) {
                 Surface(
                     shape = RoundedCornerShape(14.dp),
-                    color = c.surfaceSoft.copy(alpha = if (theme.isDark) 0.72f else 0.78f),
+                    color = if (c.surfaceSoft.alpha < 0.95f) {
+                        c.surfaceSoft
+                    } else {
+                        c.surfaceSoft.copy(alpha = if (theme.isDark) 0.72f else 0.78f)
+                    },
                     border = BorderStroke(theme.borderWidth, c.border),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
@@ -776,7 +800,7 @@ fun RpStatusHudBar(
         }
         HorizontalDivider(
             thickness = theme.borderWidth,
-            color = c.border.copy(alpha = 0.85f),
+            color = c.border.copy(alpha = c.border.alpha * 0.85f),
         )
     }
 }
@@ -793,7 +817,7 @@ private fun RpAuthorNoteDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = c.surfaceElevated,
+        containerColor = c.surfaceElevated.copy(alpha = 1f),
         title = {
             Text(
                 text = strings.rp.authorNoteLabel,

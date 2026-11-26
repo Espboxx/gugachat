@@ -38,6 +38,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -76,6 +77,8 @@ import com.gugachat.app.ui.auth.AuthViewModel
 import com.gugachat.app.ui.auth.LoginScreen
 import com.gugachat.app.ui.chat.ChatViewModel
 import com.gugachat.app.ui.chat.ChatWorkspaceScreen
+import com.gugachat.app.ui.chat.resolveNovelPaperTheme
+import com.gugachat.app.ui.chat.resolveRpStageAccent
 import com.gugachat.app.ui.images.CreativeStudioScreen
 import com.gugachat.app.ui.images.ImageCreateSheet
 import com.gugachat.app.ui.images.ImageDetailSheet
@@ -225,26 +228,86 @@ private fun AuthenticatedShell(container: AppContainer) {
     val activeTab = MainTab.entries.getOrElse(activeTabOrdinal) { MainTab.CHAT }
     val saveableStateHolder = rememberSaveableStateHolder()
 
+    val activeConv = chatState.activeConversation
     val isImeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
-    val isTheaterImmersive = activeTab == MainTab.CHAT &&
-        chatState.activeConversation?.mode == ConversationMode.rp &&
-        chatState.activeConversation?.rp?.theaterMode == true
+    val isNovelWorkspace = activeTab == MainTab.CHAT &&
+        activeConv?.mode == ConversationMode.novel &&
+        activeConv.novel != null
+    val isRpWorkspace = activeTab == MainTab.CHAT &&
+        activeConv?.mode == ConversationMode.rp &&
+        activeConv.rp != null
+    val isTheaterImmersive = isRpWorkspace && activeConv?.rp?.theaterMode == true
+    val isRpStreamBar = isRpWorkspace && !isTheaterImmersive
     val isPureReading = activeTab == MainTab.CHAT && chatState.pureReadingMode
     val showBottomBar = !isImeVisible && !isTheaterImmersive && !isPureReading
 
+    val scaffoldContainerColor = when {
+        isNovelWorkspace -> resolveNovelPaperTheme(chatState.readerPaper).bg
+        isRpWorkspace -> Color(0xFF090D16)
+        else -> c.page
+    }
+    val bottomBarPalette = remember(
+        isNovelWorkspace,
+        isRpStreamBar,
+        chatState.readerPaper,
+        activeConv?.rp?.visualTheme?.accentHex,
+        c,
+    ) {
+        when {
+            isNovelWorkspace -> {
+                val paper = resolveNovelPaperTheme(chatState.readerPaper)
+                BottomBarPalette(
+                    container = paper.chromeBg,
+                    divider = paper.border.copy(alpha = 0.85f),
+                    selectedCapsule = paper.accent.copy(alpha = if (paper.isNight) 0.24f else 0.14f),
+                    selectedContent = if (paper.isNight) Color(0xFFB8CEFF) else paper.accent,
+                    unselectedContent = paper.muted,
+                    indicatorDot = paper.accent,
+                )
+            }
+            isRpStreamBar -> {
+                val stageAccent = resolveRpStageAccent(activeConv?.rp?.visualTheme?.accentHex)
+                BottomBarPalette(
+                    container = Color(0xF00B0F1A),
+                    divider = stageAccent.copy(alpha = 0.36f),
+                    selectedCapsule = stageAccent.copy(alpha = 0.20f),
+                    selectedContent = stageAccent,
+                    unselectedContent = Color(0xFFA7B3CB),
+                    indicatorDot = stageAccent,
+                )
+            }
+            else -> BottomBarPalette(
+                container = c.surface,
+                divider = c.border.copy(alpha = 0.85f),
+                selectedCapsule = c.primarySoft,
+                selectedContent = c.primarySoftInk,
+                unselectedContent = c.muted,
+                indicatorDot = c.accent,
+            )
+        }
+    }
+    val animatedBarContainer by animateColorAsState(
+        targetValue = bottomBarPalette.container,
+        label = "bottom_bar_container",
+    )
+    val animatedBarDivider by animateColorAsState(
+        targetValue = bottomBarPalette.divider,
+        label = "bottom_bar_divider",
+    )
+
     Scaffold(
-        containerColor = c.page,
+        containerColor = scaffoldContainerColor,
         bottomBar = {
             if (showBottomBar) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(c.surface)
+                        .background(animatedBarContainer)
                         .navigationBarsPadding(),
                 ) {
                     HorizontalDivider(
                         thickness = theme.borderWidth,
-                        color = c.border.copy(alpha = 0.85f),
+                        color = animatedBarDivider,
                     )
                     Row(
                         modifier = Modifier
@@ -258,6 +321,7 @@ private fun AuthenticatedShell(container: AppContainer) {
                             selectedIcon = Icons.AutoMirrored.Filled.Chat,
                             unselectedIcon = Icons.AutoMirrored.Outlined.Chat,
                             label = strings.nav.tabChat,
+                            palette = bottomBarPalette,
                             onClick = { activeTabOrdinal = MainTab.CHAT.ordinal },
                             modifier = Modifier.weight(1f),
                         )
@@ -266,6 +330,7 @@ private fun AuthenticatedShell(container: AppContainer) {
                             selectedIcon = Icons.Filled.AutoAwesome,
                             unselectedIcon = Icons.Outlined.AutoAwesome,
                             label = strings.nav.tabStudio,
+                            palette = bottomBarPalette,
                             showIndicatorDot = activeImageTasks > 0,
                             onClick = { activeTabOrdinal = MainTab.STUDIO.ordinal },
                             modifier = Modifier.weight(1f),
@@ -275,6 +340,7 @@ private fun AuthenticatedShell(container: AppContainer) {
                             selectedIcon = Icons.Filled.Person,
                             unselectedIcon = Icons.Outlined.Person,
                             label = strings.nav.tabMine,
+                            palette = bottomBarPalette,
                             onClick = { activeTabOrdinal = MainTab.MINE.ordinal },
                             modifier = Modifier.weight(1f),
                         )
@@ -306,27 +372,37 @@ private fun AuthenticatedShell(container: AppContainer) {
     ImageStudioModals(container = container, imageVm = imageVm)
 }
 
+@Immutable
+private data class BottomBarPalette(
+    val container: Color,
+    val divider: Color,
+    val selectedCapsule: Color,
+    val selectedContent: Color,
+    val unselectedContent: Color,
+    val indicatorDot: Color,
+)
+
 @Composable
 private fun CompactBottomNavItem(
     selected: Boolean,
     selectedIcon: ImageVector,
     unselectedIcon: ImageVector,
     label: String,
+    palette: BottomBarPalette,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     showIndicatorDot: Boolean = false,
 ) {
-    val c = LocalAppTheme.current.colors
     val capsuleBg by animateColorAsState(
-        targetValue = if (selected) c.primarySoft else Color.Transparent,
+        targetValue = if (selected) palette.selectedCapsule else Color.Transparent,
         label = "nav_capsule_bg",
     )
     val iconTint by animateColorAsState(
-        targetValue = if (selected) c.primarySoftInk else c.muted,
+        targetValue = if (selected) palette.selectedContent else palette.unselectedContent,
         label = "nav_icon_tint",
     )
     val labelTint by animateColorAsState(
-        targetValue = if (selected) c.primarySoftInk else c.muted,
+        targetValue = if (selected) palette.selectedContent else palette.unselectedContent,
         label = "nav_label_tint",
     )
 
@@ -362,8 +438,8 @@ private fun CompactBottomNavItem(
                         .offset(x = (-5).dp, y = 1.dp)
                         .size(7.dp)
                         .clip(CircleShape)
-                        .background(c.accent)
-                        .border(1.5.dp, c.surface, CircleShape),
+                        .background(palette.indicatorDot)
+                        .border(1.5.dp, palette.container, CircleShape),
                 )
             }
         }

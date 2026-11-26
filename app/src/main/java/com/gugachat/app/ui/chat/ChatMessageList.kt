@@ -76,6 +76,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -332,6 +335,7 @@ fun ChatMessageList(
 
                 if (isUser) {
                     UserMessageBlock(
+                        mode = mode,
                         msg = msg,
                         isDecayed = isDecayed,
                         isStreaming = isStreaming,
@@ -485,7 +489,7 @@ private fun ChatEmptyWelcomeCanvas(
             if (mode == ConversationMode.rp && rpConfig != null) {
                 GuGroupedCard(
                     modifier = Modifier.fillMaxWidth(),
-                    borderColor = c.primary.copy(alpha = 0.35f),
+                    borderColor = c.border,
                 ) {
                     Box(
                         modifier = Modifier
@@ -493,8 +497,8 @@ private fun ChatEmptyWelcomeCanvas(
                             .background(
                                 Brush.horizontalGradient(
                                     listOf(
-                                        c.primarySoft.copy(alpha = if (theme.isDark) 0.9f else 0.85f),
-                                        c.accentSoft.copy(alpha = if (theme.isDark) 0.55f else 0.7f),
+                                        c.primarySoft.copy(alpha = 0.85f),
+                                        c.tag.copy(alpha = 0.65f),
                                     ),
                                 ),
                             )
@@ -507,7 +511,7 @@ private fun ChatEmptyWelcomeCanvas(
                             GuIconTile(
                                 icon = Icons.Default.Casino,
                                 tint = c.primarySoftInk,
-                                backgroundColor = c.surface,
+                                backgroundColor = c.surfaceSoft,
                                 size = 42.dp,
                                 iconSize = 21.dp,
                                 cornerRadius = 12.dp,
@@ -605,7 +609,7 @@ private fun ChatEmptyWelcomeCanvas(
             } else if (mode == ConversationMode.novel && novelConfig != null) {
                 GuGroupedCard(
                     modifier = Modifier.fillMaxWidth(),
-                    borderColor = c.accent.copy(alpha = 0.4f),
+                    borderColor = c.border,
                 ) {
                     Box(
                         modifier = Modifier
@@ -613,8 +617,8 @@ private fun ChatEmptyWelcomeCanvas(
                             .background(
                                 Brush.horizontalGradient(
                                     listOf(
-                                        c.accentSoft,
-                                        c.tag.copy(alpha = if (theme.isDark) 0.5f else 0.65f),
+                                        c.surfaceSoft,
+                                        c.tag.copy(alpha = if (theme.isDark) 0.55f else 0.65f),
                                     ),
                                 ),
                             )
@@ -967,6 +971,7 @@ private fun StarterGridCard(
 
 @Composable
 private fun UserMessageBlock(
+    mode: ConversationMode,
     msg: ChatMessage,
     isDecayed: Boolean,
     isStreaming: Boolean,
@@ -975,122 +980,234 @@ private fun UserMessageBlock(
     onBranch: () -> Unit,
     onDelete: () -> Unit,
 ) {
-    val strings = LocalAppStrings.current
     val theme = LocalAppTheme.current
     val c = theme.colors
-    val bubbleShape = RoundedCornerShape(topStart = 20.dp, topEnd = 6.dp, bottomStart = 20.dp, bottomEnd = 20.dp)
-    val bubbleBg = if (theme.isDark) c.surfaceSoft else c.primarySoft
-    val bubbleBorder = if (theme.isDark) c.primary.copy(alpha = 0.34f) else c.primary.copy(alpha = 0.22f)
 
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalAlignment = Alignment.End,
-    ) {
-        Column(
-            modifier = Modifier
-                .widthIn(max = 304.dp)
-                .clip(bubbleShape)
-                .background(bubbleBg)
-                .border(theme.borderWidth, bubbleBorder, bubbleShape)
-                .padding(horizontal = 15.dp, vertical = 11.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            msg.inputKind?.let { kind ->
-                val isZh = strings.language == AppLanguage.ZH
-                val tagText = when (kind) {
-                    NovelInputKind.director -> strings.novel.inputDirector
-                    NovelInputKind.`continue` -> strings.novel.inputContinue
-                    NovelInputKind.branch -> if (isZh) "分支" else "Branch"
-                    NovelInputKind.dialogue -> strings.novel.inputDialogue
-                }
-                GuBadge(tagText, variant = GuBadgeVariant.HONEY)
-            }
-            msg.rpInputKind?.let { kind ->
-                val tagText = when (kind) {
-                    RpInputKind.action -> strings.rp.inputAction
-                    RpInputKind.speech -> strings.rp.inputSay
-                    RpInputKind.thought -> strings.rp.inputThought
-                    RpInputKind.gm_command -> strings.rp.inputOoc
-                }
-                GuBadge(tagText, variant = GuBadgeVariant.BLUE)
-            }
-            if (msg.attachmentIds.isNotEmpty()) {
-                Row(
-                    modifier = Modifier.horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+    when (mode) {
+        ConversationMode.novel -> {
+            val noteShape = RoundedCornerShape(10.dp)
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.End,
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(noteShape)
+                        .background(c.surfaceSoft)
+                        .drawBehind {
+                            val barWidth = 2.5.dp.toPx()
+                            drawRect(
+                                color = c.accent,
+                                topLeft = Offset.Zero,
+                                size = Size(barWidth, size.height),
+                            )
+                        }
+                        .border(theme.borderWidth, c.border, noteShape)
+                        .padding(start = 13.dp, end = 12.dp, top = 9.dp, bottom = 9.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    msg.attachmentIds.forEach { id ->
-                        Image(
-                            painter = rememberAsyncImagePainter(attachmentPathResolver(id)),
-                            contentDescription = null,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier
-                                .size(66.dp)
-                                .clip(RoundedCornerShape(12.dp)),
-                        )
-                    }
-                }
-                if (isDecayed) {
-                    GuBadge(strings.chat.decayedImageNotice, variant = GuBadgeVariant.AMBER)
-                }
-            }
-            if (msg.rpDiceRoll != null) {
-                GuBadge(
-                    text = "🎲 ${msg.rpDiceRoll.skill ?: ""} ${msg.rpDiceRoll.expression} = ${msg.rpDiceRoll.total}".trim(),
-                    variant = GuBadgeVariant.HONEY,
-                )
-            }
-            if (msg.content.isNotBlank()) {
-                SelectionContainer {
-                    Text(
-                        text = msg.content,
-                        color = c.ink,
-                        fontSize = 15.sp,
-                        lineHeight = 22.5.sp,
+                    UserMessageBody(
+                        msg = msg,
+                        isDecayed = isDecayed,
+                        attachmentPathResolver = attachmentPathResolver,
+                        fontSizeSp = 14f,
+                        lineHeightSp = 21f,
                     )
                 }
+                UserMessageActionsRow(
+                    isStreaming = isStreaming,
+                    onEdit = onEdit,
+                    onBranch = onBranch,
+                    onDelete = onDelete,
+                )
             }
         }
 
+        ConversationMode.rp -> {
+            val bubbleShape = RoundedCornerShape(topStart = 18.dp, topEnd = 6.dp, bottomStart = 18.dp, bottomEnd = 18.dp)
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.End,
+            ) {
+                Column(
+                    modifier = Modifier
+                        .widthIn(max = 304.dp)
+                        .clip(bubbleShape)
+                        .background(c.surfaceSoft)
+                        .border(theme.borderWidth, c.accent.copy(alpha = 0.42f), bubbleShape)
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    UserMessageBody(
+                        msg = msg,
+                        isDecayed = isDecayed,
+                        attachmentPathResolver = attachmentPathResolver,
+                        fontSizeSp = 14.5f,
+                        lineHeightSp = 22f,
+                    )
+                }
+                UserMessageActionsRow(
+                    isStreaming = isStreaming,
+                    onEdit = onEdit,
+                    onBranch = onBranch,
+                    onDelete = onDelete,
+                )
+            }
+        }
+
+        ConversationMode.chat -> {
+            val bubbleShape = RoundedCornerShape(topStart = 20.dp, topEnd = 6.dp, bottomStart = 20.dp, bottomEnd = 20.dp)
+            val bubbleBg = if (theme.isDark) c.surfaceSoft else c.primarySoft
+            val bubbleBorder = if (theme.isDark) c.primary.copy(alpha = 0.34f) else c.primary.copy(alpha = 0.22f)
+
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.End,
+            ) {
+                Column(
+                    modifier = Modifier
+                        .widthIn(max = 304.dp)
+                        .clip(bubbleShape)
+                        .background(bubbleBg)
+                        .border(theme.borderWidth, bubbleBorder, bubbleShape)
+                        .padding(horizontal = 15.dp, vertical = 11.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    UserMessageBody(
+                        msg = msg,
+                        isDecayed = isDecayed,
+                        attachmentPathResolver = attachmentPathResolver,
+                        fontSizeSp = 15f,
+                        lineHeightSp = 22.5f,
+                    )
+                }
+                UserMessageActionsRow(
+                    isStreaming = isStreaming,
+                    onEdit = onEdit,
+                    onBranch = onBranch,
+                    onDelete = onDelete,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun UserMessageBody(
+    msg: ChatMessage,
+    isDecayed: Boolean,
+    attachmentPathResolver: (String) -> File,
+    fontSizeSp: Float,
+    lineHeightSp: Float,
+) {
+    val strings = LocalAppStrings.current
+    val c = LocalAppTheme.current.colors
+
+    msg.inputKind?.let { kind ->
+        val isZh = strings.language == AppLanguage.ZH
+        val tagText = when (kind) {
+            NovelInputKind.director -> strings.novel.inputDirector
+            NovelInputKind.`continue` -> strings.novel.inputContinue
+            NovelInputKind.branch -> if (isZh) "分支" else "Branch"
+            NovelInputKind.dialogue -> strings.novel.inputDialogue
+        }
+        GuBadge(tagText, variant = GuBadgeVariant.HONEY)
+    }
+    msg.rpInputKind?.let { kind ->
+        val tagText = when (kind) {
+            RpInputKind.action -> strings.rp.inputAction
+            RpInputKind.speech -> strings.rp.inputSay
+            RpInputKind.thought -> strings.rp.inputThought
+            RpInputKind.gm_command -> strings.rp.inputOoc
+        }
+        GuBadge(tagText, variant = GuBadgeVariant.BLUE)
+    }
+    if (msg.attachmentIds.isNotEmpty()) {
         Row(
-            modifier = Modifier.padding(top = 2.dp),
-            horizontalArrangement = Arrangement.spacedBy(2.dp),
+            modifier = Modifier.horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            IconButton(
-                onClick = onEdit,
-                enabled = !isStreaming,
-                modifier = Modifier.size(36.dp),
-            ) {
-                Icon(
-                    Icons.Default.Edit,
-                    contentDescription = strings.chat.editResend,
-                    tint = c.muted.copy(alpha = 0.85f),
-                    modifier = Modifier.size(16.dp),
+            msg.attachmentIds.forEach { id ->
+                Image(
+                    painter = rememberAsyncImagePainter(attachmentPathResolver(id)),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .size(66.dp)
+                        .clip(RoundedCornerShape(12.dp)),
                 )
             }
-            IconButton(
-                onClick = onBranch,
-                modifier = Modifier.size(36.dp),
-            ) {
-                Icon(
-                    Icons.Default.AccountTree,
-                    contentDescription = strings.novel.branchBtn,
-                    tint = c.muted.copy(alpha = 0.85f),
-                    modifier = Modifier.size(16.dp),
-                )
-            }
-            IconButton(
-                onClick = onDelete,
-                enabled = !isStreaming,
-                modifier = Modifier.size(36.dp),
-            ) {
-                Icon(
-                    Icons.Default.Delete,
-                    contentDescription = strings.common.delete,
-                    tint = c.muted.copy(alpha = 0.85f),
-                    modifier = Modifier.size(16.dp),
-                )
-            }
+        }
+        if (isDecayed) {
+            GuBadge(strings.chat.decayedImageNotice, variant = GuBadgeVariant.AMBER)
+        }
+    }
+    if (msg.rpDiceRoll != null) {
+        GuBadge(
+            text = "🎲 ${msg.rpDiceRoll.skill ?: ""} ${msg.rpDiceRoll.expression} = ${msg.rpDiceRoll.total}".trim(),
+            variant = GuBadgeVariant.HONEY,
+        )
+    }
+    if (msg.content.isNotBlank()) {
+        SelectionContainer {
+            Text(
+                text = msg.content,
+                color = c.ink,
+                fontSize = fontSizeSp.sp,
+                lineHeight = lineHeightSp.sp,
+            )
+        }
+    }
+}
+
+@Composable
+private fun UserMessageActionsRow(
+    isStreaming: Boolean,
+    onEdit: () -> Unit,
+    onBranch: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val strings = LocalAppStrings.current
+    val c = LocalAppTheme.current.colors
+    Row(
+        modifier = Modifier.padding(top = 2.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        IconButton(
+            onClick = onEdit,
+            enabled = !isStreaming,
+            modifier = Modifier.size(34.dp),
+        ) {
+            Icon(
+                Icons.Default.Edit,
+                contentDescription = strings.chat.editResend,
+                tint = c.muted.copy(alpha = 0.85f),
+                modifier = Modifier.size(15.5.dp),
+            )
+        }
+        IconButton(
+            onClick = onBranch,
+            modifier = Modifier.size(34.dp),
+        ) {
+            Icon(
+                Icons.Default.AccountTree,
+                contentDescription = strings.novel.branchBtn,
+                tint = c.muted.copy(alpha = 0.85f),
+                modifier = Modifier.size(15.5.dp),
+            )
+        }
+        IconButton(
+            onClick = onDelete,
+            enabled = !isStreaming,
+            modifier = Modifier.size(34.dp),
+        ) {
+            Icon(
+                Icons.Default.Delete,
+                contentDescription = strings.common.delete,
+                tint = c.muted.copy(alpha = 0.85f),
+                modifier = Modifier.size(15.5.dp),
+            )
         }
     }
 }
@@ -1188,6 +1305,9 @@ private fun AssistantMessageBlock(
             val (speakerName, speakerNpc) = remember(msg.id, msg.activeVariantIndex, rpConfig?.cast, rpConfig?.title) {
                 resolveRpSpeaker(msg, rpConfig, strings.rp.badge)
             }
+            val stageAccent = remember(rpConfig?.visualTheme?.accentHex) {
+                resolveRpStageAccent(rpConfig?.visualTheme?.accentHex)
+            }
             val activeVar = msg.activeVariant()
             val deltas = activeVar?.rpDeltas.orEmpty()
             val unlockedEnding = activeVar?.rpEndingUnlocked
@@ -1270,7 +1390,7 @@ private fun AssistantMessageBlock(
                     )
 
                     if (deltas.isNotEmpty() && !isStreaming && rpTheme?.showTurnDeltas != false) {
-                        RpTurnDeltaStrip(deltas = deltas)
+                        RpTurnDeltaStrip(deltas = deltas, onDarkStage = true)
                     }
 
                     if (unlockedEnding != null) {
@@ -1284,8 +1404,9 @@ private fun AssistantMessageBlock(
                             isRefreshing = isRefreshingChoices,
                             onSelectChoice = onSelectRpChoice,
                             onRefreshChoices = onRefreshRpChoices,
-                            onDarkStage = false,
+                            onDarkStage = true,
                             enabled = !isStreaming,
+                            accentColor = stageAccent,
                         )
                     }
 

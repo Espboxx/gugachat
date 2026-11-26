@@ -183,23 +183,29 @@ fun GuToastHost(
 fun GuAwningHeader(
     modifier: Modifier = Modifier,
     includeStatusBarPadding: Boolean = true,
+    containerBrush: Brush? = null,
+    dividerColor: Color? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val theme = LocalAppTheme.current
     val c = theme.colors
+    val effectiveBrush = containerBrush ?: Brush.verticalGradient(listOf(c.awning, c.page))
+    val effectiveDividerColor = dividerColor ?: c.border.copy(alpha = 0.85f)
 
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .background(Brush.verticalGradient(listOf(c.awning, c.page)))
+            .background(effectiveBrush)
             .drawBehind {
-                val stroke = theme.borderWidth.toPx()
-                drawLine(
-                    color = c.border.copy(alpha = 0.85f),
-                    start = Offset(0f, size.height - stroke / 2f),
-                    end = Offset(size.width, size.height - stroke / 2f),
-                    strokeWidth = stroke,
-                )
+                if (effectiveDividerColor.alpha > 0f) {
+                    val stroke = theme.borderWidth.toPx()
+                    drawLine(
+                        color = effectiveDividerColor,
+                        start = Offset(0f, size.height - stroke / 2f),
+                        end = Offset(size.width, size.height - stroke / 2f),
+                        strokeWidth = stroke,
+                    )
+                }
             }
             .then(if (includeStatusBarPadding) Modifier.statusBarsPadding() else Modifier),
         content = content,
