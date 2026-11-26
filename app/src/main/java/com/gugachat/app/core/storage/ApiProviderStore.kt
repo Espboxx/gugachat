@@ -113,6 +113,40 @@ class ApiProviderStore(context: Context) {
     }
 
     @Synchronized
+    fun upsertAllDeduped(imported: List<ApiProviderConfig>): Int {
+        if (imported.isEmpty()) return 0
+        val list = _providers.value.toMutableList()
+        val existingKeys = list.map { ApiProviderImportCodec.dedupeKey(it) }.toHashSet()
+        var nextNumericId = (list.maxOfOrNull { it.numericId } ?: 0L) + 1L
+        val now = System.currentTimeMillis()
+        var added = 0
+        imported.forEach { raw ->
+            val cleanKey = raw.apiKey.trim()
+            if (cleanKey.isEmpty()) return@forEach
+            val normalized = raw.copy(
+                id = raw.id.ifBlank { UUID.randomUUID().toString() },
+                numericId = nextNumericId,
+                name = raw.name.trim(),
+                baseUrl = raw.baseUrl.trim().ifBlank { raw.protocol.defaultBaseUrl },
+                apiKey = cleanKey,
+                customModels = raw.customModels.map { it.trim() }.filter { it.isNotEmpty() }.distinct(),
+                createdAt = now,
+                updatedAt = now,
+            )
+            val key = ApiProviderImportCodec.dedupeKey(normalized)
+            if (existingKeys.add(key)) {
+                list.add(normalized)
+                nextNumericId += 1L
+                added += 1
+            }
+        }
+        if (added > 0) {
+            persistList(list)
+        }
+        return added
+    }
+
+    @Synchronized
     fun addCustomModel(syntheticId: Long, modelId: String) {
         val clean = modelId.trim()
         if (clean.isEmpty()) return

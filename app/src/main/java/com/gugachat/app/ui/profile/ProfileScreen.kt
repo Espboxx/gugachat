@@ -95,6 +95,7 @@ import com.gugachat.app.data.api.UpdateChannel
 import com.gugachat.app.ui.chat.ExternalImportSheet
 import com.gugachat.app.ui.providers.ApiProviderDraft
 import com.gugachat.app.ui.providers.ApiProviderEditorSheet
+import com.gugachat.app.ui.providers.ApiProviderImportSheet
 import com.gugachat.app.ui.providers.ApiProviderManagerCard
 
 @Composable
@@ -114,6 +115,7 @@ fun ProfileScreen(
     var showLogoutConfirm by remember { mutableStateOf(false) }
     var showDeepSeekImport by remember { mutableStateOf(false) }
     var editingProviderDraft by remember { mutableStateOf<ApiProviderDraft?>(null) }
+    var showProviderImport by remember { mutableStateOf(false) }
     var activeBackupOp by remember { mutableStateOf<String?>(null) }
 
     if (showDeepSeekImport) {
@@ -143,6 +145,15 @@ fun ProfileScreen(
                 editingProviderDraft = null
                 viewModel.clearProviderTestState()
             },
+        )
+    }
+
+    if (showProviderImport) {
+        ApiProviderImportSheet(
+            onImportSelected = { selected ->
+                viewModel.importProviders(selected)
+            },
+            onDismiss = { showProviderImport = false },
         )
     }
 
@@ -383,33 +394,64 @@ fun ProfileScreen(
                     title = if (isZh) "自定义 API 通道" else "Custom API Channels",
                     subtitle = strings.providers.managerSubtitle,
                     trailing = {
-                        Surface(
-                            onClick = {
-                                viewModel.clearProviderTestState()
-                                editingProviderDraft = ApiProviderDraft()
-                            },
-                            shape = RoundedCornerShape(theme.pillRadius),
-                            color = c.primarySoft,
-                            border = BorderStroke(theme.borderWidth, c.primary.copy(alpha = 0.3f)),
-                            modifier = Modifier.heightIn(min = 32.dp),
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(3.dp),
+                            Surface(
+                                onClick = { showProviderImport = true },
+                                shape = RoundedCornerShape(theme.pillRadius),
+                                color = c.surfaceSoft,
+                                border = BorderStroke(theme.borderWidth, c.border),
+                                modifier = Modifier.heightIn(min = 32.dp),
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.Add,
-                                    contentDescription = null,
-                                    tint = c.primarySoftInk,
-                                    modifier = Modifier.size(14.dp),
-                                )
-                                Text(
-                                    text = if (isZh) "添加" else strings.common.add,
-                                    color = c.primarySoftInk,
-                                    fontSize = 11.5.sp,
-                                    fontWeight = FontWeight.Bold,
-                                )
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(3.dp),
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Upload,
+                                        contentDescription = null,
+                                        tint = c.ink,
+                                        modifier = Modifier.size(13.5.dp),
+                                    )
+                                    Text(
+                                        text = strings.providers.importProviderBtn,
+                                        color = c.ink,
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                    )
+                                }
+                            }
+                            Surface(
+                                onClick = {
+                                    viewModel.clearProviderTestState()
+                                    editingProviderDraft = ApiProviderDraft()
+                                },
+                                shape = RoundedCornerShape(theme.pillRadius),
+                                color = c.primarySoft,
+                                border = BorderStroke(theme.borderWidth, c.primary.copy(alpha = 0.3f)),
+                                modifier = Modifier.heightIn(min = 32.dp),
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(3.dp),
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Add,
+                                        contentDescription = null,
+                                        tint = c.primarySoftInk,
+                                        modifier = Modifier.size(14.dp),
+                                    )
+                                    Text(
+                                        text = if (isZh) "添加" else strings.common.add,
+                                        color = c.primarySoftInk,
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                    )
+                                }
                             }
                         }
                     },
@@ -771,7 +813,7 @@ fun ProfileScreen(
                         onClick = if (state.isBackupBusy) {
                             null
                         } else {
-                            { importLauncher.launch(arrayOf("application/json", "text/*")) }
+                            { importLauncher.launch(arrayOf("*/*")) }
                         },
                         trailing = if (importingNow) {
                             {

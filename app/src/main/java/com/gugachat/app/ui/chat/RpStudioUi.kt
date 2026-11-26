@@ -937,12 +937,12 @@ fun RpWizardDialog(
                 ) {
                     GuSettingsRow(
                         title = strings.rp.importCardBtn,
-                        subtitle = if (isZh) "支持 PNG / JSON V2 · V3 角色卡、世界书与正则脚本" else "Supports PNG / JSON V2 · V3 character cards, lorebooks & regex",
+                        subtitle = if (isZh) "支持 PNG / JSON / CHARX 角色卡、世界书与正则脚本" else "Supports PNG / JSON / CHARX character cards, lorebooks & regex",
                         icon = Icons.Default.UploadFile,
                         iconTint = c.primarySoftInk,
                         iconBg = c.primarySoft,
                         showChevron = true,
-                        onClick = { cardLauncher.launch(arrayOf("application/json", "image/png", "*/*")) },
+                        onClick = { cardLauncher.launch(arrayOf("*/*")) },
                     )
                 }
 
@@ -1458,6 +1458,8 @@ fun RpStudioSheet(
     onToggleLoreEnabled: (String) -> Unit,
     onToggleLoreAlwaysActive: (String) -> Unit,
     onDeleteLore: (String) -> Unit,
+    onImportLorebookOrPreset: (Uri) -> Unit = {},
+    onImportRegexJson: (Uri) -> Unit = {},
     onCreateSaveSlot: (name: String, note: String) -> Unit,
     onOverwriteSaveSlot: (String) -> Unit,
     onDeleteSaveSlot: (String) -> Unit,
@@ -1522,6 +1524,12 @@ fun RpStudioSheet(
     }
     val exportCardPngLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("image/png")) { uri ->
         if (uri != null) onExportCardPng(uri)
+    }
+    val importLoreOrPresetLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) onImportLorebookOrPreset(uri)
+    }
+    val importRegexJsonLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) onImportRegexJson(uri)
     }
 
     // Sub-dialogs
@@ -1836,6 +1844,7 @@ fun RpStudioSheet(
                         editingLore = null
                         showLoreDialog = true
                     },
+                    onImportLorebookOrPreset = { importLoreOrPresetLauncher.launch(arrayOf("*/*")) },
                     onEditEntry = { entry ->
                         editingLore = entry
                         showLoreDialog = true
@@ -1866,6 +1875,7 @@ fun RpStudioSheet(
                             flags = "gms",
                         )
                     },
+                    onImportRegexJson = { importRegexJsonLauncher.launch(arrayOf("*/*")) },
                     onEditRegexScript = { editingRegex = it },
                     onToggleRegexScript = onToggleRegexScript,
                     onRequestDeleteRegex = { deleteRegexTarget = it },
@@ -3762,6 +3772,7 @@ private fun RpWorldbookTab(
     triggeredLoreIds: Set<String>,
     modifier: Modifier = Modifier,
     onAddEntry: () -> Unit,
+    onImportLorebookOrPreset: () -> Unit,
     onEditEntry: (NovelLoreEntry) -> Unit,
     onToggleEnabled: (String) -> Unit,
     onToggleAlwaysActive: (String) -> Unit,
@@ -3819,14 +3830,42 @@ private fun RpWorldbookTab(
                         )
                     }
                     Spacer(Modifier.height(10.dp))
-                    GuButton(
-                        onClick = onAddEntry,
-                        variant = GuButtonVariant.PRIMARY,
+                    Row(
                         modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(17.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text(stripLeadingPlus(strings.rp.worldbookAddBtn), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        GuButton(
+                            onClick = onAddEntry,
+                            variant = GuButtonVariant.PRIMARY,
+                            compact = true,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                text = stripLeadingPlus(strings.rp.worldbookAddBtn),
+                                fontSize = 12.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        GuButton(
+                            onClick = onImportLorebookOrPreset,
+                            variant = GuButtonVariant.SUBTLE,
+                            compact = true,
+                            modifier = Modifier.weight(1.15f),
+                        ) {
+                            Icon(Icons.Default.UploadFile, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                text = if (isZh) "导入世界书/预设" else "Import Lore / Preset",
+                                fontSize = 12.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
                     }
                 }
             }
@@ -4804,6 +4843,7 @@ private fun RpFrontendTab(
     onUpdateConfig: ((RpConfig) -> RpConfig) -> Unit,
     onApplyStatusWidgetTemplate: (String) -> Unit,
     onAddRegexScript: () -> Unit,
+    onImportRegexJson: () -> Unit,
     onEditRegexScript: (RpRegexScript) -> Unit,
     onToggleRegexScript: (String) -> Unit,
     onRequestDeleteRegex: (RpRegexScript) -> Unit,
@@ -5272,6 +5312,20 @@ private fun RpFrontendTab(
                     Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(15.dp))
                     Spacer(Modifier.width(4.dp))
                     Text(strings.rp.regexPresetsBtn, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+                GuButton(
+                    onClick = onImportRegexJson,
+                    compact = true,
+                    variant = GuButtonVariant.SUBTLE,
+                    modifier = Modifier.heightIn(min = 36.dp),
+                ) {
+                    Icon(Icons.Default.UploadFile, contentDescription = null, modifier = Modifier.size(15.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        text = if (isZh) "导入正则 JSON" else "Import Regex JSON",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
                 }
             }
 

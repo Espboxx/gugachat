@@ -5,6 +5,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
@@ -14,6 +15,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.put
+import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
@@ -22,10 +24,12 @@ import java.util.UUID
 import java.util.zip.CRC32
 import java.util.zip.Deflater
 import java.util.zip.Inflater
+import java.util.zip.ZipInputStream
 
 @Serializable
 private data class StLoreEntryJson(
     val keys: List<String> = emptyList(),
+    val secondary_keys: List<String> = emptyList(),
     val content: String = "",
     val name: String? = null,
     val comment: String? = null,
@@ -63,19 +67,6 @@ private data class StCardEnvelopeJson(
     val spec: String? = null,
     val spec_version: String? = null,
     val data: StCardDataJson? = null,
-    // V1 / top-level fallback fields
-    val name: String? = null,
-    val description: String? = null,
-    val personality: String? = null,
-    val scenario: String? = null,
-    val first_mes: String? = null,
-    val alternate_greetings: List<String>? = null,
-    val mes_example: String? = null,
-    val system_prompt: String? = null,
-    val post_history_instructions: String? = null,
-    val creator_notes: String? = null,
-    val tags: List<String>? = null,
-    val extensions: JsonObject? = null,
 )
 
 data class ImportedRpCard(
@@ -84,37 +75,71 @@ data class ImportedRpCard(
     val specVersion: String,
 )
 
+data class ExtractedZipCard(
+    val cardJson: String,
+    val avatarBytes: ByteArray? = null,
+    val avatarExt: String = "png",
+)
+
 object RpCardCodec {
+    private const val MAX_ZIP_JSON_BYTES = 16 * 1024 * 1024
+    private const val MAX_ZIP_IMAGE_BYTES = 12 * 1024 * 1024
+
     private val PNG_SIG = byteArrayOf(
         0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
     )
 
     fun parseCardJson(rawJson: String, conversationId: String = "preview"): ImportedRpCard {
-        val env = AppJson.decodeFromString(StCardEnvelopeJson.serializer(), rawJson.trim())
-        val data = env.data
-        val isV3 = env.spec.equals("chara_card_v3", ignoreCase = true)
-        val isV2 = env.spec.equals("chara_card_v2", ignoreCase = true)
+        val cleaned = rawJson.removePrefix("\uFEFF").trim()
+        val root = try {
+            AppJson.parseToJsonElement(cleaned) as? JsonObject
+        } catch (e: Exception) {
+            throw IllegalArgumentException("无效的角色卡 JSON 格式：${e.message}")
+        } ?: throw IllegalArgumentException("角色卡 JSON 根节点必须为对象")
+
+        val data = root.objOrNull("data")
+        val spec = root.strOrNull("spec").orEmpty()
+        val isV3 = spec.equals("chara_card_v3", ignoreCase = true)
+        val isV2 = spec.equals("chara_card_v2", ignoreCase = true)
         val specVersion = when {
             isV3 -> "v3"
             isV2 || data != null -> "v2"
             else -> "v1"
         }
 
-        val charName = (data?.name ?: env.name).orEmpty().trim().ifEmpty { "角色卡" }
-        val desc = (data?.description ?: env.description).orEmpty().trim()
-        val personality = (data?.personality ?: env.personality).orEmpty().trim()
-        val scenario = (data?.scenario ?: env.scenario).orEmpty().trim()
-        val firstMes = (data?.first_mes ?: env.first_mes).orEmpty().trim()
-        val altGreetings = (data?.alternate_greetings?.takeIf { it.isNotEmpty() } ?: env.alternate_greetings.orEmpty())
-            .map { it.trim() }
-            .filter { it.isNotEmpty() }
-        val sysPrompt = (data?.system_prompt ?: env.system_prompt).orEmpty().trim()
-        val postHistory = (data?.post_history_instructions ?: env.post_history_instructions).orEmpty().trim()
-        val notes = (data?.creator_notes ?: env.creator_notes).orEmpty().trim()
-        val examples = (data?.mes_example ?: env.mes_example).orEmpty().trim()
-        val tags = (data?.tags?.takeIf { it.isNotEmpty() } ?: env.tags.orEmpty())
-            .map { it.trim() }
-            .filter { it.isNotEmpty() }
+        fun pickStr(vararg keys: String): String {
+            for (k in keys) {
+                data?.strOrNull(k)?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+            }
+            for (k in keys) {
+                root.strOrNull(k)?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+            }
+            return ""
+        }
+
+        fun pickStrList(vararg keys: String): List<String> {
+            for (k in keys) {
+                val fromData = data?.strListOrEmpty(k).orEmpty()
+                if (fromData.isNotEmpty()) return fromData
+            }
+            for (k in keys) {
+                val fromRoot = root.strListOrEmpty(k)
+                if (fromRoot.isNotEmpty()) return fromRoot
+            }
+            return emptyList()
+        }
+
+        val charName = pickStr("name", "char_name").ifEmpty { "角色卡" }
+        val desc = pickStr("description", "char_persona")
+        val personality = pickStr("personality")
+        val scenario = pickStr("scenario", "world_scenario")
+        val firstMes = pickStr("first_mes", "char_greeting")
+        val altGreetings = pickStrList("alternate_greetings")
+        val sysPrompt = pickStr("system_prompt")
+        val postHistory = pickStr("post_history_instructions")
+        val notes = pickStr("creator_notes")
+        val examples = pickStr("mes_example", "example_dialogue")
+        val tags = pickStrList("tags")
 
         val worldview = buildList {
             if (scenario.isNotBlank()) add(scenario)
@@ -134,14 +159,25 @@ object RpCardCodec {
             inScene = true,
         )
 
-        val regexScripts = (parseRegexScripts(data?.extensions) + parseRegexScripts(env.extensions))
-            .distinctBy { "${it.id}|${it.findRegex}|${it.replaceString}" }
+        val dataExt = data?.objOrNull("extensions")
+        val rootExt = root.objOrNull("extensions")
+        val regexScripts = (
+            parseRegexScriptsFromElement(dataExt?.get("regex_scripts")) +
+                parseRegexScriptsFromElement(rootExt?.get("regex_scripts"))
+            ).distinctBy { "${it.id}|${it.findRegex}|${it.replaceString}" }
+
+        val depthPromptObj = parseDepthPromptObject(dataExt) ?: parseDepthPromptObject(rootExt)
+        val depthPromptText = depthPromptObj?.strOrNull("prompt").orEmpty().trim()
+        val depthPromptDepth = depthPromptObj?.intOrNull("depth")?.coerceIn(0, 12)
+            ?: if (depthPromptText.isNotEmpty()) 4 else 1
 
         val rp = RpConfig(
             title = charName,
             worldview = worldview,
             systemRules = sysPrompt,
             narratorStyle = notes,
+            authorNote = depthPromptText,
+            authorNoteDepth = depthPromptDepth,
             cast = listOf(castChar),
             state = RpGameState(scene = scenario.take(40).ifBlank { "初次相遇" }),
             greeting = firstMes,
@@ -153,9 +189,12 @@ object RpCardCodec {
             regexScripts = regexScripts,
         )
 
+        val charBookObj = data?.objOrNull("character_book")
+            ?: root.objOrNull("character_book")
+            ?: root.objOrNull("character_embdings")
         val now = System.currentTimeMillis()
         val loreList = parseCharacterBookEntries(
-            entriesElem = data?.character_book?.entries,
+            entriesElem = charBookObj?.get("entries"),
             conversationId = conversationId,
             now = now,
         )
@@ -163,32 +202,126 @@ object RpCardCodec {
         return ImportedRpCard(rpConfig = rp, importedLore = loreList, specVersion = specVersion)
     }
 
-    private fun parseCharacterBookEntries(
+    /**
+     * Extracts SillyTavern `.charx` / `.byaf` ZIP card archive (`card.json` + optional embedded avatar image).
+     */
+    fun extractCardFromZipBytes(zipBytes: ByteArray): ExtractedZipCard? {
+        if (!DeepSeekImportCodec.isZipBytes(zipBytes)) return null
+        var exactCardJson: String? = null
+        var fallbackCardJson: String? = null
+        var preferredAvatar: Pair<ByteArray, String>? = null
+        var fallbackImage: Pair<ByteArray, String>? = null
+
+        runCatching {
+            ZipInputStream(ByteArrayInputStream(zipBytes)).use { zis ->
+                while (true) {
+                    val entry = zis.nextEntry ?: break
+                    if (entry.isDirectory) {
+                        zis.closeEntry()
+                        continue
+                    }
+                    val norm = entry.name.replace('\\', '/').trimStart('/')
+                    val fileName = norm.substringAfterLast('/')
+                    val lowerPath = norm.lowercase()
+                    val lowerName = fileName.lowercase()
+                    if (lowerName.startsWith("._") || lowerPath.contains("__macosx/")) {
+                        zis.closeEntry()
+                        continue
+                    }
+
+                    when {
+                        lowerName == "card.json" && exactCardJson == null -> {
+                            val text = readZipBounded(zis, MAX_ZIP_JSON_BYTES)
+                                ?.toString(Charsets.UTF_8)
+                                ?.removePrefix("\uFEFF")
+                                ?.trim()
+                            if (!text.isNullOrEmpty() && text.startsWith("{")) {
+                                exactCardJson = text
+                            }
+                        }
+                        lowerName.endsWith(".json") && exactCardJson == null && fallbackCardJson == null -> {
+                            val text = readZipBounded(zis, MAX_ZIP_JSON_BYTES)
+                                ?.toString(Charsets.UTF_8)
+                                ?.removePrefix("\uFEFF")
+                                ?.trim()
+                            if (!text.isNullOrEmpty() && text.startsWith("{") &&
+                                (text.contains("\"spec\"") || text.contains("\"character_book\"") || text.contains("\"first_mes\""))
+                            ) {
+                                fallbackCardJson = text
+                            }
+                        }
+                        lowerName.endsWith(".png") || lowerName.endsWith(".webp") ||
+                            lowerName.endsWith(".jpg") || lowerName.endsWith(".jpeg") -> {
+                            val ext = lowerName.substringAfterLast('.')
+                            val isIconPath = lowerPath.contains("assets/icon/") ||
+                                lowerName.startsWith("avatar.") ||
+                                lowerName.startsWith("main.")
+                            if (isIconPath && preferredAvatar == null) {
+                                readZipBounded(zis, MAX_ZIP_IMAGE_BYTES)?.takeIf { it.isNotEmpty() }?.let {
+                                    preferredAvatar = it to ext
+                                }
+                            } else if (fallbackImage == null) {
+                                readZipBounded(zis, MAX_ZIP_IMAGE_BYTES)?.takeIf { it.isNotEmpty() }?.let {
+                                    fallbackImage = it to ext
+                                }
+                            }
+                        }
+                    }
+                    zis.closeEntry()
+                }
+            }
+        }
+
+        val jsonText = exactCardJson ?: fallbackCardJson ?: return null
+        val chosenImg = preferredAvatar ?: fallbackImage
+        return ExtractedZipCard(
+            cardJson = jsonText,
+            avatarBytes = chosenImg?.first,
+            avatarExt = chosenImg?.second ?: "png",
+        )
+    }
+
+    private fun parseDepthPromptObject(extensions: JsonObject?): JsonObject? {
+        if (extensions == null) return null
+        val elem = extensions["depth_prompt"] ?: return null
+        if (elem is JsonObject) return elem
+        val raw = (elem as? JsonPrimitive)?.takeUnless { it is JsonNull }?.contentOrNull?.trim()
+            ?: return null
+        if (!raw.startsWith("{")) return null
+        return runCatching { AppJson.parseToJsonElement(raw) as? JsonObject }.getOrNull()
+    }
+
+    internal fun parseCharacterBookEntries(
         entriesElem: JsonElement?,
         conversationId: String,
         now: Long,
     ): List<NovelLoreEntry> {
-        if (entriesElem == null) return emptyList()
+        if (entriesElem == null || entriesElem is JsonNull) return emptyList()
         val rawObjects: List<JsonObject> = when (entriesElem) {
             is JsonArray -> entriesElem.mapNotNull { it as? JsonObject }
             is JsonObject -> entriesElem.values.mapNotNull { it as? JsonObject }
             else -> emptyList()
         }
         return rawObjects.mapIndexedNotNull { idx, obj ->
-            val content = obj.str("content").orEmpty().trim()
+            val content = obj.strOrNull("content").orEmpty().trim()
             if (content.isEmpty()) return@mapIndexedNotNull null
 
-            val keysArr = (obj["keys"] as? JsonArray) ?: (obj["key"] as? JsonArray)
-            val keys = keysArr?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.trim() }
-                ?.filter { it.isNotEmpty() }
-                .orEmpty()
-            val title = (obj.str("name") ?: obj.str("comment") ?: keys.firstOrNull() ?: "Lore #$idx").trim()
-            val disabled = (obj["disable"] as? JsonPrimitive)?.booleanOrNull == true
-            val enabled = (obj["enabled"] as? JsonPrimitive)?.booleanOrNull ?: !disabled
-            val constant = (obj["constant"] as? JsonPrimitive)?.booleanOrNull == true
-            val priority = (obj["priority"] as? JsonPrimitive)?.intOrNull
-                ?: (obj["insertion_order"] as? JsonPrimitive)?.intOrNull
-                ?: (obj["order"] as? JsonPrimitive)?.intOrNull
+            val keys = (obj.strListOrEmpty("keys") + obj.strListOrEmpty("key")).distinct()
+            val secondaryKeys = (obj.strListOrEmpty("secondary_keys") + obj.strListOrEmpty("keysecondary")).distinct()
+            val ext = obj.objOrNull("extensions")
+            val title = (
+                obj.strOrNull("name")?.takeIf { it.isNotBlank() }
+                    ?: obj.strOrNull("comment")?.takeIf { it.isNotBlank() }
+                    ?: keys.firstOrNull()
+                    ?: "Lore #$idx"
+                ).trim()
+            val disabled = obj.boolOrNull("disable") == true
+            val enabled = obj.boolOrNull("enabled") ?: !disabled
+            val constant = obj.boolOrNull("constant") == true
+            val priority = obj.intOrNull("priority")
+                ?: obj.intOrNull("insertion_order")
+                ?: obj.intOrNull("order")
+                ?: ext?.intOrNull("order")
                 ?: 50
 
             val entry = NovelLoreEntry(
@@ -198,6 +331,7 @@ object RpCardCodec {
                 title = title,
                 content = content,
                 keywords = keys.ifEmpty { listOf(title) },
+                aliases = secondaryKeys,
                 alwaysActive = constant,
                 priority = priority,
                 enabled = enabled,
@@ -209,37 +343,61 @@ object RpCardCodec {
         }
     }
 
-    private fun parseRegexScripts(extensions: JsonObject?): List<RpRegexScript> {
-        val rawArr = extensions?.get("regex_scripts") as? JsonArray ?: return emptyList()
-        return rawArr.mapIndexedNotNull { idx, elem ->
-            val obj = elem as? JsonObject ?: return@mapIndexedNotNull null
-            val rawFind = obj.str("findRegex").orEmpty()
+    /**
+     * Parses SillyTavern regex scripts from a JSON array or single JSON object.
+     * Supports both official ST camelCase (`scriptName`/`findRegex`/`placement`) and
+     * Tavern Helper snake_case (`script_name`/`find_regex`/`source`/`destination`).
+     */
+    fun parseRegexScriptsFromElement(elem: JsonElement?): List<RpRegexScript> {
+        val objects: List<JsonObject> = when (elem) {
+            is JsonArray -> elem.mapNotNull { it as? JsonObject }
+            is JsonObject -> listOf(elem)
+            else -> emptyList()
+        }
+        if (objects.isEmpty()) return emptyList()
+
+        return objects.mapIndexedNotNull { idx, obj ->
+            val rawFind = obj.strOrNull("findRegex") ?: obj.strOrNull("find_regex") ?: ""
             if (rawFind.isBlank()) return@mapIndexedNotNull null
 
-            val explicitFlags = obj.str("flags")
+            val explicitFlags = obj.strOrNull("flags")
             val (pattern, parsedFlags) = RpRegexEngine.parseRegexLiteral(
                 raw = rawFind,
                 fallbackFlags = explicitFlags ?: "gms",
             )
-            val name = (obj.str("scriptName") ?: obj.str("name") ?: "Regex #${idx + 1}").trim()
-            val id = obj.str("id")?.trim()?.takeIf { it.isNotEmpty() } ?: UUID.randomUUID().toString()
-            val disabled = (obj["disabled"] as? JsonPrimitive)?.booleanOrNull == true
-            val enabled = (obj["enabled"] as? JsonPrimitive)?.booleanOrNull ?: !disabled
-            val promptOnly = (obj["promptOnly"] as? JsonPrimitive)?.booleanOrNull ?: false
-            val markdownOnly = (obj["markdownOnly"] as? JsonPrimitive)?.booleanOrNull ?: !promptOnly
+            val name = (
+                obj.strOrNull("scriptName")?.takeIf { it.isNotBlank() }
+                    ?: obj.strOrNull("script_name")?.takeIf { it.isNotBlank() }
+                    ?: obj.strOrNull("name")?.takeIf { it.isNotBlank() }
+                    ?: "Regex #${idx + 1}"
+                ).trim()
+            val id = obj.strOrNull("id")?.trim()?.takeIf { it.isNotEmpty() } ?: UUID.randomUUID().toString()
+            val disabled = obj.boolOrNull("disabled") == true
+            val enabled = obj.boolOrNull("enabled") ?: !disabled
 
-            val placement = parseRegexPlacement(obj["placement"])
-            val trimStrings = (obj["trimStrings"] as? JsonArray)
-                ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
-                ?.filter { it.isNotEmpty() }
-                .orEmpty()
+            val destinationObj = obj.objOrNull("destination")
+            val promptOnly: Boolean
+            val markdownOnly: Boolean
+            if (destinationObj != null) {
+                val display = destinationObj.boolOrNull("display") ?: true
+                val prompt = destinationObj.boolOrNull("prompt") ?: true
+                markdownOnly = display && !prompt
+                promptOnly = prompt && !display
+            } else {
+                promptOnly = obj.boolOrNull("promptOnly") ?: false
+                markdownOnly = obj.boolOrNull("markdownOnly") ?: !promptOnly
+            }
+
+            val placement = parseRegexPlacement(obj["placement"], obj.objOrNull("source"))
+            val trimStrings = parseTrimStrings(obj["trimStrings"] ?: obj["trim_strings"])
+            val replaceString = obj.strOrNull("replaceString") ?: obj.strOrNull("replace_string") ?: ""
 
             RpRegexScript(
                 id = id,
                 name = name,
                 enabled = enabled,
                 findRegex = pattern,
-                replaceString = obj.str("replaceString").orEmpty(),
+                replaceString = replaceString,
                 placement = placement,
                 markdownOnly = markdownOnly,
                 promptOnly = promptOnly,
@@ -249,18 +407,42 @@ object RpCardCodec {
         }
     }
 
-    private fun parseRegexPlacement(elem: JsonElement?): String {
-        if (elem is JsonPrimitive) {
+    private fun parseTrimStrings(elem: JsonElement?): List<String> = when (elem) {
+        is JsonArray -> elem.mapNotNull { (it as? JsonPrimitive)?.takeUnless { p -> p is JsonNull }?.contentOrNull }
+            .filter { it.isNotEmpty() }
+        is JsonPrimitive -> elem.takeUnless { it is JsonNull }?.contentOrNull
+            ?.split('\n')
+            ?.map { it.trimEnd('\r') }
+            ?.filter { it.isNotEmpty() }
+            .orEmpty()
+        else -> emptyList()
+    }
+
+    private fun parseRegexPlacement(elem: JsonElement?, sourceObj: JsonObject? = null): String {
+        if (sourceObj != null) {
+            val hasUser = sourceObj.boolOrNull("user_input") == true
+            val hasAi = sourceObj.boolOrNull("ai_output") == true
+            return when {
+                hasUser && hasAi -> "both"
+                hasUser -> "user_input"
+                hasAi -> "ai_output"
+                else -> "ai_output"
+            }
+        }
+        if (elem is JsonPrimitive && elem !is JsonNull) {
             val s = elem.contentOrNull?.trim()?.lowercase()
             if (s == "user_input" || s == "ai_output" || s == "both") return s
-            return when (elem.intOrNull) {
+            return when (elem.intOrNull ?: s?.toIntOrNull()) {
                 1 -> "user_input"
                 2 -> "ai_output"
                 else -> "ai_output"
             }
         }
         val arr = elem as? JsonArray ?: return "ai_output"
-        val codes = arr.mapNotNull { (it as? JsonPrimitive)?.intOrNull }.toSet()
+        val codes = arr.mapNotNull { p ->
+            val prim = p as? JsonPrimitive ?: return@mapNotNull null
+            if (prim is JsonNull) null else prim.intOrNull ?: prim.contentOrNull?.toIntOrNull()
+        }.toSet()
         val hasUser = 1 in codes
         val hasAi = 2 in codes
         return when {
@@ -308,15 +490,13 @@ object RpCardCodec {
         }
     }
 
-    private fun JsonObject.str(key: String): String? =
-        (this[key] as? JsonPrimitive)?.contentOrNull
-
     fun exportToV3Json(rp: RpConfig, lore: List<NovelLoreEntry> = emptyList()): String {
         val mainChar = rp.cast.firstOrNull { !it.isPlayer } ?: rp.cast.firstOrNull()
         val charBook = if (lore.isNotEmpty()) {
             val serializedEntries = lore.map { l ->
                 StLoreEntryJson(
                     keys = l.keywords.ifEmpty { listOf(l.title) },
+                    secondary_keys = l.aliases,
                     content = l.content,
                     name = l.title,
                     enabled = l.enabled,
@@ -486,6 +666,55 @@ object RpCardCodec {
             if (type == "IEND") break
         }
         return out.toByteArray()
+    }
+
+    // ==================== Safe JSON Accessors ====================
+
+    internal fun JsonObject.objOrNull(key: String): JsonObject? =
+        this[key] as? JsonObject
+
+    internal fun JsonObject.arrOrNull(key: String): JsonArray? =
+        this[key] as? JsonArray
+
+    internal fun JsonObject.strOrNull(key: String): String? =
+        (this[key] as? JsonPrimitive)?.takeUnless { it is JsonNull }?.contentOrNull
+
+    internal fun JsonObject.boolOrNull(key: String): Boolean? {
+        val prim = this[key] as? JsonPrimitive ?: return null
+        if (prim is JsonNull) return null
+        prim.booleanOrNull?.let { return it }
+        return when (prim.contentOrNull?.trim()?.lowercase()) {
+            "true", "1" -> true
+            "false", "0" -> false
+            else -> null
+        }
+    }
+
+    internal fun JsonObject.intOrNull(key: String): Int? {
+        val prim = this[key] as? JsonPrimitive ?: return null
+        if (prim is JsonNull) return null
+        return prim.intOrNull ?: prim.contentOrNull?.trim()?.toIntOrNull()
+    }
+
+    internal fun JsonObject.strListOrEmpty(key: String): List<String> {
+        val arr = this[key] as? JsonArray ?: return emptyList()
+        return arr.mapNotNull { el ->
+            (el as? JsonPrimitive)?.takeUnless { it is JsonNull }?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
+        }
+    }
+
+    private fun readZipBounded(zis: ZipInputStream, maxBytes: Int): ByteArray? {
+        val baos = ByteArrayOutputStream()
+        val buf = ByteArray(8192)
+        var total = 0
+        while (true) {
+            val read = zis.read(buf)
+            if (read <= 0) break
+            total += read
+            if (total > maxBytes) return null
+            baos.write(buf, 0, read)
+        }
+        return baos.toByteArray()
     }
 
     private fun writeChunk(out: ByteArrayOutputStream, type: String, data: ByteArray) {

@@ -12,6 +12,7 @@ import com.gugachat.app.domain.chat.RpSaveSlot
 import com.gugachat.app.domain.chat.UserMemory
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.JsonObject
 
 @Serializable
 data class GuGuChatBackupPayload(
@@ -52,12 +53,32 @@ object ChatBackupCodec {
         return AppJson.encodeToString(payload)
     }
 
+    fun decodePayload(rawJson: String): GuGuChatBackupPayload {
+        val cleaned = rawJson.removePrefix("\uFEFF").trim()
+        val rootObj = runCatching { AppJson.parseToJsonElement(cleaned) as? JsonObject }.getOrNull()
+            ?: throw IllegalArgumentException("无效的 GuGuChat 本地备份 JSON 格式")
+        val hasKnownSection = listOf(
+            "conversations",
+            "messages",
+            "userMemories",
+            "novelChapters",
+            "novelLore",
+            "memoryLedger",
+            "memoryEpisodes",
+            "rpSaveSlots",
+        ).any { rootObj.containsKey(it) }
+        if (!hasKnownSection) {
+            throw IllegalArgumentException("该文件不是 GuGuChat 本地备份（外部软件导出请使用「导入外部对话 / 剧本」）")
+        }
+        return AppJson.decodeFromString(GuGuChatBackupPayload.serializer(), cleaned)
+    }
+
     suspend fun importJson(
         db: AppDatabase,
         rawJson: String,
         replaceExisting: Boolean = false,
     ): BackupImportResult {
-        val payload = AppJson.decodeFromString(GuGuChatBackupPayload.serializer(), rawJson.trim())
+        val payload = decodePayload(rawJson)
         val chatDao = db.chatDao()
         val memDao = db.userMemoryDao()
 

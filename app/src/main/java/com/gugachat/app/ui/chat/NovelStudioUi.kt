@@ -3,6 +3,7 @@ package com.gugachat.app.ui.chat
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -60,6 +61,7 @@ import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -1006,6 +1008,7 @@ fun NovelStudioSheet(
     onToggleLoreEnabled: (String) -> Unit = {},
     onToggleLoreAlwaysActive: (String) -> Unit = {},
     onDeleteLore: (String) -> Unit,
+    onImportLorebook: (Uri) -> Unit = {},
     onExtractLoreNow: () -> Unit = {},
     onSaveForeshadowToLore: (String) -> Unit = {},
     onUpdateConfig: ((NovelConfig) -> NovelConfig) -> Unit,
@@ -1088,6 +1091,9 @@ fun NovelStudioSheet(
     }
     val exportMdLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/markdown")) { uri ->
         if (uri != null) onExportMd(uri, exportIncludeLore)
+    }
+    val importLoreLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) onImportLorebook(uri)
     }
 
     // Chapter Edit Dialog
@@ -1602,12 +1608,26 @@ fun NovelStudioSheet(
                                     Text(strings.novel.loreAddBtn, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                 }
                                 GuButton(
+                                    onClick = { importLoreLauncher.launch(arrayOf("*/*")) },
+                                    compact = true,
+                                    variant = GuButtonVariant.SUBTLE,
+                                ) {
+                                    Icon(Icons.Default.UploadFile, contentDescription = null, modifier = Modifier.size(15.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(
+                                        text = if (isZh) "导入" else "Import",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                    )
+                                }
+                                GuButton(
                                     onClick = onExtractLoreNow,
                                     enabled = hasAssistantProse && !isExtractingLore,
                                     loading = isExtractingLore,
                                     compact = true,
                                     variant = GuButtonVariant.HONEY,
-                                    modifier = Modifier.weight(1.25f),
+                                    modifier = Modifier.weight(1.15f),
                                 ) {
                                     Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(15.dp))
                                     Spacer(Modifier.width(4.dp))
@@ -1616,6 +1636,7 @@ fun NovelStudioSheet(
                                         fontSize = 12.sp,
                                         fontWeight = FontWeight.Bold,
                                         maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
                                     )
                                 }
                             }

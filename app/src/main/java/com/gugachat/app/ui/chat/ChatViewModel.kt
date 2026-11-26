@@ -4,6 +4,7 @@ import android.content.ContentResolver
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.provider.OpenableColumns
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.gugachat.app.AppContainer
@@ -14,6 +15,7 @@ import com.gugachat.app.core.i18n.ZhStrings
 import com.gugachat.app.core.i18n.fmt
 import com.gugachat.app.core.util.newIdempotencyKey
 import com.gugachat.app.data.api.ApiException
+import com.gugachat.app.data.api.AppJson
 import com.gugachat.app.data.api.DirectProtocolCodec
 import com.gugachat.app.data.api.ImageBinaryUpload
 import com.gugachat.app.data.api.OnlineChatCompletionRequestDto
@@ -53,6 +55,7 @@ import com.gugachat.app.domain.chat.NovelExport
 import com.gugachat.app.domain.chat.NovelInputKind
 import com.gugachat.app.domain.chat.NovelLoreEntry
 import com.gugachat.app.domain.chat.NovelPresets
+import com.gugachat.app.domain.chat.ParsedTavernAsset
 import com.gugachat.app.domain.chat.RpCardCodec
 import com.gugachat.app.domain.chat.RpCgRecord
 import com.gugachat.app.domain.chat.RpCharacter
@@ -68,6 +71,7 @@ import com.gugachat.app.domain.chat.RpRegexEngine
 import com.gugachat.app.domain.chat.RpRegexScript
 import com.gugachat.app.domain.chat.RpSaveSlot
 import com.gugachat.app.domain.chat.RpVisualTheme
+import com.gugachat.app.domain.chat.TavernAssetCodec
 import com.gugachat.app.domain.chat.TimelineReconciler
 import com.gugachat.app.domain.chat.UserMemory
 import com.gugachat.app.domain.chat.WireChatMessage
@@ -2540,14 +2544,23 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                     contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: error("Empty file")
                 }
                 val isPng = RpCardCodec.isPngBytes(bytes)
-                val jsonText = if (isPng) {
-                    RpCardCodec.extractCardJsonFromPng(bytes) ?: error("No ccv3/chara metadata found in PNG")
-                } else {
-                    bytes.toString(Charsets.UTF_8)
+                val zipCard = if (!isPng) RpCardCodec.extractCardFromZipBytes(bytes) else null
+                val jsonText = when {
+                    isPng -> RpCardCodec.extractCardJsonFromPng(bytes)
+                        ?: error("No ccv3/chara metadata found in PNG")
+                    zipCard != null -> zipCard.cardJson
+                    else -> bytes.toString(Charsets.UTF_8).removePrefix("\uFEFF")
                 }
                 val imported = RpCardCodec.parseCardJson(jsonText, conversationId = "pending")
-                val finalRp = if (isPng) {
-                    val avatarPath = withContext(Dispatchers.IO) { saveRpMediaBytes(bytes, "avatar", "png") }
+                val avatarPayload: Pair<ByteArray, String>? = when {
+                    isPng -> bytes to "png"
+                    zipCard?.avatarBytes != null -> zipCard.avatarBytes to zipCard.avatarExt
+                    else -> null
+                }
+                val finalRp = if (avatarPayload != null) {
+                    val avatarPath = withContext(Dispatchers.IO) {
+                        saveRpMediaBytes(avatarPayload.first, "avatar", avatarPayload.second)
+                    }
                     val leadIdx = imported.rpConfig.cast.indexOfFirst { !it.isPlayer }.takeIf { it >= 0 } ?: 0
                     val updatedCast = imported.rpConfig.cast.mapIndexed { idx, ch ->
                         if (idx == leadIdx) ch.copy(avatarPath = avatarPath) else ch
@@ -2565,6 +2578,251 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                 )
             }
         }
+    }
+
+    fun importLorebookOrPresetUri(uri: Uri, contentResolver: ContentResolver) {
+        val conv = _ui.value.activeConversation ?: return
+        val isZh = strings().language == AppLanguage.ZH
+        viewModelScope.launch {
+            try {
+                val (rawText, displayName) = withContext(Dispatchers.IO) {
+                    val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                        ?: error(if (isZh) "文件为空" else "Empty file")
+                    val name = resolveUriDisplayName(contentResolver, uri)
+                    val text = if (RpCardCodec.isPngBytes(bytes)) {
+                        RpCardCodec.extractCardJsonFromPng(bytes)
+                            ?: error(if (isZh) "PNG 中未发现角色卡元数据" else "No card metadata in PNG")
+                    } else {
+                        RpCardCodec.extractCardFromZipBytes(bytes)?.cardJson
+                            ?: bytes.toString(Charsets.UTF_8).removePrefix("\uFEFF")
+                    }
+                    text to name
+                }
+
+                val existingLore = chatDao.getNovelLoreForConversation(conv.id).map { it.toDomain() }
+                val existingLoreKeys = existingLore
+                    .map { "${it.title.trim().lowercase()}|${it.content.trim()}" }
+                    .toHashSet()
+
+                suspend fun insertDedupedLore(entries: List<NovelLoreEntry>): Int {
+                    val fresh = entries.map { it.copy(conversationId = conv.id) }.filter { entry ->
+                        existingLoreKeys.add("${entry.title.trim().lowercase()}|${entry.content.trim()}")
+                    }
+                    if (fresh.isNotEmpty()) {
+                        chatDao.upsertNovelLoreList(fresh.map { it.toEntity() })
+                    }
+                    return fresh.size
+                }
+
+                fun mergeRegexIntoRp(scripts: List<RpRegexScript>): Int {
+                    if (scripts.isEmpty() || conv.rp == null) return 0
+                    var added = 0
+                    updateRpConfig { cfg ->
+                        val existingKeys = cfg.regexScripts
+                            .map { "${it.findRegex}|${it.replaceString}" }
+                            .toHashSet()
+                        val toAdd = scripts.filter { existingKeys.add("${it.findRegex}|${it.replaceString}") }
+                        added = toAdd.size
+                        if (toAdd.isEmpty()) cfg else cfg.copy(regexScripts = cfg.regexScripts + toAdd)
+                    }
+                    return added
+                }
+
+                when (val asset = TavernAssetCodec.parseJsonText(rawText, conversationId = conv.id, fileName = displayName)) {
+                    is ParsedTavernAsset.Lorebook -> {
+                        val added = insertDedupedLore(asset.asset.entries)
+                        if (added > 0) {
+                            container.toastController.show(
+                                strings().rp.importLorebookSuccess.fmt(
+                                    "name" to asset.asset.name,
+                                    "count" to added,
+                                ),
+                            )
+                        } else {
+                            container.toastController.show(
+                                if (isZh) "世界书「${asset.asset.name}」条目均已存在" else "All entries in \"${asset.asset.name}\" already exist",
+                            )
+                        }
+                    }
+
+                    is ParsedTavernAsset.Preset -> {
+                        val preset = asset.asset
+                        val addedLore = insertDedupedLore(preset.loreEntries)
+                        val addedRegex = mergeRegexIntoRp(preset.regexScripts)
+                        if (conv.rp != null) {
+                            updateRpConfig { cfg ->
+                                val nextRules = mergeTextSection(cfg.systemRules, preset.systemRules)
+                                val nextPost = mergeTextSection(cfg.postHistoryInstructions, preset.postHistoryInstructions)
+                                cfg.copy(
+                                    systemRules = nextRules,
+                                    postHistoryInstructions = nextPost,
+                                )
+                            }
+                        } else if (preset.systemRules.isNotBlank() && conv.systemPrompt.isBlank()) {
+                            val fresh = chatDao.getConversationById(conv.id)?.toDomain() ?: conv
+                            chatDao.upsertConversation(
+                                fresh.copy(
+                                    systemPrompt = preset.systemRules,
+                                    updatedAt = System.currentTimeMillis(),
+                                ).toEntity(),
+                            )
+                        }
+                        val baseMsg = strings().rp.importPresetSuccess.fmt("name" to preset.name)
+                        val extras = buildList {
+                            if (addedLore > 0) add(if (isZh) "+$addedLore 条世界书" else "+$addedLore lore")
+                            if (addedRegex > 0) add(if (isZh) "+$addedRegex 条正则" else "+$addedRegex regex")
+                        }.joinToString(" · ")
+                        container.toastController.show(if (extras.isEmpty()) baseMsg else "$baseMsg（$extras）")
+                    }
+
+                    is ParsedTavernAsset.QuickReplies -> {
+                        val qr = asset.asset
+                        if (conv.rp != null) {
+                            updateRpConfig { cfg ->
+                                cfg.copy(quickActions = (cfg.quickActions + qr.actions).distinct())
+                            }
+                            container.toastController.show(
+                                if (isZh) "已导入快速回复「${qr.name}」（${qr.actions.size} 条）" else "Imported quick replies \"${qr.name}\" (${qr.actions.size})",
+                            )
+                        } else {
+                            container.toastController.show(
+                                if (isZh) "快速回复仅适用于文游会话" else "Quick replies apply to RP sessions only",
+                                isError = true,
+                            )
+                        }
+                    }
+
+                    is ParsedTavernAsset.RegexScripts -> {
+                        val addedRegex = mergeRegexIntoRp(asset.scripts)
+                        if (conv.rp != null) {
+                            container.toastController.show(
+                                if (isZh) "已导入 $addedRegex 条正则脚本" else "Imported $addedRegex regex scripts",
+                            )
+                        } else {
+                            container.toastController.show(
+                                if (isZh) "正则脚本仅适用于文游会话" else "Regex scripts apply to RP sessions only",
+                                isError = true,
+                            )
+                        }
+                    }
+
+                    is ParsedTavernAsset.Settings -> {
+                        val st = asset.asset
+                        val addedRegex = mergeRegexIntoRp(st.regexScripts)
+                        if (conv.rp != null && st.authorNote.isNotBlank()) {
+                            updateRpConfig { cfg ->
+                                cfg.copy(authorNote = mergeTextSection(cfg.authorNote, st.authorNote))
+                            }
+                        }
+                        container.toastController.show(
+                            if (isZh) "已从酒馆设置导入（+$addedRegex 条正则）" else "Imported Tavern settings (+$addedRegex regex)",
+                        )
+                    }
+
+                    null -> {
+                        // Fallback: allow extracting embedded lorebook / regex from a character card JSON/PNG/CHARX
+                        val card = runCatching {
+                            RpCardCodec.parseCardJson(rawText, conversationId = conv.id)
+                        }.getOrNull()
+                        if (card != null && (card.importedLore.isNotEmpty() || card.rpConfig.regexScripts.isNotEmpty())) {
+                            val addedLore = insertDedupedLore(card.importedLore)
+                            val addedRegex = mergeRegexIntoRp(card.rpConfig.regexScripts)
+                            container.toastController.show(
+                                if (isZh) {
+                                    "已从角色卡「${card.rpConfig.title}」导入 $addedLore 条世界书" +
+                                        if (addedRegex > 0) " · $addedRegex 条正则" else ""
+                                } else {
+                                    "Imported $addedLore lore entries" +
+                                        (if (addedRegex > 0) " · $addedRegex regex" else "") +
+                                        " from \"${card.rpConfig.title}\""
+                                },
+                            )
+                        } else {
+                            error(
+                                if (isZh) {
+                                    "未识别到世界书、酒馆预设或正则 JSON"
+                                } else {
+                                    "Unrecognized lorebook, Tavern preset, or regex JSON"
+                                },
+                            )
+                        }
+                    }
+                }
+            } catch (e: Throwable) {
+                container.toastController.show(
+                    strings().rp.importFailed.fmt("reason" to (e.message ?: "Unknown")),
+                    isError = true,
+                )
+            }
+        }
+    }
+
+    fun importRpRegexJsonUri(uri: Uri, contentResolver: ContentResolver) {
+        val conv = _ui.value.activeConversation ?: return
+        if (conv.rp == null) return
+        val isZh = strings().language == AppLanguage.ZH
+        viewModelScope.launch {
+            try {
+                val scripts = withContext(Dispatchers.IO) {
+                    val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                        ?: error(if (isZh) "文件为空" else "Empty file")
+                    val text = if (RpCardCodec.isPngBytes(bytes)) {
+                        RpCardCodec.extractCardJsonFromPng(bytes)
+                            ?: error(if (isZh) "PNG 中未发现角色卡元数据" else "No card metadata in PNG")
+                    } else {
+                        RpCardCodec.extractCardFromZipBytes(bytes)?.cardJson
+                            ?: bytes.toString(Charsets.UTF_8).removePrefix("\uFEFF")
+                    }
+                    val root = AppJson.parseToJsonElement(text.trim())
+                    TavernAssetCodec.parseRegexScriptsJson(root)
+                }
+                if (scripts.isEmpty()) {
+                    error(
+                        if (isZh) {
+                            "文件中未找到酒馆正则脚本（支持单条/数组/预设/角色卡/settings.json）"
+                        } else {
+                            "No Tavern regex scripts found (supports single, array, preset, card, or settings.json)"
+                        },
+                    )
+                }
+                var addedCount = 0
+                updateRpConfig { cfg ->
+                    val existingKeys = cfg.regexScripts
+                        .map { "${it.findRegex}|${it.replaceString}" }
+                        .toHashSet()
+                    val fresh = scripts.filter { existingKeys.add("${it.findRegex}|${it.replaceString}") }
+                    addedCount = fresh.size
+                    if (fresh.isEmpty()) cfg else cfg.copy(regexScripts = cfg.regexScripts + fresh)
+                }
+                container.toastController.show(
+                    if (addedCount > 0) {
+                        if (isZh) "已导入 $addedCount 条酒馆正则脚本" else "Imported $addedCount Tavern regex scripts"
+                    } else {
+                        if (isZh) "正则脚本均已存在（未重复添加）" else "All regex scripts already exist"
+                    },
+                )
+            } catch (e: Throwable) {
+                container.toastController.show(
+                    strings().rp.importFailed.fmt("reason" to (e.message ?: "Unknown")),
+                    isError = true,
+                )
+            }
+        }
+    }
+
+    private fun resolveUriDisplayName(contentResolver: ContentResolver, uri: Uri): String? = runCatching {
+        contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+            if (c.moveToFirst()) c.getString(0) else null
+        }
+    }.getOrNull() ?: uri.lastPathSegment?.substringAfterLast('/')
+
+    private fun mergeTextSection(existing: String, incoming: String): String {
+        val cleanIncoming = incoming.trim()
+        if (cleanIncoming.isEmpty()) return existing
+        val cleanExisting = existing.trim()
+        if (cleanExisting.isEmpty()) return cleanIncoming
+        if (cleanExisting.contains(cleanIncoming)) return cleanExisting
+        return "$cleanExisting\n\n$cleanIncoming"
     }
 
     private suspend fun insertRpConversation(rp: RpConfig, importedLore: List<NovelLoreEntry>) {

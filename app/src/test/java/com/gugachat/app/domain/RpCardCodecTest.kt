@@ -10,6 +10,8 @@ import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 import java.util.zip.CRC32
 import java.util.zip.Inflater
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 
 class RpCardCodecTest {
 
@@ -288,5 +290,98 @@ class RpCardCodecTest {
 
         val reparsed = RpCardCodec.parseCardJson(exported, conversationId = "st-regex-2")
         assertEquals(imported.rpConfig.regexScripts, reparsed.rpConfig.regexScripts)
+    }
+
+    @Test
+    fun parseCardJson_toleratesChubNullFields() {
+        val chubNullJson = """
+            {
+              "spec": "chara_card_v2",
+              "spec_version": "2.0",
+              "data": {
+                "name": "星见琉璃",
+                "description": null,
+                "personality": "清冷",
+                "scenario": null,
+                "first_mes": "你好，观测者。",
+                "alternate_greetings": null,
+                "tags": [null, "科幻", "星际"],
+                "character_book": null,
+                "extensions": null
+              }
+            }
+        """.trimIndent()
+
+        val imported = RpCardCodec.parseCardJson(chubNullJson, conversationId = "chub-null")
+        assertEquals("v2", imported.specVersion)
+        assertEquals("星见琉璃", imported.rpConfig.title)
+        assertEquals("你好，观测者。", imported.rpConfig.greeting)
+        assertTrue(imported.rpConfig.worldview.contains("科幻"))
+        assertTrue(imported.importedLore.isEmpty())
+    }
+
+    @Test
+    fun parseCardJson_supportsSpecLessV1AliasesCharacterEmbdingsAndDepthPrompt() {
+        val v1Json = """
+            {
+              "char_name": "墨渊",
+              "char_persona": "隐居剑阁的白衣剑客",
+              "world_scenario": "落雪剑阁",
+              "char_greeting": "剑已出鞘，阁下请赐教。",
+              "example_dialogue": "{{user}}: 你是谁？\n{{char}}: 剑阁守剑人。",
+              "extensions": {
+                "depth_prompt": {
+                  "prompt": "保持武侠留白感。",
+                  "depth": 3
+                }
+              },
+              "character_embdings": {
+                "entries": [
+                  {
+                    "keys": ["寒光剑"],
+                    "secondary_keys": ["佩剑"],
+                    "comment": "寒光剑",
+                    "content": "玄铁锻造的古剑。"
+                  }
+                ]
+              }
+            }
+        """.trimIndent()
+
+        val imported = RpCardCodec.parseCardJson(v1Json, conversationId = "v1-test")
+        assertEquals("v1", imported.specVersion)
+        assertEquals("墨渊", imported.rpConfig.title)
+        assertEquals("剑已出鞘，阁下请赐教。", imported.rpConfig.greeting)
+        assertEquals("保持武侠留白感。", imported.rpConfig.authorNote)
+        assertEquals(3, imported.rpConfig.authorNoteDepth)
+        assertEquals(1, imported.importedLore.size)
+        assertEquals(listOf("佩剑"), imported.importedLore.first().aliases)
+    }
+
+    @Test
+    fun extractCardFromZipBytes_charxPackageExtractsCardJsonAndAvatar() {
+        val cardJson = """
+            {
+              "spec": "chara_card_v3",
+              "data": { "name": "夏洛特", "first_mes": "欢迎来到钟楼。" }
+            }
+        """.trimIndent()
+        val pngBytes = buildMinimalValidPng()
+        val baos = ByteArrayOutputStream()
+        ZipOutputStream(baos).use { zos ->
+            zos.putNextEntry(ZipEntry("card.json"))
+            zos.write(cardJson.toByteArray(StandardCharsets.UTF_8))
+            zos.closeEntry()
+            zos.putNextEntry(ZipEntry("assets/icon/images/main.png"))
+            zos.write(pngBytes)
+            zos.closeEntry()
+        }
+
+        val extracted = RpCardCodec.extractCardFromZipBytes(baos.toByteArray())
+        assertNotNull(extracted)
+        assertNotNull(extracted!!.avatarBytes)
+        assertEquals("png", extracted.avatarExt)
+        val parsed = RpCardCodec.parseCardJson(extracted.cardJson, conversationId = "charx-1")
+        assertEquals("夏洛特", parsed.rpConfig.title)
     }
 }

@@ -134,6 +134,7 @@ fun ExternalImportSheet(
 
     var parsedBundle by remember { mutableStateOf<ExternalImportBundle?>(null) }
     var selectedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var importSyncedProviders by remember { mutableStateOf(true) }
     var searchQuery by remember { mutableStateOf("") }
     var targetModeOverride by remember { mutableStateOf<ConversationMode?>(null) }
 
@@ -178,6 +179,7 @@ fun ExternalImportSheet(
                 }
                 parsedBundle = bundle
                 selectedIds = bundle.items.map { it.conversation.id }.toSet()
+                importSyncedProviders = bundle.importedProviders.isNotEmpty()
                 searchQuery = ""
                 targetModeOverride = null
             } catch (e: Throwable) {
@@ -413,6 +415,7 @@ fun ExternalImportSheet(
                                                             )
                                                             parsedBundle = fetched
                                                             selectedIds = fetched.items.map { it.conversation.id }.toSet()
+                                                            importSyncedProviders = fetched.importedProviders.isNotEmpty()
                                                             searchQuery = ""
                                                             targetModeOverride = null
                                                         } catch (_: DeepSeekLinkAuthRequiredException) {
@@ -527,6 +530,7 @@ fun ExternalImportSheet(
                                                             }
                                                             parsedBundle = parsed
                                                             selectedIds = parsed.items.map { it.conversation.id }.toSet()
+                                                            importSyncedProviders = parsed.importedProviders.isNotEmpty()
                                                             searchQuery = ""
                                                             targetModeOverride = null
                                                         } catch (e: Throwable) {
@@ -555,7 +559,7 @@ fun ExternalImportSheet(
                                             lineHeight = 18.5.sp,
                                         )
                                         GuButton(
-                                            onClick = { filePicker.launch(arrayOf("application/json", "*/*")) },
+                                            onClick = { filePicker.launch(arrayOf("*/*")) },
                                             enabled = !isBusy,
                                             loading = isBusy,
                                             modifier = Modifier.fillMaxWidth(),
@@ -658,13 +662,20 @@ fun ExternalImportSheet(
                             text = sourceDisplayName(bundle.source, strings),
                             variant = GuBadgeVariant.HONEY,
                         )
-                        GuBadge(
-                            text = strings.chat.importDeepSeekPreviewSummary.fmt(
-                                "convs" to bundle.items.size,
-                                "msgs" to totalMsgs,
-                            ),
-                            variant = GuBadgeVariant.BLUE,
-                        )
+                        if (bundle.items.isNotEmpty()) {
+                            GuBadge(
+                                text = strings.chat.importDeepSeekPreviewSummary.fmt(
+                                    "convs" to bundle.items.size,
+                                    "msgs" to totalMsgs,
+                                ),
+                                variant = GuBadgeVariant.BLUE,
+                            )
+                        } else if (bundle.importedProviders.isNotEmpty()) {
+                            GuBadge(
+                                text = "${bundle.importedProviders.size} API",
+                                variant = GuBadgeVariant.EMERALD,
+                            )
+                        }
                         Spacer(Modifier.weight(1f))
                         Text(
                             text = strings.chat.importDeepSeekReselect,
@@ -676,6 +687,7 @@ fun ExternalImportSheet(
                                 .clickable(enabled = !isBusy) {
                                     parsedBundle = null
                                     selectedIds = emptySet()
+                                    importSyncedProviders = true
                                     targetModeOverride = null
                                     errorMsg = null
                                 }
@@ -683,18 +695,63 @@ fun ExternalImportSheet(
                         )
                     }
 
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        GuSectionHeader(title = strings.chat.importTargetModeLabel)
-                        GuSegmentedControl(
-                            items = targetModeLabels,
-                            selectedIndex = selectedModeIndex,
-                            onSelect = { idx -> targetModeOverride = targetModes.getOrNull(idx) },
-                            compact = true,
+                    if (bundle.importedProviders.isNotEmpty()) {
+                        Surface(
+                            onClick = { importSyncedProviders = !importSyncedProviders },
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (importSyncedProviders) c.successBg else c.surfaceSoft,
+                            border = BorderStroke(
+                                theme.borderWidth,
+                                if (importSyncedProviders) c.success.copy(alpha = 0.45f) else c.border,
+                            ),
                             modifier = Modifier.fillMaxWidth(),
-                        )
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Icon(
+                                    imageVector = if (importSyncedProviders) Icons.Default.CheckBox else Icons.Default.CheckBoxOutlineBlank,
+                                    contentDescription = null,
+                                    tint = if (importSyncedProviders) c.success else c.muted,
+                                    modifier = Modifier.size(19.dp),
+                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = strings.providers.importSyncProvidersToggle.fmt("count" to bundle.importedProviders.size),
+                                        color = c.ink,
+                                        fontSize = 12.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                    )
+                                    Text(
+                                        text = bundle.importedProviders.take(4).joinToString(" · ") { it.displayTitle() },
+                                        color = c.muted,
+                                        fontSize = 11.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    if (bundle.items.isNotEmpty()) {
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            GuSectionHeader(title = strings.chat.importTargetModeLabel)
+                            GuSegmentedControl(
+                                items = targetModeLabels,
+                                selectedIndex = selectedModeIndex,
+                                onSelect = { idx -> targetModeOverride = targetModes.getOrNull(idx) },
+                                compact = true,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
                     }
 
                     if (bundle.items.size > 1) {
@@ -706,135 +763,142 @@ fun ExternalImportSheet(
                         )
                     }
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        Text(
-                            text = strings.chat.importDeepSeekSelectedCount.fmt(
-                                "selected" to selectedIds.size,
-                                "total" to bundle.items.size,
-                            ),
-                            color = c.muted,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                        if (bundle.items.size > 1) {
-                            Text(
-                                text = if (allVisibleSelected) strings.chat.importDeepSeekDeselectAll else strings.chat.importDeepSeekSelectAll,
-                                color = c.primarySoftInk,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier
-                                    .heightIn(min = 36.dp)
-                                    .clickable {
-                                        val visibleIds = filteredItems.map { it.conversation.id }.toSet()
-                                        selectedIds = if (allVisibleSelected) selectedIds - visibleIds else selectedIds + visibleIds
-                                    }
-                                    .padding(horizontal = 8.dp, vertical = 8.dp),
-                            )
-                        }
-                    }
-
-                    GuGroupedCard(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 120.dp, max = 300.dp),
-                    ) {
-                        LazyColumn(
+                    if (bundle.items.isNotEmpty()) {
+                        Row(
                             modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
                         ) {
-                            itemsIndexed(filteredItems, key = { _, it -> it.conversation.id }) { idx, item ->
-                                val checked = item.conversation.id in selectedIds
-                                val effectiveMode = targetModeOverride ?: item.conversation.mode
-                                val modeTag = when (effectiveMode) {
-                                    ConversationMode.rp -> strings.rp.filterRp
-                                    ConversationMode.novel -> strings.novel.filterNovel
-                                    ConversationMode.chat -> strings.novel.filterChat
-                                }
-                                val hasBadges = item.hasReasoning ||
-                                    item.loreEntries.isNotEmpty() ||
-                                    item.novelChapters.size > 1 ||
-                                    (effectiveMode == ConversationMode.novel && item.novelChapters.isNotEmpty())
+                            Text(
+                                text = strings.chat.importDeepSeekSelectedCount.fmt(
+                                    "selected" to selectedIds.size,
+                                    "total" to bundle.items.size,
+                                ),
+                                color = c.muted,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            if (bundle.items.size > 1) {
+                                Text(
+                                    text = if (allVisibleSelected) strings.chat.importDeepSeekDeselectAll else strings.chat.importDeepSeekSelectAll,
+                                    color = c.primarySoftInk,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier
+                                        .heightIn(min = 36.dp)
+                                        .clickable {
+                                            val visibleIds = filteredItems.map { it.conversation.id }.toSet()
+                                            selectedIds = if (allVisibleSelected) selectedIds - visibleIds else selectedIds + visibleIds
+                                        }
+                                        .padding(horizontal = 8.dp, vertical = 8.dp),
+                                )
+                            }
+                        }
 
-                                Column(modifier = Modifier.fillMaxWidth()) {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .background(if (checked) c.primarySoft.copy(alpha = 0.55f) else Color.Transparent)
-                                            .clickable {
-                                                selectedIds = if (checked) selectedIds - item.conversation.id else selectedIds + item.conversation.id
-                                            }
-                                            .padding(horizontal = 12.dp, vertical = 11.dp),
-                                        verticalAlignment = Alignment.Top,
-                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                    ) {
-                                        Icon(
-                                            imageVector = if (checked) Icons.Default.CheckBox else Icons.Default.CheckBoxOutlineBlank,
-                                            contentDescription = null,
-                                            tint = if (checked) c.primary else c.muted,
+                        GuGroupedCard(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 120.dp, max = 300.dp),
+                        ) {
+                            LazyColumn(
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                itemsIndexed(filteredItems, key = { _, it -> it.conversation.id }) { idx, item ->
+                                    val checked = item.conversation.id in selectedIds
+                                    val effectiveMode = targetModeOverride ?: item.conversation.mode
+                                    val modeTag = when (effectiveMode) {
+                                        ConversationMode.rp -> strings.rp.filterRp
+                                        ConversationMode.novel -> strings.novel.filterNovel
+                                        ConversationMode.chat -> strings.novel.filterChat
+                                    }
+                                    val regexCount = item.conversation.rp?.regexScripts?.size ?: 0
+                                    val hasBadges = item.hasReasoning ||
+                                        item.loreEntries.isNotEmpty() ||
+                                        regexCount > 0 ||
+                                        item.novelChapters.size > 1 ||
+                                        (effectiveMode == ConversationMode.novel && item.novelChapters.isNotEmpty())
+
+                                    Column(modifier = Modifier.fillMaxWidth()) {
+                                        Row(
                                             modifier = Modifier
-                                                .size(20.dp)
-                                                .padding(top = 1.dp),
-                                        )
-                                        Column(
-                                            modifier = Modifier.weight(1f),
-                                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                                                .fillMaxWidth()
+                                                .background(if (checked) c.primarySoft.copy(alpha = 0.55f) else Color.Transparent)
+                                                .clickable {
+                                                    selectedIds = if (checked) selectedIds - item.conversation.id else selectedIds + item.conversation.id
+                                                }
+                                                .padding(horizontal = 12.dp, vertical = 11.dp),
+                                            verticalAlignment = Alignment.Top,
+                                            horizontalArrangement = Arrangement.spacedBy(10.dp),
                                         ) {
-                                            Text(
-                                                text = item.conversation.title,
-                                                color = c.ink,
-                                                fontSize = 13.5.sp,
-                                                fontWeight = if (checked) FontWeight.Bold else FontWeight.Medium,
-                                                maxLines = 2,
-                                                overflow = TextOverflow.Ellipsis,
+                                            Icon(
+                                                imageVector = if (checked) Icons.Default.CheckBox else Icons.Default.CheckBoxOutlineBlank,
+                                                contentDescription = null,
+                                                tint = if (checked) c.primary else c.muted,
+                                                modifier = Modifier
+                                                    .size(20.dp)
+                                                    .padding(top = 1.dp),
                                             )
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            Column(
+                                                modifier = Modifier.weight(1f),
+                                                verticalArrangement = Arrangement.spacedBy(4.dp),
                                             ) {
                                                 Text(
-                                                    text = modeTag,
-                                                    color = c.primarySoftInk,
-                                                    fontSize = 11.sp,
-                                                    fontWeight = FontWeight.Bold,
+                                                    text = item.conversation.title,
+                                                    color = c.ink,
+                                                    fontSize = 13.5.sp,
+                                                    fontWeight = if (checked) FontWeight.Bold else FontWeight.Medium,
+                                                    maxLines = 2,
+                                                    overflow = TextOverflow.Ellipsis,
                                                 )
-                                                Text(
-                                                    text = strings.chat.messageCount.fmt("count" to item.messages.size),
-                                                    color = c.muted,
-                                                    fontSize = 11.sp,
-                                                )
-                                                Text(
-                                                    text = dateFmt.format(Date(item.conversation.updatedAt)),
-                                                    color = c.muted,
-                                                    fontSize = 11.sp,
-                                                )
-                                            }
-                                            if (hasBadges) {
-                                                FlowRow(
-                                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                                                 ) {
-                                                    if (item.hasReasoning) {
-                                                        GuBadge(strings.chat.importDeepSeekHasThinking, variant = GuBadgeVariant.HONEY)
-                                                    }
-                                                    if (item.loreEntries.isNotEmpty()) {
-                                                        GuBadge(strings.chat.importHasLore.fmt("count" to item.loreEntries.size), variant = GuBadgeVariant.BLUE)
-                                                    }
-                                                    if (item.novelChapters.size > 1 || (effectiveMode == ConversationMode.novel && item.novelChapters.isNotEmpty())) {
-                                                        GuBadge(strings.chat.importHasChapters.fmt("count" to item.novelChapters.size), variant = GuBadgeVariant.NEUTRAL)
+                                                    Text(
+                                                        text = modeTag,
+                                                        color = c.primarySoftInk,
+                                                        fontSize = 11.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                    )
+                                                    Text(
+                                                        text = strings.chat.messageCount.fmt("count" to item.messages.size),
+                                                        color = c.muted,
+                                                        fontSize = 11.sp,
+                                                    )
+                                                    Text(
+                                                        text = dateFmt.format(Date(item.conversation.updatedAt)),
+                                                        color = c.muted,
+                                                        fontSize = 11.sp,
+                                                    )
+                                                }
+                                                if (hasBadges) {
+                                                    FlowRow(
+                                                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                                                    ) {
+                                                        if (item.hasReasoning) {
+                                                            GuBadge(strings.chat.importDeepSeekHasThinking, variant = GuBadgeVariant.HONEY)
+                                                        }
+                                                        if (item.loreEntries.isNotEmpty()) {
+                                                            GuBadge(strings.chat.importHasLore.fmt("count" to item.loreEntries.size), variant = GuBadgeVariant.BLUE)
+                                                        }
+                                                        if (regexCount > 0) {
+                                                            GuBadge(strings.providers.importHasRegex.fmt("count" to regexCount), variant = GuBadgeVariant.EMERALD)
+                                                        }
+                                                        if (item.novelChapters.size > 1 || (effectiveMode == ConversationMode.novel && item.novelChapters.isNotEmpty())) {
+                                                            GuBadge(strings.chat.importHasChapters.fmt("count" to item.novelChapters.size), variant = GuBadgeVariant.NEUTRAL)
+                                                        }
                                                     }
                                                 }
                                             }
                                         }
-                                    }
-                                    if (idx < filteredItems.lastIndex) {
-                                        HorizontalDivider(
-                                            modifier = Modifier.padding(start = 42.dp),
-                                            thickness = theme.borderWidth,
-                                            color = c.border.copy(alpha = 0.78f),
-                                        )
+                                        if (idx < filteredItems.lastIndex) {
+                                            HorizontalDivider(
+                                                modifier = Modifier.padding(start = 42.dp),
+                                                thickness = theme.borderWidth,
+                                                color = c.border.copy(alpha = 0.78f),
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -846,6 +910,13 @@ fun ExternalImportSheet(
                     thickness = theme.borderWidth,
                     color = c.border.copy(alpha = 0.8f),
                 )
+                val willImportProviders = importSyncedProviders && bundle.importedProviders.isNotEmpty()
+                val canConfirm = !isBusy && (selectedIds.isNotEmpty() || willImportProviders)
+                val confirmLabel = when {
+                    selectedIds.isNotEmpty() -> strings.chat.importDeepSeekConfirmBtn.fmt("count" to selectedIds.size)
+                    willImportProviders -> strings.providers.importProvidersOnlyConfirm.fmt("count" to bundle.importedProviders.size)
+                    else -> strings.chat.importDeepSeekConfirmBtn.fmt("count" to 0)
+                }
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -857,18 +928,40 @@ fun ExternalImportSheet(
                             val toImport = bundle.items
                                 .filter { it.conversation.id in selectedIds }
                                 .map { ExternalImportCodec.applyTargetMode(it, targetModeOverride) }
-                            if (toImport.isEmpty()) return@GuButton
+                            val providersToImport = if (willImportProviders) bundle.importedProviders else emptyList()
+                            if (toImport.isEmpty() && providersToImport.isEmpty()) return@GuButton
                             scope.launch {
                                 isBusy = true
                                 try {
-                                    val res = ExternalImportService.persistSelected(container.database, toImport)
-                                    container.toastController.show(
-                                        strings.chat.importExternalSuccess.fmt(
+                                    val addedProviders = if (providersToImport.isNotEmpty()) {
+                                        withContext(Dispatchers.IO) {
+                                            container.apiProviderStore.upsertAllDeduped(providersToImport)
+                                        }
+                                    } else {
+                                        0
+                                    }
+                                    if (toImport.isNotEmpty()) {
+                                        val res = ExternalImportService.persistSelected(container.database, toImport)
+                                        val baseToast = strings.chat.importExternalSuccess.fmt(
                                             "convs" to res.conversationsCount,
                                             "msgs" to res.messagesCount,
-                                        ),
-                                    )
-                                    onImported(res.firstConversationId)
+                                        )
+                                        val fullToast = if (addedProviders > 0) {
+                                            "$baseToast · ${strings.providers.importProvidersSuccess.fmt("added" to addedProviders)}"
+                                        } else {
+                                            baseToast
+                                        }
+                                        container.toastController.show(fullToast)
+                                        onImported(res.firstConversationId)
+                                    } else {
+                                        val toast = if (addedProviders > 0) {
+                                            strings.providers.importProviderSuccess.fmt("added" to addedProviders)
+                                        } else {
+                                            strings.providers.importProviderAllDup
+                                        }
+                                        container.toastController.show(toast)
+                                        onImported(null)
+                                    }
                                     onDismiss()
                                 } catch (e: Throwable) {
                                     container.toastController.show(e.message ?: strings.chat.importFailed, isError = true)
@@ -877,12 +970,12 @@ fun ExternalImportSheet(
                                 }
                             }
                         },
-                        enabled = !isBusy && selectedIds.isNotEmpty(),
+                        enabled = canConfirm,
                         loading = isBusy,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Text(
-                            text = strings.chat.importDeepSeekConfirmBtn.fmt("count" to selectedIds.size),
+                            text = confirmLabel,
                             fontSize = 13.5.sp,
                             fontWeight = FontWeight.Bold,
                         )
@@ -902,6 +995,8 @@ private fun sourceDisplayName(source: ExternalImportSource, strings: AppStrings)
     ExternalImportSource.CHATBOX -> strings.chat.importSourceChatbox
     ExternalImportSource.CHATGPT -> "ChatGPT"
     ExternalImportSource.CLAUDE -> "Claude"
+    ExternalImportSource.RIKKAHUB -> "RikkaHub"
+    ExternalImportSource.CHERRY_STUDIO -> "Cherry Studio"
     ExternalImportSource.GENERIC -> strings.chat.importSourceOther
 }
 

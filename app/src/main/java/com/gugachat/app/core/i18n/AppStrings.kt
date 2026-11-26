@@ -1006,6 +1006,17 @@ data class ApiProviderStrings(
     val managerTitle: String,
     val managerSubtitle: String,
     val addProviderBtn: String,
+    val importProviderBtn: String,
+    val importProviderTitle: String,
+    val importProviderSubtitle: String,
+    val importProviderModeFile: String,
+    val importProviderModePaste: String,
+    val importProviderPickBtn: String,
+    val importProviderPasteHint: String,
+    val importProviderParseBtn: String,
+    val importProviderConfirmBtn: String,
+    val importProviderSuccess: String,
+    val importProviderAllDup: String,
     val editProviderTitle: String,
     val newProviderTitle: String,
     val emptyProviders: String,
@@ -1013,6 +1024,10 @@ data class ApiProviderStrings(
     val switchToSub2api: String,
     val useCustomModelFormat: String,
     val protocolShortNames: Map<String, String>,
+    val importHasRegex: String,
+    val importSyncProvidersToggle: String,
+    val importProvidersOnlyConfirm: String,
+    val importProvidersSuccess: String,
 )
 
 @Immutable

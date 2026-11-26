@@ -1,5 +1,10 @@
 package com.gugachat.app.ui.providers
 
+import android.content.ClipboardManager
+import android.content.Context
+import android.provider.OpenableColumns
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -16,6 +21,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -25,14 +32,19 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountTree
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.CheckBox
+import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
 import androidx.compose.material.icons.filled.CloudDone
+import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.FolderZip
 import androidx.compose.material.icons.filled.Forum
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Public
+import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -47,8 +59,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,6 +70,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -70,6 +85,8 @@ import com.gugachat.app.core.i18n.LocalAppStrings
 import com.gugachat.app.core.i18n.fmt
 import com.gugachat.app.core.storage.ApiProtocol
 import com.gugachat.app.core.storage.ApiProviderConfig
+import com.gugachat.app.core.storage.ApiProviderImportBundle
+import com.gugachat.app.core.storage.ApiProviderImportCodec
 import com.gugachat.app.core.theme.AppThemeSpec
 import com.gugachat.app.core.theme.GuBadge
 import com.gugachat.app.core.theme.GuBadgeVariant
@@ -80,9 +97,13 @@ import com.gugachat.app.core.theme.GuGroupedCard
 import com.gugachat.app.core.theme.GuIconTile
 import com.gugachat.app.core.theme.GuModalDragHandle
 import com.gugachat.app.core.theme.GuSectionHeader
+import com.gugachat.app.core.theme.GuSegmentedControl
 import com.gugachat.app.core.theme.GuSheetHeader
 import com.gugachat.app.core.theme.GuTextField
 import com.gugachat.app.core.theme.LocalAppTheme
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.UUID
 
 data class ApiProviderDraft(
@@ -720,6 +741,365 @@ fun ApiProviderManagerCard(
                             modifier = Modifier.padding(start = 58.dp),
                             thickness = theme.borderWidth,
                             color = c.border.copy(alpha = 0.78f),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ApiProviderImportSheet(
+    onImportSelected: (List<ApiProviderConfig>) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val strings = LocalAppStrings.current
+    val theme = LocalAppTheme.current
+    val c = theme.colors
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val isZh = strings.language == AppLanguage.ZH
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    var subTab by remember { mutableIntStateOf(0) } // 0 = file, 1 = paste
+    var pasteInput by remember { mutableStateOf("") }
+    var isBusy by remember { mutableStateOf(false) }
+    var errorMsg by remember { mutableStateOf<String?>(null) }
+    var parsedBundle by remember { mutableStateOf<ApiProviderImportBundle?>(null) }
+    var selectedKeys by remember { mutableStateOf<Set<String>>(emptySet()) }
+
+    val filePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            isBusy = true
+            errorMsg = null
+            try {
+                val (bytes, name) = withContext(Dispatchers.IO) {
+                    val data = ctx.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                        ?: error("Cannot read selected file")
+                    val disp = runCatching {
+                        ctx.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cur ->
+                            if (cur.moveToFirst()) {
+                                val idx = cur.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                                if (idx >= 0) cur.getString(idx) else null
+                            } else {
+                                null
+                            }
+                        }
+                    }.getOrNull() ?: uri.lastPathSegment
+                    data to disp
+                }
+                val bundle = withContext(Dispatchers.Default) {
+                    ApiProviderImportCodec.parseBytes(bytes, fileName = name)
+                }
+                parsedBundle = bundle
+                selectedKeys = bundle.providers.map(ApiProviderImportCodec::dedupeKey).toSet()
+            } catch (e: Throwable) {
+                errorMsg = e.message ?: strings.chat.importFailed
+            } finally {
+                isBusy = false
+            }
+        }
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = { if (!isBusy) onDismiss() },
+        sheetState = sheetState,
+        containerColor = c.page,
+        dragHandle = { GuModalDragHandle() },
+        modifier = Modifier.statusBarsPadding(),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .imePadding()
+                .navigationBarsPadding(),
+        ) {
+            GuSheetHeader(
+                title = strings.providers.importProviderTitle,
+                subtitle = strings.providers.importProviderSubtitle,
+                closeContentDescription = strings.common.close,
+                onClose = { if (!isBusy) onDismiss() },
+            )
+
+            val bundle = parsedBundle
+            if (bundle == null) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    GuSegmentedControl(
+                        items = listOf(
+                            strings.providers.importProviderModeFile,
+                            strings.providers.importProviderModePaste,
+                        ),
+                        selectedIndex = subTab,
+                        onSelect = { idx ->
+                            subTab = idx
+                            errorMsg = null
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+
+                    if (subTab == 0) {
+                        GuGroupedCard(modifier = Modifier.fillMaxWidth()) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(14.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                Text(
+                                    text = if (isZh) {
+                                        "支持 RikkaHub 备份 (.zip / settings.json)、Cherry Studio 备份 (.zip / data.json)、Chatbox Backup v2 (.zip / settings.json) 以及通用供应商 JSON 文件。"
+                                    } else {
+                                        "Supports RikkaHub backups (.zip / settings.json), Cherry Studio (.zip / data.json), Chatbox Backup v2 (.zip / settings.json), and generic provider JSON."
+                                    },
+                                    color = c.muted,
+                                    fontSize = 12.5.sp,
+                                    lineHeight = 18.sp,
+                                )
+                                GuButton(
+                                    onClick = { filePicker.launch(arrayOf("*/*")) },
+                                    enabled = !isBusy,
+                                    loading = isBusy,
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Icon(Icons.Default.FolderZip, contentDescription = null, modifier = Modifier.size(17.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(strings.providers.importProviderPickBtn, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    } else {
+                        GuGroupedCard(modifier = Modifier.fillMaxWidth()) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(14.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                GuTextField(
+                                    value = pasteInput,
+                                    onValueChange = {
+                                        pasteInput = it
+                                        errorMsg = null
+                                    },
+                                    placeholder = strings.providers.importProviderPasteHint,
+                                    singleLine = false,
+                                    minLines = 3,
+                                    maxLines = 6,
+                                    trailingIcon = {
+                                        IconButton(
+                                            onClick = {
+                                                val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                                val clip = cm?.primaryClip?.getItemAt(0)?.coerceToText(ctx)?.toString().orEmpty()
+                                                if (clip.isNotBlank()) {
+                                                    pasteInput = clip
+                                                    errorMsg = null
+                                                }
+                                            },
+                                        ) {
+                                            Icon(
+                                                Icons.Default.ContentPaste,
+                                                contentDescription = strings.chat.importDeepSeekPasteBtn,
+                                                tint = c.primary,
+                                                modifier = Modifier.size(18.dp),
+                                            )
+                                        }
+                                    },
+                                )
+                                GuButton(
+                                    onClick = {
+                                        scope.launch {
+                                            isBusy = true
+                                            errorMsg = null
+                                            try {
+                                                val parsed = withContext(Dispatchers.Default) {
+                                                    ApiProviderImportCodec.parseText(pasteInput)
+                                                }
+                                                parsedBundle = parsed
+                                                selectedKeys = parsed.providers.map(ApiProviderImportCodec::dedupeKey).toSet()
+                                            } catch (e: Throwable) {
+                                                errorMsg = e.message ?: strings.chat.importFailed
+                                            } finally {
+                                                isBusy = false
+                                            }
+                                        }
+                                    },
+                                    enabled = !isBusy && pasteInput.isNotBlank(),
+                                    loading = isBusy,
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Icon(Icons.Default.UploadFile, contentDescription = null, modifier = Modifier.size(17.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(strings.providers.importProviderParseBtn, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+
+                    errorMsg?.let { err ->
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = c.dangerBg,
+                            border = BorderStroke(theme.borderWidth, c.danger.copy(alpha = 0.42f)),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(
+                                text = err,
+                                color = c.danger,
+                                fontSize = 12.sp,
+                                lineHeight = 17.5.sp,
+                                modifier = Modifier.padding(11.dp),
+                            )
+                        }
+                    }
+                }
+            } else {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        GuBadge(text = bundle.sourceLabel, variant = GuBadgeVariant.HONEY)
+                        GuBadge(
+                            text = if (isZh) "发现 ${bundle.providers.size} 个供应商" else "${bundle.providers.size} providers",
+                            variant = GuBadgeVariant.BLUE,
+                        )
+                        Spacer(Modifier.weight(1f))
+                        Text(
+                            text = strings.chat.importDeepSeekReselect,
+                            color = c.primarySoftInk,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier
+                                .heightIn(min = 36.dp)
+                                .clickable {
+                                    parsedBundle = null
+                                    selectedKeys = emptySet()
+                                    errorMsg = null
+                                }
+                                .padding(horizontal = 8.dp, vertical = 8.dp),
+                        )
+                    }
+
+                    GuGroupedCard(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 96.dp, max = 300.dp),
+                    ) {
+                        LazyColumn(modifier = Modifier.fillMaxWidth()) {
+                            itemsIndexed(bundle.providers, key = { _, p -> ApiProviderImportCodec.dedupeKey(p) }) { idx, p ->
+                                val key = ApiProviderImportCodec.dedupeKey(p)
+                                val checked = key in selectedKeys
+                                val protoLabel = strings.providers.protocolShortNames[p.protocol.wireValue] ?: p.protocol.displayName
+                                val cleanUrl = p.baseUrl.removePrefix("https://").removePrefix("http://").trimEnd('/')
+                                Column(modifier = Modifier.fillMaxWidth()) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .background(if (checked) c.primarySoft.copy(alpha = 0.5f) else Color.Transparent)
+                                            .clickable {
+                                                selectedKeys = if (checked) selectedKeys - key else selectedKeys + key
+                                            }
+                                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                                        verticalAlignment = Alignment.Top,
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    ) {
+                                        Icon(
+                                            imageVector = if (checked) Icons.Default.CheckBox else Icons.Default.CheckBoxOutlineBlank,
+                                            contentDescription = null,
+                                            tint = if (checked) c.primary else c.muted,
+                                            modifier = Modifier
+                                                .size(20.dp)
+                                                .padding(top = 1.dp),
+                                        )
+                                        Column(
+                                            modifier = Modifier.weight(1f),
+                                            verticalArrangement = Arrangement.spacedBy(3.dp),
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                            ) {
+                                                Text(
+                                                    text = p.displayTitle(),
+                                                    color = c.ink,
+                                                    fontSize = 13.5.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                    modifier = Modifier.weight(1f, fill = false),
+                                                )
+                                                ProtocolBadge(protocol = p.protocol, label = protoLabel)
+                                            }
+                                            Text(
+                                                text = listOfNotNull(
+                                                    cleanUrl.takeIf { it.isNotBlank() },
+                                                    p.maskedApiKey().takeIf { it.isNotBlank() },
+                                                    p.customModels.takeIf { it.isNotEmpty() }?.let {
+                                                        if (isZh) "${it.size} 个模型" else "${it.size} models"
+                                                    },
+                                                ).joinToString(" · "),
+                                                color = c.muted,
+                                                fontSize = 11.5.sp,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                        }
+                                    }
+                                    if (idx < bundle.providers.lastIndex) {
+                                        HorizontalDivider(
+                                            modifier = Modifier.padding(start = 42.dp),
+                                            thickness = theme.borderWidth,
+                                            color = c.border.copy(alpha = 0.78f),
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                HorizontalDivider(
+                    thickness = theme.borderWidth,
+                    color = c.border.copy(alpha = 0.8f),
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(c.surface)
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                ) {
+                    val selectedList = bundle.providers.filter { ApiProviderImportCodec.dedupeKey(it) in selectedKeys }
+                    GuButton(
+                        onClick = {
+                            if (selectedList.isNotEmpty()) {
+                                onImportSelected(selectedList)
+                                onDismiss()
+                            }
+                        },
+                        enabled = selectedList.isNotEmpty(),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(
+                            text = strings.providers.importProviderConfirmBtn.fmt("count" to selectedList.size),
+                            fontSize = 13.5.sp,
+                            fontWeight = FontWeight.Bold,
                         )
                     }
                 }

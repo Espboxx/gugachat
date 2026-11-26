@@ -1,7 +1,9 @@
 package com.gugachat.app.domain
 
+import com.gugachat.app.core.storage.ApiProtocol
 import com.gugachat.app.data.api.DeepSeekLinkAuthRequiredException
 import com.gugachat.app.data.api.ExternalImportService
+import com.gugachat.app.data.local.ChatBackupCodec
 import com.gugachat.app.domain.chat.ConversationMode
 import com.gugachat.app.domain.chat.ExternalImportCodec
 import com.gugachat.app.domain.chat.ExternalImportSource
@@ -427,5 +429,205 @@ class ExternalImportCodecTest {
         } finally {
             server.shutdown()
         }
+    }
+
+    @Test
+    fun parseBytes_chatboxV2Zip_restoresForksReasoningStarredAndProviders() {
+        val manifest = """
+            {
+              "format": "chatbox-backup",
+              "formatVersion": 2,
+              "data": { "settings": { "path": "settings.json" } },
+              "sessions": [
+                {
+                  "id": "sess-v2",
+                  "path": "sessions/sess-v2/session.json",
+                  "meta": { "name": "架构评审", "starred": true, "createdAt": 1740000000000 }
+                }
+              ]
+            }
+        """.trimIndent()
+        val settings = """
+            {
+              "providers": {
+                "openai": { "apiKey": "sk-v2-key", "apiHost": "https://api.openai.com/v1", "apiStyle": "responses" }
+              }
+            }
+        """.trimIndent()
+        val sessionJson = """
+            {
+              "id": "sess-v2",
+              "name": "架构评审",
+              "messages": [
+                { "id": "u1", "role": "user", "content": "方案 A 和 B 哪个更稳？", "timestamp": 1740000001000 },
+                {
+                  "id": "a1",
+                  "role": "assistant",
+                  "contentParts": [
+                    { "type": "reasoning", "text": "先对比一致性与容错" },
+                    { "type": "text", "text": "主回复：推荐方案 B。" }
+                  ],
+                  "timestamp": 1740000002000
+                }
+              ],
+              "messageForksHash": {
+                "a1": {
+                  "position": 1,
+                  "lists": [
+                    { "messages": [{ "id": "a1-alt0", "role": "assistant", "content": "分支一：方案 A 延迟更低。" }] },
+                    { "messages": [{ "id": "a1-alt1", "role": "assistant", "content": "主回复：推荐方案 B。" }] }
+                  ]
+                }
+              }
+            }
+        """.trimIndent()
+
+        val zip = buildZip(
+            mapOf(
+                "manifest.json" to manifest.toByteArray(Charsets.UTF_8),
+                "settings.json" to settings.toByteArray(Charsets.UTF_8),
+                "sessions/sess-v2/session.json" to sessionJson.toByteArray(Charsets.UTF_8),
+            ),
+        )
+        val bundle = ExternalImportCodec.parseBytes(zip, fileName = "chatbox-v2.zip")
+        assertEquals(ExternalImportSource.CHATBOX, bundle.source)
+        assertEquals("chatbox_v2_zip", bundle.sourceFormat)
+        assertEquals(1, bundle.items.size)
+        assertEquals(1, bundle.importedProviders.size)
+        assertEquals(ApiProtocol.OPENAI_RESPONSES, bundle.importedProviders.first().protocol)
+
+        val item = bundle.items.first()
+        assertTrue(item.conversation.pinned)
+        assertTrue(item.hasReasoning)
+        val assistantMsg = item.messages[1]
+        assertEquals("主回复：推荐方案 B。", assistantMsg.content)
+        assertFalse(assistantMsg.content.contains("先对比一致性"))
+        assertEquals("先对比一致性与容错", assistantMsg.reasoning)
+        assertEquals(2, assistantMsg.variants.size)
+        assertEquals(1, assistantMsg.activeVariantIndex)
+    }
+
+    @Test
+    fun parseBytes_rikkaHubSettingsZip_extractsAssistantsLorebooksAndProviders() {
+        val settingsJson = """
+            {
+              "providers": [
+                {
+                  "type": "OpenAI",
+                  "name": "Rikka OAI",
+                  "baseUrl": "https://api.example.com/v1",
+                  "apiKey": "sk-rikka-1",
+                  "models": [{ "modelId": "gpt-4o" }]
+                }
+              ],
+              "assistants": [
+                {
+                  "id": "asst-1",
+                  "name": "翻译助手",
+                  "systemPrompt": "你是精准的日中翻译官。",
+                  "presetMessages": [
+                    { "role": "USER", "parts": [{ "type": "text", "text": "おはよう" }] },
+                    { "role": "ASSISTANT", "parts": [{ "type": "reasoning", "reasoning": "常见早安问候" }, { "type": "text", "text": "早上好" }] }
+                  ]
+                }
+              ],
+              "lorebooks": [
+                {
+                  "id": "lb-1",
+                  "name": "术语词典",
+                  "entries": [
+                    { "name": "量子态", "keywords": ["量子"], "content": "叠加态描述。", "constantActive": true }
+                  ]
+                }
+              ]
+            }
+        """.trimIndent()
+
+        val zip = buildZip(mapOf("settings.json" to settingsJson.toByteArray(Charsets.UTF_8)))
+        val bundle = ExternalImportCodec.parseBytes(zip, fileName = "rikkahub_backup.zip")
+        assertEquals(ExternalImportSource.RIKKAHUB, bundle.source)
+        assertEquals(1, bundle.importedProviders.size)
+        assertEquals(2, bundle.items.size)
+        val assistantItem = bundle.items.first { it.conversation.title == "翻译助手" }
+        assertEquals("你是精准的日中翻译官。", assistantItem.conversation.systemPrompt)
+        assertEquals(2, assistantItem.messages.size)
+        assertEquals("常见早安问候", assistantItem.messages[1].reasoning)
+        val loreItem = bundle.items.first { it.conversation.title == "术语词典" }
+        assertEquals(1, loreItem.loreEntries.size)
+    }
+
+    @Test
+    fun parseBytes_sillyTavernArchiveZip_extractsCardsLorePresetsAndRegex() {
+        val cardJson = """{"spec":"chara_card_v2","data":{"name":"赛琳","first_mes":"旅人你好。"}}"""
+        val worldJson = """{"name":"帝国志","entries":{"0":{"key":["帝国"],"comment":"皇城","content":"黄金之城。"}}}"""
+        val presetJson = """{"prompts":[{"identifier":"main","name":"Main","content":"沉浸扮演。","enabled":true}],"prompt_order":[{"character_id":100001,"order":[{"identifier":"main","enabled":true}]}]}"""
+        val qrJson = """{"name":"常用指令","qrList":[{"label":"查看背包","message":"打开背包检查物资"}]}"""
+
+        val zip = buildZip(
+            mapOf(
+                "characters/selene.json" to cardJson.toByteArray(Charsets.UTF_8),
+                "worlds/empire.json" to worldJson.toByteArray(Charsets.UTF_8),
+                "OpenAI Settings/rp_preset.json" to presetJson.toByteArray(Charsets.UTF_8),
+                "QuickReplies/basic_qr.json" to qrJson.toByteArray(Charsets.UTF_8),
+            ),
+        )
+        val bundle = ExternalImportCodec.parseBytes(zip, fileName = "st_pack.zip")
+        assertEquals(ExternalImportSource.SILLYTAVERN, bundle.source)
+        assertEquals(4, bundle.items.size)
+        assertTrue(bundle.items.any { it.conversation.title == "赛琳" })
+        assertTrue(bundle.items.any { it.conversation.title == "帝国志" && it.loreEntries.size == 1 })
+        assertTrue(bundle.items.any { it.conversation.rp?.quickActions?.contains("打开背包检查物资") == true })
+    }
+
+    @Test
+    fun parseBytes_relaxedGenericAndShareGptJson_parsesBareArrayAndFromValue() {
+        val shareGpt = """
+            [
+              {
+                "id": "sg-1",
+                "conversations": [
+                  { "from": "system", "value": "You are concise." },
+                  { "from": "human", "value": "2+2=?" },
+                  { "from": "gpt", "value": "4" }
+                ]
+              }
+            ]
+        """.trimIndent()
+        val sgBundle = ExternalImportCodec.parseBytes(shareGpt.toByteArray(Charsets.UTF_8), fileName = "sharegpt.json")
+        assertEquals(ExternalImportSource.GENERIC, sgBundle.source)
+        assertEquals(1, sgBundle.items.size)
+        assertEquals("You are concise.", sgBundle.items.first().conversation.systemPrompt)
+        assertEquals(2, sgBundle.items.first().messages.size)
+        assertEquals("4", sgBundle.items.first().messages[1].content)
+
+        val bareMessages = """
+            [
+              { "sender": "user", "text": "写个标题" },
+              { "sender": "model", "thought": "简短有力", "text": "《星海归途》" }
+            ]
+        """.trimIndent()
+        val bareBundle = ExternalImportCodec.parseBytes(bareMessages.toByteArray(Charsets.UTF_8), fileName = "draft_chat.json")
+        assertEquals(1, bareBundle.items.size)
+        assertEquals("draft_chat", bareBundle.items.first().conversation.title)
+        assertTrue(bareBundle.items.first().hasReasoning)
+        assertEquals("简短有力", bareBundle.items.first().messages[1].reasoning)
+        assertEquals("《星海归途》", bareBundle.items.first().messages[1].content)
+    }
+
+    @Test
+    fun chatBackupCodec_rejectsExternalAppJsonAndAcceptsUtf8Bom() {
+        val foreignJson = """{"spec":"chara_card_v2","data":{"name":"NotGuGu"}}"""
+        var rejected = false
+        try {
+            ChatBackupCodec.decodePayload(foreignJson)
+        } catch (e: IllegalArgumentException) {
+            rejected = e.message?.contains("导入外部对话") == true
+        }
+        assertTrue("Foreign JSON should be rejected with guidance", rejected)
+
+        val validWithBom = "\uFEFF" + """{"version":1,"conversations":[],"messages":[]}"""
+        val decoded = ChatBackupCodec.decodePayload(validWithBom)
+        assertEquals(1, decoded.version)
+        assertTrue(decoded.conversations.isEmpty())
     }
 }

@@ -7,6 +7,8 @@ import androidx.lifecycle.viewModelScope
 import com.gugachat.app.AppContainer
 import com.gugachat.app.AuthSessionState
 import com.gugachat.app.core.i18n.AppLanguage
+import com.gugachat.app.core.i18n.EnStrings
+import com.gugachat.app.core.i18n.ZhStrings
 import com.gugachat.app.core.i18n.fmt
 import com.gugachat.app.core.storage.ApiProviderConfig
 import com.gugachat.app.core.storage.AppSettings
@@ -127,6 +129,18 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
         container.toastController.show(if (isZh) "已保存 API 接口配置" else "Saved API endpoint")
     }
 
+    fun importProviders(selected: List<ApiProviderConfig>): Int {
+        val added = container.apiProviderStore.upsertAllDeduped(selected)
+        val strings = if (container.settingsState.value.language == AppLanguage.EN) EnStrings else ZhStrings
+        val msg = if (added > 0) {
+            strings.providers.importProviderSuccess.fmt("added" to added)
+        } else {
+            strings.providers.importProviderAllDup
+        }
+        container.toastController.show(msg)
+        return added
+    }
+
     fun toggleProviderEnabled(id: String, enabled: Boolean) {
         container.apiProviderStore.setEnabled(id, enabled)
     }
@@ -212,8 +226,13 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
                 container.toastController.show(
                     successMessage.fmt("conversations" to res.conversationsCount, "memories" to res.memoriesCount),
                 )
-            } catch (_: Throwable) {
-                container.toastController.show(failedMessage, isError = true)
+            } catch (e: Throwable) {
+                val errMsg = if (e is IllegalArgumentException && !e.message.isNullOrBlank()) {
+                    e.message!!
+                } else {
+                    failedMessage
+                }
+                container.toastController.show(errMsg, isError = true)
             } finally {
                 _ui.update { it.copy(isBackupBusy = false) }
             }
