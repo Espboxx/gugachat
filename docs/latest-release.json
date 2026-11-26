@@ -1,14 +1,14 @@
 {
-  "tag_name": "v0.3.3",
-  "version_name": "0.3.3",
-  "name": "GuGuChat v0.3.3",
-  "published_at": "2026-11-26T08:23:09Z",
-  "html_url": "https://github.com/Espboxx/gugachat/releases/tag/v0.3.3",
+  "tag_name": "v0.3.4",
+  "version_name": "0.3.4",
+  "name": "GuGuChat v0.3.4",
+  "published_at": "2026-11-26T10:21:30Z",
+  "html_url": "https://github.com/Espboxx/gugachat/releases/tag/v0.3.4",
   "cn_download_page": "",
-  "apk_name": "GuGuChat-v0.3.3-android.apk",
-  "apk_size": 17754897,
-  "apk_sha256": "d4df6f5cfa613eb170206969e41c874dc1e898661e971916e17014d8ae16e278",
-  "apk_url": "https://github.com/Espboxx/gugachat/releases/download/v0.3.3/GuGuChat-v0.3.3-android.apk",
+  "apk_name": "GuGuChat-v0.3.4-android.apk",
+  "apk_size": 17935121,
+  "apk_sha256": "83f51495ad6788be3b3c4b96506b60ce4f181bc77d41e8803527b28ada8b2d1b",
+  "apk_url": "https://github.com/Espboxx/gugachat/releases/download/v0.3.4/GuGuChat-v0.3.4-android.apk",
   "cn_apk_urls": [],
   "cn_proxies": [
     "https://gh-proxy.com/",
@@ -17,5 +17,5 @@
     "https://gh-proxy.org/",
     "https://ghfast.top/"
   ],
-  "body": "## GuGuChat v0.3.3\n\n### 重点修复与优化\n\n#### 1. DeepSeek 导出记录导入全面修复（新版 V3 + 旧版 CSV）\n- 树形主分支还原与变体折叠：修复 DeepSeek V3 导出包中重 Roll / 分支回复被平铺的问题，严格沿活跃路径还原主线，重试回复折叠为 `< 1/N >` 变体切换器。\n- V3 片段与大包解析优化：完整读取 `FILE` 嵌套文件列表，过滤 `CONTENT_RISK` / `TOOL_OPEN` 遥测片段，单次解压大幅提速。\n- 新增旧版 DeepSeek CSV 导入，重导自动覆盖清理旧消息。\n\n#### 2. Markdown 纯文本代码块自动换行与切换\n- 对 `text` / `txt` / `plaintext` / `markdown` 及无语言标注段落默认自动换行，代码块顶栏支持一键切换换行与横向滚动。"
+  "body": "## GuGuChat v0.3.4\n\n### 重点新特性与优化\n\n#### 1. 全量 JSON / 归档导入升级（全面对标 RikkaHub）\n- **酒馆与 RikkaHub 资产**：角色卡解析全链路空安全加固，彻底修复 Chub 含显式 `null` 字段卡片崩溃；新增 `.charx` / `.byaf` ZIP 角色卡（含内嵌头像）、旧版无 `spec` V1 卡片与 `depth_prompt`；新增独立导入 **RikkaHub `ExportData`（世界书 / 模式注入）**、**SillyTavern 聊天预设（`prompt_order` 顺序与内嵌正则）**、**Tavern Helper 世界书 / 下划线正则脚本**、**Quick Replies** 及整包 `.zip`。\n- **多平台 API 供应商导入**：「我的 → 自定义 API 通道」新增「导入」入口，支持粘贴 **RikkaHub `ai-provider:v1:` 分享串**，或导入 **RikkaHub / Cherry Studio / Chatbox Backup v2** 备份与通用 JSON，预览勾选后自动去重入库。\n- **Chatbox Backup v2 & 通用对话 JSON**：完整支持 Chatbox Backup v2 `.zip`（多分支变体、星标置顶、思考链分离与 API 供应商同步），新增 **ShareGPT** 与宽松通用对话 JSON 兜底，并加固 GuGuChat 本地备份 BOM 与格式校验。\n- **文游台 / 小说工坊快捷入口**：文游台「世界书」新增「导入世界书/预设」、「前端美化」新增「导入正则 JSON」，小说工坊「世界书」新增直接导入。\n\n#### 2. 国内加速更新通道 & SHA-256 完整性校验\n- 新增「自动 / 国内加速 / GitHub」三档更新渠道，内置多节点镜像自动故障转移与流式 SHA-256 校验，下载与检查更新更稳更快。\n\n#### 3. 三模式独立界面与全局缩放\n- 拆分对话 / 小说 / 文游三套独立全屏背景与精简单行输入栏，新增全局界面缩放、文游剧场升级与模型上下文设置。"
 }
