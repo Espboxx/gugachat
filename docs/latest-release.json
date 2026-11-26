@@ -1,14 +1,14 @@
 {
-  "tag_name": "v0.3.5",
-  "version_name": "0.3.5",
-  "name": "GuGuChat v0.3.5",
-  "published_at": "2026-11-26T11:41:00Z",
-  "html_url": "https://github.com/Espboxx/gugachat/releases/tag/v0.3.5",
+  "tag_name": "v0.3.6",
+  "version_name": "0.3.6",
+  "name": "GuGuChat v0.3.6",
+  "published_at": "2026-11-26T18:19:34Z",
+  "html_url": "https://github.com/Espboxx/gugachat/releases/tag/v0.3.6",
   "cn_download_page": "",
-  "apk_name": "GuGuChat-v0.3.5-android.apk",
-  "apk_size": 26516335,
-  "apk_sha256": "532c6f4af93553ba05f5f91c584938a5a5a603e84ff8e5af6515715715ab9ab4",
-  "apk_url": "https://github.com/Espboxx/gugachat/releases/download/v0.3.5/GuGuChat-v0.3.5-android.apk",
+  "apk_name": "GuGuChat-v0.3.6-android.apk",
+  "apk_size": 66413921,
+  "apk_sha256": "c0d3e09639bdfdd776a43111c221db45f09c4ebbb979f12f25474393d02447b2",
+  "apk_url": "https://github.com/Espboxx/gugachat/releases/download/v0.3.6/GuGuChat-v0.3.6-android.apk",
   "cn_apk_urls": [],
   "cn_proxies": [
     "https://gh-proxy.com/",
@@ -17,5 +17,5 @@
     "https://gh-proxy.org/",
     "https://ghfast.top/"
   ],
-  "body": "## GuGuChat v0.3.5\n\n### 重点新特性与升级\n\n#### 1. 完整兼容 UU 互动文游存档（`uu-game-save`）\n- **文游一键接管续玩**：支持在「导入外部对话 / 剧本」及「玩文游 → 导入」中直接解析 UU 互动文游存档 JSON，完整还原全部主线剧情消息、当前待选剧情分支（开箱即可点击续玩）、主角人设、现金与具名属性、持有物品、进行中事件与快捷行动。\n- **人物立绘与内心独白**：完整还原人物关系网、NPC 内心评价（`opinion` → 秘密）、最新具名关系数值（羁绊/信任/亲密度等），导入后自动在后台静默拉取并缓存 NPC 远程立绘。\n- **长期记忆与世界书**：自动将 `sideEventFacts` 写入文游「记忆账本」、将主线阶段总结与支线编年史写入「剧情编年史」；物品详情、事件档案、NPC 微信私聊、朋友圈动态与社区论坛热帖自动整理为关键词触发的「世界书」条目，既省 Token 又精准回忆。\n- **聊天附件智能提炼**：直接通过输入框「上传文件」附加 UU 存档 JSON 时，自动剔除冗余地图 ID 与状态快照噪音，提炼为精简结构化 Markdown 喂给模型。\n\n#### 2. 多格式文件附件上传与智能上下文预算\n- **全格式文档直传**：对话 / 小说 / 文游输入框均新增「上传文件」与「拍照」入口，支持本地离线解析 **PDF（含扫描件识别提示）、DOCX、XLSX、PPTX、EPUB、HTML、JSON、Markdown 及各类代码与文本文件**。\n- **智能 Token 预算守卫**：内置文档注入模式切换（自动 / 按需检索 / 首尾摘要 / 全文）与附件预览抽屉，大文档不爆上下文，并支持多模态模型视觉能力校验提醒。"
+  "body": "## GuGuChat v0.3.6\n\n### 重点新特性与升级\n\n#### 1. 本地极小向量模型（零 Key 离线语义检索）\n- **按需下载、不膨胀安装包**：支持在「我的 → 语义检索与向量模型」中按需下载轻量化中文 ONNX INT8 模型（`gte-small-zh-int8` 约 29 MB / `bge-small-zh-v1.5-int8` 约 23 MB），不打入 APK 安装包。\n- **移动端专项优化**：集成 ONNX Runtime 2 线程温控策略与超 512 字重叠分片池化（Chunk Pooling），长文本语义表征完整；空闲 3 分钟自动卸载模型释放至 0 MB 内存，并提供国内镜像断点续传与完整性校验。\n\n#### 2. 可配置云端 / 局域网向量模型 API + 可选精排（Rerank）\n- **多生态无缝接入**：支持硅基流动免费 `BAAI/bge-m3` 与 `BAAI/bge-reranker-v2-m3` 精排、Gemini `gemini-embedding-001`、阿里云百炼、智谱 AI、OpenAI、Jina，以及局域网 Ollama / LM Studio / `llama-server` 免 Key 直连。\n- **Room INT8 量化向量缓存**：本地与云端统一写入 Room INT8 量化向量索引，单会话千级条目实现 `<1.5 ms` 毫秒级离线混合检索，并支持一键重建索引与缓存管理。\n\n#### 3. 词法召回、双指标水位与上下文压缩全面升级与修复\n- **高精度中文分词与词法召回**：引入停用词断句与 Android 原生 ICU 分词，彻底消除 `的何 / 半的 / 的顶` 等跨词伪命中及超长对话全量误召回问题。\n- **模型家族 Token 先验 + 实时 EMA 校准**：按模型家族内置中文 Token 换算先验并结合真实 API 用量跨会话实时 EMA 校准（DeepSeek 等长存档估算不再高估约 2.2 倍）。\n- **双指标上下文水位与升级版召回透视**：拆清「本轮召回预算」与「实际发送 / 完整历史」双指标进度条（滑动窗口温和提示，仅硬超限时红色告警）；召回透视新增单卡 Token 消耗显示与本轮静音 / 置顶 / 停用快捷控制。\n- **压缩归档与导入核心修复**：修复上下文压缩归档未过滤已摘要历史、重试发送误覆盖及外部导入缺少默认模型等问题。\n\n#### 4. 外置浏览器跳转修复\n- 修复「我的 → 前往下载页」跳转行为，严格唤起系统默认外置浏览器打开下载页面，避免应用内拦截异常。"
 }
