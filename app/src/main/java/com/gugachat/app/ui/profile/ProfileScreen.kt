@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FolderZip
+import androidx.compose.material.icons.filled.FormatSize
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.OpenInBrowser
@@ -87,6 +88,7 @@ import com.gugachat.app.core.theme.GuSegmentedControl
 import com.gugachat.app.core.theme.GuSettingsRow
 import com.gugachat.app.core.theme.LocalAppTheme
 import com.gugachat.app.core.theme.ThemeStyle
+import com.gugachat.app.core.theme.UiScalePreset
 import com.gugachat.app.core.util.FormatUtils
 import com.gugachat.app.data.api.AppUpdateService
 import com.gugachat.app.ui.chat.ExternalImportSheet
@@ -191,35 +193,35 @@ fun ProfileScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(56.dp)
-                    .padding(horizontal = 16.dp),
+                    .height(46.dp)
+                    .padding(horizontal = 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 Text(
                     text = strings.profile.title,
                     color = c.ink,
-                    fontSize = 17.5.sp,
+                    fontSize = 16.5.sp,
                     fontWeight = FontWeight.ExtraBold,
                 )
                 if (!state.isDirectApiOnly) {
                     IconButton(
                         onClick = viewModel::refreshProfile,
                         enabled = !state.isRefreshing,
-                        modifier = Modifier.size(44.dp),
+                        modifier = Modifier.size(38.dp),
                     ) {
                         if (state.isRefreshing) {
                             CircularProgressIndicator(
                                 color = c.primary,
                                 strokeWidth = 2.dp,
-                                modifier = Modifier.size(18.dp),
+                                modifier = Modifier.size(16.dp),
                             )
                         } else {
                             Icon(
                                 imageVector = Icons.Default.Refresh,
                                 contentDescription = strings.profile.refreshProfile,
                                 tint = c.ink,
-                                modifier = Modifier.size(21.dp),
+                                modifier = Modifier.size(19.dp),
                             )
                         }
                     }
@@ -231,8 +233,8 @@ fun ProfileScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 14.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             val user = state.user
             val displayName = user?.username?.ifBlank { user.email } ?: "GuGuUser"
@@ -505,6 +507,51 @@ fun ProfileScreen(
                                 modifier = Modifier.width(168.dp),
                             )
                         },
+                    )
+
+                    // Row 2.5: Global UI Scale
+                    val scalePresets = UiScalePreset.entries
+                    val scaleIndex = scalePresets.indexOf(state.settings.uiScale).coerceAtLeast(0)
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 10.dp),
+                    ) {
+                        GuSettingsRow(
+                            title = strings.profile.uiScaleLabel,
+                            icon = Icons.Default.FormatSize,
+                            iconTint = c.primarySoftInk,
+                            iconBg = c.primarySoft,
+                            showDivider = false,
+                            trailing = {
+                                GuBadge(
+                                    text = "${(state.settings.uiScale.scale * 100).toInt()}%",
+                                    variant = GuBadgeVariant.BLUE,
+                                )
+                            },
+                        )
+                        GuSegmentedControl(
+                            items = listOf(
+                                strings.profile.uiScaleCompact,
+                                strings.profile.uiScaleComfortable,
+                                strings.profile.uiScaleStandard,
+                                strings.profile.uiScaleLarge,
+                            ),
+                            selectedIndex = scaleIndex,
+                            onSelect = { idx ->
+                                scalePresets.getOrNull(idx)?.let(viewModel::setUiScale)
+                            },
+                            compact = true,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 56.dp, end = 14.dp),
+                        )
+                    }
+
+                    HorizontalDivider(
+                        modifier = Modifier.padding(start = 56.dp),
+                        thickness = theme.borderWidth,
+                        color = c.border.copy(alpha = 0.78f),
                     )
 
                     // Row 3: Language

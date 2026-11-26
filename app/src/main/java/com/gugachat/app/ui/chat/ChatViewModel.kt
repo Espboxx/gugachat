@@ -139,8 +139,18 @@ data class ChatUiState(
     val readerPaper: String = "cream", // cream | parchment | sage | night
     val readerSerif: Boolean = true,
     val readerIndent: Boolean = true,
+    val defaultContextWindowOverride: Int? = null,
+    val defaultMaxHistoryMessages: Int? = null,
+    val defaultMaxOutputTokens: Int? = null,
     val waterline: ContextWaterlineSummary = ContextWaterlineSummary(),
-)
+) {
+    val effectiveChatParams: ChatParams
+        get() = activeConversation?.params ?: ChatParams(
+            maxTokens = defaultMaxOutputTokens,
+            contextWindowOverride = defaultContextWindowOverride,
+            maxHistoryMessages = defaultMaxHistoryMessages,
+        )
+}
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ChatViewModel(private val container: AppContainer) : ViewModel() {
@@ -270,6 +280,9 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                         readerLineHeight = s.readerLineHeight,
                         readerSerif = s.readerSerif,
                         readerIndent = s.readerIndent,
+                        defaultContextWindowOverride = s.defaultContextWindowOverride,
+                        defaultMaxHistoryMessages = s.defaultMaxHistoryMessages,
+                        defaultMaxOutputTokens = s.defaultMaxOutputTokens,
                     )
                 }
             }
@@ -432,6 +445,15 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
+    private fun defaultChatParams(): ChatParams {
+        val st = _ui.value
+        return ChatParams(
+            maxTokens = st.defaultMaxOutputTokens,
+            contextWindowOverride = st.defaultContextWindowOverride,
+            maxHistoryMessages = st.defaultMaxHistoryMessages,
+        )
+    }
+
     fun createNewChatSession(title: String = "新对话") {
         viewModelScope.launch {
             val now = System.currentTimeMillis()
@@ -441,6 +463,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                 mode = ConversationMode.chat,
                 groupId = _ui.value.selectedGroupId,
                 model = _ui.value.selectedModelId,
+                params = defaultChatParams(),
                 createdAt = now,
                 updatedAt = now,
             )
@@ -478,20 +501,61 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     fun updateConversationParams(systemPrompt: String, params: ChatParams) {
         viewModelScope.launch {
             val conv = _ui.value.activeConversation ?: ensureActiveConversation()
+            val sanitized = params.copy(
+                contextWindowOverride = params.contextWindowOverride?.coerceIn(4096, 2_000_000),
+                maxHistoryMessages = params.maxHistoryMessages?.coerceIn(1, 500),
+                maxTokens = params.maxTokens?.coerceIn(256, 131_072),
+            )
             chatDao.upsertConversation(
                 conv.copy(
                     systemPrompt = systemPrompt,
-                    params = params,
+                    params = sanitized,
                     updatedAt = System.currentTimeMillis(),
                 ).toEntity(),
+            )
+            container.settingsStore.setDefaultContextPrefs(
+                contextWindowOverride = sanitized.contextWindowOverride,
+                maxHistoryMessages = sanitized.maxHistoryMessages,
+                maxOutputTokens = sanitized.maxTokens,
             )
             recomputeWaterline()
         }
     }
 
+    fun updateContextSettings(
+        contextWindowOverride: Int?,
+        maxHistoryMessages: Int?,
+        maxTokens: Int?,
+    ) {
+        viewModelScope.launch {
+            val cleanWin = contextWindowOverride?.coerceIn(4096, 2_000_000)
+            val cleanHist = maxHistoryMessages?.coerceIn(1, 500)
+            val cleanOut = maxTokens?.coerceIn(256, 131_072)
+            container.settingsStore.setDefaultContextPrefs(
+                contextWindowOverride = cleanWin,
+                maxHistoryMessages = cleanHist,
+                maxOutputTokens = cleanOut,
+            )
+            val conv = _ui.value.activeConversation
+            if (conv != null) {
+                val updated = conv.copy(
+                    params = conv.params.copy(
+                        contextWindowOverride = cleanWin,
+                        maxHistoryMessages = cleanHist,
+                        maxTokens = cleanOut,
+                    ),
+                    updatedAt = System.currentTimeMillis(),
+                )
+                chatDao.upsertConversation(updated.toEntity())
+                _ui.update { it.copy(activeConversation = updated) }
+                recomputeWaterline()
+            }
+        }
+    }
+
     fun toggleActiveReasoning() {
         val conv = _ui.value.activeConversation
-        val params = conv?.params ?: ChatParams()
+        val params = conv?.params ?: defaultChatParams()
         updateConversationParams(
             systemPrompt = conv?.systemPrompt.orEmpty(),
             params = params.copy(enableReasoning = !params.enableReasoning),
@@ -500,7 +564,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
 
     fun toggleActiveMemory() {
         val conv = _ui.value.activeConversation
-        val params = conv?.params ?: ChatParams()
+        val params = conv?.params ?: defaultChatParams()
         updateConversationParams(
             systemPrompt = conv?.systemPrompt.orEmpty(),
             params = params.copy(enableAutoMemory = !params.enableAutoMemory),
@@ -3697,6 +3761,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             mode = ConversationMode.chat,
             groupId = _ui.value.selectedGroupId,
             model = _ui.value.selectedModelId,
+            params = defaultChatParams(),
             createdAt = now,
             updatedAt = now,
         )

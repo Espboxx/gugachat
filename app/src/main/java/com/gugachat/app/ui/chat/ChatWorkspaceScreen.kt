@@ -140,9 +140,12 @@ fun ChatWorkspaceScreen(
             models = state.models,
             selectedGroupId = state.selectedGroupId,
             selectedModelId = state.selectedModelId,
+            params = state.effectiveChatParams,
+            waterline = state.waterline,
             onSelectGroup = viewModel::selectGroup,
             onSelectModel = viewModel::selectModel,
             onSelectCustomModel = viewModel::selectCustomModel,
+            onUpdateContextSettings = viewModel::updateContextSettings,
             onDismiss = { showModelSheet = false },
         )
     }
@@ -168,7 +171,7 @@ fun ChatWorkspaceScreen(
     if (showParamsSheet) {
         ChatParamsSheet(
             systemPrompt = activeConv?.systemPrompt.orEmpty(),
-            params = activeConv?.params ?: ChatParams(),
+            params = state.effectiveChatParams,
             waterline = state.waterline,
             isCompacting = state.isCompacting,
             onSave = viewModel::updateConversationParams,
@@ -392,27 +395,27 @@ fun ChatWorkspaceScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(56.dp)
-                        .padding(horizontal = 6.dp),
+                        .height(46.dp)
+                        .padding(horizontal = 4.dp),
                 ) {
                     IconButton(
                         onClick = { scope.launch { drawerState.open() } },
                         modifier = Modifier
                             .align(Alignment.CenterStart)
-                            .size(44.dp),
+                            .size(38.dp),
                     ) {
                         Icon(
                             Icons.Default.Menu,
                             contentDescription = strings.chat.sessions,
                             tint = c.ink,
-                            modifier = Modifier.size(22.dp),
+                            modifier = Modifier.size(20.dp),
                         )
                     }
 
                     Box(
                         modifier = Modifier
                             .align(Alignment.Center)
-                            .padding(horizontal = 96.dp),
+                            .padding(horizontal = 82.dp),
                         contentAlignment = Alignment.Center,
                     ) {
                         val hasModel = !state.selectedModelId.isNullOrBlank()
@@ -429,23 +432,23 @@ fun ChatWorkspaceScreen(
                                 width = theme.borderWidth,
                                 color = if (hasModel) c.border else c.outline.copy(alpha = 0.8f),
                             ),
-                            modifier = Modifier.heightIn(min = 36.dp),
+                            modifier = Modifier.heightIn(min = 32.dp),
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                horizontalArrangement = Arrangement.spacedBy(5.dp),
                             ) {
                                 Box(
                                     modifier = Modifier
-                                        .size(7.dp)
+                                        .size(6.5.dp)
                                         .clip(CircleShape)
                                         .background(dotColor),
                                 )
                                 Text(
                                     text = state.selectedModelId ?: strings.chat.selectModel,
                                     color = if (hasModel) c.ink else c.muted,
-                                    fontSize = 13.sp,
+                                    fontSize = 12.5.sp,
                                     fontWeight = if (hasModel) FontWeight.Bold else FontWeight.SemiBold,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
@@ -455,7 +458,7 @@ fun ChatWorkspaceScreen(
                                     Icons.Default.KeyboardArrowDown,
                                     contentDescription = null,
                                     tint = c.muted,
-                                    modifier = Modifier.size(16.dp),
+                                    modifier = Modifier.size(15.dp),
                                 )
                             }
                         }
@@ -467,26 +470,26 @@ fun ChatWorkspaceScreen(
                     ) {
                         IconButton(
                             onClick = { showNewSessionSheet = true },
-                            modifier = Modifier.size(44.dp),
+                            modifier = Modifier.size(38.dp),
                         ) {
                             Icon(
                                 Icons.Default.Add,
                                 contentDescription = strings.chat.newChat,
                                 tint = c.ink,
-                                modifier = Modifier.size(22.dp),
+                                modifier = Modifier.size(20.dp),
                             )
                         }
 
                         Box {
                             IconButton(
                                 onClick = { showMoreMenu = true },
-                                modifier = Modifier.size(44.dp),
+                                modifier = Modifier.size(38.dp),
                             ) {
                                 Icon(
                                     Icons.Default.MoreVert,
                                     contentDescription = strings.chat.moreActions,
                                     tint = c.ink,
-                                    modifier = Modifier.size(21.dp),
+                                    modifier = Modifier.size(19.dp),
                                 )
                             }
                             GuPopupMenu(

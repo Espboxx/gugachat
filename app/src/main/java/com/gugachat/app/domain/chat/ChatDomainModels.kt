@@ -52,6 +52,8 @@ data class ChatParams(
     val enableReasoning: Boolean = true,
     val enableAutoMemory: Boolean = true,
     val enableAutoConsolidate: Boolean = true,
+    val contextWindowOverride: Int? = null,
+    val maxHistoryMessages: Int? = null,
 )
 
 @Serializable

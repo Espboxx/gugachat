@@ -320,8 +320,8 @@ fun ChatMessageList(
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(18.dp),
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item { Spacer(Modifier.height(2.dp)) }
 
@@ -1326,8 +1326,8 @@ private fun AssistantMessageBlock(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 14.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -1374,8 +1374,8 @@ private fun AssistantMessageBlock(
                         isStreaming = isStreaming,
                         streamingStatusHint = streamingStatusHint,
                         useSerif = true,
-                        fontSize = 16.sp,
-                        lineHeight = 27.sp,
+                        fontSize = 15.sp,
+                        lineHeight = 24.5.sp,
                         onRetry = onRegenerate,
                         onToast = onToast,
                     )
@@ -1488,26 +1488,26 @@ private fun AssistantMessageBlock(
         ConversationMode.chat -> {
             Column(
                 modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(9.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     Image(
                         painter = painterResource(id = R.drawable.img_logo),
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier
-                            .size(22.dp)
+                            .size(18.dp)
                             .clip(CircleShape)
                             .border(theme.borderWidth, c.border, CircleShape),
                     )
                     Text(
                         text = msg.model?.takeIf { it.isNotBlank() } ?: strings.common.appName,
                         color = c.muted,
-                        fontSize = 12.sp,
+                        fontSize = 11.5.sp,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -1522,8 +1522,8 @@ private fun AssistantMessageBlock(
                     isStreaming = isStreaming,
                     streamingStatusHint = streamingStatusHint,
                     useSerif = false,
-                    fontSize = 15.5.sp,
-                    lineHeight = 25.sp,
+                    fontSize = 14.5.sp,
+                    lineHeight = 22.5.sp,
                     onRetry = onRegenerate,
                     onToast = onToast,
                 )
@@ -1892,44 +1892,44 @@ private fun AssistantFooterRow(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(onClick = onCopy, modifier = Modifier.size(36.dp)) {
+            IconButton(onClick = onCopy, modifier = Modifier.size(30.dp)) {
                 Icon(
                     Icons.Default.ContentCopy,
                     contentDescription = strings.common.copy,
                     tint = c.muted.copy(alpha = 0.85f),
-                    modifier = Modifier.size(16.dp),
+                    modifier = Modifier.size(15.dp),
                 )
             }
-            IconButton(onClick = onEdit, enabled = !isStreaming, modifier = Modifier.size(36.dp)) {
+            IconButton(onClick = onEdit, enabled = !isStreaming, modifier = Modifier.size(30.dp)) {
                 Icon(
                     Icons.Default.Edit,
                     contentDescription = strings.common.edit,
                     tint = c.muted.copy(alpha = 0.85f),
-                    modifier = Modifier.size(16.dp),
+                    modifier = Modifier.size(15.dp),
                 )
             }
-            IconButton(onClick = onRegenerate, enabled = !isStreaming, modifier = Modifier.size(36.dp)) {
+            IconButton(onClick = onRegenerate, enabled = !isStreaming, modifier = Modifier.size(30.dp)) {
                 Icon(
                     Icons.Default.Refresh,
                     contentDescription = strings.chat.regenerate,
                     tint = c.muted.copy(alpha = 0.85f),
-                    modifier = Modifier.size(16.dp),
+                    modifier = Modifier.size(15.dp),
                 )
             }
-            IconButton(onClick = onBranch, modifier = Modifier.size(36.dp)) {
+            IconButton(onClick = onBranch, modifier = Modifier.size(30.dp)) {
                 Icon(
                     Icons.Default.AccountTree,
                     contentDescription = strings.novel.branchBtn,
                     tint = c.muted.copy(alpha = 0.85f),
-                    modifier = Modifier.size(16.dp),
+                    modifier = Modifier.size(15.dp),
                 )
             }
-            IconButton(onClick = onDelete, enabled = !isStreaming, modifier = Modifier.size(36.dp)) {
+            IconButton(onClick = onDelete, enabled = !isStreaming, modifier = Modifier.size(30.dp)) {
                 Icon(
                     Icons.Default.Delete,
                     contentDescription = strings.common.delete,
                     tint = c.muted.copy(alpha = 0.85f),
-                    modifier = Modifier.size(16.dp),
+                    modifier = Modifier.size(15.dp),
                 )
             }
             Spacer(Modifier.weight(1f))

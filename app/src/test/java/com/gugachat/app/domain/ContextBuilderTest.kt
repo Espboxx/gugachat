@@ -235,4 +235,70 @@ class ContextBuilderTest {
         assertTrue(waterline.recalledItems.any { it.id == "lore-trig" })
         assertTrue(waterline.novelLoreTokens > 0)
     }
+
+    @Test
+    fun buildChatContext_honorsContextWindowOverrideAndMaxHistoryMessages() = runBlocking {
+        val longChunk = "这是一段用于测试上下文裁剪的长对话内容，重复多次以占用较多 Token。".repeat(25)
+        val messages = (1..6).map { idx ->
+            ChatMessage(
+                id = "m$idx",
+                conversationId = "conv-ctx",
+                role = if (idx % 2 == 1) "user" else "assistant",
+                content = "第${idx}条消息：$longChunk",
+                createdAt = idx.toLong(),
+                seq = idx,
+            )
+        }
+
+        // 1. Cap history messages to last 2 even with a large 128K model window
+        val convLimitMsgs = ChatConversation(
+            id = "conv-ctx",
+            title = "限制条数",
+            mode = ConversationMode.chat,
+            params = ChatParams(maxHistoryMessages = 2),
+            createdAt = 1L,
+            updatedAt = 2L,
+        )
+        val builtLimitedMsgs = ContextBuilder.buildChatContext(
+            ContextBuildInput(
+                conversation = convLimitMsgs,
+                messages = messages,
+                modelContextWindow = 128_000,
+            ),
+        )
+        val nonSystemLimited = builtLimitedMsgs.wireMessages.filter { it.role != "system" }
+        assertEquals(2, nonSystemLimited.size)
+        assertTrue(nonSystemLimited.first().textContent!!.startsWith("第5条消息"))
+        assertTrue(nonSystemLimited.last().textContent!!.startsWith("第6条消息"))
+        assertEquals(4, builtLimitedMsgs.summary.trimmedMessageCount)
+
+        // 2. Cap context window override down to 4096 tokens on a 128K model
+        val convSmallWin = convLimitMsgs.copy(
+            params = ChatParams(contextWindowOverride = 4096, maxTokens = 1024),
+        )
+        val builtSmallWin = ContextBuilder.buildChatContext(
+            ContextBuildInput(
+                conversation = convSmallWin,
+                messages = messages,
+                modelContextWindow = 128_000,
+            ),
+        )
+        assertEquals(4096, builtSmallWin.summary.modelContextWindow)
+        assertTrue(builtSmallWin.summary.trimmedMessageCount > 0)
+        assertTrue(builtSmallWin.wireMessages.count { it.role != "system" } < 6)
+
+        // 3. Raise context window override above default 128K (e.g. 256K)
+        val convLargeWin = convLimitMsgs.copy(
+            params = ChatParams(contextWindowOverride = 256_000),
+        )
+        val wlLarge = ContextBuilder.computeContextWaterline(
+            ContextBuildInput(
+                conversation = convLargeWin,
+                messages = messages,
+                modelContextWindow = 128_000,
+            ),
+        )
+        assertEquals(256_000, wlLarge.modelContextWindow)
+        assertEquals(0, wlLarge.trimmedMessageCount)
+    }
 }

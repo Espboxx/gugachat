@@ -12,6 +12,7 @@ import com.gugachat.app.core.storage.ApiProviderConfig
 import com.gugachat.app.core.storage.AppSettings
 import com.gugachat.app.core.theme.ColorMode
 import com.gugachat.app.core.theme.ThemeStyle
+import com.gugachat.app.core.theme.UiScalePreset
 import com.gugachat.app.data.api.ApiException
 import com.gugachat.app.data.api.UserDto
 import com.gugachat.app.data.local.ChatBackupCodec
@@ -158,6 +159,7 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
 
     fun setThemeStyle(style: ThemeStyle) = container.setThemeStyle(style)
     fun setColorMode(mode: ColorMode) = container.setColorMode(mode)
+    fun setUiScale(preset: UiScalePreset) = container.setUiScale(preset)
     fun setLanguage(lang: AppLanguage) = container.setLanguage(lang)
     fun setMemoryBudget(budget: String) {
         viewModelScope.launch { container.settingsStore.setMemoryBudget(budget) }

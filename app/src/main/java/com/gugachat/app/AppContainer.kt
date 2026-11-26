@@ -196,6 +196,10 @@ class AppContainer(context: Context) {
         scope.launch { settingsStore.setColorMode(mode) }
     }
 
+    fun setUiScale(preset: com.gugachat.app.core.theme.UiScalePreset) {
+        scope.launch { settingsStore.setUiScale(preset) }
+    }
+
     fun setLanguage(language: AppLanguage) {
         scope.launch { settingsStore.setLanguage(language) }
     }

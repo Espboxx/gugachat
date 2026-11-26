@@ -10,10 +10,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -50,9 +52,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -67,6 +71,7 @@ import com.gugachat.app.core.i18n.fmt
 import com.gugachat.app.core.theme.GuGuChatTheme
 import com.gugachat.app.core.theme.GuToastHost
 import com.gugachat.app.core.theme.LocalAppTheme
+import com.gugachat.app.domain.chat.ConversationMode
 import com.gugachat.app.ui.auth.AuthViewModel
 import com.gugachat.app.ui.auth.LoginScreen
 import com.gugachat.app.ui.chat.ChatViewModel
@@ -98,11 +103,22 @@ fun GuGuChatRoot(container: AppContainer) {
         if (settings.language == AppLanguage.EN) EnStrings else ZhStrings
     }
 
+    val baseDensity = LocalDensity.current
+    val scaledDensity = remember(baseDensity, settings.uiScale) {
+        Density(
+            density = baseDensity.density * settings.uiScale.scale,
+            fontScale = baseDensity.fontScale,
+        )
+    }
+
     LaunchedEffect(container) {
         container.updateController.checkForUpdate(silent = true)
     }
 
-    CompositionLocalProvider(LocalAppStrings provides strings) {
+    CompositionLocalProvider(
+        LocalAppStrings provides strings,
+        LocalDensity provides scaledDensity,
+    ) {
         GuGuChatTheme(
             themeStyle = settings.themeStyle,
             colorMode = settings.colorMode,
@@ -127,7 +143,7 @@ fun GuGuChatRoot(container: AppContainer) {
                     modifier = Modifier
                         .align(Alignment.TopCenter)
                         .statusBarsPadding()
-                        .padding(top = 58.dp),
+                        .padding(top = 48.dp),
                 )
 
                 val updateInfo = updateState.availableUpdate
@@ -192,6 +208,7 @@ private fun AuthenticatedShell(container: AppContainer) {
     val imageVm = remember(container) { ImageViewModel(container) }
     val profileVm = remember(container) { ProfileViewModel(container) }
 
+    val chatState by chatVm.ui.collectAsStateWithLifecycle()
     val imageState by imageVm.ui.collectAsStateWithLifecycle()
     val activeImageTasks = remember(imageState.generations) {
         imageState.generations.count {
@@ -208,51 +225,60 @@ private fun AuthenticatedShell(container: AppContainer) {
     val activeTab = MainTab.entries.getOrElse(activeTabOrdinal) { MainTab.CHAT }
     val saveableStateHolder = rememberSaveableStateHolder()
 
+    val isImeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    val isTheaterImmersive = activeTab == MainTab.CHAT &&
+        chatState.activeConversation?.mode == ConversationMode.rp &&
+        chatState.activeConversation?.rp?.theaterMode == true
+    val isPureReading = activeTab == MainTab.CHAT && chatState.pureReadingMode
+    val showBottomBar = !isImeVisible && !isTheaterImmersive && !isPureReading
+
     Scaffold(
         containerColor = c.page,
         bottomBar = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(c.surface)
-                    .navigationBarsPadding(),
-            ) {
-                HorizontalDivider(
-                    thickness = theme.borderWidth,
-                    color = c.border.copy(alpha = 0.85f),
-                )
-                Row(
+            if (showBottomBar) {
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(62.dp)
-                        .padding(horizontal = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+                        .background(c.surface)
+                        .navigationBarsPadding(),
                 ) {
-                    CompactBottomNavItem(
-                        selected = activeTab == MainTab.CHAT,
-                        selectedIcon = Icons.AutoMirrored.Filled.Chat,
-                        unselectedIcon = Icons.AutoMirrored.Outlined.Chat,
-                        label = strings.nav.tabChat,
-                        onClick = { activeTabOrdinal = MainTab.CHAT.ordinal },
-                        modifier = Modifier.weight(1f),
+                    HorizontalDivider(
+                        thickness = theme.borderWidth,
+                        color = c.border.copy(alpha = 0.85f),
                     )
-                    CompactBottomNavItem(
-                        selected = activeTab == MainTab.STUDIO,
-                        selectedIcon = Icons.Filled.AutoAwesome,
-                        unselectedIcon = Icons.Outlined.AutoAwesome,
-                        label = strings.nav.tabStudio,
-                        showIndicatorDot = activeImageTasks > 0,
-                        onClick = { activeTabOrdinal = MainTab.STUDIO.ordinal },
-                        modifier = Modifier.weight(1f),
-                    )
-                    CompactBottomNavItem(
-                        selected = activeTab == MainTab.MINE,
-                        selectedIcon = Icons.Filled.Person,
-                        unselectedIcon = Icons.Outlined.Person,
-                        label = strings.nav.tabMine,
-                        onClick = { activeTabOrdinal = MainTab.MINE.ordinal },
-                        modifier = Modifier.weight(1f),
-                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(50.dp)
+                            .padding(horizontal = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        CompactBottomNavItem(
+                            selected = activeTab == MainTab.CHAT,
+                            selectedIcon = Icons.AutoMirrored.Filled.Chat,
+                            unselectedIcon = Icons.AutoMirrored.Outlined.Chat,
+                            label = strings.nav.tabChat,
+                            onClick = { activeTabOrdinal = MainTab.CHAT.ordinal },
+                            modifier = Modifier.weight(1f),
+                        )
+                        CompactBottomNavItem(
+                            selected = activeTab == MainTab.STUDIO,
+                            selectedIcon = Icons.Filled.AutoAwesome,
+                            unselectedIcon = Icons.Outlined.AutoAwesome,
+                            label = strings.nav.tabStudio,
+                            showIndicatorDot = activeImageTasks > 0,
+                            onClick = { activeTabOrdinal = MainTab.STUDIO.ordinal },
+                            modifier = Modifier.weight(1f),
+                        )
+                        CompactBottomNavItem(
+                            selected = activeTab == MainTab.MINE,
+                            selectedIcon = Icons.Filled.Person,
+                            unselectedIcon = Icons.Outlined.Person,
+                            label = strings.nav.tabMine,
+                            onClick = { activeTabOrdinal = MainTab.MINE.ordinal },
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
                 }
             }
         },
@@ -260,7 +286,8 @@ private fun AuthenticatedShell(container: AppContainer) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(bottom = innerPadding.calculateBottomPadding()),
+                .padding(bottom = if (showBottomBar) innerPadding.calculateBottomPadding() else 0.dp)
+                .then(if (!showBottomBar && !isImeVisible && !isPureReading) Modifier.navigationBarsPadding() else Modifier),
         ) {
             saveableStateHolder.SaveableStateProvider(key = activeTab.name) {
                 when (activeTab) {
@@ -306,8 +333,8 @@ private fun CompactBottomNavItem(
     Column(
         modifier = modifier
             .fillMaxHeight()
-            .padding(vertical = 4.dp)
-            .clip(RoundedCornerShape(14.dp))
+            .padding(vertical = 3.dp)
+            .clip(RoundedCornerShape(12.dp))
             .clickable(role = Role.Tab, onClick = onClick),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
@@ -315,8 +342,8 @@ private fun CompactBottomNavItem(
         Box(contentAlignment = Alignment.Center) {
             Box(
                 modifier = Modifier
-                    .width(54.dp)
-                    .height(30.dp)
+                    .width(46.dp)
+                    .height(24.dp)
                     .clip(RoundedCornerShape(999.dp))
                     .background(capsuleBg),
                 contentAlignment = Alignment.Center,
@@ -325,14 +352,14 @@ private fun CompactBottomNavItem(
                     imageVector = if (selected) selectedIcon else unselectedIcon,
                     contentDescription = null,
                     tint = iconTint,
-                    modifier = Modifier.size(21.dp),
+                    modifier = Modifier.size(19.dp),
                 )
             }
             if (showIndicatorDot) {
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
-                        .offset(x = (-6).dp, y = 2.dp)
+                        .offset(x = (-5).dp, y = 1.dp)
                         .size(7.dp)
                         .clip(CircleShape)
                         .background(c.accent)
@@ -340,11 +367,11 @@ private fun CompactBottomNavItem(
                 )
             }
         }
-        Spacer(Modifier.height(3.dp))
+        Spacer(Modifier.height(2.dp))
         Text(
             text = label,
-            fontSize = 11.sp,
-            lineHeight = 13.sp,
+            fontSize = 10.5.sp,
+            lineHeight = 12.sp,
             fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
             color = labelTint,
             maxLines = 1,

@@ -39,6 +39,20 @@ enum class ColorMode(val wireValue: String) {
     }
 }
 
+enum class UiScalePreset(val wireValue: String, val scale: Float) {
+    COMPACT("compact", 0.86f),
+    COMFORTABLE("comfortable", 0.92f),
+    STANDARD("standard", 1.00f),
+    LARGE("large", 1.08f);
+
+    companion object {
+        val DEFAULT: UiScalePreset = COMFORTABLE
+
+        fun fromWire(value: String?): UiScalePreset =
+            entries.firstOrNull { it.wireValue.equals(value?.trim(), ignoreCase = true) } ?: DEFAULT
+    }
+}
+
 @Immutable
 data class AppColors(
     val page: Color,

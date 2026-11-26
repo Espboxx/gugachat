@@ -541,9 +541,11 @@ object ContextBuilder {
     private fun runSharedPipeline(input: ContextBuildInput, allowScorer: Boolean): ComputedPipeline {
         val conv = input.conversation
         val slice = sliceActiveWindow(conv, input.messages, input.novelChapters)
-        val windowLimit = max(4096, input.modelContextWindow)
+        val requestedWindow = conv.params.contextWindowOverride?.takeIf { it >= 4096 } ?: input.modelContextWindow
+        val windowLimit = max(4096, requestedWindow)
         val budgetTokens = max(2048, (windowLimit * 0.80).toInt())
-        val outputReserve = (conv.params.maxTokens ?: 2048).coerceIn(512, 8192)
+        val maxReserve = max(512, min(32768, budgetTokens / 2))
+        val outputReserve = (conv.params.maxTokens ?: 2048).coerceIn(512, maxReserve)
         val effectiveLimitTokens = max(1024, budgetTokens - outputReserve)
         val calibration = if (conv.tokenCalibration in 0.4..2.5) conv.tokenCalibration else 1.0
 
@@ -632,23 +634,26 @@ object ContextBuilder {
         val msgCosts = slice.active.map { msg ->
             resolveMsgTokenCost(msg, msg.id in slice.decayedImageMessageIds)
         }
-        val activeMsgsRawTotal = msgCosts.sum()
         val draftTokens = if (input.draftText.isNotBlank() || input.draftImageCount > 0) {
             estimateMessageTokens(input.draftText, input.draftImageCount)
         } else {
             0
         }
-        val totalRaw = prefix.systemTokens + draftTokens + dynamicOverhead + activeMsgsRawTotal
-        val calibratedTotal = (totalRaw * calibration).roundToInt()
-
+        val maxHistoryLimit = conv.params.maxHistoryMessages?.takeIf { it > 0 }
         var running = ((prefix.systemTokens + draftTokens + dynamicOverhead) * calibration).roundToInt()
         var kept = 0
+        var keptHistoryRaw = 0
         for (i in slice.active.indices.reversed()) {
+            if (maxHistoryLimit != null && kept >= maxHistoryLimit) break
             val msgTok = (msgCosts[i] * calibration).roundToInt()
             if (kept > 0 && running + msgTok > effectiveLimitTokens) break
             running += msgTok
+            keptHistoryRaw += msgCosts[i]
             kept++
         }
+        val activeMsgsRawTotal = if (maxHistoryLimit != null) keptHistoryRaw else msgCosts.sum()
+        val totalRaw = prefix.systemTokens + draftTokens + dynamicOverhead + activeMsgsRawTotal
+        val calibratedTotal = (totalRaw * calibration).roundToInt()
 
         val loreInspect = loreMatch.triggered.map { entry ->
             RecalledMemoryInspectItem(
@@ -736,9 +741,11 @@ object ContextBuilder {
             }
         }
 
+        val maxHistoryLimit = conv.params.maxHistoryMessages?.takeIf { it > 0 }
         val selected = ArrayList<ChatMessage>()
         var used = ((pipe.prefix.systemTokens + pipe.dynamicOverhead) * pipe.calibration).roundToInt()
         for (i in active.indices.reversed()) {
+            if (maxHistoryLimit != null && selected.size >= maxHistoryLimit) break
             val msg = active[i]
             val msgTok = (resolveMsgTokenCost(msg, msg.id in decayed) * pipe.calibration).roundToInt()
             if (selected.isNotEmpty() && used + msgTok > pipe.effectiveLimitTokens) break

@@ -125,19 +125,19 @@ fun ChatComposerBar(
 
     Surface(
         color = if (theme.isDark) c.surfaceElevated else c.surface,
-        shape = RoundedCornerShape(26.dp),
+        shape = RoundedCornerShape(20.dp),
         border = BorderStroke(theme.borderWidth, c.border),
-        shadowElevation = if (theme.isDark) 4.dp else 5.dp,
+        shadowElevation = if (theme.isDark) 3.dp else 4.dp,
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 6.dp)
+            .padding(horizontal = 10.dp, vertical = 4.dp)
             .imePadding(),
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 9.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             if (draftAttachments.isNotEmpty()) {
                 Row(
@@ -223,19 +223,19 @@ fun ChatComposerBar(
                 else -> strings.chat.composerPlaceholder
             }
 
-            // Row 1: Generous full-width input area
+            // Row 1: Compact full-width input area
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(min = 42.dp)
-                    .padding(horizontal = 4.dp, vertical = 2.dp),
+                    .heightIn(min = 32.dp)
+                    .padding(horizontal = 4.dp, vertical = 1.dp),
                 contentAlignment = Alignment.CenterStart,
             ) {
                 if (draftText.isEmpty()) {
                     Text(
                         text = placeholder,
                         color = c.muted,
-                        fontSize = 15.5.sp,
+                        fontSize = 14.5.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -246,24 +246,24 @@ fun ChatComposerBar(
                     maxLines = 6,
                     textStyle = TextStyle(
                         color = c.ink,
-                        fontSize = 15.5.sp,
-                        lineHeight = 22.5.sp,
+                        fontSize = 14.5.sp,
+                        lineHeight = 20.5.sp,
                     ),
                     cursorBrush = SolidColor(c.primary),
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
 
-            // Row 2: DeepSeek-inspired balanced bottom toolbar
+            // Row 2: Compact balanced bottom toolbar
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
             ) {
-                Box(modifier = Modifier.size(38.dp)) {
+                Box(modifier = Modifier.size(32.dp)) {
                     Box(
                         modifier = Modifier
-                            .size(38.dp)
+                            .size(32.dp)
                             .clip(CircleShape)
                             .background(if (showToolsPanel) c.primarySoft else c.surfaceSoft)
                             .border(
@@ -278,15 +278,15 @@ fun ChatComposerBar(
                             imageVector = if (showToolsPanel) Icons.Default.Close else Icons.Default.Add,
                             contentDescription = strings.chat.composerTools,
                             tint = if (showToolsPanel) c.primarySoftInk else c.muted,
-                            modifier = Modifier.size(19.dp),
+                            modifier = Modifier.size(17.dp),
                         )
                     }
                     if (!showToolsPanel && waterline.exceedsModelWindow) {
                         Box(
                             modifier = Modifier
                                 .align(Alignment.TopEnd)
-                                .padding(2.dp)
-                                .size(8.dp)
+                                .padding(1.dp)
+                                .size(7.dp)
                                 .clip(CircleShape)
                                 .background(c.danger),
                         )
@@ -318,19 +318,19 @@ fun ChatComposerBar(
                     Box {
                         Row(
                             modifier = Modifier
-                                .height(36.dp)
+                                .height(30.dp)
                                 .clip(RoundedCornerShape(999.dp))
                                 .background(pillBg)
                                 .border(theme.borderWidth, pillBorder, RoundedCornerShape(999.dp))
                                 .clickable { showKindMenu = true }
-                                .padding(horizontal = 11.dp),
+                                .padding(horizontal = 9.dp),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(3.dp),
+                            horizontalArrangement = Arrangement.spacedBy(2.dp),
                         ) {
                             Text(
                                 text = activeKindLabel,
                                 color = pillFg,
-                                fontSize = 12.sp,
+                                fontSize = 11.5.sp,
                                 fontWeight = FontWeight.Bold,
                                 maxLines = 1,
                             )
@@ -338,7 +338,7 @@ fun ChatComposerBar(
                                 Icons.Default.KeyboardArrowDown,
                                 contentDescription = null,
                                 tint = pillFg,
-                                modifier = Modifier.size(15.dp),
+                                modifier = Modifier.size(14.dp),
                             )
                         }
 
@@ -424,7 +424,7 @@ fun ChatComposerBar(
                 if (isStreaming) {
                     Box(
                         modifier = Modifier
-                            .size(38.dp)
+                            .size(32.dp)
                             .clip(CircleShape)
                             .background(c.danger)
                             .clickable(onClick = onStop),
@@ -434,7 +434,7 @@ fun ChatComposerBar(
                             Icons.Default.Stop,
                             contentDescription = strings.chat.stop,
                             tint = Color.White,
-                            modifier = Modifier.size(18.dp),
+                            modifier = Modifier.size(16.dp),
                         )
                     }
                 } else {
@@ -445,7 +445,7 @@ fun ChatComposerBar(
                     )
                     Box(
                         modifier = Modifier
-                            .size(38.dp)
+                            .size(32.dp)
                             .clip(CircleShape)
                             .background(sendBg)
                             .border(
@@ -460,7 +460,7 @@ fun ChatComposerBar(
                             Icons.Default.ArrowUpward,
                             contentDescription = strings.chat.send,
                             tint = if (canSend) Color.White else c.muted,
-                            modifier = Modifier.size(19.dp),
+                            modifier = Modifier.size(17.dp),
                         )
                     }
                 }
@@ -640,7 +640,7 @@ private fun DeepThinkTogglePill(
     )
     Row(
         modifier = Modifier
-            .height(36.dp)
+            .height(30.dp)
             .clip(RoundedCornerShape(999.dp))
             .background(bg)
             .border(
@@ -649,20 +649,20 @@ private fun DeepThinkTogglePill(
                 shape = RoundedCornerShape(999.dp),
             )
             .clickable(onClick = onClick)
-            .padding(horizontal = 11.dp),
+            .padding(horizontal = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(5.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         Icon(
             imageVector = Icons.Default.AutoAwesome,
             contentDescription = null,
             tint = fg,
-            modifier = Modifier.size(14.dp),
+            modifier = Modifier.size(13.dp),
         )
         Text(
             text = label,
             color = fg,
-            fontSize = 12.sp,
+            fontSize = 11.5.sp,
             fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -710,29 +710,29 @@ private fun ComposerChip(
 
     Row(
         modifier = Modifier
-            .height(36.dp)
+            .height(30.dp)
             .alpha(if (enabled || loading) 1f else 0.48f)
             .clip(RoundedCornerShape(999.dp))
             .background(bg)
             .border(theme.borderWidth, border, RoundedCornerShape(999.dp))
             .clickable(enabled = enabled && !loading, onClick = onClick)
-            .padding(horizontal = 11.dp),
+            .padding(horizontal = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(5.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         if (loading) {
             CircularProgressIndicator(
-                modifier = Modifier.size(13.dp),
+                modifier = Modifier.size(12.dp),
                 strokeWidth = 1.8.dp,
                 color = fg,
             )
         } else if (icon != null) {
-            Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(14.dp))
+            Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(13.dp))
         }
         Text(
             text = label,
             color = fg,
-            fontSize = 12.sp,
+            fontSize = 11.5.sp,
             fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,

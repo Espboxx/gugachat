@@ -92,15 +92,15 @@ fun CreativeStudioScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(50.dp)
-                        .padding(start = 16.dp, end = 12.dp),
+                        .height(44.dp)
+                        .padding(start = 14.dp, end = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
                     Text(
                         text = strings.images.title,
                         color = c.ink,
-                        fontSize = 17.5.sp,
+                        fontSize = 16.5.sp,
                         fontWeight = FontWeight.ExtraBold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -111,36 +111,36 @@ fun CreativeStudioScreen(
                         0 -> {
                             IconButton(
                                 onClick = { showGallerySearch = !showGallerySearch },
-                                modifier = Modifier.size(44.dp),
+                                modifier = Modifier.size(38.dp),
                             ) {
                                 Icon(
                                     Icons.Default.Search,
                                     contentDescription = strings.common.search,
                                     tint = if (showGallerySearch || state.searchQuery.isNotEmpty()) c.primary else c.ink,
-                                    modifier = Modifier.size(20.dp),
+                                    modifier = Modifier.size(19.dp),
                                 )
                             }
                             IconButton(
                                 onClick = imageViewModel::toggleBatchMode,
-                                modifier = Modifier.size(44.dp),
+                                modifier = Modifier.size(38.dp),
                             ) {
                                 Icon(
                                     Icons.Default.Checklist,
                                     contentDescription = strings.images.batchManage,
                                     tint = if (state.batchMode) c.primary else c.ink,
-                                    modifier = Modifier.size(20.dp),
+                                    modifier = Modifier.size(19.dp),
                                 )
                             }
                             IconButton(
                                 onClick = imageViewModel::refreshGallery,
                                 enabled = !state.isLoadingGallery,
-                                modifier = Modifier.size(44.dp),
+                                modifier = Modifier.size(38.dp),
                             ) {
                                 Icon(
                                     Icons.Default.Refresh,
                                     contentDescription = strings.common.refresh,
                                     tint = if (state.isLoadingGallery) c.muted else c.ink,
-                                    modifier = Modifier.size(20.dp),
+                                    modifier = Modifier.size(19.dp),
                                 )
                             }
                         }
@@ -148,13 +148,13 @@ fun CreativeStudioScreen(
                         1 -> {
                             IconButton(
                                 onClick = { imageViewModel.setShowPresetSheet(true) },
-                                modifier = Modifier.size(44.dp),
+                                modifier = Modifier.size(38.dp),
                             ) {
                                 Icon(
                                     Icons.Default.Bookmarks,
                                     contentDescription = strings.images.presetsTitle,
                                     tint = c.ink,
-                                    modifier = Modifier.size(20.dp),
+                                    modifier = Modifier.size(19.dp),
                                 )
                             }
                         }

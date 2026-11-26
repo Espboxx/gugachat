@@ -13,6 +13,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.theme.ColorMode
 import com.gugachat.app.core.theme.ThemeStyle
+import com.gugachat.app.core.theme.UiScalePreset
 import com.gugachat.app.core.util.ServerUrlUtils
 import com.gugachat.app.data.api.SseRetryPolicy
 import kotlinx.coroutines.flow.Flow
@@ -25,6 +26,7 @@ data class AppSettings(
     val serverUrl: String = "",
     val themeStyle: ThemeStyle = ThemeStyle.GUGUGA,
     val colorMode: ColorMode = ColorMode.SYSTEM,
+    val uiScale: UiScalePreset = UiScalePreset.DEFAULT,
     val language: AppLanguage = AppLanguage.ZH,
     val memoryBudget: String = "4K",
     val sseAutoRetryCount: Int = SseRetryPolicy.DEFAULT_SSE_AUTO_RETRY_COUNT,
@@ -40,6 +42,9 @@ data class AppSettings(
     val readerLineHeight: Float = 1.75f,
     val readerSerif: Boolean = true,
     val readerIndent: Boolean = true,
+    val defaultContextWindowOverride: Int? = null,
+    val defaultMaxHistoryMessages: Int? = null,
+    val defaultMaxOutputTokens: Int? = null,
 )
 
 class SettingsStore(private val context: Context) {
@@ -47,6 +52,7 @@ class SettingsStore(private val context: Context) {
         val SERVER_URL = stringPreferencesKey("server_url")
         val THEME_STYLE = stringPreferencesKey("theme_style")
         val COLOR_MODE = stringPreferencesKey("color_mode")
+        val UI_SCALE = stringPreferencesKey("ui_scale")
         val LANGUAGE = stringPreferencesKey("language")
         val MEMORY_BUDGET = stringPreferencesKey("memory_budget")
         val SSE_AUTO_RETRY_COUNT = intPreferencesKey("sse_auto_retry_count")
@@ -62,6 +68,9 @@ class SettingsStore(private val context: Context) {
         val READER_LINE_HEIGHT = floatPreferencesKey("reader_line_height")
         val READER_SERIF = booleanPreferencesKey("reader_serif")
         val READER_INDENT = booleanPreferencesKey("reader_indent")
+        val DEFAULT_CONTEXT_WINDOW_OVERRIDE = intPreferencesKey("default_context_window_override")
+        val DEFAULT_MAX_HISTORY_MESSAGES = intPreferencesKey("default_max_history_messages")
+        val DEFAULT_MAX_OUTPUT_TOKENS = intPreferencesKey("default_max_output_tokens")
     }
 
     val settingsFlow: Flow<AppSettings> = context.settingsDataStore.data.map { prefs ->
@@ -69,6 +78,7 @@ class SettingsStore(private val context: Context) {
             serverUrl = prefs[Keys.SERVER_URL].orEmpty(),
             themeStyle = ThemeStyle.fromWire(prefs[Keys.THEME_STYLE]),
             colorMode = ColorMode.fromWire(prefs[Keys.COLOR_MODE]),
+            uiScale = UiScalePreset.fromWire(prefs[Keys.UI_SCALE]),
             language = AppLanguage.fromTag(prefs[Keys.LANGUAGE]),
             memoryBudget = prefs[Keys.MEMORY_BUDGET] ?: "4K",
             sseAutoRetryCount = SseRetryPolicy.clampRetryCount(
@@ -86,6 +96,9 @@ class SettingsStore(private val context: Context) {
             readerLineHeight = (prefs[Keys.READER_LINE_HEIGHT] ?: 1.75f).coerceIn(1.4f, 2.2f),
             readerSerif = prefs[Keys.READER_SERIF] ?: true,
             readerIndent = prefs[Keys.READER_INDENT] ?: true,
+            defaultContextWindowOverride = prefs[Keys.DEFAULT_CONTEXT_WINDOW_OVERRIDE]?.takeIf { it >= 4096 },
+            defaultMaxHistoryMessages = prefs[Keys.DEFAULT_MAX_HISTORY_MESSAGES]?.takeIf { it > 0 },
+            defaultMaxOutputTokens = prefs[Keys.DEFAULT_MAX_OUTPUT_TOKENS]?.takeIf { it >= 256 },
         )
     }
 
@@ -103,6 +116,10 @@ class SettingsStore(private val context: Context) {
 
     suspend fun setColorMode(mode: ColorMode) {
         context.settingsDataStore.edit { it[Keys.COLOR_MODE] = mode.wireValue }
+    }
+
+    suspend fun setUiScale(preset: UiScalePreset) {
+        context.settingsDataStore.edit { it[Keys.UI_SCALE] = preset.wireValue }
     }
 
     suspend fun setLanguage(language: AppLanguage) {
@@ -156,6 +173,21 @@ class SettingsStore(private val context: Context) {
             lineHeight?.let { prefs[Keys.READER_LINE_HEIGHT] = it.coerceIn(1.4f, 2.2f) }
             serif?.let { prefs[Keys.READER_SERIF] = it }
             indent?.let { prefs[Keys.READER_INDENT] = it }
+        }
+    }
+
+    suspend fun setDefaultContextPrefs(
+        contextWindowOverride: Int?,
+        maxHistoryMessages: Int?,
+        maxOutputTokens: Int?,
+    ) {
+        context.settingsDataStore.edit { prefs ->
+            val cleanWin = contextWindowOverride?.coerceIn(4096, 2_000_000) ?: 0
+            val cleanHist = maxHistoryMessages?.coerceIn(1, 500) ?: 0
+            val cleanOut = maxOutputTokens?.coerceIn(256, 131_072) ?: 0
+            prefs[Keys.DEFAULT_CONTEXT_WINDOW_OVERRIDE] = cleanWin
+            prefs[Keys.DEFAULT_MAX_HISTORY_MESSAGES] = cleanHist
+            prefs[Keys.DEFAULT_MAX_OUTPUT_TOKENS] = cleanOut
         }
     }
 }

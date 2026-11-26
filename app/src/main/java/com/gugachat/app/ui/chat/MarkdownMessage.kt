@@ -113,22 +113,23 @@ fun ReasoningCard(
 
     Column(
         modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(5.dp),
     ) {
+        val showInlinePreview = !expanded && !isStreaming && collapsedPreview.isNotEmpty()
         Row(
             modifier = Modifier
-                .heightIn(min = 36.dp)
+                .heightIn(min = 28.dp)
                 .clip(RoundedCornerShape(999.dp))
                 .background(c.surfaceSoft)
                 .border(theme.borderWidth, c.border, RoundedCornerShape(999.dp))
                 .clickable { expanded = !expanded }
-                .padding(horizontal = 12.dp, vertical = 6.dp),
+                .padding(horizontal = 10.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
         ) {
             if (isStreaming) {
                 CircularProgressIndicator(
-                    modifier = Modifier.size(13.dp),
+                    modifier = Modifier.size(12.dp),
                     strokeWidth = 1.8.dp,
                     color = c.primary,
                 )
@@ -136,7 +137,7 @@ fun ReasoningCard(
                 Icon(
                     imageVector = Icons.Default.Psychology,
                     contentDescription = null,
-                    modifier = Modifier.size(15.dp),
+                    modifier = Modifier.size(13.5.dp),
                     tint = c.primary,
                 )
             }
@@ -147,45 +148,26 @@ fun ReasoningCard(
                     strings.chat.thinkingDone.fmt("seconds" to kotlin.math.max(1, reasoning.length / 45))
                 },
                 color = c.ink,
-                fontSize = 12.sp,
+                fontSize = 11.5.sp,
                 fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
             )
+            if (showInlinePreview) {
+                Text(
+                    text = "· $collapsedPreview",
+                    color = c.muted.copy(alpha = 0.85f),
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+            }
             Icon(
                 imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
                 contentDescription = null,
                 tint = c.muted,
-                modifier = Modifier.size(16.dp),
+                modifier = Modifier.size(14.5.dp),
             )
-        }
-
-        if (!expanded && !isStreaming && collapsedPreview.isNotEmpty()) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(IntrinsicSize.Min)
-                    .padding(start = 6.dp)
-                    .clip(RoundedCornerShape(6.dp))
-                    .clickable { expanded = true }
-                    .padding(vertical = 2.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Box(
-                    modifier = Modifier
-                        .width(2.dp)
-                        .fillMaxHeight()
-                        .clip(RoundedCornerShape(2.dp))
-                        .background(c.primary.copy(alpha = 0.45f)),
-                )
-                Text(
-                    text = collapsedPreview,
-                    color = c.muted.copy(alpha = 0.85f),
-                    fontSize = 12.sp,
-                    lineHeight = 17.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
         }
 
         AnimatedVisibility(visible = expanded && reasoning.isNotBlank()) {

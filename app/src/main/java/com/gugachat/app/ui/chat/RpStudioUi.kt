@@ -466,20 +466,20 @@ fun RpStatusHudBar(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(min = 46.dp)
+                .heightIn(min = 38.dp)
                 .clickable { expanded = !expanded }
-                .padding(horizontal = 12.dp, vertical = 6.dp),
+                .padding(horizontal = 10.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(7.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Column(
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
+                verticalArrangement = Arrangement.spacedBy(1.dp),
             ) {
                 Text(
                     text = headerLine,
                     color = c.ink,
-                    fontSize = 12.5.sp,
+                    fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -488,7 +488,7 @@ fun RpStatusHudBar(
                     Text(
                         text = compactStatusLine,
                         color = c.muted,
-                        fontSize = 11.sp,
+                        fontSize = 10.5.sp,
                         fontWeight = FontWeight.Medium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -498,7 +498,7 @@ fun RpStatusHudBar(
 
             Surface(
                 modifier = Modifier
-                    .heightIn(min = 34.dp)
+                    .heightIn(min = 28.dp)
                     .clip(RoundedCornerShape(999.dp))
                     .clickable(onClick = onToggleTheaterMode),
                 shape = RoundedCornerShape(999.dp),
@@ -509,20 +509,20 @@ fun RpStatusHudBar(
                 ),
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.5.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(3.5.dp),
                 ) {
                     Icon(
                         imageVector = Icons.Default.Theaters,
                         contentDescription = null,
                         tint = if (rp.theaterMode) Color.White else c.ink,
-                        modifier = Modifier.size(14.dp),
+                        modifier = Modifier.size(13.dp),
                     )
                     Text(
                         text = if (rp.theaterMode) strings.rp.chatModeBtn else strings.rp.theaterModeBtn,
                         color = if (rp.theaterMode) Color.White else c.ink,
-                        fontSize = 11.5.sp,
+                        fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         maxLines = 1,
                     )
@@ -532,7 +532,7 @@ fun RpStatusHudBar(
             if (!expanded) {
                 Surface(
                     modifier = Modifier
-                        .heightIn(min = 34.dp)
+                        .heightIn(min = 28.dp)
                         .clip(RoundedCornerShape(999.dp))
                         .clickable(onClick = onOpenStudio),
                     shape = RoundedCornerShape(999.dp),
@@ -540,13 +540,13 @@ fun RpStatusHudBar(
                     border = BorderStroke(theme.borderWidth, c.accent.copy(alpha = 0.45f)),
                 ) {
                     Box(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.5.dp),
                         contentAlignment = Alignment.Center,
                     ) {
                         Text(
                             text = strings.rp.studioBtn,
                             color = c.tagInk,
-                            fontSize = 11.5.sp,
+                            fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             maxLines = 1,
                         )

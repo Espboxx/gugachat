@@ -86,6 +86,12 @@ fun ChatParamsSheet(
     var temp by remember(params) { mutableFloatStateOf(params.temperature.toFloat()) }
     var topP by remember(params) { mutableFloatStateOf(params.topP.toFloat()) }
     var maxTokensText by remember(params) { mutableStateOf(params.maxTokens?.toString().orEmpty()) }
+    var contextWindowKText by remember(params) {
+        mutableStateOf(params.contextWindowOverride?.let { (it / 1000).toString() }.orEmpty())
+    }
+    var maxHistoryText by remember(params) {
+        mutableStateOf(params.maxHistoryMessages?.toString().orEmpty())
+    }
     var effort by remember(params) { mutableStateOf(params.reasoningEffort) }
     var maxImageTurns by remember(params) { mutableIntStateOf(params.maxImageTurns) }
     var enableReasoning by remember(params) { mutableStateOf(params.enableReasoning) }
@@ -240,6 +246,30 @@ fun ChatParamsSheet(
                         }
 
                         Spacer(Modifier.height(12.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            GuTextField(
+                                value = contextWindowKText,
+                                onValueChange = { contextWindowKText = it.filter { ch -> ch.isDigit() }.take(4) },
+                                label = if (isZh) "上下文上限 (K)" else "Context Limit (K)",
+                                placeholder = if (isZh) "自动 (${waterline.modelContextWindow / 1000}K)" else "Auto (${waterline.modelContextWindow / 1000}K)",
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                modifier = Modifier.weight(1f),
+                            )
+                            GuTextField(
+                                value = maxHistoryText,
+                                onValueChange = { maxHistoryText = it.filter { ch -> ch.isDigit() }.take(3) },
+                                label = if (isZh) "附带消息条数" else "Max History",
+                                placeholder = if (isZh) "不限" else "Unlimited",
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+
+                        Spacer(Modifier.height(10.dp))
 
                         GuButton(
                             onClick = onCompactNow,
@@ -454,6 +484,8 @@ fun ChatParamsSheet(
             ) {
                 GuButton(
                     onClick = {
+                        val parsedWindow = contextWindowKText.toIntOrNull()?.takeIf { it >= 4 }?.let { (it * 1000).coerceIn(4096, 2_000_000) }
+                        val parsedHistory = maxHistoryText.toIntOrNull()?.takeIf { it > 0 }?.coerceIn(1, 500)
                         val updated = params.copy(
                             temperature = ((temp * 100).roundToInt() / 100.0),
                             topP = ((topP * 100).roundToInt() / 100.0),
@@ -463,6 +495,8 @@ fun ChatParamsSheet(
                             enableReasoning = enableReasoning,
                             enableAutoMemory = enableAutoMemory,
                             enableAutoConsolidate = enableAutoConsolidate,
+                            contextWindowOverride = parsedWindow,
+                            maxHistoryMessages = parsedHistory,
                         )
                         onSave(promptDraft, updated)
                         onDismiss()

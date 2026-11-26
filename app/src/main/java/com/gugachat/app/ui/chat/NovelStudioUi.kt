@@ -205,29 +205,29 @@ fun NovelStatusHudBar(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(min = 46.dp)
+                .heightIn(min = 38.dp)
                 .clickable { expanded = !expanded }
-                .padding(horizontal = 12.dp, vertical = 6.dp),
+                .padding(horizontal = 10.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
         ) {
             GuIconTile(
                 icon = Icons.AutoMirrored.Filled.MenuBook,
                 tint = c.tagInk,
                 backgroundColor = c.tag,
-                size = 28.dp,
-                iconSize = 15.dp,
-                cornerRadius = 8.dp,
+                size = 24.dp,
+                iconSize = 13.5.dp,
+                cornerRadius = 7.dp,
             )
 
             Column(
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(1.dp),
+                verticalArrangement = Arrangement.spacedBy(0.dp),
             ) {
                 Text(
                     text = activeCh?.title ?: novel.title,
                     color = c.ink,
-                    fontSize = 12.5.sp,
+                    fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -236,7 +236,7 @@ fun NovelStatusHudBar(
                     Text(
                         text = summarySub,
                         color = c.muted,
-                        fontSize = 11.sp,
+                        fontSize = 10.5.sp,
                         fontWeight = FontWeight.Medium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -250,23 +250,23 @@ fun NovelStatusHudBar(
                     shape = RoundedCornerShape(999.dp),
                     color = c.surfaceSoft,
                     border = BorderStroke(theme.borderWidth, c.border),
-                    modifier = Modifier.heightIn(min = 34.dp),
+                    modifier = Modifier.heightIn(min = 28.dp),
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(3.dp),
                     ) {
                         Icon(
                             imageVector = Icons.Default.AutoStories,
                             contentDescription = strings.novel.pureReading,
                             tint = c.primarySoftInk,
-                            modifier = Modifier.size(13.5.dp),
+                            modifier = Modifier.size(13.dp),
                         )
                         Text(
                             text = if (isZh) "阅读" else "Read",
                             color = c.ink,
-                            fontSize = 11.sp,
+                            fontSize = 10.5.sp,
                             fontWeight = FontWeight.Bold,
                             maxLines = 1,
                         )

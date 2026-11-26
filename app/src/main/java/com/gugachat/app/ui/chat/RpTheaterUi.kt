@@ -64,12 +64,14 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -245,28 +247,58 @@ fun RpTurnDeltaStrip(
     if (deltas.isEmpty()) return
     val c = LocalAppTheme.current.colors
 
-    FlowRow(
-        modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalArrangement = Arrangement.spacedBy(5.dp),
-    ) {
-        deltas.forEach { delta ->
-            val (bg, fg, border) = resolveDeltaColors(delta, onDarkStage, c)
-            val displayText = formatDeltaLabel(delta)
-            Surface(
-                shape = RoundedCornerShape(999.dp),
-                color = bg,
-                border = BorderStroke(0.8.dp, border),
-            ) {
-                Text(
-                    text = displayText,
-                    color = fg,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.5.dp),
-                )
+    if (onDarkStage) {
+        Row(
+            modifier = modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            deltas.forEach { delta ->
+                val (bg, fg, border) = resolveDeltaColors(delta, true, c)
+                val displayText = formatDeltaLabel(delta)
+                Surface(
+                    shape = RoundedCornerShape(999.dp),
+                    color = bg,
+                    border = BorderStroke(0.8.dp, border),
+                ) {
+                    Text(
+                        text = displayText,
+                        color = fg,
+                        fontSize = 10.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.5.dp),
+                    )
+                }
+            }
+        }
+    } else {
+        FlowRow(
+            modifier = modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            deltas.forEach { delta ->
+                val (bg, fg, border) = resolveDeltaColors(delta, false, c)
+                val displayText = formatDeltaLabel(delta)
+                Surface(
+                    shape = RoundedCornerShape(999.dp),
+                    color = bg,
+                    border = BorderStroke(0.8.dp, border),
+                ) {
+                    Text(
+                        text = displayText,
+                        color = fg,
+                        fontSize = 10.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                    )
+                }
             }
         }
     }
@@ -492,7 +524,7 @@ fun RpChoiceDeck(
 
     Column(
         modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(if (onDarkStage) 5.dp else 7.dp),
     ) {
         choices.forEachIndexed { idx, choice ->
             val eval = remember(choice, rp) {
@@ -587,14 +619,19 @@ fun RpChoiceDeck(
                                 )
                             }
                         }
-                        .padding(start = 13.dp, end = 12.dp, top = 10.dp, bottom = 10.dp),
+                        .padding(
+                            start = if (onDarkStage) 10.dp else 13.dp,
+                            end = if (onDarkStage) 10.dp else 12.dp,
+                            top = if (onDarkStage) 7.dp else 9.dp,
+                            bottom = if (onDarkStage) 7.dp else 9.dp,
+                        ),
                     verticalAlignment = Alignment.Top,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(if (onDarkStage) 8.dp else 10.dp),
                 ) {
                     Box(
                         modifier = Modifier
                             .padding(top = 1.dp)
-                            .size(24.dp)
+                            .size(if (onDarkStage) 21.dp else 24.dp)
                             .clip(CircleShape)
                             .background(
                                 if (!eval.unlocked) {
@@ -610,57 +647,73 @@ fun RpChoiceDeck(
                                 imageVector = Icons.Default.Lock,
                                 contentDescription = strings.rp.choiceLockedLabel,
                                 tint = Color.White,
-                                modifier = Modifier.size(13.dp),
+                                modifier = Modifier.size(if (onDarkStage) 11.5.dp else 13.dp),
                             )
                         } else {
                             Text(
                                 text = "${idx + 1}",
                                 color = Color.White,
-                                fontSize = 11.5.sp,
+                                fontSize = if (onDarkStage) 10.5.sp else 11.5.sp,
                                 fontWeight = FontWeight.ExtraBold,
                             )
                         }
                     }
 
+                    val toneMeta = resolveChoiceTone(choice.tone, isZh)
+                    val hasSkill = !choice.skillCheck.isNullOrBlank()
+                    val hasCost = (choice.costGold ?: 0) > 0
+                    val showConditionPill = !eval.unlocked || hasExplicitCondition
+
                     Column(
                         modifier = Modifier.weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(5.dp),
+                        verticalArrangement = Arrangement.spacedBy(if (onDarkStage) 3.dp else 5.dp),
                     ) {
-                        Text(
-                            text = choice.label,
-                            color = titleColor,
-                            fontSize = 13.5.sp,
-                            lineHeight = 19.sp,
-                            fontWeight = FontWeight.Bold,
-                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Text(
+                                text = choice.label,
+                                color = titleColor,
+                                fontSize = if (onDarkStage) 13.sp else 13.5.sp,
+                                lineHeight = if (onDarkStage) 17.5.sp else 19.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = if (onDarkStage) 2 else Int.MAX_VALUE,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false),
+                            )
+                            if (onDarkStage && toneMeta != null) {
+                                ChoiceMetaChip(
+                                    text = toneMeta.first,
+                                    variant = toneMeta.second,
+                                    onDarkStage = true,
+                                )
+                            }
+                        }
 
                         if (!choice.consequenceHint.isNullOrBlank()) {
                             Text(
                                 text = choice.consequenceHint,
                                 color = subtitleColor,
-                                fontSize = 11.5.sp,
-                                lineHeight = 16.sp,
+                                fontSize = if (onDarkStage) 11.sp else 11.5.sp,
+                                lineHeight = if (onDarkStage) 14.5.sp else 16.sp,
                                 fontStyle = FontStyle.Italic,
-                                maxLines = 2,
+                                maxLines = if (onDarkStage) 1 else 2,
                                 overflow = TextOverflow.Ellipsis,
                             )
                         }
 
-                        val toneMeta = resolveChoiceTone(choice.tone, isZh)
-                        val hasSkill = !choice.skillCheck.isNullOrBlank()
-                        val hasCost = (choice.costGold ?: 0) > 0
-                        val showConditionPill = !eval.unlocked || hasExplicitCondition
-
-                        if (toneMeta != null || hasSkill || hasCost || showConditionPill) {
+                        if ((!onDarkStage && toneMeta != null) || hasSkill || hasCost || showConditionPill) {
                             FlowRow(
                                 horizontalArrangement = Arrangement.spacedBy(5.dp),
                                 verticalArrangement = Arrangement.spacedBy(4.dp),
                             ) {
-                                if (toneMeta != null) {
+                                if (!onDarkStage && toneMeta != null) {
                                     ChoiceMetaChip(
                                         text = toneMeta.first,
                                         variant = toneMeta.second,
-                                        onDarkStage = onDarkStage,
+                                        onDarkStage = false,
                                     )
                                 }
                                 if (hasSkill) {
@@ -1265,6 +1318,7 @@ fun RpTheaterStageView(
         // 3. Full Interactive Chengguang Stage Chrome (avoid AnimatedVisibility graphicsLayer wrapper so transparent WebView paints immediately on cold start)
         if (!hideUi) {
             val hasCustomStatusWidget = theme.showCustomStatusWidget && theme.customStatusHtml.isNotBlank()
+            CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
             Column(modifier = Modifier.fillMaxSize()) {
                 // Top Stage Bar (with 1-tap Frontend Customizer button)
                 TheaterTopStageBar(
@@ -1354,8 +1408,7 @@ fun RpTheaterStageView(
                             .fillMaxWidth(),
                     )
                 } else {
-                    // Scrollable Stage Area: Custom Status Widget + Big-Sprite Stage + Deltas + Dialogue Frame + Choice Deck
-                    val stageScroll = rememberScrollState()
+                    // Viewport-Filling Stage Layout: Stage/Character Bar + Single-Row Deltas + Flexible Dialogue Frame + Compact Choice Deck
                     val spriteLayout = theme.spriteLayout.trim().lowercase()
                     val bodyFontSizeSp = theme.fontSizeSp.coerceIn(12f, 22f)
 
@@ -1363,9 +1416,8 @@ fun RpTheaterStageView(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxWidth()
-                            .verticalScroll(stageScroll)
-                            .padding(horizontal = 12.dp, vertical = 4.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                            .padding(horizontal = 10.dp, vertical = 2.dp),
+                        verticalArrangement = Arrangement.spacedBy(5.dp),
                     ) {
                         // Optional Custom HTML/CSS Frontend Status Widget right below Top Stage Bar
                         if (hasCustomStatusWidget) {
@@ -1373,8 +1425,8 @@ fun RpTheaterStageView(
                                 htmlFragment = theme.customStatusHtml,
                                 rp = rp,
                                 customCss = theme.customCss,
-                                minHeightDp = 52,
-                                maxHeightDp = 200,
+                                minHeightDp = 44,
+                                maxHeightDp = 150,
                                 forceDark = true,
                                 onFrontendAction = onFrontendAction,
                                 onFrontendSetFlag = onFrontendSetFlag,
@@ -1382,7 +1434,7 @@ fun RpTheaterStageView(
                             )
                         }
 
-                        // Multi-Character Big-Sprite Stage / Compact Portrait Card / Hidden
+                        // Multi-Character Big-Sprite Stage / Auto-Compact No-Sprite Bar / Portrait Card / Hidden
                         when (spriteLayout) {
                             "hidden" -> Unit
                             "portrait_card" -> {
@@ -1413,7 +1465,7 @@ fun RpTheaterStageView(
                             }
                         }
 
-                        // Floating Turn Deltas & Ending Card
+                        // Floating Turn Deltas (single-row horizontal strip) & Ending Card
                         val deltas = latestVariant?.rpDeltas.orEmpty()
                         if (theme.showTurnDeltas && deltas.isNotEmpty() && !isStreaming) {
                             RpTurnDeltaStrip(
@@ -1425,9 +1477,11 @@ fun RpTheaterStageView(
                             RpEndingCard(ending = ending)
                         }
 
-                        // Chengguang Dialogue Frame (5 Live-Editable Skins)
+                        // Chengguang Dialogue Frame (5 Live-Editable Skins) — expands to fill remaining viewport
                         Column(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxWidth(),
                             verticalArrangement = Arrangement.spacedBy(0.dp),
                         ) {
                             // Anchored Nameplate + Variant Swipe Row
@@ -1451,14 +1505,14 @@ fun RpTheaterStageView(
                                             border = BorderStroke(0.8.dp, skin.nameplateBorder),
                                         ) {
                                             Row(
-                                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
+                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp),
                                                 verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                horizontalArrangement = Arrangement.spacedBy(5.dp),
                                             ) {
                                                 if (skin.nameplateDecorPrefix.isEmpty()) {
                                                     Box(
                                                         modifier = Modifier
-                                                            .size(6.dp)
+                                                            .size(5.5.dp)
                                                             .clip(CircleShape)
                                                             .background(skin.nameplateDotColor),
                                                     )
@@ -1466,7 +1520,7 @@ fun RpTheaterStageView(
                                                 Text(
                                                     text = "${skin.nameplateDecorPrefix}$resolvedSpeakerName${skin.nameplateDecorSuffix}",
                                                     color = skin.nameplateText,
-                                                    fontSize = 13.sp,
+                                                    fontSize = 12.sp,
                                                     fontWeight = FontWeight.ExtraBold,
                                                     fontFamily = skin.nameplateFontFamily,
                                                     maxLines = 1,
@@ -1476,7 +1530,7 @@ fun RpTheaterStageView(
                                                     Text(
                                                         text = "· $mood",
                                                         color = skin.nameplateMoodText,
-                                                        fontSize = 11.sp,
+                                                        fontSize = 10.5.sp,
                                                         fontWeight = FontWeight.Medium,
                                                         maxLines = 1,
                                                     )
@@ -1496,16 +1550,18 @@ fun RpTheaterStageView(
                                 }
                             }
 
-                            // Dialogue Box Surface
+                            // Dialogue Box Surface (fills all remaining vertical space)
                             Surface(
                                 shape = skin.boxShape,
                                 color = skin.boxBg,
                                 border = skin.boxBorder,
-                                shadowElevation = if (skin.boxBorder != null) 6.dp else 0.dp,
-                                modifier = Modifier.fillMaxWidth(),
+                                shadowElevation = if (skin.boxBorder != null) 5.dp else 0.dp,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxWidth(),
                             ) {
                                 Column(
-                                    modifier = Modifier.fillMaxWidth(),
+                                    modifier = Modifier.fillMaxSize(),
                                 ) {
                                     // Art-directed top ornament strip or subtle glass inner specular highlight
                                     val topAccent = skin.topStripColor ?: skin.innerTopHighlight
@@ -1527,15 +1583,14 @@ fun RpTheaterStageView(
                                         )
                                     }
 
-                                    // Scrollable Narrative Viewport (taller in hidden-sprite mode; capped at 280dp when stage/portrait card is shown so quick-action bar stays visible)
-                                    val dialogueMaxHeight = if (theme.spriteLayout == "hidden") 420.dp else 280.dp
+                                    // Scrollable Narrative Viewport — automatically occupies all available space above quick-action bar
                                     Column(
                                         modifier = Modifier
+                                            .weight(1f)
                                             .fillMaxWidth()
-                                            .heightIn(min = 96.dp, max = dialogueMaxHeight)
                                             .verticalScroll(dialogueScrollState)
-                                            .padding(horizontal = 14.dp, vertical = 12.dp),
-                                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                                            .padding(horizontal = 12.dp, vertical = 9.dp),
+                                        verticalArrangement = Arrangement.spacedBy(6.dp),
                                     ) {
                                         if (parsedReasoning.isNotBlank()) {
                                             ReasoningCard(
@@ -1650,15 +1705,15 @@ fun RpTheaterStageView(
                                         }
                                     }
 
-                                    // Compact Quick-Action Bar inside Dialogue Frame
+                                    // Compact Quick-Action Bar pinned inside Dialogue Frame
                                     HorizontalDivider(thickness = 0.8.dp, color = skin.dividerColor)
                                     Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .horizontalScroll(rememberScrollState())
-                                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                                            .padding(horizontal = 8.dp, vertical = 4.dp),
                                         verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(5.dp),
                                     ) {
                                         StageInlineActionChip(
                                             label = strings.rp.continueBtn,
@@ -1717,26 +1772,32 @@ fun RpTheaterStageView(
                             }
                         }
 
-                        // Dramatic Choice Deck right below dialogue frame
+                        // Dramatic Choice Deck right below dialogue frame (capped height with internal scroll so narrative never collapses)
                         val stageChoices = remember(latestAssistant?.rpChoices, rp.pendingChoices) {
                             latestAssistant?.rpChoices?.takeIf { it.isNotEmpty() } ?: rp.pendingChoices
                         }
                         if (!isStreaming && (stageChoices.isNotEmpty() || isRefreshingChoices || (rp.enableChoices && latestAssistant != null))) {
-                            RpChoiceDeck(
-                                choices = stageChoices,
-                                rp = rp,
-                                isRefreshing = isRefreshingChoices,
-                                onSelectChoice = onSelectChoice,
-                                onRefreshChoices = onRefreshChoices,
-                                onDarkStage = true,
-                                enabled = !isStreaming,
-                                accentColor = stageAccent,
-                            )
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(max = 128.dp)
+                                    .verticalScroll(rememberScrollState()),
+                            ) {
+                                RpChoiceDeck(
+                                    choices = stageChoices,
+                                    rp = rp,
+                                    isRefreshing = isRefreshingChoices,
+                                    onSelectChoice = onSelectChoice,
+                                    onRefreshChoices = onRefreshChoices,
+                                    onDarkStage = true,
+                                    enabled = !isStreaming,
+                                    accentColor = stageAccent,
+                                )
+                            }
                         }
-
-                        Spacer(Modifier.height(6.dp))
                     }
                 }
+            }
             }
         }
     }
@@ -1759,17 +1820,54 @@ private fun TheaterChengguangSpriteStage(
     val strings = LocalAppStrings.current
     val isZh = strings.language == AppLanguage.ZH
 
-    // Map spriteHeightRatio (0.25..0.62, default 0.44) -> 150dp..270dp (~211dp default; ~185dp when custom HUD is shown)
+    // Auto-detect whether any cast member on stage has an uploaded/generated sprite file
+    val hasAnyRealSprite = remember(stageCharacters) {
+        stageCharacters.any { (_, ch) ->
+            val path = RpEngine.resolveCharacterSpritePath(ch)
+            !path.isNullOrBlank() && File(path).isFile
+        }
+    }
+
+    if (!hasAnyRealSprite) {
+        val activeChar = stageCharacters.firstOrNull { it.second.id == activeHighlightId }?.second
+            ?: focusedNpc
+            ?: stageCharacters.firstOrNull()?.second
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            if (activeChar != null) {
+                TheaterCompactNoSpriteBar(
+                    character = activeChar,
+                    stageAccent = stageAccent,
+                    isZh = isZh,
+                    onTap = { onSelectNpc(activeChar) },
+                    onOpenStudio = onOpenStudio,
+                )
+            }
+            if (allNpcs.size > 1) {
+                StageCastMiniStrip(
+                    allNpcs = allNpcs,
+                    focusedNpcId = focusedNpc?.id,
+                    stageAccent = stageAccent,
+                    onSelectNpc = onSelectNpc,
+                )
+            }
+        }
+        return
+    }
+
+    // Map spriteHeightRatio (0.25..0.62, default 0.44) -> 132dp..232dp (~178dp default; ~154dp when custom HUD is shown)
     val clampedRatio = spriteHeightRatio.coerceIn(0.25f, 0.62f)
-    val baseStageHeight = 150f + ((clampedRatio - 0.25f) / 0.37f) * 120f
-    val stageHeight: Dp = (baseStageHeight - if (hasCustomStatusWidget) 26f else 0f)
-        .coerceAtLeast(148f)
+    val baseStageHeight = 132f + ((clampedRatio - 0.25f) / 0.37f) * 100f
+    val stageHeight: Dp = (baseStageHeight - if (hasCustomStatusWidget) 24f else 0f)
+        .coerceAtLeast(128f)
         .dp
-    val compactHeight = stageHeight < 205.dp
+    val compactHeight = stageHeight < 188.dp
 
     Column(
         modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         if (stageCharacters.isNotEmpty()) {
             BoxWithConstraints(
@@ -1844,6 +1942,146 @@ private fun TheaterChengguangSpriteStage(
                 stageAccent = stageAccent,
                 onSelectNpc = onSelectNpc,
             )
+        }
+    }
+}
+
+@Composable
+private fun TheaterCompactNoSpriteBar(
+    character: RpCharacter,
+    stageAccent: Color,
+    isZh: Boolean,
+    onTap: () -> Unit,
+    onOpenStudio: () -> Unit,
+) {
+    val strings = LocalAppStrings.current
+    val pair = PORTRAIT_GRADIENTS[abs(character.name.hashCode()) % PORTRAIT_GRADIENTS.size]
+    val initial = character.name.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "✦"
+    val roleLabel = formatRpRoleLabel(character.role, isZh)
+    val exprKey = remember(character.mood) { RpEngine.resolveExpressionKey(character.mood) }
+    val exprLabel = strings.rp.expressionLabels[exprKey] ?: exprKey
+    val moodBadgeText = character.mood.trim().takeIf { it.isNotEmpty() } ?: exprLabel
+    val tier = remember(character.affinity) { RpEngine.affinityTier(character.affinity) }
+    val tierLabel = strings.rp.affinityTiers[tier.code]
+        ?: if (isZh) tier.zhLabel else tier.enLabel
+
+    Surface(
+        onClick = onTap,
+        shape = RoundedCornerShape(14.dp),
+        color = Color.Transparent,
+        border = BorderStroke(0.9.dp, stageAccent.copy(alpha = 0.56f)),
+        shadowElevation = 3.dp,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(
+                    Brush.horizontalGradient(
+                        listOf(
+                            pair.first.copy(alpha = 0.88f),
+                            pair.second.copy(alpha = 0.90f),
+                            Color(0xE00C111E),
+                        ),
+                    ),
+                )
+                .padding(horizontal = 10.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(9.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .clip(CircleShape)
+                    .background(
+                        Brush.radialGradient(
+                            listOf(stageAccent.copy(alpha = 0.32f), Color(0x660B0F1A)),
+                        ),
+                    )
+                    .border(1.dp, stageAccent.copy(alpha = 0.78f), CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = initial,
+                    color = Color(0xFFFFF6E3),
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    fontFamily = FontFamily.Serif,
+                )
+            }
+
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        text = character.name,
+                        color = Color(0xFFFFF8EA),
+                        fontSize = 13.5.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontFamily = FontFamily.Serif,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    Surface(
+                        shape = RoundedCornerShape(999.dp),
+                        color = Color(0x88101522),
+                        border = BorderStroke(0.7.dp, stageAccent.copy(alpha = 0.52f)),
+                    ) {
+                        Text(
+                            text = "${expressionEmoji(exprKey)} $moodBadgeText",
+                            color = Color(0xFFFFF4DC),
+                            fontSize = 9.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.5.dp),
+                        )
+                    }
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    if (roleLabel.isNotBlank()) {
+                        Text(
+                            text = "❖ $roleLabel",
+                            color = Color(0xFFD6C7AE),
+                            fontSize = 10.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
+                    }
+                    Text(
+                        text = "♥ ${character.affinity} · $tierLabel",
+                        color = if (character.affinity < 0) Color(0xFFFCA5A5) else Color(0xFFFFB4CE),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                    )
+                }
+            }
+
+            Surface(
+                onClick = onOpenStudio,
+                shape = RoundedCornerShape(999.dp),
+                color = Color(0x880B0F1A),
+                border = BorderStroke(0.8.dp, stageAccent.copy(alpha = 0.45f)),
+            ) {
+                Text(
+                    text = if (isZh) "✨ 立绘" else "✨ Art",
+                    color = Color(0xFFE6D8BC),
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.5.dp),
+                )
+            }
         }
     }
 }
@@ -2403,13 +2641,13 @@ private fun TheaterTopStageBar(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 6.dp),
-        verticalArrangement = Arrangement.spacedBy(5.dp),
+            .padding(horizontal = 10.dp, vertical = 3.dp),
+        verticalArrangement = Arrangement.spacedBy(3.dp),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(5.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             // Left: Chapter / Act pill gets full remaining width before ellipsizing
             Box(
@@ -2421,23 +2659,23 @@ private fun TheaterTopStageBar(
                     shape = RoundedCornerShape(999.dp),
                     color = Color(0xC4131928),
                     border = BorderStroke(0.8.dp, stageAccent.copy(alpha = 0.66f)),
-                    modifier = Modifier.heightIn(min = 34.dp),
+                    modifier = Modifier.heightIn(min = 28.dp),
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp),
+                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(5.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
                         Icon(
                             imageVector = Icons.Default.AutoAwesome,
                             contentDescription = null,
                             tint = stageAccent,
-                            modifier = Modifier.size(13.5.dp),
+                            modifier = Modifier.size(12.5.dp),
                         )
                         Text(
                             text = actLabel,
                             color = Color(0xFFFFF4DC),
-                            fontSize = 11.5.sp,
+                            fontSize = 11.sp,
                             fontWeight = FontWeight.ExtraBold,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -2485,7 +2723,7 @@ private fun TheaterTopStageBar(
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
             ) {
                 if (envText.isNotBlank()) {
                     Surface(
@@ -2498,11 +2736,11 @@ private fun TheaterTopStageBar(
                         Text(
                             text = "📍 $envText",
                             color = Color(0xFFDDE5F5),
-                            fontSize = 11.sp,
+                            fontSize = 10.5.sp,
                             fontWeight = FontWeight.Medium,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.5.dp),
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
                         )
                     }
                 }
@@ -2516,10 +2754,10 @@ private fun TheaterTopStageBar(
                         Text(
                             text = "♥${rp.state.hp}/${rp.state.maxHp} · 🪙${rp.state.gold}",
                             color = Color(0xFFFDE68A),
-                            fontSize = 10.5.sp,
+                            fontSize = 10.sp,
                             fontWeight = FontWeight.Bold,
                             maxLines = 1,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.5.dp),
+                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
                         )
                     }
                 }
@@ -2541,23 +2779,23 @@ private fun StageGlassPill(
         shape = RoundedCornerShape(999.dp),
         color = if (accent) Color(0xD42A1F12) else Color(0xBA0D1220),
         border = BorderStroke(0.8.dp, if (accent) accentColor.copy(alpha = 0.72f) else Color(0x52CBD5E1)),
-        modifier = Modifier.heightIn(min = 34.dp),
+        modifier = Modifier.heightIn(min = 28.dp),
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(3.5.dp),
         ) {
             Icon(
                 imageVector = icon,
                 contentDescription = null,
                 tint = if (accent) accentColor else Color(0xFFE2E8F0),
-                modifier = Modifier.size(13.5.dp),
+                modifier = Modifier.size(13.dp),
             )
             Text(
                 text = label,
                 color = if (accent) Color(0xFFFFF4DC) else Color(0xFFE2E8F0),
-                fontSize = 11.sp,
+                fontSize = 10.5.sp,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
             )
@@ -2578,14 +2816,14 @@ private fun StageGlassIconPill(
         shape = CircleShape,
         color = if (accent) Color(0xD42A1F12) else Color(0xBA0D1220),
         border = BorderStroke(0.8.dp, if (accent) accentColor.copy(alpha = 0.72f) else Color(0x52CBD5E1)),
-        modifier = Modifier.size(34.dp),
+        modifier = Modifier.size(28.dp),
     ) {
         Box(contentAlignment = Alignment.Center) {
             Icon(
                 imageVector = icon,
                 contentDescription = contentDescription,
                 tint = if (accent) accentColor else Color(0xFFE2E8F0),
-                modifier = Modifier.size(15.5.dp),
+                modifier = Modifier.size(14.dp),
             )
         }
     }
@@ -2828,15 +3066,15 @@ private fun StageInlineActionChip(
         border = BorderStroke(0.8.dp, border),
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 9.5.dp, vertical = 5.dp),
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.5.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(3.5.dp),
         ) {
-            Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(13.dp))
+            Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(12.5.dp))
             Text(
                 text = label,
                 color = fg,
-                fontSize = 11.sp,
+                fontSize = 10.5.sp,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
             )
