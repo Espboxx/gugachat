@@ -21,6 +21,11 @@ android {
         vectorDrawables {
             useSupportLibrary = true
         }
+        ndk {
+            // Keep arm64-v8a (modern Android phones) and x86_64 (MuMu / emulators);
+            // strip unused 32-bit armeabi-v7a & x86 ONNX Runtime .so (~13 MB APK savings).
+            abiFilters += listOf("arm64-v8a", "x86_64")
+        }
     }
 
     buildTypes {
@@ -94,6 +99,7 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.coil.compose)
     implementation(libs.pdfbox.android)
+    implementation(libs.onnxruntime.android)
 
     debugImplementation(libs.androidx.compose.ui.tooling)
 

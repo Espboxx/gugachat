@@ -15,6 +15,7 @@ kotlinxSerializationJson = "1.7.3"
 coroutines = "1.9.0"
 coil = "2.7.0"
 pdfboxAndroid = "2.0.27.0"
+onnxruntimeAndroid = "1.20.0"
 junit = "4.13.2"
 jsonOrg = "20240303"
 
@@ -52,6 +53,7 @@ kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-cor
 
 coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coil" }
 pdfbox-android = { group = "com.tom-roush", name = "pdfbox-android", version.ref = "pdfboxAndroid" }
+onnxruntime-android = { group = "com.microsoft.onnxruntime", name = "onnxruntime-android", version.ref = "onnxruntimeAndroid" }
 
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 org-json = { group = "org.json", name = "json", version.ref = "jsonOrg" }
