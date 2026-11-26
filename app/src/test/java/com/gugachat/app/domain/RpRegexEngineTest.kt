@@ -274,5 +274,12 @@ class RpRegexEngineTest {
             val doc = RpRegexEngine.buildSandboxHtmlDocument(tpl.html, rp = rp, isDark = false)
             assertTrue(doc.contains("<!DOCTYPE html>"))
         }
+
+        // Verify {{char}} macros inside quests/inventory expand cleanly in RP_STATE
+        val tavernRp = RpPresets.findById("modern_tavern").config
+        val cyberTpl = RpRegexEngine.findStatusWidgetTemplate("cyber_hud")
+        val tavernDoc = RpRegexEngine.buildSandboxHtmlDocument(cyberTpl.html, rp = tavernRp, isDark = true)
+        assertTrue(tavernDoc.contains("听懂江晚柠藏在特调"))
+        assertFalse(tavernDoc.contains("听懂{{char}}"))
     }
 }

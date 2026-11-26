@@ -1669,31 +1669,45 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     private suspend fun insertRpConversation(rp: RpConfig, importedLore: List<NovelLoreEntry>) {
         val now = System.currentTimeMillis()
         val convId = UUID.randomUUID().toString()
+        val expandedState = rp.state.copy(
+            scene = RpEngine.replaceMacros(rp.state.scene, rp),
+            chapterTitle = RpEngine.replaceMacros(rp.state.chapterTitle, rp),
+            inventory = rp.state.inventory.map { RpEngine.replaceMacros(it, rp) },
+            quests = rp.state.quests.map { RpEngine.replaceMacros(it, rp) },
+        )
+        val expandedChoices = rp.pendingChoices.map { ch ->
+            ch.copy(
+                label = RpEngine.replaceMacros(ch.label, rp),
+                actionText = RpEngine.replaceMacros(ch.actionText, rp),
+                consequenceHint = ch.consequenceHint?.let { RpEngine.replaceMacros(it, rp) },
+            )
+        }
+        val normalizedRp = rp.copy(state = expandedState, pendingChoices = expandedChoices)
         val conv = ChatConversation(
             id = convId,
-            title = rp.title,
+            title = normalizedRp.title,
             mode = ConversationMode.rp,
             groupId = _ui.value.selectedGroupId,
             model = _ui.value.selectedModelId,
-            rp = rp,
+            rp = normalizedRp,
             createdAt = now,
             updatedAt = now,
         )
         chatDao.upsertConversation(conv.toEntity())
-        val rawGreetings = (listOf(rp.greeting) + rp.alternateGreetings)
+        val rawGreetings = (listOf(normalizedRp.greeting) + normalizedRp.alternateGreetings)
             .map { it.trim() }
             .filter { it.isNotEmpty() }
-        val leadSpeaker = rp.cast.firstOrNull { !it.isPlayer }?.name?.takeIf { it.isNotBlank() }
+        val leadSpeaker = normalizedRp.cast.firstOrNull { !it.isPlayer }?.name?.takeIf { it.isNotBlank() }
         if (rawGreetings.isNotEmpty()) {
             val openingVariants = rawGreetings.map { raw ->
-                val rendered = RpEngine.replaceMacros(raw, rp)
+                val rendered = RpEngine.replaceMacros(raw, normalizedRp)
                 MessageVariant(
                     id = UUID.randomUUID().toString(),
                     content = rendered,
                     createdAt = now,
-                    rpStateSnapshot = rp.state,
-                    rpCastSnapshot = rp.cast,
-                    rpChoices = rp.pendingChoices,
+                    rpStateSnapshot = normalizedRp.state,
+                    rpCastSnapshot = normalizedRp.cast,
+                    rpChoices = normalizedRp.pendingChoices,
                     rpSpeakerName = leadSpeaker,
                 )
             }
@@ -1705,7 +1719,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                 content = firstContent,
                 createdAt = now,
                 seq = 1,
-                rpChoices = rp.pendingChoices,
+                rpChoices = normalizedRp.pendingChoices,
                 status = "done",
                 tokenEstimate = ContextBuilder.estimateMessageTokens(firstContent),
                 variants = openingVariants,
