@@ -44,15 +44,19 @@ import com.gugachat.app.core.theme.GuBadgeVariant
 import com.gugachat.app.core.theme.GuButton
 import com.gugachat.app.core.theme.GuButtonVariant
 import com.gugachat.app.core.theme.GuIconTile
+import com.gugachat.app.core.theme.GuSegmentedControl
 import com.gugachat.app.core.theme.LocalAppTheme
 import com.gugachat.app.data.api.AppUpdateInfo
 import com.gugachat.app.data.api.AppUpdateService
+import com.gugachat.app.data.api.UpdateChannel
 import com.gugachat.app.data.api.UpdateDownloadState
 
 @Composable
 fun AppUpdateDialog(
     info: AppUpdateInfo,
     downloadState: UpdateDownloadState,
+    updateChannel: UpdateChannel = UpdateChannel.AUTO,
+    onSelectChannel: (UpdateChannel) -> Unit = {},
     onConfirmUpdate: () -> Unit,
     onOpenDownloadPage: () -> Unit,
     onDismiss: () -> Unit,
@@ -174,6 +178,36 @@ fun AppUpdateDialog(
                     }
                 }
 
+                // Channel selector (allows instant switch between Auto / CN Mirror / GitHub right inside update dialog)
+                val channels = UpdateChannel.entries
+                val selectedChannelIdx = channels.indexOf(updateChannel).coerceAtLeast(0)
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(5.dp),
+                ) {
+                    Text(
+                        text = strings.update.channelLabel,
+                        color = c.muted,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    GuSegmentedControl(
+                        items = listOf(
+                            strings.update.channelAuto,
+                            strings.update.channelCnMirror,
+                            strings.update.channelGithub,
+                        ),
+                        selectedIndex = selectedChannelIdx,
+                        onSelect = { idx ->
+                            if (!isDownloading) {
+                                channels.getOrNull(idx)?.let(onSelectChannel)
+                            }
+                        },
+                        compact = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+
                 // Download progress / status banner
                 when (downloadState) {
                     is UpdateDownloadState.Downloading -> {
@@ -186,8 +220,29 @@ fun AppUpdateDialog(
                         val percent = (progress * 100).toInt()
                         Column(
                             modifier = Modifier.fillMaxWidth(),
-                            verticalArrangement = Arrangement.spacedBy(7.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
+                            if (downloadState.activeSourceLabel.isNotBlank()) {
+                                val srcText = if (downloadState.totalCandidates > 1) {
+                                    strings.update.downloadingSourceAttempt.fmt(
+                                        "source" to downloadState.activeSourceLabel,
+                                        "attempt" to downloadState.attemptIndex,
+                                        "total" to downloadState.totalCandidates,
+                                    )
+                                } else {
+                                    strings.update.downloadingSource.fmt(
+                                        "source" to downloadState.activeSourceLabel,
+                                    )
+                                }
+                                Text(
+                                    text = srcText,
+                                    color = c.muted,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically,

@@ -154,6 +154,8 @@ fun GuGuChatRoot(container: AppContainer) {
                     AppUpdateDialog(
                         info = updateInfo,
                         downloadState = updateState.downloadState,
+                        updateChannel = settings.updateChannel,
+                        onSelectChannel = { container.updateController.setUpdateChannel(it) },
                         onConfirmUpdate = { container.updateController.startDownloadOrInstall(ctx) },
                         onOpenDownloadPage = { container.updateController.openManualDownloadPage(ctx) },
                         onDismiss = { container.updateController.dismissDialog() },

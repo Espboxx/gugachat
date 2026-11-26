@@ -12,6 +12,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 import java.nio.file.Files
+import java.security.MessageDigest
 
 class AppUpdateServiceTest {
 
@@ -169,5 +170,149 @@ class AppUpdateServiceTest {
             tempDir.deleteRecursively()
             server.shutdown()
         }
+    }
+
+    @Test
+    fun parseStaticManifest_and_checkFallback_recoversFromBrokenMirror() = runBlocking {
+        val server = MockWebServer()
+        server.start()
+        try {
+            val client = OkHttpClient()
+            val fakeSha = "d4df6f5cfa613eb170206969e41c874dc1e898661e971916e17014d8ae16e278"
+            val manifestJson = """
+                {
+                  "tag_name": "v0.3.4",
+                  "version_name": "0.3.4",
+                  "name": "GuGuChat v0.3.4",
+                  "body": "新增国内镜像更新渠道",
+                  "html_url": "https://github.com/Espboxx/gugachat/releases/tag/v0.3.4",
+                  "cn_download_page": "https://cn.example.com/downloads",
+                  "apk_name": "GuGuChat-v0.3.4-android.apk",
+                  "apk_size": 18000000,
+                  "apk_sha256": "$fakeSha",
+                  "apk_url": "https://github.com/Espboxx/gugachat/releases/download/v0.3.4/GuGuChat-v0.3.4-android.apk",
+                  "cn_apk_urls": ["https://oss.example.cn/gugachat-v0.3.4.apk"],
+                  "cn_proxies": ["https://gh-proxy.com", "https://cdn.gh-proxy.org/"]
+                }
+            """.trimIndent()
+
+            // First endpoint returns 502 error, second returns HTML block page, third returns valid manifest
+            server.enqueue(MockResponse().setResponseCode(502).setBody("Bad Gateway"))
+            server.enqueue(
+                MockResponse()
+                    .setResponseCode(200)
+                    .addHeader("Content-Type", "text/html")
+                    .setBody("<html>blocked</html>"),
+            )
+            server.enqueue(
+                MockResponse()
+                    .setResponseCode(200)
+                    .addHeader("Content-Type", "application/json")
+                    .setBody(manifestJson),
+            )
+
+            val endpoints = listOf(
+                UpdateMetadataEndpoint("mirror-1", server.url("/m1").toString(), isGitHubApi = false),
+                UpdateMetadataEndpoint("mirror-2", server.url("/m2").toString(), isGitHubApi = false),
+                UpdateMetadataEndpoint("mirror-3", server.url("/m3").toString(), isGitHubApi = false),
+            )
+            val res = AppUpdateService.checkLatestReleaseWithFallback(
+                httpClient = client,
+                currentVersion = "0.3.3",
+                channel = UpdateChannel.CN_MIRROR,
+                endpointsOverride = endpoints,
+            )
+            assertTrue(res is UpdateCheckResult.UpdateAvailable)
+            val info = (res as UpdateCheckResult.UpdateAvailable).info
+            assertEquals("0.3.4", info.versionName)
+            assertEquals(fakeSha, info.apkSha256)
+            assertEquals(listOf("https://oss.example.cn/gugachat-v0.3.4.apk"), info.cnApkUrls)
+            assertEquals("https://cn.example.com/downloads", info.cnDownloadPage)
+            assertEquals("mirror-3", info.resolvedSourceLabel)
+
+            // Verify candidate ordering for CN_MIRROR vs GITHUB_DIRECT
+            val cnCandidates = AppUpdateService.buildApkDownloadCandidates(info, UpdateChannel.CN_MIRROR, preferCn = true)
+            assertEquals("https://oss.example.cn/gugachat-v0.3.4.apk", cnCandidates.first().url)
+            assertTrue(cnCandidates[1].url.startsWith("https://gh-proxy.com/https://github.com/"))
+            assertEquals(info.apkDownloadUrl, cnCandidates.last().url)
+
+            val ghCandidates = AppUpdateService.buildApkDownloadCandidates(info, UpdateChannel.GITHUB_DIRECT, preferCn = true)
+            assertEquals(1, ghCandidates.size)
+            assertEquals(info.apkDownloadUrl, ghCandidates.first().url)
+
+            // Verify manual download URL respects channel
+            assertEquals(
+                "https://cn.example.com/downloads",
+                AppUpdateService.resolveManualDownloadUrl(info, UpdateChannel.CN_MIRROR, preferCn = true),
+            )
+            assertEquals(
+                info.htmlUrl,
+                AppUpdateService.resolveManualDownloadUrl(info, UpdateChannel.GITHUB_DIRECT, preferCn = true),
+            )
+        } finally {
+            server.shutdown()
+        }
+    }
+
+    @Test
+    fun downloadApkWithFallback_rejectsTamperedSha256AndFallsBackToHealthyMirror() = runBlocking {
+        val server = MockWebServer()
+        server.start()
+        val tempDir = Files.createTempDirectory("gugachat_cn_dl_test_").toFile()
+        try {
+            val client = OkHttpClient()
+            val goodApk = byteArrayOf(0x50, 0x4B, 0x03, 0x04) + ByteArray(4096) { 0x33 }
+            val tamperedApk = byteArrayOf(0x50, 0x4B, 0x03, 0x04) + ByteArray(4096) { 0x99.toByte() }
+            val expectedSha = MessageDigest.getInstance("SHA-256")
+                .digest(goodApk)
+                .joinToString("") { "%02x".format(it) }
+
+            // Mirror 1 returns tampered APK (valid ZIP header, wrong SHA-256)
+            server.enqueue(
+                MockResponse()
+                    .setResponseCode(200)
+                    .addHeader("Content-Type", "application/vnd.android.package-archive")
+                    .setBody(Buffer().write(tamperedApk)),
+            )
+            // Mirror 2 returns valid APK matching SHA-256
+            server.enqueue(
+                MockResponse()
+                    .setResponseCode(200)
+                    .addHeader("Content-Type", "application/vnd.android.package-archive")
+                    .setBody(Buffer().write(goodApk)),
+            )
+
+            val candidates = listOf(
+                ApkDownloadCandidate("国内加速 · bad-mirror", server.url("/bad.apk").toString(), isCnChannel = true),
+                ApkDownloadCandidate("国内加速 · good-mirror", server.url("/good.apk").toString(), isCnChannel = true),
+            )
+            val dest = File(tempDir, "gugachat-v0.3.4.apk")
+            val attempts = mutableListOf<String>()
+            val (outFile, winner) = AppUpdateService.downloadApkWithFallback(
+                httpClient = client,
+                candidates = candidates,
+                destFile = dest,
+                expectedSha256 = expectedSha,
+                onCandidateAttempt = { cand, _, _ -> attempts.add(cand.label) },
+            )
+            assertTrue(outFile.exists())
+            assertEquals(goodApk.size.toLong(), outFile.length())
+            assertEquals("国内加速 · good-mirror", winner.label)
+            assertEquals(listOf("国内加速 · bad-mirror", "国内加速 · good-mirror"), attempts)
+            assertEquals(expectedSha, AppUpdateService.computeFileSha256(outFile))
+        } finally {
+            tempDir.deleteRecursively()
+            server.shutdown()
+        }
+    }
+
+    @Test
+    fun updateChannel_fromWireRoundTripsAndFallsBackToAuto() {
+        UpdateChannel.entries.forEach { ch ->
+            assertEquals(ch, UpdateChannel.fromWire(ch.wireValue))
+            assertEquals(ch, UpdateChannel.fromWire("  ${ch.wireValue.uppercase()}  "))
+        }
+        assertEquals(UpdateChannel.AUTO, UpdateChannel.fromWire(null))
+        assertEquals(UpdateChannel.AUTO, UpdateChannel.fromWire("unknown"))
     }
 }

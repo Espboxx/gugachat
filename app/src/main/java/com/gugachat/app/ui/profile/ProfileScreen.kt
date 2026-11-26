@@ -91,6 +91,7 @@ import com.gugachat.app.core.theme.ThemeStyle
 import com.gugachat.app.core.theme.UiScalePreset
 import com.gugachat.app.core.util.FormatUtils
 import com.gugachat.app.data.api.AppUpdateService
+import com.gugachat.app.data.api.UpdateChannel
 import com.gugachat.app.ui.chat.ExternalImportSheet
 import com.gugachat.app.ui.providers.ApiProviderDraft
 import com.gugachat.app.ui.providers.ApiProviderEditorSheet
@@ -841,6 +842,57 @@ fun ProfileScreen(
                             }
                         },
                     )
+                    val updateChannels = UpdateChannel.entries
+                    val updateChannelIdx = updateChannels.indexOf(state.settings.updateChannel).coerceAtLeast(0)
+                    val channelBadgeText = when (state.settings.updateChannel) {
+                        UpdateChannel.AUTO -> strings.update.channelAuto
+                        UpdateChannel.CN_MIRROR -> strings.update.channelCnMirror
+                        UpdateChannel.GITHUB_DIRECT -> strings.update.channelGithub
+                    }
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 10.dp),
+                    ) {
+                        GuSettingsRow(
+                            title = strings.update.channelLabel,
+                            subtitle = strings.update.channelSubtitle,
+                            icon = Icons.Default.Public,
+                            iconTint = c.success,
+                            iconBg = c.successBg,
+                            showDivider = false,
+                            trailing = {
+                                GuBadge(
+                                    text = channelBadgeText,
+                                    variant = if (state.settings.updateChannel == UpdateChannel.GITHUB_DIRECT) {
+                                        GuBadgeVariant.NEUTRAL
+                                    } else {
+                                        GuBadgeVariant.EMERALD
+                                    },
+                                )
+                            },
+                        )
+                        GuSegmentedControl(
+                            items = listOf(
+                                strings.update.channelAuto,
+                                strings.update.channelCnMirror,
+                                strings.update.channelGithub,
+                            ),
+                            selectedIndex = updateChannelIdx,
+                            onSelect = { idx ->
+                                updateChannels.getOrNull(idx)?.let(viewModel::setUpdateChannel)
+                            },
+                            compact = true,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 56.dp, end = 14.dp),
+                        )
+                    }
+                    HorizontalDivider(
+                        modifier = Modifier.padding(start = 56.dp),
+                        thickness = theme.borderWidth,
+                        color = c.border.copy(alpha = 0.78f),
+                    )
                     GuSettingsRow(
                         title = strings.update.manualDownloadBtn,
                         subtitle = strings.update.qqGroupLabel,
@@ -849,7 +901,14 @@ fun ProfileScreen(
                         iconBg = c.tag,
                         showChevron = true,
                         showDivider = false,
-                        onClick = { AppUpdateService.openDownloadPage(ctx) },
+                        onClick = {
+                            val manualUrl = AppUpdateService.resolveManualDownloadUrl(
+                                info = updateUi.availableUpdate,
+                                channel = state.settings.updateChannel,
+                                preferCn = isZh,
+                            )
+                            AppUpdateService.openDownloadPage(ctx, manualUrl)
+                        },
                     )
                 }
             }

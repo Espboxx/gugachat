@@ -1177,5 +1177,12 @@ val EnStrings = AppStrings(
         checkFailedToast = "Update check failed. Try again or visit the download page.",
         qqGroupLabel = "QQ Group: 587660465",
         openReleasesBtn = "Releases",
+        channelLabel = "Update Channel",
+        channelSubtitle = "CN mirror acceleration with auto-failover & SHA-256 check",
+        channelAuto = "Auto",
+        channelCnMirror = "CN Mirror",
+        channelGithub = "GitHub",
+        downloadingSource = "Source: {source}",
+        downloadingSourceAttempt = "Source: {source} ({attempt}/{total})",
     ),
 )

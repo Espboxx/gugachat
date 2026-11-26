@@ -1177,5 +1177,12 @@ val ZhStrings = AppStrings(
         checkFailedToast = "检查更新失败，请稍后重试或手动前往下载页",
         qqGroupLabel = "QQ 交流群：587660465",
         openReleasesBtn = "下载页",
+        channelLabel = "更新渠道",
+        channelSubtitle = "国内多节点加速 + 自动故障转移与 SHA-256 校验",
+        channelAuto = "自动",
+        channelCnMirror = "国内加速",
+        channelGithub = "GitHub",
+        downloadingSource = "当前线路：{source}",
+        downloadingSourceAttempt = "当前线路：{source} ({attempt}/{total})",
     ),
 )

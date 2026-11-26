@@ -1040,6 +1040,13 @@ data class UpdateStrings(
     val checkFailedToast: String,
     val qqGroupLabel: String,
     val openReleasesBtn: String,
+    val channelLabel: String,
+    val channelSubtitle: String,
+    val channelAuto: String,
+    val channelCnMirror: String,
+    val channelGithub: String,
+    val downloadingSource: String,
+    val downloadingSourceAttempt: String,
 )
 
 @Immutable

@@ -1,0 +1,21 @@
+{
+  "tag_name": "v0.3.3",
+  "version_name": "0.3.3",
+  "name": "GuGuChat v0.3.3",
+  "published_at": "2026-11-26T08:23:09Z",
+  "html_url": "https://github.com/Espboxx/gugachat/releases/tag/v0.3.3",
+  "cn_download_page": "",
+  "apk_name": "GuGuChat-v0.3.3-android.apk",
+  "apk_size": 17754897,
+  "apk_sha256": "d4df6f5cfa613eb170206969e41c874dc1e898661e971916e17014d8ae16e278",
+  "apk_url": "https://github.com/Espboxx/gugachat/releases/download/v0.3.3/GuGuChat-v0.3.3-android.apk",
+  "cn_apk_urls": [],
+  "cn_proxies": [
+    "https://gh-proxy.com/",
+    "https://cdn.gh-proxy.org/",
+    "https://edgeone.gh-proxy.org/",
+    "https://gh-proxy.org/",
+    "https://ghfast.top/"
+  ],
+  "body": "## GuGuChat v0.3.3\n\n### 重点修复与优化\n\n#### 1. DeepSeek 导出记录导入全面修复（新版 V3 + 旧版 CSV）\n- 树形主分支还原与变体折叠：修复 DeepSeek V3 导出包中重 Roll / 分支回复被平铺的问题，严格沿活跃路径还原主线，重试回复折叠为 `< 1/N >` 变体切换器。\n- V3 片段与大包解析优化：完整读取 `FILE` 嵌套文件列表，过滤 `CONTENT_RISK` / `TOOL_OPEN` 遥测片段，单次解压大幅提速。\n- 新增旧版 DeepSeek CSV 导入，重导自动覆盖清理旧消息。\n\n#### 2. Markdown 纯文本代码块自动换行与切换\n- 对 `text` / `txt` / `plaintext` / `markdown` 及无语言标注段落默认自动换行，代码块顶栏支持一键切换换行与横向滚动。"
+}

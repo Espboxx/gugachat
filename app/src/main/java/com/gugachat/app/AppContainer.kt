@@ -19,6 +19,7 @@ import com.gugachat.app.data.api.DirectApiClient
 import com.gugachat.app.data.api.OnlineChatApi
 import com.gugachat.app.data.api.OnlineImagesApi
 import com.gugachat.app.data.api.PublicSettingsDto
+import com.gugachat.app.data.api.UpdateChannel
 import com.gugachat.app.data.api.UserDto
 import com.gugachat.app.data.local.AppDatabase
 import com.gugachat.app.data.local.AttachmentFileStore
@@ -103,6 +104,9 @@ class AppContainer(context: Context) {
         appContext = appContext,
         scope = scope,
         httpClient = apiClient.streamingClient,
+        channelProvider = { settingsState.value.updateChannel },
+        preferCnProvider = { settingsState.value.language == AppLanguage.ZH },
+        onChannelChanged = { ch -> setUpdateChannel(ch) },
     )
 
     init {
@@ -202,5 +206,9 @@ class AppContainer(context: Context) {
 
     fun setLanguage(language: AppLanguage) {
         scope.launch { settingsStore.setLanguage(language) }
+    }
+
+    fun setUpdateChannel(channel: UpdateChannel) {
+        scope.launch { settingsStore.setUpdateChannel(channel) }
     }
 }

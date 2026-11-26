@@ -16,6 +16,7 @@ import com.gugachat.app.core.theme.ThemeStyle
 import com.gugachat.app.core.theme.UiScalePreset
 import com.gugachat.app.core.util.ServerUrlUtils
 import com.gugachat.app.data.api.SseRetryPolicy
+import com.gugachat.app.data.api.UpdateChannel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -30,6 +31,7 @@ data class AppSettings(
     val language: AppLanguage = AppLanguage.ZH,
     val memoryBudget: String = "4K",
     val sseAutoRetryCount: Int = SseRetryPolicy.DEFAULT_SSE_AUTO_RETRY_COUNT,
+    val updateChannel: UpdateChannel = UpdateChannel.AUTO,
     val lastChatGroupId: Long = 0L,
     val lastChatModel: String = "",
     val lastImageKeyId: Long = 0L,
@@ -56,6 +58,7 @@ class SettingsStore(private val context: Context) {
         val LANGUAGE = stringPreferencesKey("language")
         val MEMORY_BUDGET = stringPreferencesKey("memory_budget")
         val SSE_AUTO_RETRY_COUNT = intPreferencesKey("sse_auto_retry_count")
+        val UPDATE_CHANNEL = stringPreferencesKey("update_channel")
         val LAST_CHAT_GROUP_ID = longPreferencesKey("last_chat_group_id")
         val LAST_CHAT_MODEL = stringPreferencesKey("last_chat_model")
         val LAST_IMAGE_KEY_ID = longPreferencesKey("last_image_key_id")
@@ -84,6 +87,7 @@ class SettingsStore(private val context: Context) {
             sseAutoRetryCount = SseRetryPolicy.clampRetryCount(
                 prefs[Keys.SSE_AUTO_RETRY_COUNT] ?: SseRetryPolicy.DEFAULT_SSE_AUTO_RETRY_COUNT,
             ),
+            updateChannel = UpdateChannel.fromWire(prefs[Keys.UPDATE_CHANNEL]),
             lastChatGroupId = prefs[Keys.LAST_CHAT_GROUP_ID] ?: 0L,
             lastChatModel = prefs[Keys.LAST_CHAT_MODEL].orEmpty(),
             lastImageKeyId = prefs[Keys.LAST_IMAGE_KEY_ID] ?: 0L,
@@ -133,6 +137,10 @@ class SettingsStore(private val context: Context) {
     suspend fun setSseAutoRetryCount(count: Int) {
         val clamped = SseRetryPolicy.clampRetryCount(count)
         context.settingsDataStore.edit { it[Keys.SSE_AUTO_RETRY_COUNT] = clamped }
+    }
+
+    suspend fun setUpdateChannel(channel: UpdateChannel) {
+        context.settingsDataStore.edit { it[Keys.UPDATE_CHANNEL] = channel.wireValue }
     }
 
     suspend fun setLastChatSelection(groupId: Long, model: String) {
