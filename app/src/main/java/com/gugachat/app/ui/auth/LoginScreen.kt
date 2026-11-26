@@ -7,6 +7,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -22,6 +23,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -33,15 +35,18 @@ import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.BrightnessAuto
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.OpenInBrowser
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -59,6 +64,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalFocusManager
@@ -68,6 +74,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -83,7 +90,9 @@ import com.gugachat.app.core.theme.GuBadgeVariant
 import com.gugachat.app.core.theme.GuButton
 import com.gugachat.app.core.theme.GuButtonVariant
 import com.gugachat.app.core.theme.GuCard
-import com.gugachat.app.core.theme.GuPill
+import com.gugachat.app.core.theme.GuGroupedCard
+import com.gugachat.app.core.theme.GuIconTile
+import com.gugachat.app.core.theme.GuSegmentedControl
 import com.gugachat.app.core.theme.GuTextField
 import com.gugachat.app.core.theme.LocalAppTheme
 import com.gugachat.app.core.util.ServerUrlUtils
@@ -136,15 +145,16 @@ fun LoginScreen(
                     contentDescription = strings.common.appName,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
-                        .size(40.dp)
-                        .clip(RoundedCornerShape(11.dp)),
+                        .size(38.dp)
+                        .clip(RoundedCornerShape(11.dp))
+                        .border(theme.borderWidth, c.border, RoundedCornerShape(11.dp)),
                 )
                 Spacer(Modifier.width(10.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = state.publicSettings?.site_name?.ifBlank { strings.auth.title } ?: strings.auth.title,
                         color = c.ink,
-                        fontSize = 17.sp,
+                        fontSize = 16.5.sp,
                         fontWeight = FontWeight.ExtraBold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -161,13 +171,23 @@ fun LoginScreen(
                     onClick = viewModel::toggleThemeStyle,
                     modifier = Modifier.size(44.dp),
                 ) {
-                    Icon(Icons.Default.Palette, contentDescription = strings.profile.themeStyleLabel, tint = c.ink, modifier = Modifier.size(20.dp))
+                    Icon(
+                        imageVector = Icons.Default.Palette,
+                        contentDescription = strings.profile.themeStyleLabel,
+                        tint = c.ink,
+                        modifier = Modifier.size(20.dp),
+                    )
                 }
                 IconButton(
                     onClick = viewModel::toggleLanguage,
                     modifier = Modifier.size(44.dp),
                 ) {
-                    Icon(Icons.Default.Language, contentDescription = strings.profile.languageLabel, tint = c.ink, modifier = Modifier.size(20.dp))
+                    Icon(
+                        imageVector = Icons.Default.Language,
+                        contentDescription = strings.profile.languageLabel,
+                        tint = c.ink,
+                        modifier = Modifier.size(20.dp),
+                    )
                 }
             }
         }
@@ -189,43 +209,51 @@ fun LoginScreen(
                     onCycleColorMode = viewModel::cycleColorMode,
                 )
             } else {
+                // Mode Switcher: 44dp Back Button + 2-segment GuSegmentedControl
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     IconButton(
                         onClick = { viewModel.chooseEntryMode(LoginEntryMode.CHOOSER) },
                         modifier = Modifier.size(44.dp),
                     ) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = strings.providers.chooserBackBtn,
-                            tint = c.muted,
-                            modifier = Modifier.size(20.dp),
-                        )
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(c.surface)
+                                .border(theme.borderWidth, c.border, CircleShape),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = strings.providers.chooserBackBtn,
+                                tint = c.ink,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
                     }
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        GuPill(
-                            label = strings.providers.entrySub2api,
-                            selected = state.entryMode == LoginEntryMode.SUB2API,
-                            onClick = { viewModel.chooseEntryMode(LoginEntryMode.SUB2API) },
-                        )
-                        GuPill(
-                            label = strings.providers.entryDirectApi,
-                            selected = state.entryMode == LoginEntryMode.DIRECT_API,
-                            onClick = { viewModel.chooseEntryMode(LoginEntryMode.DIRECT_API) },
-                        )
-                    }
+                    GuSegmentedControl(
+                        items = listOf(strings.providers.entrySub2api, strings.providers.entryDirectApi),
+                        selectedIndex = if (state.entryMode == LoginEntryMode.SUB2API) 0 else 1,
+                        onSelect = { idx ->
+                            viewModel.chooseEntryMode(
+                                if (idx == 0) LoginEntryMode.SUB2API else LoginEntryMode.DIRECT_API,
+                            )
+                        },
+                        modifier = Modifier.weight(1f),
+                    )
                 }
             }
 
             if (state.entryMode == LoginEntryMode.DIRECT_API) {
                 if (state.savedProvidersCount > 0) {
-                    GuCard(modifier = Modifier.fillMaxWidth()) {
+                    GuCard(
+                        modifier = Modifier.fillMaxWidth(),
+                        borderColor = c.accent.copy(alpha = 0.45f),
+                    ) {
                         GuButton(
                             onClick = viewModel::enterWithSavedProviders,
                             variant = GuButtonVariant.HONEY,
@@ -240,19 +268,38 @@ fun LoginScreen(
                     }
                 }
                 GuCard(modifier = Modifier.fillMaxWidth()) {
-                    Text(
-                        text = strings.providers.entryDirectApi,
-                        color = c.ink,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        text = strings.providers.directSubtitle,
-                        color = c.muted,
-                        fontSize = 12.sp,
-                    )
-                    Spacer(Modifier.height(12.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        GuIconTile(
+                            icon = Icons.Default.Key,
+                            tint = c.tagInk,
+                            backgroundColor = c.tag,
+                            size = 36.dp,
+                            iconSize = 19.dp,
+                            cornerRadius = 10.dp,
+                        )
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(2.dp),
+                        ) {
+                            Text(
+                                text = strings.providers.entryDirectApi,
+                                color = c.ink,
+                                fontSize = 15.5.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                            )
+                            Text(
+                                text = strings.providers.directSubtitle,
+                                color = c.muted,
+                                fontSize = 12.sp,
+                                lineHeight = 16.5.sp,
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(14.dp))
                     ApiProviderFormContent(
                         draft = state.directDraft,
                         isTesting = state.directTesting,
@@ -283,92 +330,130 @@ fun LoginScreen(
                     onCycleColorMode = viewModel::cycleColorMode,
                 )
             } else if (state.entryMode == LoginEntryMode.SUB2API) {
-                // GuGuGa Preset Host Selector + Collapsible Custom Server URL Card
-                GuCard(modifier = Modifier.fillMaxWidth()) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
+                // Host Picker Card (GuGroupedCard with speed-test header, grouped host rows, collapsible custom URL)
+                GuGroupedCard(modifier = Modifier.fillMaxWidth()) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        Text(
-                            text = strings.auth.hostPickerTitle,
-                            color = c.ink,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                        )
-                        GuButton(
-                            onClick = { viewModel.probePresetHosts(autoSelectFastest = true) },
-                            loading = state.isProbingHosts,
-                            compact = true,
-                            variant = GuButtonVariant.SUBTLE,
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Icon(Icons.Default.Speed, contentDescription = null, modifier = Modifier.size(14.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text(strings.auth.hostSpeedTestBtn, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(9.dp),
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                GuIconTile(
+                                    icon = Icons.Default.Public,
+                                    tint = c.primarySoftInk,
+                                    backgroundColor = c.primarySoft,
+                                    size = 30.dp,
+                                    iconSize = 16.dp,
+                                    cornerRadius = 8.dp,
+                                )
+                                Text(
+                                    text = strings.auth.hostPickerTitle,
+                                    color = c.ink,
+                                    fontSize = 14.5.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            GuButton(
+                                onClick = { viewModel.probePresetHosts(autoSelectFastest = true) },
+                                loading = state.isProbingHosts,
+                                compact = true,
+                                variant = GuButtonVariant.SUBTLE,
+                            ) {
+                                Icon(Icons.Default.Speed, contentDescription = null, modifier = Modifier.size(14.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text(strings.auth.hostSpeedTestBtn, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+
+                        if (state.serverConnected || state.serverError != null || !state.publicSettings?.version.isNullOrBlank()) {
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                if (state.serverConnected) {
+                                    GuBadge(
+                                        text = strings.auth.serverConnected.fmt(
+                                            "site" to (state.publicSettings?.site_name?.ifBlank { "sub2api" } ?: "sub2api"),
+                                        ),
+                                        variant = GuBadgeVariant.EMERALD,
+                                    )
+                                } else if (state.serverError != null) {
+                                    GuBadge(
+                                        text = strings.auth.serverFailed,
+                                        variant = GuBadgeVariant.DANGER,
+                                    )
+                                }
+                                state.publicSettings?.version?.takeIf { it.isNotBlank() }?.let { v ->
+                                    GuBadge("v$v", variant = GuBadgeVariant.BLUE)
+                                }
+                            }
                         }
                     }
 
-                    if (state.serverConnected || state.serverError != null || !state.publicSettings?.version.isNullOrBlank()) {
-                        Spacer(Modifier.height(6.dp))
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp),
-                        ) {
-                            if (state.serverConnected) {
-                                GuBadge(
-                                    text = strings.auth.serverConnected.fmt(
-                                        "site" to (state.publicSettings?.site_name?.ifBlank { "sub2api" } ?: "sub2api"),
-                                    ),
-                                    variant = GuBadgeVariant.EMERALD,
-                                )
-                            } else if (state.serverError != null) {
-                                GuBadge(
-                                    text = strings.auth.serverFailed,
-                                    variant = GuBadgeVariant.DANGER,
-                                )
-                            }
-                            state.publicSettings?.version?.takeIf { it.isNotBlank() }?.let { v ->
-                                GuBadge("v$v", variant = GuBadgeVariant.BLUE)
-                            }
-                        }
-                    }
+                    HorizontalDivider(
+                        thickness = theme.borderWidth,
+                        color = c.border.copy(alpha = 0.8f),
+                    )
 
-                    Spacer(Modifier.height(10.dp))
                     val fastestHostId = remember(state.hostProbes) {
                         GugagaHosts.pickFastestReachable(state.hostProbes)?.host?.id
                     }
                     val normalizedCurrentUrl = ServerUrlUtils.normalizeServerUrl(state.serverUrlInput)
 
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        state.hostProbes.forEach { item ->
-                            PresetHostRow(
-                                item = item,
-                                selected = normalizedCurrentUrl.equals(item.host.url, ignoreCase = true),
-                                isFastest = item.status == HostProbeStatus.REACHABLE && item.host.id == fastestHostId,
-                                onClick = { viewModel.selectPresetHost(item.host) },
+                    state.hostProbes.forEachIndexed { index, item ->
+                        PresetHostRow(
+                            item = item,
+                            selected = normalizedCurrentUrl.equals(item.host.url, ignoreCase = true),
+                            isFastest = item.status == HostProbeStatus.REACHABLE && item.host.id == fastestHostId,
+                            onClick = { viewModel.selectPresetHost(item.host) },
+                        )
+                        if (index < state.hostProbes.lastIndex) {
+                            HorizontalDivider(
+                                modifier = Modifier.padding(start = 42.dp),
+                                thickness = theme.borderWidth,
+                                color = c.border.copy(alpha = 0.72f),
                             )
                         }
                     }
 
-                    Spacer(Modifier.height(10.dp))
-                    HorizontalDivider(color = c.border.copy(alpha = 0.6f))
-                    Spacer(Modifier.height(6.dp))
+                    HorizontalDivider(
+                        thickness = theme.borderWidth,
+                        color = c.border.copy(alpha = 0.8f),
+                    )
 
-                    // Collapsible Custom Server URL toggle
+                    // Collapsible Custom Server URL row
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
+                            .heightIn(min = 46.dp)
                             .clickable { showCustomServerUrl = !showCustomServerUrl }
-                            .padding(vertical = 6.dp),
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        Icon(Icons.Default.Public, contentDescription = null, tint = c.muted, modifier = Modifier.size(15.dp))
+                        Icon(
+                            imageVector = Icons.Default.Public,
+                            contentDescription = null,
+                            tint = c.muted,
+                            modifier = Modifier.size(16.dp),
+                        )
                         Text(
                             text = strings.auth.hostCustomUrlHint,
                             color = c.muted,
-                            fontSize = 12.sp,
+                            fontSize = 12.5.sp,
                             fontWeight = FontWeight.SemiBold,
                             modifier = Modifier.weight(1f),
                         )
@@ -382,8 +467,10 @@ fun LoginScreen(
 
                     AnimatedVisibility(visible = showCustomServerUrl) {
                         Column(
-                            modifier = Modifier.padding(top = 6.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 14.dp, end = 14.dp, bottom = 14.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
                             GuTextField(
                                 value = state.serverUrlInput,
@@ -413,7 +500,7 @@ fun LoginScreen(
                                 modifier = Modifier.fillMaxWidth(),
                             ) {
                                 Text(
-                                    if (state.isProbing) strings.auth.connecting else strings.auth.testConnection,
+                                    text = if (state.isProbing) strings.auth.connecting else strings.auth.testConnection,
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold,
                                 )
@@ -422,37 +509,64 @@ fun LoginScreen(
                     }
 
                     if (!state.serverError.isNullOrBlank()) {
-                        Spacer(Modifier.height(6.dp))
-                        Text(state.serverError!!, color = c.danger, fontSize = 12.sp)
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 14.dp, end = 14.dp, bottom = 12.dp),
+                        ) {
+                            InlineErrorBanner(message = state.serverError!!)
+                        }
                     }
                 }
 
                 // Auth Card
                 GuCard(modifier = Modifier.fillMaxWidth()) {
                     if (state.requires2fa) {
-                        Text(
-                            text = strings.auth.totpTitle,
-                            color = c.ink,
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                        )
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            text = strings.auth.totpSubtitle.fmt("email" to state.maskedEmail.ifBlank { state.email }),
-                            color = c.muted,
-                            fontSize = 12.sp,
-                        )
-                        Spacer(Modifier.height(12.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            GuIconTile(
+                                icon = Icons.Default.Security,
+                                tint = c.primarySoftInk,
+                                backgroundColor = c.primarySoft,
+                                size = 36.dp,
+                                iconSize = 19.dp,
+                                cornerRadius = 10.dp,
+                            )
+                            Column(
+                                modifier = Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(2.dp),
+                            ) {
+                                Text(
+                                    text = strings.auth.totpTitle,
+                                    color = c.ink,
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                )
+                                Text(
+                                    text = strings.auth.totpSubtitle.fmt(
+                                        "email" to state.maskedEmail.ifBlank { state.email },
+                                    ),
+                                    color = c.muted,
+                                    fontSize = 12.sp,
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(14.dp))
                         GuTextField(
                             value = state.totpCode,
                             onValueChange = viewModel::updateTotpCode,
                             label = strings.auth.totpCodeLabel,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Number,
+                                imeAction = ImeAction.Done,
+                            ),
                             keyboardActions = KeyboardActions(onDone = { viewModel.submit2fa() }),
                         )
                         state.errorMsg?.let { err ->
-                            Spacer(Modifier.height(8.dp))
-                            Text(err, color = c.danger, fontSize = 12.sp)
+                            Spacer(Modifier.height(10.dp))
+                            InlineErrorBanner(message = err)
                         }
                         Spacer(Modifier.height(14.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -472,25 +586,24 @@ fun LoginScreen(
                             }
                         }
                     } else {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            GuPill(
-                                label = strings.auth.tabLogin,
-                                selected = state.activeTab == AuthFormTab.LOGIN,
-                                onClick = { viewModel.setActiveTab(AuthFormTab.LOGIN) },
-                            )
-                            GuPill(
-                                label = strings.auth.tabRegister,
-                                selected = state.activeTab == AuthFormTab.REGISTER,
-                                onClick = { viewModel.setActiveTab(AuthFormTab.REGISTER) },
-                            )
-                        }
+                        // Full-width 2-segment GuSegmentedControl (Login / Register)
+                        GuSegmentedControl(
+                            items = listOf(strings.auth.tabLogin, strings.auth.tabRegister),
+                            selectedIndex = if (state.activeTab == AuthFormTab.LOGIN) 0 else 1,
+                            onSelect = { idx ->
+                                viewModel.setActiveTab(
+                                    if (idx == 0) AuthFormTab.LOGIN else AuthFormTab.REGISTER,
+                                )
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
 
-                        Spacer(Modifier.height(12.dp))
+                        Spacer(Modifier.height(14.dp))
                         val pub = state.publicSettings
                         val regDisabled = state.activeTab == AuthFormTab.REGISTER && pub != null && !pub.registration_enabled
                         if (regDisabled) {
                             GuBadge(strings.auth.registrationDisabled, variant = GuBadgeVariant.AMBER)
-                            Spacer(Modifier.height(8.dp))
+                            Spacer(Modifier.height(10.dp))
                         }
 
                         GuTextField(
@@ -498,10 +611,15 @@ fun LoginScreen(
                             onValueChange = viewModel::updateEmail,
                             label = strings.auth.emailLabel,
                             placeholder = strings.auth.emailPlaceholder,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next),
-                            keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) }),
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Email,
+                                imeAction = ImeAction.Next,
+                            ),
+                            keyboardActions = KeyboardActions(
+                                onNext = { focusManager.moveFocus(FocusDirection.Down) },
+                            ),
                         )
-                        Spacer(Modifier.height(10.dp))
+                        Spacer(Modifier.height(11.dp))
                         GuTextField(
                             value = state.password,
                             onValueChange = viewModel::updatePassword,
@@ -511,9 +629,10 @@ fun LoginScreen(
                             trailingIcon = {
                                 IconButton(onClick = { passwordVisible = !passwordVisible }) {
                                     Icon(
-                                        if (passwordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                        imageVector = if (passwordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
                                         contentDescription = null,
                                         tint = c.muted,
+                                        modifier = Modifier.size(19.dp),
                                     )
                                 }
                             },
@@ -532,7 +651,7 @@ fun LoginScreen(
 
                         if (state.activeTab == AuthFormTab.REGISTER) {
                             if (pub?.email_verify_enabled == true) {
-                                Spacer(Modifier.height(10.dp))
+                                Spacer(Modifier.height(11.dp))
                                 Row(
                                     verticalAlignment = Alignment.Bottom,
                                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -542,8 +661,13 @@ fun LoginScreen(
                                         onValueChange = viewModel::updateVerifyCode,
                                         label = strings.auth.verifyCodeLabel,
                                         modifier = Modifier.weight(1f),
-                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Next),
-                                        keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) }),
+                                        keyboardOptions = KeyboardOptions(
+                                            keyboardType = KeyboardType.Number,
+                                            imeAction = ImeAction.Next,
+                                        ),
+                                        keyboardActions = KeyboardActions(
+                                            onNext = { focusManager.moveFocus(FocusDirection.Down) },
+                                        ),
                                     )
                                     GuButton(
                                         onClick = viewModel::sendVerifyCode,
@@ -553,7 +677,7 @@ fun LoginScreen(
                                         modifier = Modifier.height(54.dp),
                                     ) {
                                         Text(
-                                            if (state.verifyCountdownSec > 0) {
+                                            text = if (state.verifyCountdownSec > 0) {
                                                 strings.auth.resendCountdown.fmt("sec" to state.verifyCountdownSec)
                                             } else {
                                                 strings.auth.sendCode
@@ -565,7 +689,7 @@ fun LoginScreen(
                                 }
                             }
                             if (pub?.promo_code_enabled == true) {
-                                Spacer(Modifier.height(10.dp))
+                                Spacer(Modifier.height(11.dp))
                                 GuTextField(
                                     value = state.promoCode,
                                     onValueChange = viewModel::updatePromoCode,
@@ -574,7 +698,7 @@ fun LoginScreen(
                                 )
                             }
                             if (pub?.invitation_code_enabled == true) {
-                                Spacer(Modifier.height(10.dp))
+                                Spacer(Modifier.height(11.dp))
                                 GuTextField(
                                     value = state.invitationCode,
                                     onValueChange = viewModel::updateInvitationCode,
@@ -617,6 +741,7 @@ fun LoginScreen(
                                 text = strings.auth.captchaRequiredHint,
                                 color = c.warning,
                                 fontSize = 11.5.sp,
+                                lineHeight = 16.sp,
                             )
                         }
 
@@ -633,14 +758,18 @@ fun LoginScreen(
                         }
 
                         state.errorMsg?.let { err ->
-                            Spacer(Modifier.height(8.dp))
-                            Text(err, color = c.danger, fontSize = 12.sp)
+                            Spacer(Modifier.height(10.dp))
+                            InlineErrorBanner(message = err)
                         }
 
-                        Spacer(Modifier.height(14.dp))
+                        Spacer(Modifier.height(16.dp))
                         GuButton(
                             onClick = {
-                                if (state.activeTab == AuthFormTab.LOGIN) viewModel.submitLogin() else viewModel.submitRegister()
+                                if (state.activeTab == AuthFormTab.LOGIN) {
+                                    viewModel.submitLogin()
+                                } else {
+                                    viewModel.submitRegister()
+                                }
                             },
                             enabled = !regDisabled && !waitingForTurnstile,
                             loading = state.isSubmitting,
@@ -649,7 +778,11 @@ fun LoginScreen(
                             Icon(Icons.Default.Lock, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(6.dp))
                             Text(
-                                if (state.activeTab == AuthFormTab.LOGIN) strings.auth.loginBtn else strings.auth.registerBtn,
+                                text = if (state.activeTab == AuthFormTab.LOGIN) {
+                                    strings.auth.loginBtn
+                                } else {
+                                    strings.auth.registerBtn
+                                },
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Bold,
                             )
@@ -661,19 +794,61 @@ fun LoginScreen(
                             variant = GuButtonVariant.SUBTLE,
                             modifier = Modifier.fillMaxWidth(),
                         ) {
+                            Icon(Icons.Default.OpenInBrowser, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
                             Text(strings.auth.webLoginBtn, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                         }
-
-                        Spacer(Modifier.height(12.dp))
-                        LoginQuickSettingsRow(
-                            colorMode = state.colorMode,
-                            onToggleLanguage = viewModel::toggleLanguage,
-                            onToggleThemeStyle = viewModel::toggleThemeStyle,
-                            onCycleColorMode = viewModel::cycleColorMode,
-                        )
                     }
                 }
+
+                LoginQuickSettingsRow(
+                    colorMode = state.colorMode,
+                    onToggleLanguage = viewModel::toggleLanguage,
+                    onToggleThemeStyle = viewModel::toggleThemeStyle,
+                    onCycleColorMode = viewModel::cycleColorMode,
+                )
             }
+
+            Spacer(Modifier.height(12.dp))
+        }
+    }
+}
+
+@Composable
+private fun InlineErrorBanner(
+    message: String,
+    modifier: Modifier = Modifier,
+) {
+    val theme = LocalAppTheme.current
+    val c = theme.colors
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(10.dp),
+        color = c.dangerBg,
+        border = BorderStroke(theme.borderWidth, c.danger.copy(alpha = 0.4f)),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.Top,
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
+        ) {
+            Icon(
+                imageVector = Icons.Default.ErrorOutline,
+                contentDescription = null,
+                tint = c.danger,
+                modifier = Modifier
+                    .padding(top = 1.dp)
+                    .size(15.dp),
+            )
+            Text(
+                text = message,
+                color = c.danger,
+                fontSize = 12.sp,
+                lineHeight = 17.sp,
+                modifier = Modifier.weight(1f),
+            )
         }
     }
 }
@@ -689,136 +864,87 @@ private fun FirstLaunchModeChooser(
     onCycleColorMode: () -> Unit,
 ) {
     val strings = LocalAppStrings.current
-    val c = LocalAppTheme.current.colors
+    val theme = LocalAppTheme.current
+    val c = theme.colors
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = 12.dp),
+            .padding(top = 18.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Image(
-            painter = painterResource(id = R.drawable.img_splash),
-            contentDescription = strings.common.appName,
-            contentScale = ContentScale.Crop,
+        // Airy 80dp Brand Logo Hero
+        Box(
             modifier = Modifier
-                .size(84.dp)
-                .clip(RoundedCornerShape(22.dp)),
-        )
-        Text(
-            text = strings.providers.chooserWelcomeTitle,
-            color = c.ink,
-            fontSize = 20.sp,
-            fontWeight = FontWeight.ExtraBold,
-        )
-        Text(
-            text = strings.providers.chooserWelcomeSubtitle,
-            color = c.muted,
-            fontSize = 12.sp,
-        )
+                .size(88.dp)
+                .clip(RoundedCornerShape(24.dp))
+                .background(c.primarySoft)
+                .border(theme.borderWidth, c.primary.copy(alpha = 0.28f), RoundedCornerShape(24.dp)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Image(
+                painter = painterResource(id = R.drawable.img_splash),
+                contentDescription = strings.common.appName,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .size(80.dp)
+                    .clip(RoundedCornerShape(20.dp)),
+            )
+        }
+
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.padding(horizontal = 12.dp),
+        ) {
+            Text(
+                text = strings.providers.chooserWelcomeTitle,
+                color = c.ink,
+                fontSize = 21.sp,
+                fontWeight = FontWeight.ExtraBold,
+                textAlign = TextAlign.Center,
+            )
+            Text(
+                text = strings.providers.chooserWelcomeSubtitle,
+                color = c.muted,
+                fontSize = 12.5.sp,
+                lineHeight = 18.5.sp,
+                textAlign = TextAlign.Center,
+            )
+        }
 
         Spacer(Modifier.height(4.dp))
 
-        GuCard(
-            modifier = Modifier.fillMaxWidth(),
-            borderColor = c.primary,
+        // Choice Card 1: GuGuGa Account
+        OnboardingChoiceCard(
+            icon = Icons.Default.AccountCircle,
+            iconTint = c.primarySoftInk,
+            iconBg = c.primarySoft,
+            borderColor = c.primary.copy(alpha = 0.42f),
+            title = strings.providers.chooserGugagaTitle,
+            badgeText = strings.providers.chooserGugagaBadge,
+            badgeVariant = GuBadgeVariant.BLUE,
+            description = strings.providers.chooserGugagaDesc,
+            arrowTint = c.primary,
             onClick = onChooseGugaga,
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Icon(
-                    imageVector = Icons.Default.AccountCircle,
-                    contentDescription = null,
-                    tint = c.primary,
-                    modifier = Modifier.size(34.dp),
-                )
-                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        Text(
-                            text = strings.providers.chooserGugagaTitle,
-                            color = c.ink,
-                            fontSize = 15.5.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            modifier = Modifier.align(Alignment.CenterVertically),
-                        )
-                        GuBadge(
-                            text = strings.providers.chooserGugagaBadge,
-                            variant = GuBadgeVariant.BLUE,
-                            modifier = Modifier.align(Alignment.CenterVertically),
-                        )
-                    }
-                    Text(
-                        text = strings.providers.chooserGugagaDesc,
-                        color = c.muted,
-                        fontSize = 12.sp,
-                        lineHeight = 17.sp,
-                    )
-                }
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                    contentDescription = null,
-                    tint = c.primary,
-                    modifier = Modifier.size(20.dp),
-                )
-            }
-        }
+        )
 
-        GuCard(
-            modifier = Modifier.fillMaxWidth(),
-            borderColor = c.accent,
+        // Choice Card 2: Direct BYOK API
+        OnboardingChoiceCard(
+            icon = Icons.Default.Key,
+            iconTint = c.tagInk,
+            iconBg = c.tag,
+            borderColor = c.accent.copy(alpha = 0.45f),
+            title = strings.providers.chooserDirectTitle,
+            badgeText = strings.providers.chooserDirectBadge,
+            badgeVariant = GuBadgeVariant.HONEY,
+            description = strings.providers.chooserDirectDesc,
+            arrowTint = c.accent,
             onClick = onChooseCustomApi,
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Key,
-                    contentDescription = null,
-                    tint = c.accent,
-                    modifier = Modifier.size(34.dp),
-                )
-                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        Text(
-                            text = strings.providers.chooserDirectTitle,
-                            color = c.ink,
-                            fontSize = 15.5.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            modifier = Modifier.align(Alignment.CenterVertically),
-                        )
-                        GuBadge(
-                            text = strings.providers.chooserDirectBadge,
-                            variant = GuBadgeVariant.HONEY,
-                            modifier = Modifier.align(Alignment.CenterVertically),
-                        )
-                    }
-                    Text(
-                        text = strings.providers.chooserDirectDesc,
-                        color = c.muted,
-                        fontSize = 12.sp,
-                        lineHeight = 17.sp,
-                    )
-                }
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                    contentDescription = null,
-                    tint = c.ink,
-                    modifier = Modifier.size(20.dp),
-                )
-            }
-        }
+        )
+
+        Spacer(Modifier.height(4.dp))
 
         LoginQuickSettingsRow(
             colorMode = colorMode,
@@ -826,6 +952,77 @@ private fun FirstLaunchModeChooser(
             onToggleThemeStyle = onToggleThemeStyle,
             onCycleColorMode = onCycleColorMode,
         )
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun OnboardingChoiceCard(
+    icon: ImageVector,
+    iconTint: Color,
+    iconBg: Color,
+    borderColor: Color,
+    title: String,
+    badgeText: String,
+    badgeVariant: GuBadgeVariant,
+    description: String,
+    arrowTint: Color,
+    onClick: () -> Unit,
+) {
+    val c = LocalAppTheme.current.colors
+    GuCard(
+        modifier = Modifier.fillMaxWidth(),
+        borderColor = borderColor,
+        onClick = onClick,
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            GuIconTile(
+                icon = icon,
+                tint = iconTint,
+                backgroundColor = iconBg,
+                size = 44.dp,
+                iconSize = 22.dp,
+                cornerRadius = 12.dp,
+            )
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(5.dp),
+            ) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Text(
+                        text = title,
+                        color = c.ink,
+                        fontSize = 15.5.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        modifier = Modifier.align(Alignment.CenterVertically),
+                    )
+                    GuBadge(
+                        text = badgeText,
+                        variant = badgeVariant,
+                        modifier = Modifier.align(Alignment.CenterVertically),
+                    )
+                }
+                Text(
+                    text = description,
+                    color = c.muted,
+                    fontSize = 12.sp,
+                    lineHeight = 17.5.sp,
+                )
+            }
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                contentDescription = null,
+                tint = arrowTint,
+                modifier = Modifier.size(19.dp),
+            )
+        }
     }
 }
 
@@ -851,7 +1048,8 @@ private fun LoginQuickSettingsRow(
     }
 
     FlowRow(
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         QuickSettingChip(
@@ -878,15 +1076,17 @@ private fun QuickSettingChip(
     label: String,
     onClick: () -> Unit,
 ) {
-    val c = LocalAppTheme.current.colors
+    val theme = LocalAppTheme.current
+    val c = theme.colors
     Surface(
         onClick = onClick,
-        shape = RoundedCornerShape(999.dp),
-        color = c.surfaceSoft,
-        border = BorderStroke(1.dp, c.border),
+        shape = RoundedCornerShape(theme.pillRadius),
+        color = c.surface,
+        border = BorderStroke(theme.borderWidth, c.border),
+        modifier = Modifier.heightIn(min = 34.dp),
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(5.dp),
         ) {
@@ -910,18 +1110,22 @@ private fun PresetHostRow(
     onClick: () -> Unit,
 ) {
     val strings = LocalAppStrings.current
-    val c = LocalAppTheme.current.colors
+    val theme = LocalAppTheme.current
+    val c = theme.colors
+    val rowBg = if (selected) {
+        c.primarySoft.copy(alpha = if (theme.isDark) 0.55f else 0.72f)
+    } else {
+        Color.Transparent
+    }
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
-            .background(if (selected) c.primarySoft else c.surfaceSoft)
-            .border(1.dp, if (selected) c.primary else c.border, RoundedCornerShape(10.dp))
+            .background(rowBg)
             .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 8.dp),
+            .padding(horizontal = 14.dp, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Icon(
             imageVector = if (selected) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
@@ -929,17 +1133,22 @@ private fun PresetHostRow(
             tint = if (selected) c.primary else c.muted,
             modifier = Modifier.size(18.dp),
         )
-        Column(modifier = Modifier.weight(1f)) {
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(1.dp),
+        ) {
             Text(
                 text = item.host.label,
-                color = c.ink,
-                fontSize = 13.sp,
+                color = if (selected) c.primarySoftInk else c.ink,
+                fontSize = 13.5.sp,
                 fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
             Text(
                 text = item.host.url,
                 color = c.muted,
-                fontSize = 11.sp,
+                fontSize = 11.5.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -962,8 +1171,8 @@ private fun PresetHostRow(
                     val ms = item.latencyMs ?: 0L
                     val variant = when {
                         ms <= 300L -> GuBadgeVariant.EMERALD
-                        ms <= 900L -> GuBadgeVariant.HONEY
-                        else -> GuBadgeVariant.AMBER
+                        ms <= 900L -> GuBadgeVariant.AMBER
+                        else -> GuBadgeVariant.DANGER
                     }
                     GuBadge("${ms}ms", variant = variant)
                 }

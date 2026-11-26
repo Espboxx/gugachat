@@ -35,13 +35,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -51,6 +51,7 @@ import androidx.compose.ui.window.DialogProperties
 import com.gugachat.app.AppContainer
 import com.gugachat.app.core.i18n.LocalAppStrings
 import com.gugachat.app.data.api.OnlineImageGenerationDto
+import kotlin.math.roundToInt
 
 @Composable
 fun ImageLightboxDialog(
@@ -73,6 +74,9 @@ fun ImageLightboxDialog(
         scale = 1f
         offset = Offset.Zero
     }
+
+    val frostedBg = Color.Black.copy(alpha = 0.62f)
+    val frostedBorder = BorderStroke(0.8.dp, Color.White.copy(alpha = 0.22f))
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -159,29 +163,52 @@ fun ImageLightboxDialog(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
-                    if (imageCount > 1) {
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(999.dp))
-                                .background(Color.Black.copy(alpha = 0.58f))
-                                .padding(horizontal = 12.dp, vertical = 6.dp),
-                        ) {
-                            Text(
-                                text = "${pagerState.currentPage + 1} / $imageCount",
-                                color = Color.White,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                            )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        if (imageCount > 1) {
+                            Surface(
+                                shape = RoundedCornerShape(999.dp),
+                                color = frostedBg,
+                                border = frostedBorder,
+                            ) {
+                                Text(
+                                    text = "${pagerState.currentPage + 1} / $imageCount",
+                                    color = Color.White,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                )
+                            }
                         }
-                    } else {
-                        Spacer(Modifier.size(1.dp))
+                        if (scale > 1.05f) {
+                            Surface(
+                                shape = RoundedCornerShape(999.dp),
+                                color = frostedBg,
+                                border = frostedBorder,
+                            ) {
+                                Text(
+                                    text = "${(scale * 10).roundToInt() / 10.0}×",
+                                    color = Color.White.copy(alpha = 0.9f),
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                )
+                            }
+                        }
+                        if (imageCount <= 1 && scale <= 1.05f) {
+                            Spacer(Modifier.size(1.dp))
+                        }
                     }
 
                     Surface(
                         onClick = onDismiss,
                         shape = CircleShape,
-                        color = Color.Black.copy(alpha = 0.58f),
-                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.22f)),
+                        color = frostedBg,
+                        border = frostedBorder,
                         modifier = Modifier.size(44.dp),
                     ) {
                         Box(contentAlignment = Alignment.Center) {
@@ -205,17 +232,17 @@ fun ImageLightboxDialog(
                     .navigationBarsPadding()
                     .padding(bottom = 18.dp),
             ) {
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(999.dp))
-                        .background(Color.Black.copy(alpha = 0.56f))
-                        .padding(horizontal = 14.dp, vertical = 6.dp),
+                Surface(
+                    shape = RoundedCornerShape(999.dp),
+                    color = frostedBg,
+                    border = frostedBorder,
                 ) {
                     Text(
                         text = strings.images.swipeHint,
-                        color = Color.White.copy(alpha = 0.85f),
+                        color = Color.White.copy(alpha = 0.88f),
                         fontSize = 11.5.sp,
                         fontWeight = FontWeight.Medium,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.5.dp),
                     )
                 }
             }

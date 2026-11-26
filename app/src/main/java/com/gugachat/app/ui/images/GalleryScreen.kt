@@ -29,9 +29,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CheckCircle
@@ -40,13 +37,13 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FilterAltOff
 import androidx.compose.material.icons.filled.FolderZip
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -59,12 +56,9 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -78,10 +72,15 @@ import com.gugachat.app.core.theme.GuBadge
 import com.gugachat.app.core.theme.GuBadgeVariant
 import com.gugachat.app.core.theme.GuButton
 import com.gugachat.app.core.theme.GuButtonVariant
+import com.gugachat.app.core.theme.GuCard
+import com.gugachat.app.core.theme.GuCompactSearchBar
 import com.gugachat.app.core.theme.GuConfirmDialog
+import com.gugachat.app.core.theme.GuEmptyState
+import com.gugachat.app.core.theme.GuIconTile
 import com.gugachat.app.core.theme.GuPill
 import com.gugachat.app.core.theme.LocalAppTheme
 import com.gugachat.app.data.api.OnlineImageGenerationDto
+import kotlinx.coroutines.delay
 
 @Composable
 fun GalleryTabContent(
@@ -93,11 +92,22 @@ fun GalleryTabContent(
 ) {
     val state by viewModel.ui.collectAsStateWithLifecycle()
     val strings = LocalAppStrings.current
-    val c = LocalAppTheme.current.colors
+    val theme = LocalAppTheme.current
+    val c = theme.colors
     val ctx = LocalContext.current
     val isZh = strings.language == AppLanguage.ZH
 
     var showBatchDeleteConfirm by remember { mutableStateOf(false) }
+    var searchInitialized by remember { mutableStateOf(false) }
+
+    LaunchedEffect(state.searchQuery) {
+        if (!searchInitialized) {
+            searchInitialized = true
+            return@LaunchedEffect
+        }
+        delay(320L)
+        viewModel.refreshGallery()
+    }
 
     val zipLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
         if (uri != null) {
@@ -144,61 +154,35 @@ fun GalleryTabContent(
             .background(c.page),
     ) {
         AnimatedVisibility(visible = showSearchBar || state.searchQuery.isNotEmpty()) {
-            Surface(
-                shape = RoundedCornerShape(999.dp),
-                color = c.surface,
-                border = BorderStroke(1.dp, c.border),
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 12.dp, end = 12.dp, top = 8.dp),
+                    .padding(start = 12.dp, end = 6.dp, top = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 12.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Icon(Icons.Default.Search, contentDescription = null, tint = c.muted, modifier = Modifier.size(18.dp))
-                    Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
-                        if (state.searchQuery.isEmpty()) {
-                            Text(
-                                text = strings.images.searchPlaceholder,
-                                color = c.muted,
-                                fontSize = 13.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
+                GuCompactSearchBar(
+                    value = state.searchQuery,
+                    onValueChange = viewModel::setSearchQuery,
+                    placeholder = strings.images.searchPlaceholder,
+                    clearContentDescription = strings.common.clear,
+                    modifier = Modifier.weight(1f),
+                )
+                IconButton(
+                    onClick = {
+                        if (state.searchQuery.isNotEmpty()) {
+                            viewModel.setSearchQuery("")
                         }
-                        BasicTextField(
-                            value = state.searchQuery,
-                            onValueChange = viewModel::setSearchQuery,
-                            singleLine = true,
-                            textStyle = TextStyle(color = c.ink, fontSize = 13.sp),
-                            cursorBrush = SolidColor(c.primary),
-                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                            keyboardActions = KeyboardActions(onSearch = { viewModel.refreshGallery() }),
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    }
-                    IconButton(
-                        onClick = {
-                            if (state.searchQuery.isNotEmpty()) {
-                                viewModel.setSearchQuery("")
-                                viewModel.refreshGallery()
-                            } else {
-                                onCloseSearchBar()
-                            }
-                        },
-                        modifier = Modifier.size(40.dp),
-                    ) {
-                        Icon(
-                            Icons.Default.Close,
-                            contentDescription = if (state.searchQuery.isNotEmpty()) strings.common.clear else strings.common.close,
-                            tint = c.muted,
-                            modifier = Modifier.size(18.dp),
-                        )
-                    }
+                        onCloseSearchBar()
+                    },
+                    modifier = Modifier.size(44.dp),
+                ) {
+                    Icon(
+                        Icons.Default.Close,
+                        contentDescription = strings.common.close,
+                        tint = c.muted,
+                        modifier = Modifier.size(18.dp),
+                    )
                 }
             }
         }
@@ -239,7 +223,7 @@ fun GalleryTabContent(
             Surface(
                 shape = RoundedCornerShape(14.dp),
                 color = c.surface,
-                border = BorderStroke(1.dp, c.primary.copy(alpha = 0.4f)),
+                border = BorderStroke(theme.borderWidth, c.primary.copy(alpha = 0.45f)),
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(start = 12.dp, end = 12.dp, bottom = 8.dp),
@@ -287,7 +271,7 @@ fun GalleryTabContent(
                     }
                     IconButton(
                         onClick = viewModel::toggleBatchMode,
-                        modifier = Modifier.size(40.dp),
+                        modifier = Modifier.size(44.dp),
                     ) {
                         Icon(
                             Icons.Default.Close,
@@ -328,67 +312,49 @@ fun GalleryTabContent(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(horizontal = 24.dp, vertical = 20.dp),
+                    .padding(horizontal = 20.dp, vertical = 20.dp),
                 contentAlignment = Alignment.Center,
             ) {
-                Surface(
-                    shape = RoundedCornerShape(20.dp),
-                    color = c.surface,
-                    border = BorderStroke(1.dp, c.border),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 20.dp, vertical = 28.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                if (isFiltered) {
+                    GuEmptyState(
+                        title = if (isZh) "当前筛选条件下暂无匹配作品" else "No artworks match the current filter",
+                        icon = Icons.Default.FilterAltOff,
+                        actionLabel = if (isZh) "重置筛选" else "Reset Filters",
+                        onAction = {
+                            viewModel.setSearchQuery("")
+                            viewModel.setFilter("all")
+                        },
+                    )
+                } else {
+                    GuCard(
+                        modifier = Modifier.fillMaxWidth(),
+                        cornerRadius = 20.dp,
+                        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 28.dp),
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(52.dp)
-                                .clip(RoundedCornerShape(16.dp))
-                                .background(c.primarySoft),
-                            contentAlignment = Alignment.Center,
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
-                            Icon(
-                                if (isFiltered) Icons.Default.FilterAltOff else Icons.Default.AutoAwesome,
-                                contentDescription = null,
-                                tint = c.primary,
-                                modifier = Modifier.size(26.dp),
+                            GuIconTile(
+                                icon = Icons.Default.AutoAwesome,
+                                tint = c.primarySoftInk,
+                                backgroundColor = c.primarySoft,
+                                size = 52.dp,
+                                iconSize = 26.dp,
+                                cornerRadius = 15.dp,
                             )
-                        }
-                        Text(
-                            text = if (isFiltered) {
-                                if (isZh) "当前筛选条件下暂无匹配作品" else "No artworks match the current filter"
-                            } else {
-                                strings.images.emptyWorks
-                            },
-                            color = c.ink,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold,
-                            textAlign = TextAlign.Center,
-                        )
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            if (isFiltered) {
-                                GuButton(
-                                    onClick = {
-                                        viewModel.setSearchQuery("")
-                                        viewModel.setFilter("all")
-                                    },
-                                    compact = true,
-                                    variant = GuButtonVariant.PRIMARY,
-                                ) {
-                                    Text(
-                                        if (isZh) "重置筛选" else "Reset Filters",
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold,
-                                    )
-                                }
-                            } else {
+                            Text(
+                                text = strings.images.emptyWorks,
+                                color = c.ink,
+                                fontSize = 14.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center,
+                            )
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
                                 GuButton(
                                     onClick = { viewModel.setShowCreateSheet(true) },
                                     compact = true,
@@ -411,9 +377,9 @@ fun GalleryTabContent(
         } else {
             LazyVerticalGrid(
                 columns = GridCells.Fixed(2),
-                contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 2.dp, bottom = 96.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                contentPadding = PaddingValues(start = 10.dp, end = 10.dp, top = 2.dp, bottom = 104.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.fillMaxSize(),
             ) {
                 items(state.generations, key = { it.id }) { gen ->
@@ -443,7 +409,9 @@ fun GalleryTabContent(
                             onClick = viewModel::loadMoreGallery,
                             loading = state.isLoadingMore,
                             variant = GuButtonVariant.SECONDARY,
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 8.dp),
                         ) {
                             Text(strings.images.loadMore, fontWeight = FontWeight.Bold)
                         }
@@ -465,9 +433,10 @@ private fun GalleryWorkCard(
     onLongClick: () -> Unit,
 ) {
     val strings = LocalAppStrings.current
-    val c = LocalAppTheme.current.colors
+    val theme = LocalAppTheme.current
+    val c = theme.colors
     val isPending = generation.status.lowercase() in setOf("pending", "queued", "processing", "running")
-    val shape = RoundedCornerShape(16.dp)
+    val shape = RoundedCornerShape(14.dp)
     val actionLabel = generation.action
         ?.takeIf { it.isNotBlank() && it != "generate" }
         ?.let { strings.images.actions[it] ?: it }
@@ -475,11 +444,11 @@ private fun GalleryWorkCard(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .aspectRatio(0.92f)
+            .aspectRatio(0.9f)
             .clip(shape)
             .background(c.surface)
             .border(
-                width = if (selected) 2.dp else 1.dp,
+                width = if (selected) 2.dp else theme.borderWidth,
                 color = if (selected) c.primary else c.border,
                 shape = shape,
             )
@@ -498,16 +467,21 @@ private fun GalleryWorkCard(
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
             )
+            // Silky 3-stop bottom editorial scrim
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .align(Alignment.BottomCenter)
                     .background(
                         Brush.verticalGradient(
-                            colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.78f)),
+                            colorStops = arrayOf(
+                                0.0f to Color.Transparent,
+                                0.44f to Color.Black.copy(alpha = 0.36f),
+                                1.0f to Color.Black.copy(alpha = 0.84f),
+                            ),
                         ),
                     )
-                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                    .padding(start = 10.dp, end = 10.dp, top = 26.dp, bottom = 9.dp),
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text(
@@ -521,7 +495,7 @@ private fun GalleryWorkCard(
                     )
                     Text(
                         text = generation.model,
-                        color = Color.White.copy(alpha = 0.72f),
+                        color = Color.White.copy(alpha = 0.76f),
                         fontSize = 9.5.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -538,11 +512,11 @@ private fun GalleryWorkCard(
                 verticalArrangement = Arrangement.Center,
             ) {
                 CircularProgressIndicator(color = c.primary, strokeWidth = 2.5.dp, modifier = Modifier.size(28.dp))
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(10.dp))
                 val qText = generation.queue_position?.let {
                     strings.images.queueWaiting.fmt("ahead" to it)
                 } ?: (strings.images.statuses[generation.status] ?: generation.status)
-                Text(qText, color = c.ink, fontSize = 11.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+                Text(qText, color = c.ink, fontSize = 11.5.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
                 if (generation.prompt.isNotBlank()) {
                     Spacer(Modifier.height(4.dp))
                     Text(
@@ -566,7 +540,7 @@ private fun GalleryWorkCard(
             ) {
                 GuBadge(strings.images.statuses[generation.status] ?: generation.status, variant = GuBadgeVariant.DANGER)
                 if (generation.prompt.isNotBlank()) {
-                    Spacer(Modifier.height(6.dp))
+                    Spacer(Modifier.height(8.dp))
                     Text(
                         text = generation.prompt,
                         color = c.muted,
@@ -586,7 +560,8 @@ private fun GalleryWorkCard(
                     .padding(7.dp)
                     .clip(RoundedCornerShape(999.dp))
                     .background(Color.Black.copy(alpha = 0.56f))
-                    .padding(horizontal = 7.dp, vertical = 2.dp),
+                    .border(0.8.dp, Color.White.copy(alpha = 0.22f), RoundedCornerShape(999.dp))
+                    .padding(horizontal = 7.5.dp, vertical = 2.5.dp),
             ) {
                 Text(actionLabel, color = Color.White, fontSize = 9.5.sp, fontWeight = FontWeight.Bold)
             }
@@ -599,7 +574,8 @@ private fun GalleryWorkCard(
                     .padding(7.dp)
                     .size(24.dp)
                     .clip(CircleShape)
-                    .background(Color.Black.copy(alpha = 0.45f)),
+                    .background(if (selected) Color.White else Color.Black.copy(alpha = 0.48f))
+                    .border(0.8.dp, if (selected) c.primary else Color.White.copy(alpha = 0.35f), CircleShape),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
@@ -616,7 +592,8 @@ private fun GalleryWorkCard(
                     .padding(7.dp)
                     .clip(RoundedCornerShape(999.dp))
                     .background(Color.Black.copy(alpha = 0.58f))
-                    .padding(horizontal = 7.dp, vertical = 2.dp),
+                    .border(0.8.dp, Color.White.copy(alpha = 0.22f), RoundedCornerShape(999.dp))
+                    .padding(horizontal = 7.5.dp, vertical = 2.5.dp),
             ) {
                 Text("${generation.images.size}P", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
             }

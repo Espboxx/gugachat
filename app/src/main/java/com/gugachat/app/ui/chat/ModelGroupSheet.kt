@@ -11,11 +11,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -40,6 +38,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -48,7 +47,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -59,6 +57,11 @@ import com.gugachat.app.core.storage.ApiProviderConfig
 import com.gugachat.app.core.theme.GuBadge
 import com.gugachat.app.core.theme.GuBadgeVariant
 import com.gugachat.app.core.theme.GuCompactSearchBar
+import com.gugachat.app.core.theme.GuEmptyState
+import com.gugachat.app.core.theme.GuIconTile
+import com.gugachat.app.core.theme.GuModalDragHandle
+import com.gugachat.app.core.theme.GuSectionHeader
+import com.gugachat.app.core.theme.GuSegmentedControl
 import com.gugachat.app.core.theme.GuSelectableListRow
 import com.gugachat.app.core.theme.GuSheetHeader
 import com.gugachat.app.core.theme.LocalAppTheme
@@ -80,11 +83,22 @@ fun ModelGroupSheet(
     onDismiss: () -> Unit,
 ) {
     val strings = LocalAppStrings.current
-    val c = LocalAppTheme.current.colors
+    val theme = LocalAppTheme.current
+    val c = theme.colors
     val isZh = strings.language == AppLanguage.ZH
     var groupSearch by remember { mutableStateOf("") }
     var showGroupSearch by remember { mutableStateOf(false) }
     var modelSearch by remember { mutableStateOf("") }
+    var capFilterIndex by remember { mutableIntStateOf(0) } // 0=All, 1=Free, 2=Vision, 3=Reasoning
+
+    val capFilterLabels = remember(isZh, strings) {
+        listOf(
+            strings.novel.filterAll,
+            if (isZh) "限免" else "Free",
+            strings.chat.visionCap,
+            strings.chat.reasoningCap,
+        )
+    }
 
     val filteredGroups = remember(groups, groupSearch, strings.providers.protocolShortNames) {
         FuzzyMatcher.filterAndRank(groups, groupSearch) { g ->
@@ -103,8 +117,14 @@ fun ModelGroupSheet(
         }
     }
 
-    val filteredModels = remember(models, modelSearch) {
-        FuzzyMatcher.filterAndRank(models, modelSearch) { m ->
+    val filteredModels = remember(models, modelSearch, capFilterIndex) {
+        val byCap = when (capFilterIndex) {
+            1 -> models.filter { FreeQuotaUtils.hasAvailableFreeQuota(it.free_quota) || it.free_quota != null }
+            2 -> models.filter { it.supports_vision }
+            3 -> models.filter { it.supports_reasoning }
+            else -> models
+        }
+        FuzzyMatcher.filterAndRank(byCap, modelSearch) { m ->
             listOf(
                 m.id,
                 if (m.supports_vision) "视觉 vision" else "",
@@ -126,12 +146,13 @@ fun ModelGroupSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = c.page,
+        dragHandle = { GuModalDragHandle() },
         modifier = Modifier.statusBarsPadding(),
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .fillMaxHeight(0.84f)
+                .fillMaxHeight(0.86f)
                 .imePadding()
                 .navigationBarsPadding(),
         ) {
@@ -142,48 +163,44 @@ fun ModelGroupSheet(
                 closeContentDescription = strings.common.close,
             )
 
-            // Compact horizontal group selector (no competing nested vertical scroll!)
+            // Provider / Group channel strip
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 10.dp, bottom = 8.dp),
+                    .padding(top = 8.dp, bottom = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text(
-                        text = strings.chat.selectGroup,
-                        color = c.ink,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                    )
-                    GuBadge(
-                        text = if (groupSearch.isNotBlank()) "${filteredGroups.size}/${groups.size}" else "${groups.size}",
-                        variant = GuBadgeVariant.NEUTRAL,
-                    )
-                    Spacer(Modifier.weight(1f))
-                    if (groups.size > 4) {
-                        IconButton(
-                            onClick = {
-                                showGroupSearch = !showGroupSearch
-                                if (!showGroupSearch) groupSearch = ""
-                            },
-                            modifier = Modifier.size(36.dp),
+                GuSectionHeader(
+                    title = strings.chat.selectGroup,
+                    modifier = Modifier.padding(horizontal = 12.dp),
+                    trailing = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Search,
-                                contentDescription = strings.chat.searchGroups,
-                                tint = if (showGroupSearch || groupSearch.isNotBlank()) c.primary else c.muted,
-                                modifier = Modifier.size(18.dp),
+                            GuBadge(
+                                text = if (groupSearch.isNotBlank()) "${filteredGroups.size}/${groups.size}" else "${groups.size}",
+                                variant = GuBadgeVariant.NEUTRAL,
                             )
+                            if (groups.size > 4) {
+                                IconButton(
+                                    onClick = {
+                                        showGroupSearch = !showGroupSearch
+                                        if (!showGroupSearch) groupSearch = ""
+                                    },
+                                    modifier = Modifier.size(36.dp),
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Search,
+                                        contentDescription = strings.chat.searchGroups,
+                                        tint = if (showGroupSearch || groupSearch.isNotBlank()) c.primary else c.muted,
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                }
+                            }
                         }
-                    }
-                }
+                    },
+                )
 
                 AnimatedVisibility(visible = showGroupSearch) {
                     GuCompactSearchBar(
@@ -219,10 +236,11 @@ fun ModelGroupSheet(
                                 onClick = {
                                     onSelectGroup(g.id)
                                     modelSearch = ""
+                                    capFilterIndex = 0
                                 },
                                 shape = RoundedCornerShape(12.dp),
                                 color = if (selected) c.primary else c.surface,
-                                border = BorderStroke(1.dp, if (selected) c.primary else c.border),
+                                border = BorderStroke(theme.borderWidth, if (selected) c.primary else c.border),
                                 modifier = Modifier.heightIn(min = 38.dp),
                             ) {
                                 Row(
@@ -242,20 +260,20 @@ fun ModelGroupSheet(
                                         text = g.name,
                                         color = if (selected) Color.White else c.ink,
                                         fontSize = 12.5.sp,
-                                        fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.SemiBold,
+                                        fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold,
                                         maxLines = 1,
                                     )
                                     if (protoTag != null) {
                                         Text(
                                             text = protoTag,
-                                            color = if (selected) Color.White.copy(alpha = 0.85f) else c.primarySoftInk,
+                                            color = if (selected) Color.White.copy(alpha = 0.86f) else c.primarySoftInk,
                                             fontSize = 10.5.sp,
                                             fontWeight = FontWeight.Bold,
                                         )
                                     } else if (g.rate_multiplier != 1.0) {
                                         Text(
                                             text = "${g.rate_multiplier}x",
-                                            color = if (selected) Color.White.copy(alpha = 0.85f) else c.accent,
+                                            color = if (selected) Color.White.copy(alpha = 0.86f) else c.accent,
                                             fontSize = 10.5.sp,
                                             fontWeight = FontWeight.Bold,
                                         )
@@ -267,9 +285,12 @@ fun ModelGroupSheet(
                 }
             }
 
-            HorizontalDivider(color = c.border.copy(alpha = 0.65f))
+            HorizontalDivider(
+                thickness = theme.borderWidth,
+                color = c.border.copy(alpha = 0.75f),
+            )
 
-            // Single full-height searchable model list
+            // Full-height searchable model picker
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -277,50 +298,34 @@ fun ModelGroupSheet(
                     .padding(horizontal = 16.dp, vertical = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Row(
-                        modifier = Modifier.weight(1f),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Text(
-                            text = strings.chat.model,
-                            color = c.ink,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                        )
-                        if (!selectedModelId.isNullOrBlank()) {
-                            Surface(
-                                shape = RoundedCornerShape(999.dp),
-                                color = c.primarySoft,
-                                border = BorderStroke(1.dp, c.primary.copy(alpha = 0.35f)),
-                                modifier = Modifier.weight(1f, fill = false),
-                            ) {
-                                Text(
+                GuSectionHeader(
+                    title = strings.chat.model,
+                    trailing = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            if (!selectedModelId.isNullOrBlank()) {
+                                GuBadge(
                                     text = selectedModelId,
-                                    color = c.primarySoftInk,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                                    variant = GuBadgeVariant.BLUE,
                                 )
                             }
+                            GuBadge(
+                                text = if (modelSearch.isNotBlank() || capFilterIndex != 0) {
+                                    "${filteredModels.size}/${models.size}"
+                                } else {
+                                    "${models.size}"
+                                },
+                                variant = if (filteredModels.isEmpty() && models.isNotEmpty()) {
+                                    GuBadgeVariant.AMBER
+                                } else {
+                                    GuBadgeVariant.NEUTRAL
+                                },
+                            )
                         }
-                    }
-                    GuBadge(
-                        text = if (modelSearch.isNotBlank()) "${filteredModels.size}/${models.size}" else "${models.size}",
-                        variant = if (modelSearch.isNotBlank() && filteredModels.isEmpty() && models.isNotEmpty()) {
-                            GuBadgeVariant.AMBER
-                        } else {
-                            GuBadgeVariant.NEUTRAL
-                        },
-                    )
-                }
+                    },
+                )
 
                 GuCompactSearchBar(
                     value = modelSearch,
@@ -329,22 +334,34 @@ fun ModelGroupSheet(
                     clearContentDescription = strings.common.clear,
                 )
 
+                if (models.isNotEmpty()) {
+                    GuSegmentedControl(
+                        items = capFilterLabels,
+                        selectedIndex = capFilterIndex,
+                        onSelect = { capFilterIndex = it },
+                        compact = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+
                 if (filteredModels.isEmpty() && !showCustomAction) {
                     Box(
-                        modifier = Modifier.fillMaxSize().padding(24.dp),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(vertical = 20.dp),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Text(
-                            text = if (models.isEmpty()) strings.chat.noModels else strings.chat.noMatchingModels,
-                            color = c.muted,
-                            fontSize = 13.sp,
-                            textAlign = TextAlign.Center,
+                        GuEmptyState(
+                            title = if (models.isEmpty()) strings.chat.noModels else strings.chat.noMatchingModels,
+                            icon = Icons.Default.Search,
                         )
                     }
                 } else {
                     LazyColumn(
-                        modifier = Modifier.fillMaxWidth().weight(1f),
-                        contentPadding = PaddingValues(bottom = 12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        contentPadding = PaddingValues(top = 2.dp, bottom = 14.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         if (showCustomAction) {
@@ -354,21 +371,31 @@ fun ModelGroupSheet(
                                         .fillMaxWidth()
                                         .clip(RoundedCornerShape(12.dp))
                                         .background(c.primarySoft)
-                                        .border(1.dp, c.primary.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
+                                        .border(theme.borderWidth, c.primary.copy(alpha = 0.45f), RoundedCornerShape(12.dp))
                                         .clickable {
                                             onSelectCustomModel(trimmedModelSearch)
                                             onDismiss()
                                         }
-                                        .padding(horizontal = 12.dp, vertical = 12.dp),
+                                        .padding(horizontal = 12.dp, vertical = 10.dp),
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
                                 ) {
-                                    Icon(Icons.Default.Add, contentDescription = null, tint = c.primarySoftInk)
+                                    GuIconTile(
+                                        icon = Icons.Default.Add,
+                                        tint = Color.White,
+                                        backgroundColor = c.primary,
+                                        size = 30.dp,
+                                        iconSize = 17.dp,
+                                        cornerRadius = 8.dp,
+                                    )
                                     Text(
                                         text = strings.providers.useCustomModelFormat.fmt("model" to trimmedModelSearch),
                                         color = c.primarySoftInk,
                                         fontSize = 13.sp,
                                         fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f),
                                     )
                                 }
                             }

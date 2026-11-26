@@ -8,7 +8,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,7 +18,6 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -30,6 +28,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -41,11 +40,9 @@ import androidx.compose.material.icons.filled.Casino
 import androidx.compose.material.icons.filled.CheckBox
 import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
 import androidx.compose.material.icons.filled.ContentPaste
-import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.FolderZip
-import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -65,9 +62,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -82,7 +77,11 @@ import com.gugachat.app.core.theme.GuBadgeVariant
 import com.gugachat.app.core.theme.GuButton
 import com.gugachat.app.core.theme.GuButtonVariant
 import com.gugachat.app.core.theme.GuCompactSearchBar
-import com.gugachat.app.core.theme.GuPill
+import com.gugachat.app.core.theme.GuGroupedCard
+import com.gugachat.app.core.theme.GuIconTile
+import com.gugachat.app.core.theme.GuModalDragHandle
+import com.gugachat.app.core.theme.GuSectionHeader
+import com.gugachat.app.core.theme.GuSegmentedControl
 import com.gugachat.app.core.theme.GuSheetHeader
 import com.gugachat.app.core.theme.GuTextField
 import com.gugachat.app.core.theme.LocalAppTheme
@@ -116,7 +115,8 @@ fun ExternalImportSheet(
     onDismiss: () -> Unit,
 ) {
     val strings = LocalAppStrings.current
-    val c = LocalAppTheme.current.colors
+    val theme = LocalAppTheme.current
+    val c = theme.colors
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -138,6 +138,16 @@ fun ExternalImportSheet(
     var targetModeOverride by remember { mutableStateOf<ConversationMode?>(null) }
 
     val dateFmt = remember { SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()) }
+
+    val targetModes = remember { listOf(null, ConversationMode.chat, ConversationMode.rp, ConversationMode.novel) }
+    val targetModeLabels = remember(strings) {
+        listOf(
+            strings.chat.importTargetAuto,
+            strings.novel.filterChat,
+            strings.rp.filterRp,
+            strings.novel.filterNovel,
+        )
+    }
 
     fun hintForTab(tab: ImportPlatformTab): ExternalImportSource = when (tab) {
         ImportPlatformTab.DEEPSEEK -> ExternalImportSource.DEEPSEEK
@@ -182,6 +192,7 @@ fun ExternalImportSheet(
         onDismissRequest = { if (!isBusy) onDismiss() },
         sheetState = sheetState,
         containerColor = c.page,
+        dragHandle = { GuModalDragHandle() },
         modifier = Modifier.statusBarsPadding(),
     ) {
         Column(
@@ -205,7 +216,6 @@ fun ExternalImportSheet(
                         .padding(top = 12.dp, bottom = 20.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    // Stage 1: Platform Switcher with full-bleed horizontal edge padding
                     val platformTabs = remember(strings) {
                         listOf(
                             Triple(ImportPlatformTab.DEEPSEEK, strings.chat.importSourceDeepSeek, Icons.Default.AutoAwesome),
@@ -232,7 +242,7 @@ fun ExternalImportSheet(
                                 },
                                 shape = RoundedCornerShape(999.dp),
                                 color = if (selected) c.primary else c.surface,
-                                border = BorderStroke(1.dp, if (selected) c.primary else c.border),
+                                border = BorderStroke(theme.borderWidth, if (selected) c.primary else c.border),
                                 modifier = Modifier.heightIn(min = 36.dp),
                             ) {
                                 Row(
@@ -250,7 +260,7 @@ fun ExternalImportSheet(
                                         text = label,
                                         color = if (selected) Color.White else c.ink,
                                         fontSize = 12.5.sp,
-                                        fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.SemiBold,
+                                        fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold,
                                         maxLines = 1,
                                     )
                                 }
@@ -265,67 +275,66 @@ fun ExternalImportSheet(
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         if (activeTab == ImportPlatformTab.DEEPSEEK) {
-                            Row(
+                            GuSegmentedControl(
+                                items = listOf(strings.chat.importDeepSeekModeZip, strings.chat.importDeepSeekModeLink),
+                                selectedIndex = deepSeekSubTab,
+                                onSelect = { idx ->
+                                    deepSeekSubTab = idx
+                                    errorMsg = null
+                                    linkNeedsBrowser = false
+                                },
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            ) {
-                                ImportModeOptionCard(
-                                    title = strings.chat.importDeepSeekModeZip,
-                                    icon = Icons.Default.FolderZip,
-                                    selected = deepSeekSubTab == 0,
-                                    onClick = {
-                                        deepSeekSubTab = 0
-                                        errorMsg = null
-                                        linkNeedsBrowser = false
-                                    },
-                                    modifier = Modifier.weight(1f),
-                                )
-                                ImportModeOptionCard(
-                                    title = strings.chat.importDeepSeekModeLink,
-                                    icon = Icons.Default.Link,
-                                    selected = deepSeekSubTab == 1,
-                                    onClick = {
-                                        deepSeekSubTab = 1
-                                        errorMsg = null
-                                        linkNeedsBrowser = false
-                                    },
-                                    modifier = Modifier.weight(1f),
-                                )
-                            }
+                            )
                         } else if (activeTab == ImportPlatformTab.CHENGGUANG) {
-                            Row(
+                            GuSegmentedControl(
+                                items = listOf(strings.chat.importChengguangModeFile, strings.chat.importChengguangModePaste),
+                                selectedIndex = chengguangSubTab,
+                                onSelect = { idx ->
+                                    chengguangSubTab = idx
+                                    errorMsg = null
+                                },
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            ) {
-                                ImportModeOptionCard(
-                                    title = strings.chat.importChengguangModeFile,
-                                    icon = Icons.Default.Description,
-                                    selected = chengguangSubTab == 0,
-                                    onClick = {
-                                        chengguangSubTab = 0
-                                        errorMsg = null
-                                    },
-                                    modifier = Modifier.weight(1f),
-                                )
-                                ImportModeOptionCard(
-                                    title = strings.chat.importChengguangModePaste,
-                                    icon = Icons.Default.EditNote,
-                                    selected = chengguangSubTab == 1,
-                                    onClick = {
-                                        chengguangSubTab = 1
-                                        errorMsg = null
-                                    },
-                                    modifier = Modifier.weight(1f),
-                                )
-                            }
+                            )
                         }
 
-                        Surface(
-                            shape = RoundedCornerShape(16.dp),
-                            color = c.surface,
-                            border = BorderStroke(1.dp, c.border),
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
+                        val (activeIcon, activeTint, activeBg, activeTitle) = when (activeTab) {
+                            ImportPlatformTab.DEEPSEEK -> Quad(Icons.Default.AutoAwesome, c.primarySoftInk, c.primarySoft, strings.chat.importSourceDeepSeek)
+                            ImportPlatformTab.TAVERN -> Quad(Icons.Default.Casino, c.success, c.successBg, strings.chat.importSourceTavern)
+                            ImportPlatformTab.CHENGGUANG -> Quad(Icons.Default.AutoStories, c.tagInk, c.tag, strings.chat.importSourceChengguang)
+                            ImportPlatformTab.CHATBOX -> Quad(Icons.AutoMirrored.Filled.Chat, c.primarySoftInk, c.primarySoft, strings.chat.importSourceChatbox)
+                            ImportPlatformTab.OTHER -> Quad(Icons.Default.Public, c.accent, c.accentSoft, strings.chat.importSourceOther)
+                        }
+
+                        GuGroupedCard(modifier = Modifier.fillMaxWidth()) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                GuIconTile(
+                                    icon = activeIcon,
+                                    tint = activeTint,
+                                    backgroundColor = activeBg,
+                                    size = 38.dp,
+                                    iconSize = 19.dp,
+                                    cornerRadius = 11.dp,
+                                )
+                                Text(
+                                    text = activeTitle,
+                                    color = c.ink,
+                                    fontSize = 14.5.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+
+                            HorizontalDivider(
+                                thickness = theme.borderWidth,
+                                color = c.border.copy(alpha = 0.78f),
+                            )
+
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -339,7 +348,7 @@ fun ExternalImportSheet(
                                                 text = strings.chat.importDeepSeekZipHint,
                                                 color = c.muted,
                                                 fontSize = 12.5.sp,
-                                                lineHeight = 18.sp,
+                                                lineHeight = 18.5.sp,
                                             )
                                             GuButton(
                                                 onClick = { filePicker.launch(arrayOf("*/*")) },
@@ -356,7 +365,7 @@ fun ExternalImportSheet(
                                                 text = strings.chat.importDeepSeekLinkHint,
                                                 color = c.muted,
                                                 fontSize = 12.5.sp,
-                                                lineHeight = 18.sp,
+                                                lineHeight = 18.5.sp,
                                             )
                                             GuTextField(
                                                 value = linkInput,
@@ -438,7 +447,7 @@ fun ExternalImportSheet(
                                             text = strings.chat.importTavernHint,
                                             color = c.muted,
                                             fontSize = 12.5.sp,
-                                            lineHeight = 18.sp,
+                                            lineHeight = 18.5.sp,
                                         )
                                         GuButton(
                                             onClick = { filePicker.launch(arrayOf("*/*")) },
@@ -458,7 +467,7 @@ fun ExternalImportSheet(
                                                 text = strings.chat.importChengguangHint,
                                                 color = c.muted,
                                                 fontSize = 12.5.sp,
-                                                lineHeight = 18.sp,
+                                                lineHeight = 18.5.sp,
                                             )
                                             GuButton(
                                                 onClick = { filePicker.launch(arrayOf("*/*")) },
@@ -475,7 +484,7 @@ fun ExternalImportSheet(
                                                 text = strings.chat.importChengguangHint,
                                                 color = c.muted,
                                                 fontSize = 12.sp,
-                                                lineHeight = 17.sp,
+                                                lineHeight = 17.5.sp,
                                             )
                                             GuTextField(
                                                 value = pastedScript,
@@ -543,7 +552,7 @@ fun ExternalImportSheet(
                                             text = strings.chat.importChatboxHint,
                                             color = c.muted,
                                             fontSize = 12.5.sp,
-                                            lineHeight = 18.sp,
+                                            lineHeight = 18.5.sp,
                                         )
                                         GuButton(
                                             onClick = { filePicker.launch(arrayOf("application/json", "*/*")) },
@@ -562,7 +571,7 @@ fun ExternalImportSheet(
                                             text = strings.chat.importOtherHint,
                                             color = c.muted,
                                             fontSize = 12.5.sp,
-                                            lineHeight = 18.sp,
+                                            lineHeight = 18.5.sp,
                                         )
                                         GuButton(
                                             onClick = { filePicker.launch(arrayOf("*/*")) },
@@ -582,7 +591,11 @@ fun ExternalImportSheet(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                                     ) {
-                                        CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp, color = c.primary)
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(14.dp),
+                                            strokeWidth = 2.dp,
+                                            color = c.primary,
+                                        )
                                         Text(busyLabel, color = c.muted, fontSize = 12.sp)
                                     }
                                 }
@@ -591,14 +604,14 @@ fun ExternalImportSheet(
                                     Surface(
                                         shape = RoundedCornerShape(12.dp),
                                         color = c.dangerBg,
-                                        border = BorderStroke(1.dp, c.danger.copy(alpha = 0.45f)),
+                                        border = BorderStroke(theme.borderWidth, c.danger.copy(alpha = 0.42f)),
                                         modifier = Modifier.fillMaxWidth(),
                                     ) {
                                         Column(
-                                            modifier = Modifier.padding(10.dp),
+                                            modifier = Modifier.padding(11.dp),
                                             verticalArrangement = Arrangement.spacedBy(8.dp),
                                         ) {
-                                            Text(err, color = c.danger, fontSize = 12.sp, lineHeight = 17.sp)
+                                            Text(err, color = c.danger, fontSize = 12.sp, lineHeight = 17.5.sp)
                                             if (linkNeedsBrowser) {
                                                 GuButton(
                                                     onClick = {
@@ -620,7 +633,7 @@ fun ExternalImportSheet(
                     }
                 }
             } else {
-                // Stage 2: Universal Preview & Selective Import
+                // Stage 2: Preview & Selective Import
                 val totalMsgs = remember(bundle) { bundle.items.sumOf { it.messages.size } }
                 val filteredItems = remember(bundle, searchQuery) {
                     FuzzyMatcher.filterAndRank(bundle.items, searchQuery) { item ->
@@ -628,6 +641,7 @@ fun ExternalImportSheet(
                     }
                 }
                 val allVisibleSelected = filteredItems.isNotEmpty() && filteredItems.all { it.conversation.id in selectedIds }
+                val selectedModeIndex = targetModes.indexOf(targetModeOverride).coerceAtLeast(0)
 
                 Column(
                     modifier = Modifier
@@ -658,36 +672,29 @@ fun ExternalImportSheet(
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier
+                                .heightIn(min = 36.dp)
                                 .clickable(enabled = !isBusy) {
                                     parsedBundle = null
                                     selectedIds = emptySet()
                                     targetModeOverride = null
                                     errorMsg = null
                                 }
-                                .padding(horizontal = 6.dp, vertical = 6.dp),
+                                .padding(horizontal = 8.dp, vertical = 8.dp),
                         )
                     }
 
-                    // Target Mode Override Pills stacked cleanly under label
                     Column(
                         modifier = Modifier.fillMaxWidth(),
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
-                        Text(
-                            text = strings.chat.importTargetModeLabel,
-                            color = c.muted,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
+                        GuSectionHeader(title = strings.chat.importTargetModeLabel)
+                        GuSegmentedControl(
+                            items = targetModeLabels,
+                            selectedIndex = selectedModeIndex,
+                            onSelect = { idx -> targetModeOverride = targetModes.getOrNull(idx) },
+                            compact = true,
+                            modifier = Modifier.fillMaxWidth(),
                         )
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            GuPill(strings.chat.importTargetAuto, targetModeOverride == null, { targetModeOverride = null })
-                            GuPill(strings.novel.filterChat, targetModeOverride == ConversationMode.chat, { targetModeOverride = ConversationMode.chat })
-                            GuPill(strings.rp.filterRp, targetModeOverride == ConversationMode.rp, { targetModeOverride = ConversationMode.rp })
-                            GuPill(strings.novel.filterNovel, targetModeOverride == ConversationMode.novel, { targetModeOverride = ConversationMode.novel })
-                        }
                     }
 
                     if (bundle.items.size > 1) {
@@ -720,28 +727,25 @@ fun ExternalImportSheet(
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold,
                                 modifier = Modifier
+                                    .heightIn(min = 36.dp)
                                     .clickable {
                                         val visibleIds = filteredItems.map { it.conversation.id }.toSet()
                                         selectedIds = if (allVisibleSelected) selectedIds - visibleIds else selectedIds + visibleIds
                                     }
-                                    .padding(horizontal = 6.dp, vertical = 4.dp),
+                                    .padding(horizontal = 8.dp, vertical = 8.dp),
                             )
                         }
                     }
 
-                    Surface(
-                        shape = RoundedCornerShape(14.dp),
-                        color = c.surface,
-                        border = BorderStroke(1.dp, c.border),
+                    GuGroupedCard(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(min = 110.dp, max = 280.dp),
+                            .heightIn(min = 120.dp, max = 300.dp),
                     ) {
                         LazyColumn(
-                            modifier = Modifier.fillMaxWidth().padding(6.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.fillMaxWidth(),
                         ) {
-                            items(filteredItems, key = { it.conversation.id }) { item ->
+                            itemsIndexed(filteredItems, key = { _, it -> it.conversation.id }) { idx, item ->
                                 val checked = item.conversation.id in selectedIds
                                 val effectiveMode = targetModeOverride ?: item.conversation.mode
                                 val modeTag = when (effectiveMode) {
@@ -754,78 +758,83 @@ fun ExternalImportSheet(
                                     item.novelChapters.size > 1 ||
                                     (effectiveMode == ConversationMode.novel && item.novelChapters.isNotEmpty())
 
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(10.dp))
-                                        .background(if (checked) c.primarySoft else c.surfaceSoft.copy(alpha = 0.65f))
-                                        .border(
-                                            width = 1.dp,
-                                            color = if (checked) c.primary.copy(alpha = 0.45f) else Color.Transparent,
-                                            shape = RoundedCornerShape(10.dp),
-                                        )
-                                        .clickable {
-                                            selectedIds = if (checked) selectedIds - item.conversation.id else selectedIds + item.conversation.id
-                                        }
-                                        .padding(horizontal = 10.dp, vertical = 10.dp),
-                                    verticalAlignment = Alignment.Top,
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                ) {
-                                    Icon(
-                                        imageVector = if (checked) Icons.Default.CheckBox else Icons.Default.CheckBoxOutlineBlank,
-                                        contentDescription = null,
-                                        tint = if (checked) c.primary else c.muted,
-                                        modifier = Modifier.size(20.dp).padding(top = 1.dp),
-                                    )
-                                    Column(
-                                        modifier = Modifier.weight(1f),
-                                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                                Column(modifier = Modifier.fillMaxWidth()) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .background(if (checked) c.primarySoft.copy(alpha = 0.55f) else Color.Transparent)
+                                            .clickable {
+                                                selectedIds = if (checked) selectedIds - item.conversation.id else selectedIds + item.conversation.id
+                                            }
+                                            .padding(horizontal = 12.dp, vertical = 11.dp),
+                                        verticalAlignment = Alignment.Top,
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
                                     ) {
-                                        Text(
-                                            text = item.conversation.title,
-                                            color = c.ink,
-                                            fontSize = 13.5.sp,
-                                            fontWeight = if (checked) FontWeight.Bold else FontWeight.Medium,
-                                            maxLines = 2,
-                                            overflow = TextOverflow.Ellipsis,
+                                        Icon(
+                                            imageVector = if (checked) Icons.Default.CheckBox else Icons.Default.CheckBoxOutlineBlank,
+                                            contentDescription = null,
+                                            tint = if (checked) c.primary else c.muted,
+                                            modifier = Modifier
+                                                .size(20.dp)
+                                                .padding(top = 1.dp),
                                         )
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        Column(
+                                            modifier = Modifier.weight(1f),
+                                            verticalArrangement = Arrangement.spacedBy(4.dp),
                                         ) {
                                             Text(
-                                                text = modeTag,
-                                                color = c.primarySoftInk,
-                                                fontSize = 11.sp,
-                                                fontWeight = FontWeight.Bold,
+                                                text = item.conversation.title,
+                                                color = c.ink,
+                                                fontSize = 13.5.sp,
+                                                fontWeight = if (checked) FontWeight.Bold else FontWeight.Medium,
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis,
                                             )
-                                            Text(
-                                                text = strings.chat.messageCount.fmt("count" to item.messages.size),
-                                                color = c.muted,
-                                                fontSize = 11.sp,
-                                            )
-                                            Text(
-                                                text = dateFmt.format(Date(item.conversation.updatedAt)),
-                                                color = c.muted,
-                                                fontSize = 11.sp,
-                                            )
-                                        }
-                                        if (hasBadges) {
-                                            FlowRow(
-                                                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp),
                                             ) {
-                                                if (item.hasReasoning) {
-                                                    GuBadge(strings.chat.importDeepSeekHasThinking, variant = GuBadgeVariant.HONEY)
-                                                }
-                                                if (item.loreEntries.isNotEmpty()) {
-                                                    GuBadge(strings.chat.importHasLore.fmt("count" to item.loreEntries.size), variant = GuBadgeVariant.BLUE)
-                                                }
-                                                if (item.novelChapters.size > 1 || (effectiveMode == ConversationMode.novel && item.novelChapters.isNotEmpty())) {
-                                                    GuBadge(strings.chat.importHasChapters.fmt("count" to item.novelChapters.size), variant = GuBadgeVariant.NEUTRAL)
+                                                Text(
+                                                    text = modeTag,
+                                                    color = c.primarySoftInk,
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                )
+                                                Text(
+                                                    text = strings.chat.messageCount.fmt("count" to item.messages.size),
+                                                    color = c.muted,
+                                                    fontSize = 11.sp,
+                                                )
+                                                Text(
+                                                    text = dateFmt.format(Date(item.conversation.updatedAt)),
+                                                    color = c.muted,
+                                                    fontSize = 11.sp,
+                                                )
+                                            }
+                                            if (hasBadges) {
+                                                FlowRow(
+                                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                                                ) {
+                                                    if (item.hasReasoning) {
+                                                        GuBadge(strings.chat.importDeepSeekHasThinking, variant = GuBadgeVariant.HONEY)
+                                                    }
+                                                    if (item.loreEntries.isNotEmpty()) {
+                                                        GuBadge(strings.chat.importHasLore.fmt("count" to item.loreEntries.size), variant = GuBadgeVariant.BLUE)
+                                                    }
+                                                    if (item.novelChapters.size > 1 || (effectiveMode == ConversationMode.novel && item.novelChapters.isNotEmpty())) {
+                                                        GuBadge(strings.chat.importHasChapters.fmt("count" to item.novelChapters.size), variant = GuBadgeVariant.NEUTRAL)
+                                                    }
                                                 }
                                             }
                                         }
+                                    }
+                                    if (idx < filteredItems.lastIndex) {
+                                        HorizontalDivider(
+                                            modifier = Modifier.padding(start = 42.dp),
+                                            thickness = theme.borderWidth,
+                                            color = c.border.copy(alpha = 0.78f),
+                                        )
                                     }
                                 }
                             }
@@ -833,10 +842,14 @@ fun ExternalImportSheet(
                     }
                 }
 
-                HorizontalDivider(color = c.border.copy(alpha = 0.7f))
+                HorizontalDivider(
+                    thickness = theme.borderWidth,
+                    color = c.border.copy(alpha = 0.8f),
+                )
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .background(c.surface)
                         .padding(horizontal = 16.dp, vertical = 12.dp),
                 ) {
                     GuButton(
@@ -880,6 +893,8 @@ fun ExternalImportSheet(
     }
 }
 
+private data class Quad<A, B, C, D>(val a: A, val b: B, val c: C, val d: D)
+
 private fun sourceDisplayName(source: ExternalImportSource, strings: AppStrings): String = when (source) {
     ExternalImportSource.DEEPSEEK -> strings.chat.importSourceDeepSeek
     ExternalImportSource.SILLYTAVERN -> strings.chat.importSourceTavern
@@ -905,48 +920,3 @@ private fun queryDisplayName(ctx: Context, uri: Uri): String? = runCatching {
         }
     }
 }.getOrNull() ?: uri.lastPathSegment
-
-@Composable
-private fun ImportModeOptionCard(
-    title: String,
-    icon: ImageVector,
-    selected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val c = LocalAppTheme.current.colors
-    Surface(
-        onClick = onClick,
-        shape = RoundedCornerShape(14.dp),
-        color = if (selected) c.primarySoft else c.surface,
-        border = BorderStroke(
-            width = if (selected) 1.5.dp else 1.dp,
-            color = if (selected) c.primary else c.border,
-        ),
-        modifier = modifier.height(56.dp),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center,
-        ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = if (selected) c.primarySoftInk else c.muted,
-                modifier = Modifier.size(18.dp),
-            )
-            Spacer(Modifier.width(7.dp))
-            Text(
-                text = title,
-                color = if (selected) c.primarySoftInk else c.ink,
-                fontSize = 13.sp,
-                fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-    }
-}

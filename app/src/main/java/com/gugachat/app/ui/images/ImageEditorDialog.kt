@@ -2,6 +2,7 @@ package com.gugachat.app.ui.images
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,6 +28,7 @@ import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Slider
@@ -45,6 +47,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -55,12 +58,11 @@ import com.gugachat.app.AppContainer
 import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.i18n.LocalAppStrings
 import com.gugachat.app.core.theme.GuAwningHeader
-import com.gugachat.app.core.theme.GuBadge
-import com.gugachat.app.core.theme.GuBadgeVariant
 import com.gugachat.app.core.theme.GuButton
 import com.gugachat.app.core.theme.GuButtonVariant
 import com.gugachat.app.core.theme.GuCard
 import com.gugachat.app.core.theme.GuPill
+import com.gugachat.app.core.theme.GuSegmentedControl
 import com.gugachat.app.core.theme.GuTextField
 import com.gugachat.app.core.theme.LocalAppTheme
 import com.gugachat.app.domain.images.ImageEditMode
@@ -90,7 +92,8 @@ fun ImageEditorDialog(
     ) -> Unit,
 ) {
     val strings = LocalAppStrings.current
-    val c = LocalAppTheme.current.colors
+    val theme = LocalAppTheme.current
+    val c = theme.colors
     val isZh = strings.language == AppLanguage.ZH
 
     val asset = target.generation.images.getOrNull(target.imageIndex)
@@ -113,6 +116,21 @@ fun ImageEditorDialog(
     val (targetW, targetH) = remember(outpaintAspect, outpaintResolution) {
         OnlineImageStudioUtils.computeCanvasDimensions(outpaintAspect, outpaintResolution, null)
     }
+
+    val modes = remember {
+        listOf(
+            ImageEditMode.EDIT,
+            ImageEditMode.VARIATION,
+            ImageEditMode.INPAINT,
+            ImageEditMode.OUTPAINT,
+        )
+    }
+    val modeLabels = listOf(
+        strings.images.actions["edit"] ?: "Edit",
+        strings.images.actions["variation"] ?: "Variation",
+        strings.images.actions["inpaint"] ?: "Inpaint",
+        strings.images.actions["outpaint"] ?: "Outpaint",
+    )
 
     val canSubmit = when (mode) {
         ImageEditMode.INPAINT -> strokes.isNotEmpty()
@@ -151,7 +169,7 @@ fun ImageEditorDialog(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(56.dp)
+                        .height(54.dp)
                         .padding(horizontal = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -193,6 +211,16 @@ fun ImageEditorDialog(
                         Text(strings.images.editorSubmit, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     }
                 }
+
+                GuSegmentedControl(
+                    items = modeLabels,
+                    selectedIndex = modes.indexOf(mode).coerceAtLeast(0),
+                    onSelect = { idx -> mode = modes[idx] },
+                    compact = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 12.dp, end = 12.dp, bottom = 10.dp),
+                )
             }
 
             Column(
@@ -202,13 +230,6 @@ fun ImageEditorDialog(
                     .padding(14.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    GuPill(strings.images.actions["edit"] ?: "Edit", mode == ImageEditMode.EDIT, { mode = ImageEditMode.EDIT })
-                    GuPill(strings.images.actions["variation"] ?: "Variation", mode == ImageEditMode.VARIATION, { mode = ImageEditMode.VARIATION })
-                    GuPill(strings.images.actions["inpaint"] ?: "Inpaint", mode == ImageEditMode.INPAINT, { mode = ImageEditMode.INPAINT })
-                    GuPill(strings.images.actions["outpaint"] ?: "Outpaint", mode == ImageEditMode.OUTPAINT, { mode = ImageEditMode.OUTPAINT })
-                }
-
                 when (mode) {
                     ImageEditMode.INPAINT -> {
                         InpaintMaskCanvas(
@@ -228,12 +249,16 @@ fun ImageEditorDialog(
                         GuCard {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                GuPill(strings.images.editorBrush, !isEraser, { isEraser = false })
-                                GuPill(strings.images.editorErase, isEraser, { isEraser = true })
-                                Spacer(Modifier.weight(1f))
+                                GuSegmentedControl(
+                                    items = listOf(strings.images.editorBrush, strings.images.editorErase),
+                                    selectedIndex = if (isEraser) 1 else 0,
+                                    onSelect = { isEraser = it == 1 },
+                                    compact = true,
+                                    modifier = Modifier.weight(1f),
+                                )
                                 IconButton(
                                     onClick = { if (strokes.isNotEmpty()) strokes = strokes.dropLast(1) },
                                     enabled = strokes.isNotEmpty(),
@@ -257,14 +282,19 @@ fun ImageEditorDialog(
                                     )
                                 }
                             }
+
+                            Spacer(Modifier.height(6.dp))
+                            HorizontalDivider(thickness = theme.borderWidth, color = c.border.copy(alpha = 0.72f))
+                            Spacer(Modifier.height(6.dp))
+
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Icon(Icons.Default.Brush, contentDescription = null, tint = c.muted, modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.width(8.dp))
+                                Spacer(Modifier.width(6.dp))
                                 Text(strings.images.editorBrushSize, color = c.ink, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                Spacer(Modifier.width(10.dp))
+                                Spacer(Modifier.width(8.dp))
                                 Box(
                                     modifier = Modifier.size(24.dp),
                                     contentAlignment = Alignment.Center,
@@ -276,7 +306,7 @@ fun ImageEditorDialog(
                                             .background(if (isEraser) c.muted.copy(alpha = 0.55f) else Color(0xCCEF4444)),
                                     )
                                 }
-                                Spacer(Modifier.width(8.dp))
+                                Spacer(Modifier.width(6.dp))
                                 Slider(
                                     value = brushRadius,
                                     onValueChange = { brushRadius = it },
@@ -284,6 +314,21 @@ fun ImageEditorDialog(
                                     colors = sliderColors,
                                     modifier = Modifier.weight(1f),
                                 )
+                                Spacer(Modifier.width(6.dp))
+                                Surface(
+                                    shape = RoundedCornerShape(999.dp),
+                                    color = c.primarySoft,
+                                    border = BorderStroke(theme.borderWidth, c.primary.copy(alpha = 0.3f)),
+                                ) {
+                                    Text(
+                                        text = "${((brushRadius / 0.14f) * 100).roundToInt()}%",
+                                        color = c.primarySoftInk,
+                                        fontSize = 10.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        fontFamily = FontFamily.Monospace,
+                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+                                    )
+                                }
                             }
                         }
                     }
@@ -304,20 +349,37 @@ fun ImageEditorDialog(
 
                         GuCard {
                             Text(strings.images.aspectRatio, color = c.ink, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                            Spacer(Modifier.height(6.dp))
+                            Spacer(Modifier.height(8.dp))
                             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 listOf("16:9", "9:16", "1:1", "4:3", "3:4", "21:9").forEach { r ->
                                     GuPill(r, outpaintAspect == r, { outpaintAspect = r })
                                 }
                             }
+
+                            Spacer(Modifier.height(12.dp))
+                            HorizontalDivider(thickness = theme.borderWidth, color = c.border.copy(alpha = 0.72f))
                             Spacer(Modifier.height(10.dp))
+
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Text(strings.images.editorImageScale, color = c.ink, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                GuBadge("${(imageScale * 100).roundToInt()}%", variant = GuBadgeVariant.BLUE)
+                                Surface(
+                                    shape = RoundedCornerShape(999.dp),
+                                    color = c.primarySoft,
+                                    border = BorderStroke(theme.borderWidth, c.primary.copy(alpha = 0.32f)),
+                                ) {
+                                    Text(
+                                        text = "${(imageScale * 100).roundToInt()}%",
+                                        color = c.primarySoftInk,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        fontFamily = FontFamily.Monospace,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.5.dp),
+                                    )
+                                }
                             }
                             Slider(
                                 value = imageScale,
@@ -327,9 +389,20 @@ fun ImageEditorDialog(
                             )
 
                             Spacer(Modifier.height(6.dp))
+                            HorizontalDivider(thickness = theme.borderWidth, color = c.border.copy(alpha = 0.72f))
+                            Spacer(Modifier.height(10.dp))
+
                             Text(strings.images.editorAnchorLabel, color = c.ink, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                             Spacer(Modifier.height(8.dp))
-                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(c.surfaceSoft)
+                                    .border(theme.borderWidth, c.border, RoundedCornerShape(12.dp))
+                                    .padding(6.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
                                 for (rowIdx in 0..2) {
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
@@ -340,9 +413,9 @@ fun ImageEditorDialog(
                                             val selected = anchor == item
                                             Surface(
                                                 onClick = { anchor = item },
-                                                shape = RoundedCornerShape(10.dp),
-                                                color = if (selected) c.primary else c.surfaceSoft,
-                                                border = BorderStroke(1.dp, if (selected) c.primary else c.border),
+                                                shape = RoundedCornerShape(9.dp),
+                                                color = if (selected) c.primary else c.surface,
+                                                border = BorderStroke(theme.borderWidth, if (selected) c.primary else c.border),
                                                 modifier = Modifier
                                                     .weight(1f)
                                                     .height(38.dp),
@@ -365,6 +438,7 @@ fun ImageEditorDialog(
                     }
 
                     else -> {
+                        val previewShape = RoundedCornerShape(14.dp)
                         AuthenticatedImage(
                             container = container,
                             generationId = target.generation.id,
@@ -374,19 +448,25 @@ fun ImageEditorDialog(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .aspectRatio((sourceW.toFloat() / sourceH).coerceIn(0.5f, 2f))
-                                .clip(RoundedCornerShape(12.dp)),
+                                .clip(previewShape)
+                                .background(c.surfaceSoft)
+                                .border(theme.borderWidth, c.border, previewShape),
                         )
                         if (mode == ImageEditMode.VARIATION) {
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                GuPill(strings.images.editorSubtle, variationStrength < 0.5, {
-                                    variationStrength = 0.35
-                                    instruction = strings.images.editorSubtlePrompt
-                                })
-                                GuPill(strings.images.editorBold, variationStrength >= 0.5, {
-                                    variationStrength = 0.72
-                                    instruction = strings.images.editorBoldPrompt
-                                })
-                            }
+                            GuSegmentedControl(
+                                items = listOf(strings.images.editorSubtle, strings.images.editorBold),
+                                selectedIndex = if (variationStrength < 0.5) 0 else 1,
+                                onSelect = { idx ->
+                                    if (idx == 0) {
+                                        variationStrength = 0.35
+                                        instruction = strings.images.editorSubtlePrompt
+                                    } else {
+                                        variationStrength = 0.72
+                                        instruction = strings.images.editorBoldPrompt
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
                         } else {
                             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 GuButton(onClick = { instruction = strings.images.editorQuickBgPrompt }, compact = true, variant = GuButtonVariant.SUBTLE) {

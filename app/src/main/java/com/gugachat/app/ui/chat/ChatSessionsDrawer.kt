@@ -2,18 +2,18 @@ package com.gugachat.app.ui.chat
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -23,6 +23,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoStories
 import androidx.compose.material.icons.filled.Casino
@@ -38,6 +39,7 @@ import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -52,23 +54,22 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.gugachat.app.R
+import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.i18n.LocalAppStrings
-import com.gugachat.app.core.theme.GuBadge
-import com.gugachat.app.core.theme.GuBadgeVariant
 import com.gugachat.app.core.theme.GuButton
-import com.gugachat.app.core.theme.GuButtonVariant
 import com.gugachat.app.core.theme.GuCompactSearchBar
 import com.gugachat.app.core.theme.GuConfirmDialog
 import com.gugachat.app.core.theme.GuEmptyState
-import com.gugachat.app.core.theme.GuPill
+import com.gugachat.app.core.theme.GuIconTile
 import com.gugachat.app.core.theme.GuPopupMenu
+import com.gugachat.app.core.theme.GuSectionHeader
+import com.gugachat.app.core.theme.GuSegmentedControl
 import com.gugachat.app.core.theme.LocalAppTheme
 import com.gugachat.app.core.util.FuzzyMatcher
 import com.gugachat.app.domain.chat.ChatConversation
 import com.gugachat.app.domain.chat.ConversationMode
 import java.util.Calendar
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ChatSessionsDrawerContent(
     conversations: List<ChatConversation>,
@@ -81,10 +82,28 @@ fun ChatSessionsDrawerContent(
     onCloseDrawer: () -> Unit,
 ) {
     val strings = LocalAppStrings.current
-    val c = LocalAppTheme.current.colors
+    val theme = LocalAppTheme.current
+    val c = theme.colors
+    val isZh = strings.language == AppLanguage.ZH
+
     var search by remember { mutableStateOf("") }
-    var filterMode by remember { mutableStateOf<ConversationMode?>(null) }
+    var filterIndex by remember { mutableIntStateOf(0) }
     var deleteTarget by remember { mutableStateOf<ChatConversation?>(null) }
+
+    val filterMode: ConversationMode? = when (filterIndex) {
+        1 -> ConversationMode.chat
+        2 -> ConversationMode.novel
+        3 -> ConversationMode.rp
+        else -> null
+    }
+    val filterLabels = remember(strings) {
+        listOf(
+            strings.novel.filterAll,
+            strings.novel.filterChat,
+            strings.novel.filterNovel,
+            strings.rp.filterRp,
+        )
+    }
 
     if (deleteTarget != null) {
         GuConfirmDialog(
@@ -112,106 +131,126 @@ fun ChatSessionsDrawerContent(
         }
     }
 
-    val sections = remember(filtered, strings) {
+    val last7DaysLabel = if (isZh) "近7天" else "Last 7 Days"
+    val sections = remember(filtered, strings, last7DaysLabel) {
         groupConversationsByTime(
             items = filtered,
             pinnedLabel = strings.chat.pinnedGroup,
             todayLabel = strings.chat.today,
             yesterdayLabel = strings.chat.yesterday,
+            last7DaysLabel = last7DaysLabel,
             earlierLabel = strings.chat.earlier,
         )
     }
 
     ModalDrawerSheet(
         drawerContainerColor = c.page,
-        modifier = Modifier.width(312.dp).fillMaxHeight(),
+        modifier = Modifier
+            .width(308.dp)
+            .fillMaxHeight(),
     ) {
         Column(
             modifier = Modifier
                 .fillMaxHeight()
-                .navigationBarsPadding()
-                .padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+                .navigationBarsPadding(),
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Image(
-                    painter = painterResource(id = R.drawable.img_logo),
-                    contentDescription = strings.common.appName,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.size(30.dp).clip(RoundedCornerShape(8.dp)),
+                // Clean DeepSeek brand header + compact New pill
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(9.dp),
+                ) {
+                    Image(
+                        painter = painterResource(id = R.drawable.img_logo),
+                        contentDescription = strings.common.appName,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .size(30.dp)
+                            .clip(RoundedCornerShape(9.dp))
+                            .border(theme.borderWidth, c.border, RoundedCornerShape(9.dp)),
+                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = strings.chat.sessionsTitle,
+                            color = c.ink,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    GuButton(
+                        onClick = {
+                            onNewSession()
+                            onCloseDrawer()
+                        },
+                        compact = true,
+                        contentPadding = PaddingValues(horizontal = 11.dp, vertical = 6.dp),
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(15.dp))
+                        Spacer(Modifier.width(3.dp))
+                        Text(
+                            text = strings.chat.newChat,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                        )
+                    }
+                }
+
+                GuCompactSearchBar(
+                    value = search,
+                    onValueChange = { search = it },
+                    placeholder = strings.chat.searchSessions,
+                    clearContentDescription = strings.common.clear,
                 )
-                Text(
-                    text = strings.chat.sessionsTitle,
-                    color = c.ink,
-                    fontSize = 17.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    modifier = Modifier.weight(1f),
+
+                GuSegmentedControl(
+                    items = filterLabels,
+                    selectedIndex = filterIndex,
+                    onSelect = { filterIndex = it },
+                    compact = true,
+                    modifier = Modifier.fillMaxWidth(),
                 )
-                GuBadge("${conversations.size}", variant = GuBadgeVariant.NEUTRAL)
             }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                GuButton(
-                    onClick = { onNewSession(); onCloseDrawer() },
-                    compact = true,
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text(strings.chat.newChat, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1)
-                }
-                GuButton(
-                    onClick = { onImportDeepSeek(); onCloseDrawer() },
-                    compact = true,
-                    variant = GuButtonVariant.SUBTLE,
-                ) {
-                    Icon(Icons.Default.FolderZip, contentDescription = strings.chat.importExternalTitle, modifier = Modifier.size(15.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text(strings.chat.importDeepSeekShort, fontSize = 12.5.sp, fontWeight = FontWeight.Bold, maxLines = 1)
-                }
-            }
-
-            GuCompactSearchBar(
-                value = search,
-                onValueChange = { search = it },
-                placeholder = strings.chat.searchSessions,
-                clearContentDescription = strings.common.clear,
+            HorizontalDivider(
+                thickness = theme.borderWidth,
+                color = c.border.copy(alpha = 0.75f),
             )
 
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                GuPill(strings.novel.filterAll, filterMode == null, { filterMode = null })
-                GuPill(strings.novel.filterChat, filterMode == ConversationMode.chat, { filterMode = ConversationMode.chat })
-                GuPill(strings.novel.filterNovel, filterMode == ConversationMode.novel, { filterMode = ConversationMode.novel })
-                GuPill(strings.rp.filterRp, filterMode == ConversationMode.rp, { filterMode = ConversationMode.rp })
-            }
-
-            HorizontalDivider(color = c.border.copy(alpha = 0.7f))
-
             if (filtered.isEmpty()) {
-                GuEmptyState(
-                    title = if (conversations.isEmpty()) strings.chat.emptySessions else strings.chat.noMatchingSessions,
-                )
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    GuEmptyState(
+                        title = if (conversations.isEmpty()) strings.chat.emptySessions else strings.chat.noMatchingSessions,
+                        icon = Icons.AutoMirrored.Filled.Chat,
+                    )
+                }
             } else {
                 LazyColumn(
-                    modifier = Modifier.weight(1f),
-                    contentPadding = PaddingValues(bottom = 12.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
                     sections.forEach { (sectionTitle, sectionItems) ->
                         item(key = "sec_$sectionTitle") {
-                            Text(
-                                text = sectionTitle,
-                                color = c.muted,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(start = 6.dp, top = 8.dp, bottom = 4.dp),
+                            GuSectionHeader(
+                                title = sectionTitle,
+                                modifier = Modifier.padding(top = 6.dp, bottom = 2.dp),
                             )
                         }
                         items(sectionItems, key = { it.id }) { conv ->
@@ -226,13 +265,14 @@ fun ChatSessionsDrawerContent(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
+                                    .heightIn(min = 46.dp)
                                     .clip(RoundedCornerShape(12.dp))
                                     .background(if (selected) c.primarySoft else Color.Transparent)
                                     .clickable {
                                         onSelectConversation(conv.id)
                                         onCloseDrawer()
                                     }
-                                    .padding(start = 8.dp, end = 2.dp, top = 7.dp, bottom = 7.dp),
+                                    .padding(start = 8.dp, end = 2.dp, top = 6.dp, bottom = 6.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
@@ -240,7 +280,7 @@ fun ChatSessionsDrawerContent(
                                     Box(
                                         modifier = Modifier
                                             .width(3.dp)
-                                            .height(22.dp)
+                                            .height(20.dp)
                                             .clip(RoundedCornerShape(999.dp))
                                             .background(c.primary),
                                     )
@@ -249,9 +289,12 @@ fun ChatSessionsDrawerContent(
                                     imageVector = modeIcon,
                                     contentDescription = null,
                                     tint = if (selected) c.primarySoftInk else modeTint,
-                                    modifier = Modifier.size(17.dp),
+                                    modifier = Modifier.size(16.dp),
                                 )
-                                Column(modifier = Modifier.weight(1f)) {
+                                Column(
+                                    modifier = Modifier.weight(1f),
+                                    verticalArrangement = Arrangement.spacedBy(1.dp),
+                                ) {
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -260,7 +303,7 @@ fun ChatSessionsDrawerContent(
                                             text = conv.title.ifBlank { strings.chat.untitled },
                                             color = if (selected) c.primarySoftInk else c.ink,
                                             fontSize = 13.5.sp,
-                                            fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.Medium,
+                                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis,
                                             modifier = Modifier.weight(1f, fill = false),
@@ -287,13 +330,13 @@ fun ChatSessionsDrawerContent(
                                 Box {
                                     IconButton(
                                         onClick = { rowMenuOpen = true },
-                                        modifier = Modifier.size(40.dp),
+                                        modifier = Modifier.size(38.dp),
                                     ) {
                                         Icon(
                                             Icons.Default.MoreVert,
                                             contentDescription = strings.chat.moreActions,
                                             tint = c.muted,
-                                            modifier = Modifier.size(18.dp),
+                                            modifier = Modifier.size(17.dp),
                                         )
                                     }
                                     GuPopupMenu(
@@ -351,6 +394,49 @@ fun ChatSessionsDrawerContent(
                     }
                 }
             }
+
+            // Pinned bottom footer bar with Import External Conversations row
+            HorizontalDivider(
+                thickness = theme.borderWidth,
+                color = c.border.copy(alpha = 0.8f),
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(c.surface)
+                    .clickable {
+                        onImportDeepSeek()
+                        onCloseDrawer()
+                    }
+                    .padding(horizontal = 14.dp, vertical = 11.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                GuIconTile(
+                    icon = Icons.Default.FolderZip,
+                    tint = c.accent,
+                    backgroundColor = c.accentSoft,
+                    size = 32.dp,
+                    iconSize = 17.dp,
+                    cornerRadius = 9.dp,
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = strings.chat.importExternalTitle,
+                        color = c.ink,
+                        fontSize = 13.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    contentDescription = null,
+                    tint = c.muted.copy(alpha = 0.72f),
+                    modifier = Modifier.size(18.dp),
+                )
+            }
         }
     }
 }
@@ -360,6 +446,7 @@ private fun groupConversationsByTime(
     pinnedLabel: String,
     todayLabel: String,
     yesterdayLabel: String,
+    last7DaysLabel: String,
     earlierLabel: String,
 ): List<Pair<String, List<ChatConversation>>> {
     val cal = Calendar.getInstance().apply {
@@ -370,17 +457,20 @@ private fun groupConversationsByTime(
     }
     val todayStartMs = cal.timeInMillis
     val yesterdayStartMs = todayStartMs - 86_400_000L
+    val last7DaysStartMs = todayStartMs - 7L * 86_400_000L
 
     val pinned = items.filter { it.pinned }
     val unpinned = items.filterNot { it.pinned }
     val today = unpinned.filter { it.updatedAt >= todayStartMs }
     val yesterday = unpinned.filter { it.updatedAt in yesterdayStartMs until todayStartMs }
-    val earlier = unpinned.filter { it.updatedAt < yesterdayStartMs }
+    val last7Days = unpinned.filter { it.updatedAt in last7DaysStartMs until yesterdayStartMs }
+    val earlier = unpinned.filter { it.updatedAt < last7DaysStartMs }
 
     return buildList {
         if (pinned.isNotEmpty()) add(pinnedLabel to pinned)
         if (today.isNotEmpty()) add(todayLabel to today)
         if (yesterday.isNotEmpty()) add(yesterdayLabel to yesterday)
+        if (last7Days.isNotEmpty()) add(last7DaysLabel to last7Days)
         if (earlier.isNotEmpty()) add(earlierLabel to earlier)
     }
 }

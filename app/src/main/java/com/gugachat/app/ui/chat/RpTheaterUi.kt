@@ -81,6 +81,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
@@ -255,7 +256,7 @@ fun RpTurnDeltaStrip(
             Surface(
                 shape = RoundedCornerShape(999.dp),
                 color = bg,
-                border = BorderStroke(1.dp, border),
+                border = BorderStroke(0.8.dp, border),
             ) {
                 Text(
                     text = displayText,
@@ -393,7 +394,7 @@ fun RpEndingCard(
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
         color = Color.Transparent,
-        border = BorderStroke(1.2.dp, accentColor.copy(alpha = 0.72f)),
+        border = BorderStroke(1.dp, accentColor.copy(alpha = 0.72f)),
         shadowElevation = 4.dp,
     ) {
         Row(
@@ -507,24 +508,30 @@ fun RpChoiceDeck(
                 !choice.requiresItem.isNullOrBlank() ||
                 !choice.requiresFlag.isNullOrBlank()
 
+            val toneAccent = resolveChoiceToneAccent(
+                tone = choice.tone,
+                unlocked = eval.unlocked,
+                onDarkStage = onDarkStage,
+                fallback = if (onDarkStage) stageHighlight else c.primary,
+            )
             val cardBgBrush = when {
                 onDarkStage && !eval.unlocked -> Brush.horizontalGradient(
-                    listOf(Color(0xB8181B28), Color(0xA6131622)),
+                    listOf(Color(0xBD151926), Color(0xAD111420)),
                 )
                 onDarkStage -> Brush.horizontalGradient(
-                    listOf(Color(0xDB1C2338), Color(0xCF141A2B)),
+                    listOf(Color(0xE0192034), Color(0xD4121828)),
                 )
                 !eval.unlocked -> Brush.horizontalGradient(
                     listOf(c.surfaceSoft.copy(alpha = 0.72f), c.surfaceSoft.copy(alpha = 0.55f)),
                 )
                 else -> Brush.horizontalGradient(
-                    listOf(c.primarySoft.copy(alpha = 0.68f), c.surfaceSoft),
+                    listOf(c.surface, c.surfaceSoft.copy(alpha = 0.65f)),
                 )
             }
             val cardBorderColor = when {
-                !eval.unlocked -> if (onDarkStage) Color(0x6694A3B8) else c.outline.copy(alpha = 0.7f)
-                onDarkStage -> stageHighlight.copy(alpha = 0.58f)
-                else -> c.primary.copy(alpha = 0.42f)
+                !eval.unlocked -> if (onDarkStage) Color(0x5294A3B8) else c.outline.copy(alpha = 0.65f)
+                onDarkStage -> toneAccent.copy(alpha = 0.52f)
+                else -> toneAccent.copy(alpha = 0.36f)
             }
             val titleColor = when {
                 onDarkStage && !eval.unlocked -> Color(0xFFB3BDCE)
@@ -547,9 +554,9 @@ fun RpChoiceDeck(
                     }
                 },
                 enabled = enabled,
-                shape = RoundedCornerShape(13.dp),
+                shape = RoundedCornerShape(14.dp),
                 color = Color.Transparent,
-                border = BorderStroke(1.dp, cardBorderColor),
+                border = BorderStroke(0.8.dp, cardBorderColor),
                 modifier = Modifier
                     .fillMaxWidth()
                     .alpha(if (eval.unlocked) 1f else 0.84f),
@@ -558,7 +565,29 @@ fun RpChoiceDeck(
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(cardBgBrush)
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                        .drawBehind {
+                            val stripW = 3.dp.toPx()
+                            drawRect(
+                                color = toneAccent.copy(alpha = if (eval.unlocked) 0.95f else 0.55f),
+                                topLeft = Offset.Zero,
+                                size = Size(stripW, size.height),
+                            )
+                            if (eval.unlocked) {
+                                drawRect(
+                                    brush = Brush.horizontalGradient(
+                                        colors = listOf(
+                                            toneAccent.copy(alpha = if (onDarkStage) 0.14f else 0.08f),
+                                            Color.Transparent,
+                                        ),
+                                        startX = stripW,
+                                        endX = stripW + 52.dp.toPx(),
+                                    ),
+                                    topLeft = Offset(stripW, 0f),
+                                    size = Size(52.dp.toPx(), size.height),
+                                )
+                            }
+                        }
+                        .padding(start = 13.dp, end = 12.dp, top = 10.dp, bottom = 10.dp),
                     verticalAlignment = Alignment.Top,
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
@@ -568,10 +597,10 @@ fun RpChoiceDeck(
                             .size(24.dp)
                             .clip(CircleShape)
                             .background(
-                                when {
-                                    !eval.unlocked -> if (onDarkStage) Color(0xFF363F56) else c.outline
-                                    onDarkStage -> stageHighlight
-                                    else -> c.primary
+                                if (!eval.unlocked) {
+                                    if (onDarkStage) Color(0xFF363F56) else c.outline
+                                } else {
+                                    toneAccent
                                 },
                             ),
                         contentAlignment = Alignment.Center,
@@ -676,16 +705,16 @@ fun RpChoiceDeck(
             horizontalArrangement = Arrangement.End,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            val ghostBg = if (onDarkStage) Color(0x88121726) else Color.Transparent
-            val ghostBorder = if (onDarkStage) Color(0x55A7B5D1) else c.border
-            val ghostFg = if (onDarkStage) Color(0xFFD8E1F2) else c.muted
+            val ghostBg = if (onDarkStage) Color(0x99101522) else Color.Transparent
+            val ghostBorder = if (onDarkStage) Color(0x52B8C7E0) else c.border
+            val ghostFg = if (onDarkStage) Color(0xFFDCE4F5) else c.muted
 
             Surface(
                 onClick = onRefreshChoices,
                 enabled = enabled && !isRefreshing,
                 shape = RoundedCornerShape(999.dp),
                 color = ghostBg,
-                border = BorderStroke(1.dp, ghostBorder),
+                border = BorderStroke(0.8.dp, ghostBorder),
             ) {
                 Row(
                     modifier = Modifier.padding(horizontal = 11.dp, vertical = 5.dp),
@@ -718,6 +747,28 @@ fun RpChoiceDeck(
     }
 }
 
+private fun resolveChoiceToneAccent(
+    tone: String?,
+    unlocked: Boolean,
+    onDarkStage: Boolean,
+    fallback: Color,
+): Color {
+    if (!unlocked) return Color(0xFF64748B)
+    return when (tone?.trim()?.lowercase().orEmpty()) {
+        "romantic", "flirt", "love", "心动", "暧昧", "情愫" ->
+            if (onDarkStage) Color(0xFFF43F7A) else Color(0xFFE11D48)
+        "cunning", "scheme", "intrigue", "权谋", "心机", "calm", "rational", "冷静", "理性" ->
+            if (onDarkStage) Color(0xFFD98B1C) else Color(0xFFC96F0A)
+        "bold", "brave", "adventure", "冒险", "果断", "mystery", "probe", "test", "试探", "悬疑", "探查" ->
+            if (onDarkStage) Color(0xFF4968F2) else Color(0xFF4361EE)
+        "gentle", "kind", "温柔", "安抚" ->
+            if (onDarkStage) Color(0xFF22B573) else Color(0xFF15803D)
+        "be", "danger", "risk", "be预警", "高危", "危险" ->
+            if (onDarkStage) Color(0xFFEF4444) else Color(0xFFDC2626)
+        else -> fallback
+    }
+}
+
 private fun resolveChoiceTone(tone: String?, isZh: Boolean): Pair<String, GuBadgeVariant>? {
     val raw = tone?.trim().orEmpty()
     if (raw.isEmpty()) return null
@@ -728,13 +779,13 @@ private fun resolveChoiceTone(tone: String?, isZh: Boolean): Pair<String, GuBadg
             (if (isZh) "权谋" else "Cunning") to GuBadgeVariant.AMBER
         "bold", "brave", "adventure", "冒险", "果断" ->
             (if (isZh) "冒险" else "Bold") to GuBadgeVariant.BLUE
-        "mystery", "probe", "test", "试探", "悬疑" ->
+        "mystery", "probe", "test", "试探", "悬疑", "探查" ->
             (if (isZh) "试探" else "Probe") to GuBadgeVariant.BLUE
         "gentle", "kind", "温柔", "安抚" ->
             (if (isZh) "温柔" else "Gentle") to GuBadgeVariant.EMERALD
         "calm", "rational", "冷静", "理性" ->
             (if (isZh) "冷静" else "Calm") to GuBadgeVariant.NEUTRAL
-        "be", "danger", "risk", "be预警", "高危" ->
+        "be", "danger", "risk", "be预警", "高危", "危险" ->
             (if (isZh) "BE预警" else "BE Risk") to GuBadgeVariant.DANGER
         else -> raw to GuBadgeVariant.NEUTRAL
     }
@@ -761,7 +812,7 @@ private fun ChoiceMetaChip(
     Surface(
         shape = RoundedCornerShape(999.dp),
         color = bg,
-        border = BorderStroke(1.dp, border),
+        border = BorderStroke(0.8.dp, border),
     ) {
         Text(
             text = text,
@@ -782,12 +833,16 @@ private data class DialogSkinSpec(
     val boxBorder: BorderStroke?,
     val boxShape: RoundedCornerShape,
     val topStripColor: Color?,
+    val topStripHeight: Dp,
+    val innerTopHighlight: Color?,
+    val nameplateShape: RoundedCornerShape,
     val nameplateBg: Color,
     val nameplateBorder: Color,
     val nameplateText: Color,
     val nameplateMoodText: Color,
     val nameplateDotColor: Color,
     val nameplateDecorPrefix: String,
+    val nameplateDecorSuffix: String,
     val nameplateFontFamily: FontFamily,
     val bodyText: Color,
     val mutedText: Color,
@@ -805,17 +860,18 @@ private fun resolveDialogSkin(
     val opacity = theme.dialogOpacity.coerceIn(0.45f, 1.0f)
     val style = theme.dialogStyle.trim().lowercase()
     val hasTopLeftTab = theme.showNameplate
+    val defaultTabShape = RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp, bottomStart = 2.dp, bottomEnd = 2.dp)
 
-    fun darkMarkdownPalette(accent: Color, text: Color = Color(0xFFF3F6FC)): MarkdownPalette = MarkdownPalette(
+    fun darkMarkdownPalette(accent: Color, text: Color = Color(0xFFF2F5FC)): MarkdownPalette = MarkdownPalette(
         text = text,
-        muted = Color(0xFFB3BED4),
+        muted = Color(0xFF96A3BD),
         accent = accent,
         border = Color(0x44CBD5E1),
         quoteBg = Color(0x551F2940),
         inlineCodeBg = Color(0x6627334E),
         inlineCodeInk = Color(0xFFFDE68A),
-        codeBg = Color(0xCC0A0F1A),
-        codeHeaderBg = Color(0xCC141D2E),
+        codeBg = Color(0xCC0A0D14),
+        codeHeaderBg = Color(0xCC131824),
         codeInk = Color(0xFFE6EDF3),
         codeMeta = Color(0xFFA6B4CA),
         tableHeaderBg = Color(0x661C263B),
@@ -823,27 +879,31 @@ private fun resolveDialogSkin(
 
     return when (style) {
         "classic_vn" -> {
-            val gold = customAccent ?: Color(0xFFD4AF37)
+            val gold = customAccent ?: Color(0xFFE0B954)
             DialogSkinSpec(
-                boxBg = Color(0xFF1A111D).copy(alpha = opacity),
-                boxBorder = BorderStroke(1.6.dp, gold.copy(alpha = 0.88f)),
+                boxBg = Color(0xFF18101C).copy(alpha = opacity),
+                boxBorder = BorderStroke(1.2.dp, gold.copy(alpha = 0.85f)),
                 boxShape = RoundedCornerShape(
                     topStart = if (hasTopLeftTab) 2.dp else 14.dp,
                     topEnd = 14.dp,
                     bottomStart = 14.dp,
                     bottomEnd = 14.dp,
                 ),
-                topStripColor = gold.copy(alpha = 0.55f),
-                nameplateBg = Color(0xFF2B1723).copy(alpha = (opacity + 0.10f).coerceAtMost(0.98f)),
-                nameplateBorder = gold,
-                nameplateText = Color(0xFFFFF4D6),
-                nameplateMoodText = Color(0xFFE3C996),
+                topStripColor = gold.copy(alpha = 0.72f),
+                topStripHeight = 2.dp,
+                innerTopHighlight = gold.copy(alpha = 0.16f),
+                nameplateShape = RoundedCornerShape(topStart = 10.dp, topEnd = 14.dp, bottomStart = 0.dp, bottomEnd = 2.dp),
+                nameplateBg = Color(0xFF2B1724).copy(alpha = (opacity + 0.10f).coerceAtMost(0.98f)),
+                nameplateBorder = gold.copy(alpha = 0.92f),
+                nameplateText = Color(0xFFFFF5DC),
+                nameplateMoodText = Color(0xFFE5CCA0),
                 nameplateDotColor = gold,
                 nameplateDecorPrefix = "❖ ",
+                nameplateDecorSuffix = "",
                 nameplateFontFamily = FontFamily.Serif,
                 bodyText = Color(0xFFFBF5E8),
                 mutedText = Color(0xFFD3C5AF),
-                dividerColor = gold.copy(alpha = 0.30f),
+                dividerColor = gold.copy(alpha = 0.28f),
                 markdownPalette = darkMarkdownPalette(accent = gold, text = Color(0xFFFBF5E8)),
                 isDarkSurface = true,
             )
@@ -852,47 +912,55 @@ private fun resolveDialogSkin(
         "minimal" -> {
             val minimalAccent = customAccent ?: Color(0xFFE2E8F0)
             DialogSkinSpec(
-                boxBg = Color(0xFF0A0E18).copy(alpha = (opacity * 0.86f).coerceIn(0.38f, 0.92f)),
+                boxBg = Color(0xFF090D16).copy(alpha = (opacity * 0.84f).coerceIn(0.38f, 0.90f)),
                 boxBorder = null,
                 boxShape = RoundedCornerShape(18.dp),
-                topStripColor = Color.White.copy(alpha = 0.14f),
-                nameplateBg = Color(0xFF0F1624).copy(alpha = opacity),
-                nameplateBorder = Color(0x33FFFFFF),
+                topStripColor = Color.White.copy(alpha = 0.18f),
+                topStripHeight = 1.dp,
+                innerTopHighlight = null,
+                nameplateShape = RoundedCornerShape(999.dp),
+                nameplateBg = Color(0xFF101726).copy(alpha = (opacity * 0.95f).coerceIn(0.55f, 0.96f)),
+                nameplateBorder = Color(0x36FFFFFF),
                 nameplateText = Color(0xFFF8FAFC),
                 nameplateMoodText = Color(0xFFCBD5E1),
                 nameplateDotColor = minimalAccent,
                 nameplateDecorPrefix = "",
+                nameplateDecorSuffix = "",
                 nameplateFontFamily = FontFamily.Default,
                 bodyText = Color(0xFFF4F7FD),
                 mutedText = Color(0xFFB5C2D9),
-                dividerColor = Color(0x26FFFFFF),
+                dividerColor = Color(0x24FFFFFF),
                 markdownPalette = darkMarkdownPalette(accent = stageAccent),
                 isDarkSurface = true,
             )
         }
 
         "cyber" -> {
-            val neon = customAccent ?: Color(0xFF06B6D4)
+            val neon = customAccent ?: Color(0xFF22D3EE)
             DialogSkinSpec(
-                boxBg = Color(0xFF08101B).copy(alpha = opacity),
-                boxBorder = BorderStroke(1.5.dp, neon.copy(alpha = 0.90f)),
+                boxBg = Color(0xFF07101B).copy(alpha = opacity),
+                boxBorder = BorderStroke(1.2.dp, neon.copy(alpha = 0.88f)),
                 boxShape = RoundedCornerShape(
                     topStart = 2.dp,
-                    topEnd = 10.dp,
-                    bottomStart = 10.dp,
+                    topEnd = 12.dp,
+                    bottomStart = 12.dp,
                     bottomEnd = 2.dp,
                 ),
                 topStripColor = neon,
-                nameplateBg = Color(0xFF0B1C2B).copy(alpha = (opacity + 0.08f).coerceAtMost(0.98f)),
-                nameplateBorder = neon,
-                nameplateText = Color(0xFFE0FAFF),
+                topStripHeight = 2.dp,
+                innerTopHighlight = neon.copy(alpha = 0.16f),
+                nameplateShape = RoundedCornerShape(topStart = 2.dp, topEnd = 10.dp, bottomStart = 0.dp, bottomEnd = 2.dp),
+                nameplateBg = Color(0xFF0A1D2E).copy(alpha = (opacity + 0.08f).coerceAtMost(0.98f)),
+                nameplateBorder = neon.copy(alpha = 0.95f),
+                nameplateText = Color(0xFFE4FBFF),
                 nameplateMoodText = Color(0xFF7DD3FC),
                 nameplateDotColor = neon,
                 nameplateDecorPrefix = "▸ ",
+                nameplateDecorSuffix = "",
                 nameplateFontFamily = FontFamily.Monospace,
                 bodyText = Color(0xFFE5F6FC),
                 mutedText = Color(0xFF99C8DC),
-                dividerColor = neon.copy(alpha = 0.34f),
+                dividerColor = neon.copy(alpha = 0.30f),
                 markdownPalette = darkMarkdownPalette(accent = neon, text = Color(0xFFE5F6FC)),
                 isDarkSurface = true,
             )
@@ -902,25 +970,29 @@ private fun resolveDialogSkin(
             if (appIsDark) {
                 val sepiaAccent = customAccent ?: Color(0xFFCFA76E)
                 DialogSkinSpec(
-                    boxBg = Color(0xFF261D15).copy(alpha = opacity),
-                    boxBorder = BorderStroke(1.2.dp, sepiaAccent.copy(alpha = 0.68f)),
+                    boxBg = Color(0xFF241B14).copy(alpha = opacity),
+                    boxBorder = BorderStroke(1.dp, sepiaAccent.copy(alpha = 0.65f)),
                     boxShape = RoundedCornerShape(
-                        topStart = if (hasTopLeftTab) 4.dp else 14.dp,
+                        topStart = if (hasTopLeftTab) 3.dp else 14.dp,
                         topEnd = 14.dp,
                         bottomStart = 14.dp,
                         bottomEnd = 14.dp,
                     ),
-                    topStripColor = sepiaAccent.copy(alpha = 0.35f),
-                    nameplateBg = Color(0xFF35281C).copy(alpha = (opacity + 0.08f).coerceAtMost(0.98f)),
-                    nameplateBorder = sepiaAccent.copy(alpha = 0.8f),
+                    topStripColor = sepiaAccent.copy(alpha = 0.42f),
+                    topStripHeight = 1.5.dp,
+                    innerTopHighlight = sepiaAccent.copy(alpha = 0.12f),
+                    nameplateShape = defaultTabShape,
+                    nameplateBg = Color(0xFF33261B).copy(alpha = (opacity + 0.08f).coerceAtMost(0.98f)),
+                    nameplateBorder = sepiaAccent.copy(alpha = 0.78f),
                     nameplateText = Color(0xFFFCEBC9),
                     nameplateMoodText = Color(0xFFD6BE9A),
                     nameplateDotColor = sepiaAccent,
                     nameplateDecorPrefix = "❦ ",
+                    nameplateDecorSuffix = "",
                     nameplateFontFamily = FontFamily.Serif,
                     bodyText = Color(0xFFF6ECDA),
                     mutedText = Color(0xFFCBBBA0),
-                    dividerColor = sepiaAccent.copy(alpha = 0.28f),
+                    dividerColor = sepiaAccent.copy(alpha = 0.26f),
                     markdownPalette = darkMarkdownPalette(accent = sepiaAccent, text = Color(0xFFF6ECDA)),
                     isDarkSurface = true,
                 )
@@ -930,24 +1002,28 @@ private fun resolveDialogSkin(
                 val paperMuted = Color(0xFF6B5946)
                 DialogSkinSpec(
                     boxBg = Color(0xFFF7F0E2).copy(alpha = opacity),
-                    boxBorder = BorderStroke(1.2.dp, sepiaAccent.copy(alpha = 0.65f)),
+                    boxBorder = BorderStroke(1.dp, sepiaAccent.copy(alpha = 0.62f)),
                     boxShape = RoundedCornerShape(
-                        topStart = if (hasTopLeftTab) 4.dp else 14.dp,
+                        topStart = if (hasTopLeftTab) 3.dp else 14.dp,
                         topEnd = 14.dp,
                         bottomStart = 14.dp,
                         bottomEnd = 14.dp,
                     ),
-                    topStripColor = sepiaAccent.copy(alpha = 0.35f),
+                    topStripColor = sepiaAccent.copy(alpha = 0.38f),
+                    topStripHeight = 1.5.dp,
+                    innerTopHighlight = Color.White.copy(alpha = 0.35f),
+                    nameplateShape = defaultTabShape,
                     nameplateBg = Color(0xFFEDE0C8).copy(alpha = (opacity + 0.08f).coerceAtMost(0.98f)),
-                    nameplateBorder = sepiaAccent.copy(alpha = 0.78f),
+                    nameplateBorder = sepiaAccent.copy(alpha = 0.75f),
                     nameplateText = Color(0xFF3A2613),
                     nameplateMoodText = Color(0xFF7B6347),
                     nameplateDotColor = sepiaAccent,
                     nameplateDecorPrefix = "❦ ",
+                    nameplateDecorSuffix = "",
                     nameplateFontFamily = FontFamily.Serif,
                     bodyText = paperInk,
                     mutedText = paperMuted,
-                    dividerColor = sepiaAccent.copy(alpha = 0.28f),
+                    dividerColor = sepiaAccent.copy(alpha = 0.26f),
                     markdownPalette = MarkdownPalette(
                         text = paperInk,
                         muted = paperMuted,
@@ -970,25 +1046,29 @@ private fun resolveDialogSkin(
         else -> {
             // Default: "glass"
             DialogSkinSpec(
-                boxBg = Color(0xFF101522).copy(alpha = opacity),
-                boxBorder = BorderStroke(1.dp, stageAccent.copy(alpha = 0.56f)),
+                boxBg = Color(0xFF0E1320).copy(alpha = opacity),
+                boxBorder = BorderStroke(0.8.dp, stageAccent.copy(alpha = 0.56f)),
                 boxShape = RoundedCornerShape(
-                    topStart = if (hasTopLeftTab) 4.dp else 16.dp,
+                    topStart = if (hasTopLeftTab) 3.dp else 16.dp,
                     topEnd = 16.dp,
                     bottomStart = 16.dp,
                     bottomEnd = 16.dp,
                 ),
                 topStripColor = null,
-                nameplateBg = Color(0xFF211C30).copy(alpha = (opacity + 0.08f).coerceAtMost(0.98f)),
-                nameplateBorder = stageAccent.copy(alpha = 0.78f),
+                topStripHeight = 1.dp,
+                innerTopHighlight = Color.White.copy(alpha = 0.14f),
+                nameplateShape = defaultTabShape,
+                nameplateBg = Color(0xFF1A1D2F).copy(alpha = (opacity + 0.08f).coerceAtMost(0.98f)),
+                nameplateBorder = stageAccent.copy(alpha = 0.72f),
                 nameplateText = Color(0xFFFFF4DA),
                 nameplateMoodText = Color(0xFFD6C29B),
                 nameplateDotColor = stageAccent,
                 nameplateDecorPrefix = "",
+                nameplateDecorSuffix = "",
                 nameplateFontFamily = FontFamily.Default,
-                bodyText = Color(0xFFF3F6FC),
-                mutedText = Color(0xFFB8C4DC),
-                dividerColor = Color(0x33CBD5E1),
+                bodyText = Color(0xFFF2F5FC),
+                mutedText = Color(0xFF96A3BD),
+                dividerColor = Color(0x2ECBD5E1),
                 markdownPalette = darkMarkdownPalette(accent = stageAccent),
                 isDarkSurface = true,
             )
@@ -1076,6 +1156,12 @@ fun RpTheaterStageView(
             ?: nonPlayerCast.firstOrNull { it.inScene }
             ?: nonPlayerCast.firstOrNull()
     }
+    val activeHighlightId = focusedNpcId
+        ?: resolvedSpeakerNpc?.id
+        ?: stageCharacters.firstOrNull()?.second?.id
+    val activeSpeakerSlot = remember(stageCharacters, activeHighlightId) {
+        stageCharacters.firstOrNull { it.second.id == activeHighlightId }?.first
+    }
 
     val (parsedReasoning, cleanBody) = remember(latestAssistant?.content, latestAssistant?.reasoning) {
         if (latestAssistant != null) {
@@ -1146,9 +1232,11 @@ fun RpTheaterStageView(
             .fillMaxSize()
             .clickable(enabled = hideUi) { hideUi = false },
     ) {
-        // 1. Full-Bleed Scene Backdrop (Custom CG or Curated Atmosphere + Live backdropDim)
+        // 1. 3-Layer Scene Backdrop (Custom CG or Curated Atmosphere + Active Speaker Radial Spotlight + Reading Vignette)
         TheaterStageBackdrop(
             rp = rp,
+            stageAccent = stageAccent,
+            activeSlot = activeSpeakerSlot,
             backdropDim = theme.backdropDim,
             dimForReading = !hideUi,
             modifier = Modifier.fillMaxSize(),
@@ -1310,9 +1398,7 @@ fun RpTheaterStageView(
                                 if (stageCharacters.isNotEmpty() || displayedNpc != null) {
                                     TheaterChengguangSpriteStage(
                                         stageCharacters = stageCharacters,
-                                        activeHighlightId = focusedNpcId
-                                            ?: resolvedSpeakerNpc?.id
-                                            ?: stageCharacters.firstOrNull()?.second?.id,
+                                        activeHighlightId = activeHighlightId,
                                         focusedNpc = displayedNpc,
                                         allNpcs = nonPlayerCast,
                                         spriteHeightRatio = theme.spriteHeightRatio,
@@ -1358,14 +1444,9 @@ fun RpTheaterStageView(
                                 ) {
                                     if (theme.showNameplate) {
                                         Surface(
-                                            shape = RoundedCornerShape(
-                                                topStart = 12.dp,
-                                                topEnd = 12.dp,
-                                                bottomStart = 2.dp,
-                                                bottomEnd = 2.dp,
-                                            ),
+                                            shape = skin.nameplateShape,
                                             color = skin.nameplateBg,
-                                            border = BorderStroke(1.dp, skin.nameplateBorder),
+                                            border = BorderStroke(0.8.dp, skin.nameplateBorder),
                                         ) {
                                             Row(
                                                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
@@ -1381,7 +1462,7 @@ fun RpTheaterStageView(
                                                     )
                                                 }
                                                 Text(
-                                                    text = "${skin.nameplateDecorPrefix}$resolvedSpeakerName",
+                                                    text = "${skin.nameplateDecorPrefix}$resolvedSpeakerName${skin.nameplateDecorSuffix}",
                                                     color = skin.nameplateText,
                                                     fontSize = 13.sp,
                                                     fontWeight = FontWeight.ExtraBold,
@@ -1424,18 +1505,20 @@ fun RpTheaterStageView(
                                 Column(
                                     modifier = Modifier.fillMaxWidth(),
                                 ) {
-                                    // Optional top neon/gilded accent strip
-                                    skin.topStripColor?.let { stripCol ->
+                                    // Art-directed top ornament strip or subtle glass inner specular highlight
+                                    val topAccent = skin.topStripColor ?: skin.innerTopHighlight
+                                    val topAccentHeight = if (skin.topStripColor != null) skin.topStripHeight else 1.dp
+                                    topAccent?.let { stripCol ->
                                         Box(
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .height(2.dp)
+                                                .height(topAccentHeight)
                                                 .background(
                                                     Brush.horizontalGradient(
                                                         listOf(
-                                                            stripCol.copy(alpha = 0.25f),
+                                                            stripCol.copy(alpha = 0.16f),
                                                             stripCol,
-                                                            stripCol.copy(alpha = 0.25f),
+                                                            stripCol.copy(alpha = 0.16f),
                                                         ),
                                                     ),
                                                 ),
@@ -1541,7 +1624,7 @@ fun RpTheaterStageView(
                                     }
 
                                     // Compact Quick-Action Bar inside Dialogue Frame
-                                    HorizontalDivider(color = skin.dividerColor)
+                                    HorizontalDivider(thickness = 0.8.dp, color = skin.dividerColor)
                                     Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
@@ -1688,14 +1771,14 @@ private fun TheaterChengguangSpriteStage(
                         slot == "center" -> 1f
                         else -> 0f
                     }
-                    val targetScale = (if (isActive) 1.04f else 0.90f) * char.spriteScale.coerceIn(0.7f, 1.4f)
+                    val targetScale = (if (isActive) 1.04f else 0.92f) * char.spriteScale.coerceIn(0.7f, 1.4f)
                     val animatedScale by animateFloatAsState(
                         targetValue = targetScale,
                         animationSpec = tween(durationMillis = 260),
                         label = "stageSpriteScale",
                     )
                     val animatedAlpha by animateFloatAsState(
-                        targetValue = if (isActive) 1.0f else 0.62f,
+                        targetValue = if (isActive) 1.0f else 0.68f,
                         animationSpec = tween(durationMillis = 260),
                         label = "stageSpriteAlpha",
                     )
@@ -1769,18 +1852,22 @@ private fun ChengguangSpriteActorCard(
     val tierLabel = strings.rp.affinityTiers[tier.code]
         ?: if (isZh) tier.zhLabel else tier.enLabel
     val cardShape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp, bottomStart = 10.dp, bottomEnd = 10.dp)
-    val rimColor = if (isActive) stageAccent.copy(alpha = 0.88f) else Color(0x44CBD5E1)
+    val cardBorder = when {
+        isActive -> BorderStroke(1.2.dp, stageAccent.copy(alpha = 0.86f))
+        spriteFile != null -> null
+        else -> BorderStroke(0.8.dp, Color(0x28FFFFFF))
+    }
 
     Surface(
         onClick = onTap,
         shape = cardShape,
         color = Color.Transparent,
-        border = BorderStroke(if (isActive) 1.8.dp else 1.dp, rimColor),
-        shadowElevation = if (isActive) 10.dp else 2.dp,
+        border = cardBorder,
+        shadowElevation = if (isActive) 8.dp else 0.dp,
         modifier = modifier,
     ) {
         if (spriteFile != null) {
-            // Real half-body VN Sprite Image with top-anchored crop and bottom atmospheric fade
+            // Real half-body VN Sprite Image with top-anchored crop and seamless edge/bottom fade
             Box(modifier = Modifier.fillMaxSize()) {
                 Image(
                     painter = rememberAsyncImagePainter(spriteFile),
@@ -1789,6 +1876,19 @@ private fun ChengguangSpriteActorCard(
                     alignment = Alignment.TopCenter,
                     modifier = Modifier.fillMaxSize(),
                 )
+                // Soft side edge softening so sprite blends seamlessly into stage backdrop
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.horizontalGradient(
+                                0.0f to Color(0x52080B14),
+                                0.14f to Color.Transparent,
+                                0.86f to Color.Transparent,
+                                1.0f to Color(0x52080B14),
+                            ),
+                        ),
+                )
                 // Soft bottom fade blending into the dialogue frame
                 Box(
                     modifier = Modifier
@@ -1796,17 +1896,33 @@ private fun ChengguangSpriteActorCard(
                         .background(
                             Brush.verticalGradient(
                                 0.0f to Color.Transparent,
-                                0.56f to Color.Transparent,
-                                0.82f to Color(0x8A0A0E1A),
-                                1.0f to Color(0xE0080C16),
+                                0.54f to Color.Transparent,
+                                0.80f to Color(0x940A0E1A),
+                                1.0f to Color(0xE8080C16),
                             ),
                         ),
                 )
-                // Active speaker top-right expression chip
+                // Active speaker subtle luminous inner rim halo
+                if (isActive) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .drawBehind {
+                                drawRect(
+                                    brush = Brush.radialGradient(
+                                        colors = listOf(stageAccent.copy(alpha = 0.14f), Color.Transparent),
+                                        center = Offset(size.width * 0.5f, size.height * 0.22f),
+                                        radius = size.maxDimension * 0.65f,
+                                    ),
+                                )
+                            },
+                    )
+                }
+                // Expression chip
                 Surface(
                     shape = RoundedCornerShape(999.dp),
-                    color = Color(0xB80E1422),
-                    border = BorderStroke(1.dp, if (isActive) stageAccent.copy(alpha = 0.72f) else Color(0x44FFFFFF)),
+                    color = Color(0xBA0C111E),
+                    border = BorderStroke(0.8.dp, if (isActive) stageAccent.copy(alpha = 0.72f) else Color(0x3DFFFFFF)),
                     modifier = Modifier
                         .align(Alignment.TopEnd)
                         .padding(6.dp),
@@ -1860,9 +1976,9 @@ private fun ChengguangSpriteActorCard(
                     .background(
                         Brush.verticalGradient(
                             listOf(
-                                pair.first.copy(alpha = 0.92f),
-                                pair.second.copy(alpha = 0.94f),
-                                Color(0xE80C101B),
+                                pair.first.copy(alpha = if (isActive) 0.90f else 0.78f),
+                                pair.second.copy(alpha = if (isActive) 0.94f else 0.84f),
+                                Color(0xEC0A0E18),
                             ),
                         ),
                     )
@@ -1870,7 +1986,7 @@ private fun ChengguangSpriteActorCard(
                         if (isActive) {
                             drawRect(
                                 brush = Brush.radialGradient(
-                                    colors = listOf(stageAccent.copy(alpha = 0.24f), Color.Transparent),
+                                    colors = listOf(stageAccent.copy(alpha = 0.26f), Color.Transparent),
                                     center = Offset(size.width * 0.5f, size.height * 0.30f),
                                     radius = size.maxDimension * 0.65f,
                                 ),
@@ -1878,14 +1994,14 @@ private fun ChengguangSpriteActorCard(
                         }
                     },
             ) {
-                // Inner gilded hairline frame
+                // Inner gilded hairline frame (shown prominently on active speaker, delicate whisper when inactive)
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(5.dp)
                         .border(
                             width = 0.8.dp,
-                            color = if (isActive) stageAccent.copy(alpha = 0.45f) else Color(0x33FFFFFF),
+                            color = if (isActive) stageAccent.copy(alpha = 0.45f) else Color(0x1EFFFFFF),
                             shape = RoundedCornerShape(topStart = 15.dp, topEnd = 15.dp, bottomStart = 7.dp, bottomEnd = 7.dp),
                         ),
                 )
@@ -1896,7 +2012,7 @@ private fun ChengguangSpriteActorCard(
                         onClick = onOpenStudio,
                         shape = RoundedCornerShape(999.dp),
                         color = Color(0x780B0F1A),
-                        border = BorderStroke(1.dp, stageAccent.copy(alpha = 0.38f)),
+                        border = BorderStroke(0.8.dp, stageAccent.copy(alpha = 0.38f)),
                         modifier = Modifier
                             .align(Alignment.TopStart)
                             .padding(start = 8.dp, top = 8.dp),
@@ -1916,7 +2032,7 @@ private fun ChengguangSpriteActorCard(
                 Surface(
                     shape = RoundedCornerShape(999.dp),
                     color = Color(0x99101522),
-                    border = BorderStroke(1.dp, if (isActive) stageAccent.copy(alpha = 0.65f) else Color(0x44FFFFFF)),
+                    border = BorderStroke(0.8.dp, if (isActive) stageAccent.copy(alpha = 0.65f) else Color(0x38FFFFFF)),
                     modifier = Modifier
                         .align(Alignment.TopEnd)
                         .padding(end = 8.dp, top = 8.dp),
@@ -1942,19 +2058,19 @@ private fun ChengguangSpriteActorCard(
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(if (tight) 44.dp else 58.dp)
+                            .size(if (tight) 44.dp else 56.dp)
                             .clip(CircleShape)
                             .background(
                                 Brush.radialGradient(
                                     listOf(
-                                        stageAccent.copy(alpha = if (isActive) 0.34f else 0.16f),
+                                        stageAccent.copy(alpha = if (isActive) 0.34f else 0.14f),
                                         Color(0x660B0F1A),
                                     ),
                                 ),
                             )
                             .border(
-                                width = if (isActive) 1.5.dp else 1.dp,
-                                color = if (isActive) stageAccent.copy(alpha = 0.85f) else Color(0x55FFFFFF),
+                                width = if (isActive) 1.2.dp else 0.8.dp,
+                                color = if (isActive) stageAccent.copy(alpha = 0.85f) else Color(0x44FFFFFF),
                                 shape = CircleShape,
                             ),
                         contentAlignment = Alignment.Center,
@@ -1962,7 +2078,7 @@ private fun ChengguangSpriteActorCard(
                         Text(
                             text = initial,
                             color = Color(0xFFFFF6E3),
-                            fontSize = if (tight) 19.sp else 25.sp,
+                            fontSize = if (tight) 19.sp else 24.sp,
                             fontWeight = FontWeight.ExtraBold,
                             fontFamily = FontFamily.Serif,
                         )
@@ -1994,7 +2110,7 @@ private fun ChengguangSpriteActorCard(
                         shape = RoundedCornerShape(999.dp),
                         color = Color(0x88141826),
                         border = BorderStroke(
-                            1.dp,
+                            0.8.dp,
                             if (character.affinity < 0) Color(0x88F87171) else Color(0x88F472B6),
                         ),
                     ) {
@@ -2033,10 +2149,10 @@ private fun StageCastMiniStrip(
                 shape = RoundedCornerShape(999.dp),
                 color = if (selected) Color(0xCC2C2113) else Color(0x99101522),
                 border = BorderStroke(
-                    1.dp,
+                    0.8.dp,
                     when {
                         selected -> stageAccent.copy(alpha = 0.85f)
-                        npc.inScene -> Color(0x55CBD5E1)
+                        npc.inScene -> Color(0x52CBD5E1)
                         else -> Color(0x3394A3B8)
                     },
                 ),
@@ -2077,6 +2193,8 @@ private fun StageCastMiniStrip(
 @Composable
 private fun TheaterStageBackdrop(
     rp: RpConfig,
+    stageAccent: Color,
+    activeSlot: String?,
     backdropDim: Float,
     dimForReading: Boolean,
     modifier: Modifier = Modifier,
@@ -2085,8 +2203,14 @@ private fun TheaterStageBackdrop(
         rp.state.sceneImagePath?.takeIf { it.isNotBlank() }?.let(::File)?.takeIf { it.isFile }
     }
     val effectiveDim = backdropDim.coerceIn(0f, 0.78f)
+    val spotlightXRatio = when (activeSlot) {
+        "left" -> 0.25f
+        "right" -> 0.75f
+        else -> 0.50f
+    }
 
     Box(modifier = modifier) {
+        // Layer 1: Custom CG or Curated 3-Stop Atmosphere Gradient
         if (sceneFile != null) {
             Image(
                 painter = rememberAsyncImagePainter(sceneFile),
@@ -2094,42 +2218,6 @@ private fun TheaterStageBackdrop(
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
             )
-            // Live-editable darkness scrim + gentle bottom vignette for readability
-            if (dimForReading) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color.Black.copy(alpha = effectiveDim)),
-                )
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(
-                            Brush.verticalGradient(
-                                listOf(
-                                    Color(0x55070A13),
-                                    Color.Transparent,
-                                    Color(0x66070A13),
-                                    Color(0xB8070A13),
-                                ),
-                            ),
-                        ),
-                )
-            } else {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(
-                            Brush.verticalGradient(
-                                listOf(
-                                    Color(0x33070A13),
-                                    Color.Transparent,
-                                    Color(0x22070A13),
-                                ),
-                            ),
-                        ),
-                )
-            }
         } else {
             val (topCol, midCol, botCol, glowCol) = remember(rp.playStyle, rp.state.weather, rp.state.mood, rp.state.time) {
                 resolveStageAtmosphere(rp)
@@ -2143,34 +2231,72 @@ private fun TheaterStageBackdrop(
                         if (glowRadius > 0f) {
                             drawRect(
                                 brush = Brush.radialGradient(
-                                    colors = listOf(glowCol.copy(alpha = 0.30f), Color.Transparent),
-                                    center = Offset(size.width * 0.5f, size.height * 0.24f),
+                                    colors = listOf(glowCol.copy(alpha = 0.28f), Color.Transparent),
+                                    center = Offset(size.width * 0.5f, size.height * 0.22f),
                                     radius = glowRadius,
                                 ),
                             )
                         }
                     },
             )
-            if (dimForReading) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color.Black.copy(alpha = effectiveDim)),
-                )
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(
-                            Brush.verticalGradient(
-                                listOf(
-                                    Color(0x2605070E),
-                                    Color.Transparent,
-                                    Color(0x7305070E),
+        }
+
+        // Layer 2: Soft Radial Spotlight behind Active Speaker
+        if (dimForReading) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .drawBehind {
+                        val spotRadius = size.maxDimension * 0.52f
+                        if (spotRadius > 0f) {
+                            drawRect(
+                                brush = Brush.radialGradient(
+                                    colors = listOf(
+                                        stageAccent.copy(alpha = if (sceneFile != null) 0.16f else 0.22f),
+                                        Color.Transparent,
+                                    ),
+                                    center = Offset(size.width * spotlightXRatio, size.height * 0.34f),
+                                    radius = spotRadius,
                                 ),
+                            )
+                        }
+                    },
+            )
+        }
+
+        // Layer 3: Live backdropDim Scrim & Smooth Cinema Reading Vignette
+        if (dimForReading) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = effectiveDim)),
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            0.0f to Color(if (sceneFile != null) 0x5C060912 else 0x3305070E),
+                            0.24f to Color.Transparent,
+                            0.62f to Color(if (sceneFile != null) 0x58060912 else 0x2605070E),
+                            1.0f to Color(if (sceneFile != null) 0xC4060912 else 0x8C05070E),
+                        ),
+                    ),
+            )
+        } else if (sceneFile != null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(
+                                Color(0x33070A13),
+                                Color.Transparent,
+                                Color(0x22070A13),
                             ),
                         ),
-                )
-            }
+                    ),
+            )
         }
     }
 }
@@ -2266,11 +2392,12 @@ private fun TheaterTopStageBar(
                 Surface(
                     onClick = onOpenStudio,
                     shape = RoundedCornerShape(999.dp),
-                    color = Color(0xB8181D2E),
-                    border = BorderStroke(1.dp, stageAccent.copy(alpha = 0.62f)),
+                    color = Color(0xC4131928),
+                    border = BorderStroke(0.8.dp, stageAccent.copy(alpha = 0.66f)),
+                    modifier = Modifier.heightIn(min = 34.dp),
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                        modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(5.dp),
                     ) {
@@ -2278,7 +2405,7 @@ private fun TheaterTopStageBar(
                             imageVector = Icons.Default.AutoAwesome,
                             contentDescription = null,
                             tint = stageAccent,
-                            modifier = Modifier.size(13.dp),
+                            modifier = Modifier.size(13.5.dp),
                         )
                         Text(
                             text = actLabel,
@@ -2337,8 +2464,8 @@ private fun TheaterTopStageBar(
                     Surface(
                         onClick = onOpenStudio,
                         shape = RoundedCornerShape(999.dp),
-                        color = Color(0x990D121F),
-                        border = BorderStroke(1.dp, Color(0x44CBD5E1)),
+                        color = Color(0xA60D121F),
+                        border = BorderStroke(0.8.dp, Color(0x47CBD5E1)),
                         modifier = Modifier.weight(1f, fill = false),
                     ) {
                         Text(
@@ -2356,8 +2483,8 @@ private fun TheaterTopStageBar(
                     Surface(
                         onClick = onOpenStudio,
                         shape = RoundedCornerShape(999.dp),
-                        color = Color(0x990D121F),
-                        border = BorderStroke(1.dp, stageAccent.copy(alpha = 0.44f)),
+                        color = Color(0xA60D121F),
+                        border = BorderStroke(0.8.dp, stageAccent.copy(alpha = 0.48f)),
                     ) {
                         Text(
                             text = "♥${rp.state.hp}/${rp.state.maxHp} · 🪙${rp.state.gold}",
@@ -2385,11 +2512,12 @@ private fun StageGlassPill(
     Surface(
         onClick = onClick,
         shape = RoundedCornerShape(999.dp),
-        color = if (accent) Color(0xCC2C2113) else Color(0xAA0E1320),
-        border = BorderStroke(1.dp, if (accent) accentColor.copy(alpha = 0.72f) else Color(0x55CBD5E1)),
+        color = if (accent) Color(0xD42A1F12) else Color(0xBA0D1220),
+        border = BorderStroke(0.8.dp, if (accent) accentColor.copy(alpha = 0.72f) else Color(0x52CBD5E1)),
+        modifier = Modifier.heightIn(min = 34.dp),
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
@@ -2397,7 +2525,7 @@ private fun StageGlassPill(
                 imageVector = icon,
                 contentDescription = null,
                 tint = if (accent) accentColor else Color(0xFFE2E8F0),
-                modifier = Modifier.size(13.dp),
+                modifier = Modifier.size(13.5.dp),
             )
             Text(
                 text = label,
@@ -2421,16 +2549,16 @@ private fun StageGlassIconPill(
     Surface(
         onClick = onClick,
         shape = CircleShape,
-        color = if (accent) Color(0xCC2C2113) else Color(0xAA0E1320),
-        border = BorderStroke(1.dp, if (accent) accentColor.copy(alpha = 0.72f) else Color(0x55CBD5E1)),
-        modifier = Modifier.size(30.dp),
+        color = if (accent) Color(0xD42A1F12) else Color(0xBA0D1220),
+        border = BorderStroke(0.8.dp, if (accent) accentColor.copy(alpha = 0.72f) else Color(0x52CBD5E1)),
+        modifier = Modifier.size(34.dp),
     ) {
         Box(contentAlignment = Alignment.Center) {
             Icon(
                 imageVector = icon,
                 contentDescription = contentDescription,
                 tint = if (accent) accentColor else Color(0xFFE2E8F0),
-                modifier = Modifier.size(15.dp),
+                modifier = Modifier.size(15.5.dp),
             )
         }
     }
@@ -2593,8 +2721,8 @@ private fun StageVariantSwipePill(
 ) {
     Surface(
         shape = RoundedCornerShape(topStart = 10.dp, topEnd = 10.dp, bottomStart = 2.dp, bottomEnd = 2.dp),
-        color = Color(0xCC121726),
-        border = BorderStroke(1.dp, Color(0x66CBD5E1)),
+        color = Color(0xD4101522),
+        border = BorderStroke(0.8.dp, Color(0x5CE2E8F0)),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -2670,10 +2798,10 @@ private fun StageInlineActionChip(
         enabled = enabled,
         shape = RoundedCornerShape(999.dp),
         color = bg,
-        border = BorderStroke(1.dp, border),
+        border = BorderStroke(0.8.dp, border),
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.5.dp),
+            modifier = Modifier.padding(horizontal = 9.5.dp, vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
@@ -2889,7 +3017,7 @@ private fun TheaterHistoryLogSheet(
                     Surface(
                         shape = RoundedCornerShape(14.dp),
                         color = if (isUser) c.primarySoft.copy(alpha = 0.65f) else c.surface,
-                        border = BorderStroke(1.dp, if (isUser) c.primary.copy(alpha = 0.3f) else c.border),
+                        border = BorderStroke(0.8.dp, if (isUser) c.primary.copy(alpha = 0.3f) else c.border),
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Column(

@@ -1,7 +1,6 @@
 package com.gugachat.app.ui.update
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,6 +21,7 @@ import androidx.compose.material.icons.filled.InstallMobile
 import androidx.compose.material.icons.filled.OpenInBrowser
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SystemUpdate
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Surface
@@ -31,6 +31,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -42,6 +43,7 @@ import com.gugachat.app.core.theme.GuBadge
 import com.gugachat.app.core.theme.GuBadgeVariant
 import com.gugachat.app.core.theme.GuButton
 import com.gugachat.app.core.theme.GuButtonVariant
+import com.gugachat.app.core.theme.GuIconTile
 import com.gugachat.app.core.theme.LocalAppTheme
 import com.gugachat.app.data.api.AppUpdateInfo
 import com.gugachat.app.data.api.AppUpdateService
@@ -56,7 +58,8 @@ fun AppUpdateDialog(
     onDismiss: () -> Unit,
 ) {
     val strings = LocalAppStrings.current
-    val c = LocalAppTheme.current.colors
+    val theme = LocalAppTheme.current
+    val c = theme.colors
     val isDownloading = downloadState is UpdateDownloadState.Downloading
 
     Dialog(
@@ -69,8 +72,9 @@ fun AppUpdateDialog(
     ) {
         Surface(
             shape = RoundedCornerShape(22.dp),
-            color = c.surface,
-            border = BorderStroke(1.dp, c.outline),
+            color = c.surfaceElevated,
+            border = BorderStroke(theme.borderWidth, c.outline.copy(alpha = 0.85f)),
+            shadowElevation = if (theme.isDark) 12.dp else 8.dp,
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp),
@@ -79,7 +83,7 @@ fun AppUpdateDialog(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(18.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
                 // Header
                 Row(
@@ -87,29 +91,25 @@ fun AppUpdateDialog(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(44.dp)
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(c.primarySoft),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.SystemUpdate,
-                            contentDescription = null,
-                            tint = c.primarySoftInk,
-                            modifier = Modifier.size(22.dp),
-                        )
-                    }
+                    GuIconTile(
+                        icon = Icons.Default.SystemUpdate,
+                        tint = c.primarySoftInk,
+                        backgroundColor = c.primarySoft,
+                        size = 44.dp,
+                        iconSize = 22.dp,
+                        cornerRadius = 14.dp,
+                    )
                     Column(
                         modifier = Modifier.weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalArrangement = Arrangement.spacedBy(5.dp),
                     ) {
                         Text(
                             text = strings.update.dialogTitle,
                             color = c.ink,
                             fontSize = 17.sp,
                             fontWeight = FontWeight.ExtraBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -138,32 +138,37 @@ fun AppUpdateDialog(
                 Surface(
                     shape = RoundedCornerShape(14.dp),
                     color = c.surfaceSoft,
-                    border = BorderStroke(1.dp, c.border),
+                    border = BorderStroke(theme.borderWidth, c.border),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                            .padding(13.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         Text(
                             text = strings.update.releaseNotesLabel,
                             color = c.muted,
                             fontSize = 11.5.sp,
                             fontWeight = FontWeight.Bold,
+                            letterSpacing = 0.3.sp,
+                        )
+                        HorizontalDivider(
+                            thickness = theme.borderWidth,
+                            color = c.border.copy(alpha = 0.72f),
                         )
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .heightIn(min = 52.dp, max = 210.dp)
+                                .heightIn(min = 56.dp, max = 210.dp)
                                 .verticalScroll(rememberScrollState()),
                         ) {
                             Text(
                                 text = info.releaseNotes.ifBlank { strings.update.noReleaseNotes },
                                 color = c.ink,
-                                fontSize = 12.5.sp,
-                                lineHeight = 19.sp,
+                                fontSize = 13.sp,
+                                lineHeight = 20.sp,
                             )
                         }
                     }
@@ -181,24 +186,37 @@ fun AppUpdateDialog(
                         val percent = (progress * 100).toInt()
                         Column(
                             modifier = Modifier.fillMaxWidth(),
-                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(7.dp),
                         ) {
-                            Text(
-                                text = if (hasTotal) {
-                                    strings.update.downloadingProgress.fmt(
-                                        "downloaded" to AppUpdateService.formatBytes(downloadState.downloadedBytes),
-                                        "total" to AppUpdateService.formatBytes(downloadState.totalBytes),
-                                        "percent" to percent,
-                                    )
-                                } else {
-                                    strings.update.downloadingUnknownSize.fmt(
-                                        "downloaded" to AppUpdateService.formatBytes(downloadState.downloadedBytes),
-                                    )
-                                },
-                                color = c.primarySoftInk,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold,
-                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                            ) {
+                                Text(
+                                    text = if (hasTotal) {
+                                        strings.update.downloadingProgress.fmt(
+                                            "downloaded" to AppUpdateService.formatBytes(downloadState.downloadedBytes),
+                                            "total" to AppUpdateService.formatBytes(downloadState.totalBytes),
+                                            "percent" to percent,
+                                        )
+                                    } else {
+                                        strings.update.downloadingUnknownSize.fmt(
+                                            "downloaded" to AppUpdateService.formatBytes(downloadState.downloadedBytes),
+                                        )
+                                    },
+                                    color = c.primarySoftInk,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                if (hasTotal) {
+                                    Spacer(Modifier.width(8.dp))
+                                    GuBadge(text = "$percent%", variant = GuBadgeVariant.BLUE)
+                                }
+                            }
                             if (hasTotal) {
                                 LinearProgressIndicator(
                                     progress = { progress },
@@ -227,8 +245,8 @@ fun AppUpdateDialog(
                             shape = RoundedCornerShape(12.dp),
                             color = if (downloadState.needsInstallPermission) c.warningBg else c.successBg,
                             border = BorderStroke(
-                                1.dp,
-                                (if (downloadState.needsInstallPermission) c.warning else c.success).copy(alpha = 0.45f),
+                                theme.borderWidth,
+                                (if (downloadState.needsInstallPermission) c.warning else c.success).copy(alpha = 0.42f),
                             ),
                             modifier = Modifier.fillMaxWidth(),
                         ) {
@@ -240,8 +258,8 @@ fun AppUpdateDialog(
                                 },
                                 color = if (downloadState.needsInstallPermission) c.warning else c.success,
                                 fontSize = 12.sp,
-                                lineHeight = 17.sp,
-                                modifier = Modifier.padding(10.dp),
+                                lineHeight = 17.5.sp,
+                                modifier = Modifier.padding(11.dp),
                             )
                         }
                     }
@@ -250,15 +268,15 @@ fun AppUpdateDialog(
                         Surface(
                             shape = RoundedCornerShape(12.dp),
                             color = c.dangerBg,
-                            border = BorderStroke(1.dp, c.danger.copy(alpha = 0.45f)),
+                            border = BorderStroke(theme.borderWidth, c.danger.copy(alpha = 0.42f)),
                             modifier = Modifier.fillMaxWidth(),
                         ) {
                             Text(
                                 text = strings.update.downloadFailedPrefix.fmt("error" to downloadState.message),
                                 color = c.danger,
                                 fontSize = 12.sp,
-                                lineHeight = 17.sp,
-                                modifier = Modifier.padding(10.dp),
+                                lineHeight = 17.5.sp,
+                                modifier = Modifier.padding(11.dp),
                             )
                         }
                     }
@@ -305,7 +323,13 @@ fun AppUpdateDialog(
                         ) {
                             Icon(Icons.Default.OpenInBrowser, contentDescription = null, modifier = Modifier.size(15.dp))
                             Spacer(Modifier.width(5.dp))
-                            Text(strings.update.manualDownloadBtn, fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
+                            Text(
+                                text = strings.update.manualDownloadBtn,
+                                fontSize = 12.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
                         }
                         GuButton(
                             onClick = onDismiss,
@@ -313,7 +337,13 @@ fun AppUpdateDialog(
                             variant = GuButtonVariant.SUBTLE,
                             modifier = Modifier.weight(1f),
                         ) {
-                            Text(strings.update.cancelBtn, fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
+                            Text(
+                                text = strings.update.cancelBtn,
+                                fontSize = 12.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
                         }
                     }
                 }

@@ -5,6 +5,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -29,7 +30,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.Brush
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
@@ -68,9 +68,13 @@ import com.gugachat.app.core.theme.GuBadge
 import com.gugachat.app.core.theme.GuBadgeVariant
 import com.gugachat.app.core.theme.GuButton
 import com.gugachat.app.core.theme.GuButtonVariant
-import com.gugachat.app.core.theme.GuCard
 import com.gugachat.app.core.theme.GuConfirmDialog
+import com.gugachat.app.core.theme.GuGroupedCard
+import com.gugachat.app.core.theme.GuIconTile
+import com.gugachat.app.core.theme.GuModalDragHandle
 import com.gugachat.app.core.theme.GuPill
+import com.gugachat.app.core.theme.GuSectionHeader
+import com.gugachat.app.core.theme.GuSheetHeader
 import com.gugachat.app.core.theme.LocalAppTheme
 import com.gugachat.app.data.api.OnlineImageGenerationDto
 import com.gugachat.app.domain.images.ImageEditMode
@@ -96,7 +100,8 @@ fun ImageDetailSheet(
     onDismiss: () -> Unit,
 ) {
     val strings = LocalAppStrings.current
-    val c = LocalAppTheme.current.colors
+    val theme = LocalAppTheme.current
+    val c = theme.colors
     val ctx = LocalContext.current
     val isZh = strings.language == AppLanguage.ZH
     val safeIdx = imageIndex.coerceIn(0, (generation.images.size - 1).coerceAtLeast(0))
@@ -136,6 +141,7 @@ fun ImageDetailSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = c.page,
+        dragHandle = { GuModalDragHandle() },
         modifier = Modifier.statusBarsPadding(),
     ) {
         Column(
@@ -143,32 +149,12 @@ fun ImageDetailSheet(
                 .fillMaxWidth()
                 .navigationBarsPadding(),
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 16.dp, end = 8.dp, bottom = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = strings.images.detailParams,
-                    color = c.ink,
-                    fontSize = 17.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    modifier = Modifier.weight(1f),
-                )
-                IconButton(
-                    onClick = onDismiss,
-                    modifier = Modifier.size(44.dp),
-                ) {
-                    Icon(
-                        Icons.Default.Close,
-                        contentDescription = strings.common.close,
-                        tint = c.muted,
-                        modifier = Modifier.size(20.dp),
-                    )
-                }
-            }
-            HorizontalDivider(color = c.border)
+            GuSheetHeader(
+                title = strings.images.detailParams,
+                subtitle = generation.model.takeIf { it.isNotBlank() },
+                onClose = onDismiss,
+                closeContentDescription = strings.common.close,
+            )
 
             Column(
                 modifier = Modifier
@@ -178,13 +164,15 @@ fun ImageDetailSheet(
                     .padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
+                val heroShape = RoundedCornerShape(16.dp)
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(max = 360.dp)
                         .aspectRatio(previewAspect)
-                        .clip(RoundedCornerShape(16.dp))
+                        .clip(heroShape)
                         .background(c.surfaceSoft)
+                        .border(theme.borderWidth, c.border, heroShape)
                         .clickable(onClick = onOpenLightbox),
                 ) {
                     AuthenticatedImage(
@@ -194,7 +182,10 @@ fun ImageDetailSheet(
                         variant = "original",
                         revision = generation.updated_at ?: generation.created_at,
                         contentScale = ContentScale.Fit,
-                        modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp).aspectRatio(previewAspect),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 360.dp)
+                            .aspectRatio(previewAspect),
                     )
                     Row(
                         modifier = Modifier
@@ -202,6 +193,7 @@ fun ImageDetailSheet(
                             .padding(10.dp)
                             .clip(RoundedCornerShape(999.dp))
                             .background(Color.Black.copy(alpha = 0.62f))
+                            .border(0.8.dp, Color.White.copy(alpha = 0.24f), RoundedCornerShape(999.dp))
                             .padding(horizontal = 10.dp, vertical = 5.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -232,8 +224,8 @@ fun ImageDetailSheet(
                 }
 
                 if (versions.size > 1) {
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text(strings.images.editorVersions, color = c.ink, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        GuSectionHeader(title = strings.images.editorVersions)
                         Row(
                             modifier = Modifier.horizontalScroll(rememberScrollState()),
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -249,47 +241,64 @@ fun ImageDetailSheet(
                     }
                 }
 
-                GuCard(modifier = Modifier.fillMaxWidth()) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        Text(
-                            text = strings.images.promptLabel,
-                            color = c.muted,
-                            fontSize = 11.5.sp,
-                            fontWeight = FontWeight.Bold,
-                        )
-                        if (generation.prompt.isNotBlank()) {
-                            IconButton(
-                                onClick = {
-                                    val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                    cm.setPrimaryClip(ClipData.newPlainText("prompt", generation.prompt))
-                                    container.toastController.show(strings.common.copied)
-                                },
-                                modifier = Modifier.size(36.dp),
-                            ) {
-                                Icon(
-                                    Icons.Default.ContentCopy,
-                                    contentDescription = strings.common.copy,
-                                    tint = c.muted,
-                                    modifier = Modifier.size(16.dp),
-                                )
-                            }
-                        }
-                    }
+                // Prompt & Metadata GuGroupedCard
+                GuGroupedCard(modifier = Modifier.fillMaxWidth()) {
                     if (generation.prompt.isNotBlank()) {
-                        Text(
-                            text = generation.prompt,
-                            color = c.ink,
-                            fontSize = 13.sp,
-                            lineHeight = 19.sp,
-                            fontWeight = FontWeight.Medium,
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 14.dp, end = 6.dp, top = 8.dp, bottom = 12.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                            ) {
+                                Text(
+                                    text = strings.images.promptLabel,
+                                    color = c.muted,
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                                IconButton(
+                                    onClick = {
+                                        val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                        cm.setPrimaryClip(ClipData.newPlainText("prompt", generation.prompt))
+                                        container.toastController.show(strings.common.copied)
+                                    },
+                                    modifier = Modifier.size(36.dp),
+                                ) {
+                                    Icon(
+                                        Icons.Default.ContentCopy,
+                                        contentDescription = strings.common.copy,
+                                        tint = c.muted,
+                                        modifier = Modifier.size(16.dp),
+                                    )
+                                }
+                            }
+                            Text(
+                                text = generation.prompt,
+                                color = c.ink,
+                                fontSize = 13.sp,
+                                lineHeight = 19.5.sp,
+                                fontWeight = FontWeight.Medium,
+                                modifier = Modifier.padding(end = 8.dp),
+                            )
+                        }
+                        HorizontalDivider(
+                            thickness = theme.borderWidth,
+                            color = c.border.copy(alpha = 0.78f),
                         )
-                        Spacer(Modifier.height(8.dp))
                     }
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+
+                    FlowRow(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 11.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
                         if (generation.model.isNotBlank()) {
                             GuBadge(generation.model, variant = GuBadgeVariant.BLUE)
                         }
@@ -306,7 +315,7 @@ fun ImageDetailSheet(
                     }
                 }
 
-                // Tier 1: Primary Creative Actions
+                // Tier 1: Primary Studio & Draw Same CTAs
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -331,7 +340,7 @@ fun ImageDetailSheet(
                     }
                 }
 
-                // Tier 2: Utility Action Tiles
+                // Tier 2: 4-col compact utility tiles
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -339,6 +348,8 @@ fun ImageDetailSheet(
                     DetailUtilityTile(
                         icon = Icons.Default.AddPhotoAlternate,
                         label = strings.images.actionPadRef,
+                        tint = c.success,
+                        bg = c.successBg,
                         onClick = onUseAsRef,
                         modifier = Modifier.weight(1f),
                     )
@@ -346,6 +357,8 @@ fun ImageDetailSheet(
                         DetailUtilityTile(
                             icon = Icons.Default.Refresh,
                             label = strings.images.regenerate,
+                            tint = c.primarySoftInk,
+                            bg = c.primarySoft,
                             onClick = onRegenerate,
                             modifier = Modifier.weight(1f),
                         )
@@ -353,29 +366,35 @@ fun ImageDetailSheet(
                     DetailUtilityTile(
                         icon = Icons.Default.Download,
                         label = strings.images.actionDownload,
+                        tint = c.accent,
+                        bg = c.accentSoft,
                         onClick = onSaveToGallery,
                         modifier = Modifier.weight(1f),
                     )
                     DetailUtilityTile(
                         icon = Icons.Default.Share,
                         label = if (isZh) "分享" else "Share",
+                        tint = c.ink,
+                        bg = c.surfaceSoft,
                         onClick = onShare,
                         modifier = Modifier.weight(1f),
                     )
                 }
 
-                // Tier 3: Guarded Destructive Delete
+                // Tier 3: Softened danger Delete pill
                 Surface(
                     onClick = { showDeleteConfirm = true },
-                    shape = RoundedCornerShape(999.dp),
-                    color = c.dangerBg.copy(alpha = 0.35f),
-                    border = BorderStroke(1.dp, c.danger.copy(alpha = 0.45f)),
+                    shape = RoundedCornerShape(theme.pillRadius),
+                    color = c.dangerBg.copy(alpha = 0.42f),
+                    border = BorderStroke(theme.borderWidth, c.danger.copy(alpha = 0.42f)),
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(min = 44.dp),
                 ) {
                     Row(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 10.dp),
                         horizontalArrangement = Arrangement.Center,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -400,23 +419,34 @@ fun ImageDetailSheet(
 private fun DetailUtilityTile(
     icon: ImageVector,
     label: String,
+    tint: Color,
+    bg: Color,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val c = LocalAppTheme.current.colors
+    val theme = LocalAppTheme.current
+    val c = theme.colors
     Surface(
         onClick = onClick,
         shape = RoundedCornerShape(14.dp),
         color = c.surface,
-        border = BorderStroke(1.dp, c.border),
-        modifier = modifier.heightIn(min = 58.dp),
+        border = BorderStroke(theme.borderWidth, c.border),
+        shadowElevation = if (theme.isDark) 0.dp else 0.5.dp,
+        modifier = modifier.heightIn(min = 66.dp),
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 6.dp, vertical = 10.dp),
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 9.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+            verticalArrangement = Arrangement.spacedBy(5.dp),
         ) {
-            Icon(icon, contentDescription = null, tint = c.ink, modifier = Modifier.size(18.dp))
+            GuIconTile(
+                icon = icon,
+                tint = tint,
+                backgroundColor = bg,
+                size = 30.dp,
+                iconSize = 16.dp,
+                cornerRadius = 8.dp,
+            )
             Text(
                 text = label,
                 color = c.ink,

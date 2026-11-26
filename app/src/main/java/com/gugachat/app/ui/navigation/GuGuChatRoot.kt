@@ -1,5 +1,6 @@
 package com.gugachat.app.ui.navigation
 
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -18,6 +19,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -125,7 +127,7 @@ fun GuGuChatRoot(container: AppContainer) {
                     modifier = Modifier
                         .align(Alignment.TopCenter)
                         .statusBarsPadding()
-                        .padding(top = 60.dp),
+                        .padding(top = 58.dp),
                 )
 
                 val updateInfo = updateState.availableUpdate
@@ -146,7 +148,8 @@ fun GuGuChatRoot(container: AppContainer) {
 @Composable
 private fun SplashGate() {
     val strings = LocalAppStrings.current
-    val c = LocalAppTheme.current.colors
+    val theme = LocalAppTheme.current
+    val c = theme.colors
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -159,20 +162,31 @@ private fun SplashGate() {
             contentDescription = strings.common.appName,
             contentScale = ContentScale.Crop,
             modifier = Modifier
-                .size(116.dp)
-                .clip(RoundedCornerShape(28.dp)),
+                .size(108.dp)
+                .clip(RoundedCornerShape(26.dp))
+                .border(theme.borderWidth, c.border, RoundedCornerShape(26.dp)),
         )
         Spacer(Modifier.height(16.dp))
-        Text(strings.common.appName, color = c.ink, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
+        Text(
+            text = strings.common.appName,
+            color = c.ink,
+            fontSize = 20.sp,
+            fontWeight = FontWeight.ExtraBold,
+        )
         Spacer(Modifier.height(14.dp))
-        CircularProgressIndicator(color = c.primary, modifier = Modifier.size(26.dp), strokeWidth = 2.5.dp)
+        CircularProgressIndicator(
+            color = c.primary,
+            modifier = Modifier.size(24.dp),
+            strokeWidth = 2.4.dp,
+        )
     }
 }
 
 @Composable
 private fun AuthenticatedShell(container: AppContainer) {
     val strings = LocalAppStrings.current
-    val c = LocalAppTheme.current.colors
+    val theme = LocalAppTheme.current
+    val c = theme.colors
 
     val chatVm = remember(container) { ChatViewModel(container) }
     val imageVm = remember(container) { ImageViewModel(container) }
@@ -203,11 +217,15 @@ private fun AuthenticatedShell(container: AppContainer) {
                     .background(c.surface)
                     .navigationBarsPadding(),
             ) {
-                HorizontalDivider(color = c.border)
+                HorizontalDivider(
+                    thickness = theme.borderWidth,
+                    color = c.border.copy(alpha = 0.85f),
+                )
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(60.dp),
+                        .height(62.dp)
+                        .padding(horizontal = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     CompactBottomNavItem(
@@ -272,9 +290,24 @@ private fun CompactBottomNavItem(
     showIndicatorDot: Boolean = false,
 ) {
     val c = LocalAppTheme.current.colors
+    val capsuleBg by animateColorAsState(
+        targetValue = if (selected) c.primarySoft else Color.Transparent,
+        label = "nav_capsule_bg",
+    )
+    val iconTint by animateColorAsState(
+        targetValue = if (selected) c.primarySoftInk else c.muted,
+        label = "nav_icon_tint",
+    )
+    val labelTint by animateColorAsState(
+        targetValue = if (selected) c.primarySoftInk else c.muted,
+        label = "nav_label_tint",
+    )
+
     Column(
         modifier = modifier
             .fillMaxHeight()
+            .padding(vertical = 4.dp)
+            .clip(RoundedCornerShape(14.dp))
             .clickable(role = Role.Tab, onClick = onClick),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
@@ -282,15 +315,16 @@ private fun CompactBottomNavItem(
         Box(contentAlignment = Alignment.Center) {
             Box(
                 modifier = Modifier
+                    .width(54.dp)
+                    .height(30.dp)
                     .clip(RoundedCornerShape(999.dp))
-                    .background(if (selected) c.primarySoft else Color.Transparent)
-                    .padding(horizontal = 18.dp, vertical = 4.dp),
+                    .background(capsuleBg),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     imageVector = if (selected) selectedIcon else unselectedIcon,
                     contentDescription = null,
-                    tint = if (selected) c.primarySoftInk else c.muted,
+                    tint = iconTint,
                     modifier = Modifier.size(21.dp),
                 )
             }
@@ -298,8 +332,8 @@ private fun CompactBottomNavItem(
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
-                        .offset(x = (-8).dp, y = 2.dp)
-                        .size(8.dp)
+                        .offset(x = (-6).dp, y = 2.dp)
+                        .size(7.dp)
                         .clip(CircleShape)
                         .background(c.accent)
                         .border(1.5.dp, c.surface, CircleShape),
@@ -312,7 +346,7 @@ private fun CompactBottomNavItem(
             fontSize = 11.sp,
             lineHeight = 13.sp,
             fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-            color = if (selected) c.primary else c.muted,
+            color = labelTint,
             maxLines = 1,
         )
     }

@@ -7,20 +7,18 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -42,7 +40,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -52,6 +49,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.gugachat.app.AppContainer
 import com.gugachat.app.core.i18n.LocalAppStrings
 import com.gugachat.app.core.theme.GuAwningHeader
+import com.gugachat.app.core.theme.GuIconTile
+import com.gugachat.app.core.theme.GuSegmentedControl
 import com.gugachat.app.core.theme.LocalAppTheme
 import kotlinx.coroutines.launch
 
@@ -62,7 +61,8 @@ fun CreativeStudioScreen(
 ) {
     val state by imageViewModel.ui.collectAsStateWithLifecycle()
     val strings = LocalAppStrings.current
-    val c = LocalAppTheme.current.colors
+    val theme = LocalAppTheme.current
+    val c = theme.colors
     val scope = rememberCoroutineScope()
 
     val pagerState = rememberPagerState(initialPage = 0, pageCount = { 3 })
@@ -92,64 +92,20 @@ fun CreativeStudioScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(56.dp)
-                        .padding(horizontal = 12.dp),
+                        .height(50.dp)
+                        .padding(start = 16.dp, end = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
-                    Surface(
-                        shape = RoundedCornerShape(999.dp),
-                        color = c.surfaceSoft,
-                        border = BorderStroke(1.dp, c.border),
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(3.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(2.dp),
-                        ) {
-                            segmentTitles.forEachIndexed { idx, label ->
-                                val selected = pagerState.currentPage == idx
-                                val badgeCount = if (idx == 0 && state.totalWorks > 0) state.totalWorks else null
-                                Row(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(999.dp))
-                                        .background(if (selected) c.primary else Color.Transparent)
-                                        .clickable {
-                                            scope.launch { pagerState.animateScrollToPage(idx) }
-                                        }
-                                        .padding(horizontal = 11.dp, vertical = 6.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                ) {
-                                    Text(
-                                        text = label,
-                                        color = if (selected) Color.White else c.muted,
-                                        fontSize = 12.5.sp,
-                                        fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.SemiBold,
-                                        maxLines = 1,
-                                    )
-                                    if (badgeCount != null) {
-                                        Text(
-                                            text = if (badgeCount > 99) "99+" else badgeCount.toString(),
-                                            color = if (selected) Color.White.copy(alpha = 0.85f) else c.muted,
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.Bold,
-                                        )
-                                    }
-                                    if (idx == 0 && processingCount > 0) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(6.dp)
-                                                .clip(CircleShape)
-                                                .background(if (selected) Color.White else c.accent),
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    Spacer(Modifier.weight(1f))
+                    Text(
+                        text = strings.images.title,
+                        color = c.ink,
+                        fontSize = 17.5.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
 
                     when (pagerState.currentPage) {
                         0 -> {
@@ -218,14 +174,54 @@ fun CreativeStudioScreen(
                             }
                         }
                     }
+
+                    Surface(
+                        onClick = { imageViewModel.setShowCreateSheet(true) },
+                        shape = RoundedCornerShape(theme.pillRadius),
+                        color = c.primary,
+                        modifier = Modifier.height(34.dp),
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 11.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            Icon(
+                                Icons.Default.Add,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(15.dp),
+                            )
+                            Text(
+                                text = strings.images.studioCreateFab,
+                                color = Color.White,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                            )
+                        }
+                    }
                 }
+
+                GuSegmentedControl(
+                    items = segmentTitles,
+                    selectedIndex = pagerState.currentPage,
+                    onSelect = { idx ->
+                        scope.launch { pagerState.animateScrollToPage(idx) }
+                    },
+                    badgeCounts = if (state.totalWorks > 0) mapOf(0 to state.totalWorks) else emptyMap(),
+                    indicatorDots = if (processingCount > 0) setOf(0) else emptySet(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 12.dp, end = 12.dp, top = 2.dp, bottom = 10.dp),
+                )
             }
 
             if (showUnavailableBanner) {
                 Surface(
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(14.dp),
                     color = c.warningBg,
-                    border = BorderStroke(1.dp, c.warning.copy(alpha = 0.4f)),
+                    border = BorderStroke(theme.borderWidth, c.warning.copy(alpha = 0.38f)),
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 12.dp, vertical = 6.dp),
@@ -235,18 +231,21 @@ fun CreativeStudioScreen(
                             .fillMaxWidth()
                             .padding(horizontal = 12.dp, vertical = 9.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        Icon(
-                            Icons.Default.WarningAmber,
-                            contentDescription = null,
+                        GuIconTile(
+                            icon = Icons.Default.WarningAmber,
                             tint = c.warning,
-                            modifier = Modifier.size(18.dp),
+                            backgroundColor = c.warning.copy(alpha = 0.14f),
+                            size = 28.dp,
+                            iconSize = 16.dp,
+                            cornerRadius = 8.dp,
                         )
                         Text(
                             text = state.unavailableReason?.takeIf { it.isNotBlank() } ?: strings.images.unavailable,
                             color = c.warning,
                             fontSize = 12.sp,
+                            lineHeight = 16.5.sp,
                             fontWeight = FontWeight.SemiBold,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
@@ -297,7 +296,7 @@ fun CreativeStudioScreen(
             }
         }
 
-        // Hide floating Create FAB on Tools tab (which has its own primary hero CTA & bottom cards)
+        // Hide floating Create FAB on Tools tab (zero occlusion on presets/workflow rows)
         // and while batch selection mode is active on Gallery.
         AnimatedVisibility(
             visible = pagerState.currentPage != 2 && !(pagerState.currentPage == 0 && state.batchMode),
@@ -309,12 +308,14 @@ fun CreativeStudioScreen(
         ) {
             Surface(
                 onClick = { imageViewModel.setShowCreateSheet(true) },
-                shape = RoundedCornerShape(999.dp),
+                shape = RoundedCornerShape(theme.pillRadius),
                 color = c.primary,
-                shadowElevation = 6.dp,
+                border = BorderStroke(theme.borderWidth, Color.White.copy(alpha = 0.18f)),
+                shadowElevation = if (theme.isDark) 8.dp else 6.dp,
+                modifier = Modifier.heightIn(min = 50.dp),
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                    modifier = Modifier.padding(horizontal = 17.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {

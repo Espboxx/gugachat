@@ -55,6 +55,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -78,7 +79,8 @@ fun ChatWorkspaceScreen(
 ) {
     val state by viewModel.ui.collectAsStateWithLifecycle()
     val strings = LocalAppStrings.current
-    val c = LocalAppTheme.current.colors
+    val theme = LocalAppTheme.current
+    val c = theme.colors
     val ctx = LocalContext.current
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -361,34 +363,41 @@ fun ChatWorkspaceScreen(
                     Box(
                         modifier = Modifier
                             .align(Alignment.Center)
-                            .padding(horizontal = 94.dp),
+                            .padding(horizontal = 96.dp),
                         contentAlignment = Alignment.Center,
                     ) {
+                        val hasModel = !state.selectedModelId.isNullOrBlank()
+                        val dotColor = when {
+                            activeModel?.free_quota != null -> c.success
+                            hasModel -> c.primary
+                            else -> c.muted.copy(alpha = 0.55f)
+                        }
                         Surface(
                             onClick = { showModelSheet = true },
                             shape = RoundedCornerShape(999.dp),
-                            color = c.surface,
-                            border = BorderStroke(1.dp, c.border),
-                            modifier = Modifier.heightIn(min = 38.dp),
+                            color = if (hasModel) c.surfaceSoft else c.surface,
+                            border = BorderStroke(
+                                width = theme.borderWidth,
+                                color = if (hasModel) c.border else c.outline.copy(alpha = 0.8f),
+                            ),
+                            modifier = Modifier.heightIn(min = 36.dp),
                         ) {
                             Row(
                                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                             ) {
-                                if (activeModel?.free_quota != null) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(7.dp)
-                                            .clip(CircleShape)
-                                            .background(c.success),
-                                    )
-                                }
+                                Box(
+                                    modifier = Modifier
+                                        .size(7.dp)
+                                        .clip(CircleShape)
+                                        .background(dotColor),
+                                )
                                 Text(
                                     text = state.selectedModelId ?: strings.chat.selectModel,
-                                    color = c.ink,
-                                    fontSize = 13.5.sp,
-                                    fontWeight = FontWeight.Bold,
+                                    color = if (hasModel) c.ink else c.muted,
+                                    fontSize = 13.sp,
+                                    fontWeight = if (hasModel) FontWeight.Bold else FontWeight.SemiBold,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.weight(1f, fill = false),
@@ -436,8 +445,22 @@ fun ChatWorkspaceScreen(
                                 onDismissRequest = { showMoreMenu = false },
                             ) {
                                 DropdownMenuItem(
-                                    leadingIcon = { Icon(Icons.Default.Psychology, contentDescription = null, tint = c.primary, modifier = Modifier.size(18.dp)) },
-                                    text = { Text(strings.chat.memoryTitle, color = c.ink, fontSize = 13.5.sp, fontWeight = FontWeight.Medium) },
+                                    leadingIcon = {
+                                        Icon(
+                                            Icons.Default.Psychology,
+                                            contentDescription = null,
+                                            tint = c.primary,
+                                            modifier = Modifier.size(18.dp),
+                                        )
+                                    },
+                                    text = {
+                                        Text(
+                                            strings.chat.memoryTitle,
+                                            color = c.ink,
+                                            fontSize = 13.5.sp,
+                                            fontWeight = FontWeight.Medium,
+                                        )
+                                    },
                                     onClick = {
                                         showMoreMenu = false
                                         memorySheetInitialTab = 0
@@ -445,23 +468,52 @@ fun ChatWorkspaceScreen(
                                     },
                                 )
                                 DropdownMenuItem(
-                                    leadingIcon = { Icon(Icons.Default.Tune, contentDescription = null, tint = c.primary, modifier = Modifier.size(18.dp)) },
-                                    text = { Text(strings.chat.paramsTitle, color = c.ink, fontSize = 13.5.sp, fontWeight = FontWeight.Medium) },
+                                    leadingIcon = {
+                                        Icon(
+                                            Icons.Default.Tune,
+                                            contentDescription = null,
+                                            tint = c.primary,
+                                            modifier = Modifier.size(18.dp),
+                                        )
+                                    },
+                                    text = {
+                                        Text(
+                                            strings.chat.paramsTitle,
+                                            color = c.ink,
+                                            fontSize = 13.5.sp,
+                                            fontWeight = FontWeight.Medium,
+                                        )
+                                    },
                                     onClick = {
                                         showMoreMenu = false
                                         showParamsSheet = true
                                     },
                                 )
                                 DropdownMenuItem(
-                                    leadingIcon = { Icon(Icons.Default.Bookmarks, contentDescription = null, tint = c.muted, modifier = Modifier.size(18.dp)) },
-                                    text = { Text(strings.chat.recallTitle, color = c.ink, fontSize = 13.5.sp, fontWeight = FontWeight.Medium) },
-                                    trailingIcon = {
-                                        Text(
-                                            text = "${state.waterline.percentage}% · ${state.waterline.usedTokens / 1000}K",
-                                            color = if (state.waterline.exceedsModelWindow) c.danger else c.muted,
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.SemiBold,
+                                    leadingIcon = {
+                                        Icon(
+                                            Icons.Default.Bookmarks,
+                                            contentDescription = null,
+                                            tint = if (state.waterline.exceedsModelWindow) c.danger else c.muted,
+                                            modifier = Modifier.size(18.dp),
                                         )
+                                    },
+                                    text = {
+                                        Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                                            Text(
+                                                strings.chat.recallTitle,
+                                                color = c.ink,
+                                                fontSize = 13.5.sp,
+                                                fontWeight = FontWeight.Medium,
+                                            )
+                                            Text(
+                                                text = "${state.waterline.percentage}% · ${state.waterline.usedTokens / 1000}K / ${state.waterline.effectiveLimitTokens / 1000}K",
+                                                color = if (state.waterline.exceedsModelWindow) c.danger else c.muted,
+                                                fontSize = 11.sp,
+                                                fontFamily = FontFamily.Monospace,
+                                                fontWeight = FontWeight.SemiBold,
+                                            )
+                                        }
                                     },
                                     onClick = {
                                         showMoreMenu = false
@@ -469,34 +521,86 @@ fun ChatWorkspaceScreen(
                                         showMemorySheet = true
                                     },
                                 )
+                                HorizontalDivider(
+                                    thickness = theme.borderWidth,
+                                    color = c.border.copy(alpha = 0.75f),
+                                )
                                 DropdownMenuItem(
-                                    leadingIcon = { Icon(Icons.Default.FolderZip, contentDescription = null, tint = c.accent, modifier = Modifier.size(18.dp)) },
-                                    text = { Text(strings.chat.importExternalTitle, color = c.ink, fontSize = 13.5.sp, fontWeight = FontWeight.Medium) },
+                                    leadingIcon = {
+                                        Icon(
+                                            Icons.Default.FolderZip,
+                                            contentDescription = null,
+                                            tint = c.accent,
+                                            modifier = Modifier.size(18.dp),
+                                        )
+                                    },
+                                    text = {
+                                        Text(
+                                            strings.chat.importExternalTitle,
+                                            color = c.ink,
+                                            fontSize = 13.5.sp,
+                                            fontWeight = FontWeight.Medium,
+                                        )
+                                    },
                                     onClick = {
                                         showMoreMenu = false
                                         showDeepSeekImport = true
                                     },
                                 )
                                 if (mode == ConversationMode.novel && activeConv?.novel != null) {
-                                    HorizontalDivider(color = c.border)
+                                    HorizontalDivider(
+                                        thickness = theme.borderWidth,
+                                        color = c.border.copy(alpha = 0.75f),
+                                    )
                                     DropdownMenuItem(
-                                        leadingIcon = { Icon(Icons.Default.Book, contentDescription = null, tint = c.accent, modifier = Modifier.size(18.dp)) },
-                                        text = { Text(strings.novel.studioTitle, color = c.ink, fontSize = 13.5.sp, fontWeight = FontWeight.Medium) },
+                                        leadingIcon = {
+                                            Icon(
+                                                Icons.Default.Book,
+                                                contentDescription = null,
+                                                tint = c.accent,
+                                                modifier = Modifier.size(18.dp),
+                                            )
+                                        },
+                                        text = {
+                                            Text(
+                                                strings.novel.studioTitle,
+                                                color = c.ink,
+                                                fontSize = 13.5.sp,
+                                                fontWeight = FontWeight.Medium,
+                                            )
+                                        },
                                         onClick = {
                                             showMoreMenu = false
                                             showNovelStudio = true
                                         },
                                     )
                                     DropdownMenuItem(
-                                        leadingIcon = { Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = null, tint = c.primary, modifier = Modifier.size(18.dp)) },
-                                        text = { Text(strings.novel.pureReading, color = c.ink, fontSize = 13.5.sp, fontWeight = FontWeight.Medium) },
+                                        leadingIcon = {
+                                            Icon(
+                                                Icons.AutoMirrored.Filled.MenuBook,
+                                                contentDescription = null,
+                                                tint = c.primary,
+                                                modifier = Modifier.size(18.dp),
+                                            )
+                                        },
+                                        text = {
+                                            Text(
+                                                strings.novel.pureReading,
+                                                color = c.ink,
+                                                fontSize = 13.5.sp,
+                                                fontWeight = FontWeight.Medium,
+                                            )
+                                        },
                                         onClick = {
                                             showMoreMenu = false
                                             viewModel.setPureReadingMode(true)
                                         },
                                     )
                                 } else if (mode == ConversationMode.rp && activeConv?.rp != null) {
-                                    HorizontalDivider(color = c.border)
+                                    HorizontalDivider(
+                                        thickness = theme.borderWidth,
+                                        color = c.border.copy(alpha = 0.75f),
+                                    )
                                     DropdownMenuItem(
                                         leadingIcon = {
                                             Icon(
@@ -520,8 +624,22 @@ fun ChatWorkspaceScreen(
                                         },
                                     )
                                     DropdownMenuItem(
-                                        leadingIcon = { Icon(Icons.Default.Casino, contentDescription = null, tint = c.accent, modifier = Modifier.size(18.dp)) },
-                                        text = { Text(strings.rp.studioBtn, color = c.ink, fontSize = 13.5.sp, fontWeight = FontWeight.Medium) },
+                                        leadingIcon = {
+                                            Icon(
+                                                Icons.Default.Casino,
+                                                contentDescription = null,
+                                                tint = c.accent,
+                                                modifier = Modifier.size(18.dp),
+                                            )
+                                        },
+                                        text = {
+                                            Text(
+                                                strings.rp.studioBtn,
+                                                color = c.ink,
+                                                fontSize = 13.5.sp,
+                                                fontWeight = FontWeight.Medium,
+                                            )
+                                        },
                                         onClick = {
                                             showMoreMenu = false
                                             rpStudioInitialTab = 0
@@ -529,8 +647,22 @@ fun ChatWorkspaceScreen(
                                         },
                                     )
                                     DropdownMenuItem(
-                                        leadingIcon = { Icon(Icons.Default.Palette, contentDescription = null, tint = c.primary, modifier = Modifier.size(18.dp)) },
-                                        text = { Text(strings.rp.frontendTab, color = c.ink, fontSize = 13.5.sp, fontWeight = FontWeight.Medium) },
+                                        leadingIcon = {
+                                            Icon(
+                                                Icons.Default.Palette,
+                                                contentDescription = null,
+                                                tint = c.primary,
+                                                modifier = Modifier.size(18.dp),
+                                            )
+                                        },
+                                        text = {
+                                            Text(
+                                                strings.rp.frontendTab,
+                                                color = c.ink,
+                                                fontSize = 13.5.sp,
+                                                fontWeight = FontWeight.Medium,
+                                            )
+                                        },
                                         onClick = {
                                             showMoreMenu = false
                                             rpStudioInitialTab = 3
@@ -538,8 +670,22 @@ fun ChatWorkspaceScreen(
                                         },
                                     )
                                     DropdownMenuItem(
-                                        leadingIcon = { Icon(Icons.Default.Save, contentDescription = null, tint = c.primary, modifier = Modifier.size(18.dp)) },
-                                        text = { Text(strings.rp.quickSaveBtn, color = c.ink, fontSize = 13.5.sp, fontWeight = FontWeight.Medium) },
+                                        leadingIcon = {
+                                            Icon(
+                                                Icons.Default.Save,
+                                                contentDescription = null,
+                                                tint = c.primary,
+                                                modifier = Modifier.size(18.dp),
+                                            )
+                                        },
+                                        text = {
+                                            Text(
+                                                strings.rp.quickSaveBtn,
+                                                color = c.ink,
+                                                fontSize = 13.5.sp,
+                                                fontWeight = FontWeight.Medium,
+                                            )
+                                        },
                                         onClick = {
                                             showMoreMenu = false
                                             viewModel.createRpSaveSlot(strings.rp.quickSaveBtn)
@@ -576,7 +722,7 @@ fun ChatWorkspaceScreen(
                 if (state.isGeneratingRpArt) {
                     Surface(
                         color = c.primarySoft,
-                        border = BorderStroke(1.dp, c.primary.copy(alpha = 0.3f)),
+                        border = BorderStroke(theme.borderWidth, c.primary.copy(alpha = 0.3f)),
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier
                             .fillMaxWidth()

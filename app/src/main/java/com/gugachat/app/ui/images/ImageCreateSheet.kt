@@ -4,9 +4,9 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -36,12 +36,11 @@ import androidx.compose.material.icons.filled.Bookmarks
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -68,9 +67,14 @@ import com.gugachat.app.core.theme.GuBadgeVariant
 import com.gugachat.app.core.theme.GuButton
 import com.gugachat.app.core.theme.GuButtonVariant
 import com.gugachat.app.core.theme.GuCard
+import com.gugachat.app.core.theme.GuGroupedCard
+import com.gugachat.app.core.theme.GuIconTile
+import com.gugachat.app.core.theme.GuModalDragHandle
 import com.gugachat.app.core.theme.GuPill
 import com.gugachat.app.core.theme.GuSearchableListBox
+import com.gugachat.app.core.theme.GuSectionHeader
 import com.gugachat.app.core.theme.GuSelectableListRow
+import com.gugachat.app.core.theme.GuSheetHeader
 import com.gugachat.app.core.theme.GuTextField
 import com.gugachat.app.core.theme.LocalAppTheme
 import com.gugachat.app.core.util.FuzzyMatcher
@@ -97,7 +101,8 @@ fun ImageCreateSheet(
     onDismiss: () -> Unit,
 ) {
     val strings = LocalAppStrings.current
-    val c = LocalAppTheme.current.colors
+    val theme = LocalAppTheme.current
+    val c = theme.colors
     val isZh = strings.language == AppLanguage.ZH
 
     val activeKey = state.keys.firstOrNull { it.id == state.selectedKeyId }
@@ -151,11 +156,13 @@ fun ImageCreateSheet(
     }
 
     val canSubmit = state.prompt.isNotBlank() && activeKey != null && activeModel != null && !state.isSubmitting
+    val totalRefs = state.referenceUploads.size + state.referenceAssets.size
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = c.page,
+        dragHandle = { GuModalDragHandle() },
         modifier = Modifier.statusBarsPadding(),
     ) {
         Column(
@@ -163,39 +170,18 @@ fun ImageCreateSheet(
                 .fillMaxWidth()
                 .imePadding(),
         ) {
-            // Consistent sheet header
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 16.dp, end = 8.dp, bottom = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text(
-                    text = strings.images.title,
-                    color = c.ink,
-                    fontSize = 17.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    modifier = Modifier.weight(1f),
-                )
-                GuButton(onClick = onOpenPresets, compact = true, variant = GuButtonVariant.SUBTLE) {
-                    Icon(Icons.Default.Bookmarks, contentDescription = null, modifier = Modifier.size(14.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text(strings.images.presetsTitle, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
-                }
-                IconButton(
-                    onClick = onDismiss,
-                    modifier = Modifier.size(44.dp),
-                ) {
-                    Icon(
-                        Icons.Default.Close,
-                        contentDescription = strings.common.close,
-                        tint = c.muted,
-                        modifier = Modifier.size(20.dp),
-                    )
-                }
-            }
-            HorizontalDivider(color = c.border)
+            GuSheetHeader(
+                title = strings.images.title,
+                onClose = onDismiss,
+                closeContentDescription = strings.common.close,
+                trailing = {
+                    GuButton(onClick = onOpenPresets, compact = true, variant = GuButtonVariant.SUBTLE) {
+                        Icon(Icons.Default.Bookmarks, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text(strings.images.presetsTitle, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                    }
+                },
+            )
 
             // Scrollable creation body
             Column(
@@ -206,26 +192,30 @@ fun ImageCreateSheet(
                     .padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                // Compact collapsible Channel & Model Picker Card — keeps Prompt & Refs above the fold
-                GuCard(
-                    modifier = Modifier.fillMaxWidth(),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                ) {
+                // Collapsible Channel & Model selector inside a clean GuGroupedCard — keeps Prompt above the fold
+                GuGroupedCard(modifier = Modifier.fillMaxWidth()) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
                             .clickable {
                                 expandedPicker = if (expandedPicker == "group") null else "group"
                             }
-                            .padding(vertical = 8.dp),
+                            .padding(horizontal = 14.dp, vertical = 11.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
+                        GuIconTile(
+                            icon = Icons.Default.Tune,
+                            tint = c.accent,
+                            backgroundColor = c.accentSoft,
+                            size = 30.dp,
+                            iconSize = 16.dp,
+                            cornerRadius = 8.dp,
+                        )
                         Text(
                             text = strings.images.groupLabel,
                             color = c.muted,
-                            fontSize = 12.sp,
+                            fontSize = 12.5.sp,
                             fontWeight = FontWeight.Bold,
                         )
                         Row(
@@ -266,7 +256,7 @@ fun ImageCreateSheet(
                     }
 
                     AnimatedVisibility(visible = expandedPicker == "group") {
-                        Column(modifier = Modifier.padding(bottom = 8.dp)) {
+                        Column(modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 10.dp)) {
                             GuSearchableListBox(
                                 title = strings.images.groupLabel,
                                 items = filteredKeys,
@@ -305,23 +295,34 @@ fun ImageCreateSheet(
                         }
                     }
 
-                    HorizontalDivider(color = c.border.copy(alpha = 0.6f))
+                    HorizontalDivider(
+                        modifier = Modifier.padding(start = 54.dp),
+                        thickness = theme.borderWidth,
+                        color = c.border.copy(alpha = 0.78f),
+                    )
 
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
                             .clickable {
                                 expandedPicker = if (expandedPicker == "model") null else "model"
                             }
-                            .padding(vertical = 8.dp),
+                            .padding(horizontal = 14.dp, vertical = 11.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
+                        GuIconTile(
+                            icon = Icons.Default.AutoAwesome,
+                            tint = c.primarySoftInk,
+                            backgroundColor = c.primarySoft,
+                            size = 30.dp,
+                            iconSize = 16.dp,
+                            cornerRadius = 8.dp,
+                        )
                         Text(
                             text = strings.images.modelLabel,
                             color = c.muted,
-                            fontSize = 12.sp,
+                            fontSize = 12.5.sp,
                             fontWeight = FontWeight.Bold,
                         )
                         Row(
@@ -362,7 +363,7 @@ fun ImageCreateSheet(
                     }
 
                     AnimatedVisibility(visible = expandedPicker == "model") {
-                        Column(modifier = Modifier.padding(bottom = 8.dp)) {
+                        Column(modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 10.dp)) {
                             GuSearchableListBox(
                                 title = strings.images.modelLabel,
                                 items = filteredModels,
@@ -417,93 +418,110 @@ fun ImageCreateSheet(
                     maxLines = 6,
                 )
 
-                // Reference Images (up to 5) with comfortable 36dp remove hitboxes
-                GuCard(modifier = Modifier.fillMaxWidth()) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(strings.images.referencesLabel, color = c.ink, fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
-                        if (maxRefs > 0) {
-                            GuButton(
-                                onClick = {
-                                    refPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-                                },
-                                compact = true,
-                                variant = GuButtonVariant.SUBTLE,
-                            ) {
-                                Icon(Icons.Default.AddPhotoAlternate, contentDescription = null, modifier = Modifier.size(15.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text(strings.images.addReferences, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                // Reference Images with 36dp remove hitboxes
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    GuSectionHeader(
+                        title = strings.images.referencesLabel,
+                        subtitle = if (maxRefs > 0 && totalRefs > 0) "$totalRefs / $maxRefs" else null,
+                        trailing = {
+                            if (maxRefs > 0) {
+                                GuButton(
+                                    onClick = {
+                                        refPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                                    },
+                                    compact = true,
+                                    variant = GuButtonVariant.SUBTLE,
+                                ) {
+                                    Icon(Icons.Default.AddPhotoAlternate, contentDescription = null, modifier = Modifier.size(15.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(strings.images.addReferences, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                                }
+                            } else {
+                                GuBadge(strings.images.referencesUnsupported, variant = GuBadgeVariant.NEUTRAL)
                             }
-                        } else {
-                            GuBadge(strings.images.referencesUnsupported, variant = GuBadgeVariant.NEUTRAL)
-                        }
-                    }
-                    if (state.referenceUploads.isNotEmpty() || state.referenceAssets.isNotEmpty()) {
-                        Spacer(Modifier.height(10.dp))
-                        Row(
-                            modifier = Modifier.horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        },
+                    )
+                    if (totalRefs > 0) {
+                        GuCard(
+                            modifier = Modifier.fillMaxWidth(),
+                            contentPadding = PaddingValues(12.dp),
                         ) {
-                            state.referenceUploads.forEach { ref ->
-                                Box(modifier = Modifier.size(72.dp)) {
-                                    Image(
-                                        painter = rememberAsyncImagePainter(ref.previewUri),
-                                        contentDescription = null,
-                                        contentScale = ContentScale.Crop,
-                                        modifier = Modifier
-                                            .size(64.dp)
-                                            .align(Alignment.BottomStart)
-                                            .clip(RoundedCornerShape(10.dp)),
-                                    )
-                                    Box(
-                                        modifier = Modifier
-                                            .align(Alignment.TopEnd)
-                                            .size(36.dp)
-                                            .clickable { onRemoveRefUpload(ref.id) },
-                                        contentAlignment = Alignment.TopEnd,
-                                    ) {
+                            Row(
+                                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                state.referenceUploads.forEach { ref ->
+                                    Box(modifier = Modifier.size(72.dp)) {
+                                        val refShape = RoundedCornerShape(10.dp)
+                                        Image(
+                                            painter = rememberAsyncImagePainter(ref.previewUri),
+                                            contentDescription = null,
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier
+                                                .size(64.dp)
+                                                .align(Alignment.BottomStart)
+                                                .clip(refShape)
+                                                .border(theme.borderWidth, c.border, refShape),
+                                        )
                                         Box(
                                             modifier = Modifier
-                                                .size(20.dp)
-                                                .clip(CircleShape)
-                                                .background(c.danger),
-                                            contentAlignment = Alignment.Center,
+                                                .align(Alignment.TopEnd)
+                                                .size(36.dp)
+                                                .clickable { onRemoveRefUpload(ref.id) },
+                                            contentAlignment = Alignment.TopEnd,
                                         ) {
-                                            Icon(Icons.Default.Close, contentDescription = strings.common.delete, tint = Color.White, modifier = Modifier.size(13.dp))
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(20.dp)
+                                                    .clip(CircleShape)
+                                                    .background(c.danger),
+                                                contentAlignment = Alignment.Center,
+                                            ) {
+                                                Icon(
+                                                    Icons.Default.Close,
+                                                    contentDescription = strings.common.delete,
+                                                    tint = Color.White,
+                                                    modifier = Modifier.size(13.dp),
+                                                )
+                                            }
                                         }
                                     }
                                 }
-                            }
-                            state.referenceAssets.forEach { asset ->
-                                Box(modifier = Modifier.size(72.dp)) {
-                                    AuthenticatedImage(
-                                        container = container,
-                                        generationId = asset.generation_id,
-                                        imageIndex = asset.image_index,
-                                        variant = "thumb",
-                                        modifier = Modifier
-                                            .size(64.dp)
-                                            .align(Alignment.BottomStart)
-                                            .clip(RoundedCornerShape(10.dp)),
-                                    )
-                                    Box(
-                                        modifier = Modifier
-                                            .align(Alignment.TopEnd)
-                                            .size(36.dp)
-                                            .clickable { onRemoveRefAsset(asset) },
-                                        contentAlignment = Alignment.TopEnd,
-                                    ) {
+                                state.referenceAssets.forEach { asset ->
+                                    Box(modifier = Modifier.size(72.dp)) {
+                                        val refShape = RoundedCornerShape(10.dp)
+                                        AuthenticatedImage(
+                                            container = container,
+                                            generationId = asset.generation_id,
+                                            imageIndex = asset.image_index,
+                                            variant = "thumb",
+                                            modifier = Modifier
+                                                .size(64.dp)
+                                                .align(Alignment.BottomStart)
+                                                .clip(refShape)
+                                                .border(theme.borderWidth, c.border, refShape),
+                                        )
                                         Box(
                                             modifier = Modifier
-                                                .size(20.dp)
-                                                .clip(CircleShape)
-                                                .background(c.danger),
-                                            contentAlignment = Alignment.Center,
+                                                .align(Alignment.TopEnd)
+                                                .size(36.dp)
+                                                .clickable { onRemoveRefAsset(asset) },
+                                            contentAlignment = Alignment.TopEnd,
                                         ) {
-                                            Icon(Icons.Default.Close, contentDescription = strings.common.delete, tint = Color.White, modifier = Modifier.size(13.dp))
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(20.dp)
+                                                    .clip(CircleShape)
+                                                    .background(c.danger),
+                                                contentAlignment = Alignment.Center,
+                                            ) {
+                                                Icon(
+                                                    Icons.Default.Close,
+                                                    contentDescription = strings.common.delete,
+                                                    tint = Color.White,
+                                                    modifier = Modifier.size(13.dp),
+                                                )
+                                            }
                                         }
                                     }
                                 }
@@ -513,21 +531,44 @@ fun ImageCreateSheet(
                 }
 
                 if (!isNai) {
-                    GuCard(modifier = Modifier.fillMaxWidth()) {
-                        Text(strings.images.aspectRatio, color = c.ink, fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
-                        Spacer(Modifier.height(6.dp))
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            ratios.forEach { r ->
-                                GuPill(if (r == "auto") strings.images.auto else r, state.aspectRatio == r, { onAspectChange(r) })
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        GuSectionHeader(title = strings.images.aspectRatio)
+                        GuCard(
+                            modifier = Modifier.fillMaxWidth(),
+                            contentPadding = PaddingValues(12.dp),
+                        ) {
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                ratios.forEach { r ->
+                                    GuPill(
+                                        label = if (r == "auto") strings.images.auto else r,
+                                        selected = state.aspectRatio == r,
+                                        onClick = { onAspectChange(r) },
+                                    )
+                                }
                             }
                         }
+                    }
 
-                        Spacer(Modifier.height(12.dp))
-                        Text(strings.images.resolution, color = c.ink, fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
-                        Spacer(Modifier.height(6.dp))
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            resolutions.forEach { res ->
-                                GuPill(if (res == "auto") strings.images.auto else res, state.resolution == res, { onResolutionChange(res) })
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        GuSectionHeader(title = strings.images.resolution)
+                        GuCard(
+                            modifier = Modifier.fillMaxWidth(),
+                            contentPadding = PaddingValues(12.dp),
+                        ) {
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                resolutions.forEach { res ->
+                                    GuPill(
+                                        label = if (res == "auto") strings.images.auto else res,
+                                        selected = state.resolution == res,
+                                        onClick = { onResolutionChange(res) },
+                                    )
+                                }
                             }
                         }
                     }
@@ -539,16 +580,24 @@ fun ImageCreateSheet(
                     )
                 }
 
-                // Image Count (FlowRow prevents horizontal overflow when maxCount >= 4)
-                GuCard(modifier = Modifier.fillMaxWidth()) {
-                    Text(strings.images.countLabel, color = c.ink, fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
-                    Spacer(Modifier.height(6.dp))
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                // Image Count
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    GuSectionHeader(title = strings.images.countLabel)
+                    GuCard(
+                        modifier = Modifier.fillMaxWidth(),
+                        contentPadding = PaddingValues(12.dp),
                     ) {
-                        (1..maxCount).forEach { n ->
-                            GuPill(strings.images.countUnit.fmt("count" to n), state.count == n, { onCountChange(n) })
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            (1..maxCount).forEach { n ->
+                                GuPill(
+                                    label = strings.images.countUnit.fmt("count" to n),
+                                    selected = state.count == n,
+                                    onClick = { onCountChange(n) },
+                                )
+                            }
                         }
                     }
                 }
@@ -556,8 +605,8 @@ fun ImageCreateSheet(
                 Spacer(Modifier.height(4.dp))
             }
 
-            // Sticky bottom Cost + Generate footer bar
-            HorizontalDivider(color = c.border)
+            // Sticky bottom Cost + Generate primary CTA footer
+            HorizontalDivider(thickness = theme.borderWidth, color = c.border)
             Column(
                 modifier = Modifier
                     .fillMaxWidth()

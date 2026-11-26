@@ -56,6 +56,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withLink
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
@@ -99,8 +100,14 @@ fun ReasoningCard(
 ) {
     if (reasoning.isBlank() && !isStreaming) return
     val strings = LocalAppStrings.current
-    val c = LocalAppTheme.current.colors
+    val theme = LocalAppTheme.current
+    val c = theme.colors
     var expanded by remember(isStreaming) { mutableStateOf(isStreaming) }
+    val collapsedPreview = remember(reasoning) {
+        reasoning.trim()
+            .replace(Regex("\\s+"), " ")
+            .take(120)
+    }
 
     Column(
         modifier = modifier.fillMaxWidth(),
@@ -108,19 +115,28 @@ fun ReasoningCard(
     ) {
         Row(
             modifier = Modifier
-                .heightIn(min = 34.dp)
+                .heightIn(min = 36.dp)
                 .clip(RoundedCornerShape(999.dp))
                 .background(c.surfaceSoft)
-                .border(1.dp, c.border, RoundedCornerShape(999.dp))
+                .border(theme.borderWidth, c.border, RoundedCornerShape(999.dp))
                 .clickable { expanded = !expanded }
                 .padding(horizontal = 12.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             if (isStreaming) {
-                CircularProgressIndicator(modifier = Modifier.size(13.dp), strokeWidth = 1.8.dp, color = c.primary)
+                CircularProgressIndicator(
+                    modifier = Modifier.size(13.dp),
+                    strokeWidth = 1.8.dp,
+                    color = c.primary,
+                )
             } else {
-                Icon(Icons.Default.Psychology, contentDescription = null, modifier = Modifier.size(15.dp), tint = c.primary)
+                Icon(
+                    imageVector = Icons.Default.Psychology,
+                    contentDescription = null,
+                    modifier = Modifier.size(15.dp),
+                    tint = c.primary,
+                )
             }
             Text(
                 text = if (isStreaming) {
@@ -133,12 +149,43 @@ fun ReasoningCard(
                 fontWeight = FontWeight.SemiBold,
             )
             Icon(
-                if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
                 contentDescription = null,
                 tint = c.muted,
                 modifier = Modifier.size(16.dp),
             )
         }
+
+        if (!expanded && !isStreaming && collapsedPreview.isNotEmpty()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(IntrinsicSize.Min)
+                    .padding(start = 6.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .clickable { expanded = true }
+                    .padding(vertical = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .width(2.dp)
+                        .fillMaxHeight()
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(c.primary.copy(alpha = 0.45f)),
+                )
+                Text(
+                    text = collapsedPreview,
+                    color = c.muted.copy(alpha = 0.85f),
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+
         AnimatedVisibility(visible = expanded && reasoning.isNotBlank()) {
             Row(
                 modifier = Modifier
@@ -159,7 +206,7 @@ fun ReasoningCard(
                         text = reasoning.trim(),
                         color = c.muted,
                         fontSize = 13.sp,
-                        lineHeight = 20.sp,
+                        lineHeight = 20.5.sp,
                         modifier = Modifier.padding(bottom = 4.dp),
                     )
                 }
@@ -191,13 +238,13 @@ fun MarkdownMessageText(
                 muted = c.muted,
                 accent = c.primary,
                 border = c.border,
-                quoteBg = c.surfaceSoft.copy(alpha = 0.7f),
+                quoteBg = c.surfaceSoft.copy(alpha = 0.65f),
                 inlineCodeBg = c.surfaceSoft,
                 inlineCodeInk = c.primarySoftInk,
-                codeBg = Color(0xFF0D121D),
-                codeHeaderBg = Color(0xFF161E2E),
+                codeBg = c.surfaceSoft,
+                codeHeaderBg = c.surfaceElevated,
                 codeInk = Color(0xFFE6EDF3),
-                codeMeta = Color(0xFFA6B4CA),
+                codeMeta = c.muted,
                 tableHeaderBg = c.surfaceSoft,
             )
         } else {
@@ -206,13 +253,13 @@ fun MarkdownMessageText(
                 muted = c.muted,
                 accent = c.primary,
                 border = c.border,
-                quoteBg = c.surfaceSoft.copy(alpha = 0.85f),
+                quoteBg = c.surfaceSoft.copy(alpha = 0.8f),
                 inlineCodeBg = c.surfaceSoft,
                 inlineCodeInk = c.primarySoftInk,
-                codeBg = Color(0xFFF3F6FB),
-                codeHeaderBg = Color(0xFFE7EEF8),
-                codeInk = Color(0xFF1E293B),
-                codeMeta = Color(0xFF475569),
+                codeBg = c.surfaceSoft,
+                codeHeaderBg = c.border.copy(alpha = 0.55f),
+                codeInk = c.ink,
+                codeMeta = c.muted,
                 tableHeaderBg = c.surfaceSoft,
             )
         }
@@ -222,11 +269,15 @@ fun MarkdownMessageText(
     SelectionContainer {
         Column(
             modifier = modifier,
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(9.dp),
         ) {
-            blocks.forEach { block ->
+            blocks.forEachIndexed { index, block ->
                 when (block) {
-                    is MdBlock.Divider -> HorizontalDivider(color = p.border, thickness = 1.dp)
+                    is MdBlock.Divider -> HorizontalDivider(
+                        color = p.border,
+                        thickness = theme.borderWidth,
+                        modifier = Modifier.padding(vertical = 2.dp),
+                    )
                     is MdBlock.Heading -> {
                         val hSize = when (block.level) {
                             1 -> (fontSize.value + 5f).sp
@@ -240,9 +291,10 @@ fun MarkdownMessageText(
                             codeBg = p.inlineCodeBg,
                             codeInk = p.inlineCodeInk,
                             fontSize = hSize,
-                            lineHeight = (hSize.value * 1.4f).sp,
+                            lineHeight = (hSize.value * 1.42f).sp,
                             fontWeight = FontWeight.ExtraBold,
                             fontFamily = family,
+                            modifier = Modifier.padding(top = if (index > 0) 4.dp else 0.dp),
                         )
                     }
                     is MdBlock.Blockquote -> {
@@ -250,7 +302,7 @@ fun MarkdownMessageText(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(IntrinsicSize.Min)
-                                .clip(RoundedCornerShape(8.dp))
+                                .clip(RoundedCornerShape(10.dp))
                                 .background(p.quoteBg),
                         ) {
                             Box(
@@ -259,7 +311,7 @@ fun MarkdownMessageText(
                                     .fillMaxHeight()
                                     .background(p.accent),
                             )
-                            Box(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                            Box(modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp)) {
                                 InlineRichText(
                                     raw = block.text,
                                     color = p.muted,
@@ -276,15 +328,18 @@ fun MarkdownMessageText(
                     }
                     is MdBlock.BulletItem -> {
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 2.dp),
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             Text(
                                 text = block.bullet,
                                 color = p.accent,
                                 fontSize = fontSize,
+                                lineHeight = lineHeight,
                                 fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(top = 1.dp),
+                                modifier = Modifier.widthIn(min = 14.dp),
                             )
                             InlineRichText(
                                 raw = block.text,
@@ -322,15 +377,15 @@ fun MarkdownMessageText(
                         ) {
                             Column(
                                 modifier = Modifier
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .border(1.dp, p.border, RoundedCornerShape(10.dp)),
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .border(theme.borderWidth, p.border, RoundedCornerShape(12.dp)),
                             ) {
                                 Row(modifier = Modifier.background(p.tableHeaderBg)) {
                                     block.headers.forEach { h ->
                                         Box(
                                             modifier = Modifier
                                                 .widthIn(min = 88.dp, max = 180.dp)
-                                                .padding(horizontal = 10.dp, vertical = 8.dp),
+                                                .padding(horizontal = 11.dp, vertical = 9.dp),
                                         ) {
                                             InlineRichText(
                                                 raw = h,
@@ -346,14 +401,19 @@ fun MarkdownMessageText(
                                         }
                                     }
                                 }
-                                block.rows.forEach { row ->
-                                    HorizontalDivider(color = p.border, thickness = 1.dp)
-                                    Row {
+                                block.rows.forEachIndexed { rowIdx, row ->
+                                    HorizontalDivider(color = p.border, thickness = theme.borderWidth)
+                                    val rowTint = if (rowIdx % 2 == 1) {
+                                        p.tableHeaderBg.copy(alpha = 0.35f)
+                                    } else {
+                                        Color.Transparent
+                                    }
+                                    Row(modifier = Modifier.background(rowTint)) {
                                         block.headers.indices.forEach { idx ->
                                             Box(
                                                 modifier = Modifier
                                                     .widthIn(min = 88.dp, max = 180.dp)
-                                                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                                                    .padding(horizontal = 11.dp, vertical = 8.dp),
                                             ) {
                                                 InlineRichText(
                                                     raw = row.getOrNull(idx).orEmpty(),
@@ -401,6 +461,7 @@ private fun CodeFenceBlock(
     copiedLabel: String,
     onCopy: () -> Unit,
 ) {
+    val theme = LocalAppTheme.current
     var justCopied by remember(code) { mutableStateOf(false) }
     LaunchedEffect(justCopied) {
         if (justCopied) {
@@ -411,9 +472,9 @@ private fun CodeFenceBlock(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(14.dp))
             .background(palette.codeBg)
-            .border(1.dp, palette.border, RoundedCornerShape(12.dp)),
+            .border(theme.borderWidth, palette.border, RoundedCornerShape(14.dp)),
     ) {
         Row(
             modifier = Modifier
@@ -424,21 +485,24 @@ private fun CodeFenceBlock(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = lang.ifBlank { "code" },
+                text = lang.ifBlank { "code" }.lowercase(),
                 color = palette.codeMeta,
                 fontSize = 11.sp,
                 fontFamily = FontFamily.Monospace,
                 fontWeight = FontWeight.Bold,
+                letterSpacing = 0.3.sp,
             )
             Row(
                 modifier = Modifier
                     .heightIn(min = 32.dp)
-                    .clip(RoundedCornerShape(8.dp))
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(palette.codeBg.copy(alpha = 0.72f))
+                    .border(theme.borderWidth, palette.border.copy(alpha = 0.8f), RoundedCornerShape(999.dp))
                     .clickable {
                         onCopy()
                         justCopied = true
                     }
-                    .padding(horizontal = 8.dp, vertical = 5.dp),
+                    .padding(horizontal = 9.dp, vertical = 5.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
@@ -446,25 +510,29 @@ private fun CodeFenceBlock(
                     imageVector = if (justCopied) Icons.Default.Check else Icons.Default.ContentCopy,
                     contentDescription = copyLabel,
                     tint = palette.accent,
-                    modifier = Modifier.size(14.dp),
+                    modifier = Modifier.size(13.dp),
                 )
                 Text(
                     text = if (justCopied) copiedLabel else copyLabel,
                     color = palette.accent,
-                    fontSize = 11.5.sp,
+                    fontSize = 11.sp,
                     fontWeight = FontWeight.SemiBold,
                 )
             }
         }
+        HorizontalDivider(
+            thickness = theme.borderWidth,
+            color = palette.border.copy(alpha = 0.75f),
+        )
         Text(
             text = code,
             color = palette.codeInk,
             fontSize = 12.5.sp,
-            lineHeight = 19.sp,
+            lineHeight = 19.5.sp,
             fontFamily = FontFamily.Monospace,
             modifier = Modifier
                 .horizontalScroll(rememberScrollState())
-                .padding(12.dp),
+                .padding(horizontal = 13.dp, vertical = 12.dp),
         )
     }
 }

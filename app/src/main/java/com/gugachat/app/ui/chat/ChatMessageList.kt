@@ -10,6 +10,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -17,12 +18,14 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -92,6 +95,8 @@ import com.gugachat.app.core.theme.GuButton
 import com.gugachat.app.core.theme.GuButtonVariant
 import com.gugachat.app.core.theme.GuCard
 import com.gugachat.app.core.theme.GuConfirmDialog
+import com.gugachat.app.core.theme.GuGroupedCard
+import com.gugachat.app.core.theme.GuIconTile
 import com.gugachat.app.core.theme.GuTextField
 import com.gugachat.app.core.theme.LocalAppTheme
 import com.gugachat.app.domain.chat.ChatMessage
@@ -141,7 +146,8 @@ fun ChatMessageList(
     modifier: Modifier = Modifier,
 ) {
     val strings = LocalAppStrings.current
-    val c = LocalAppTheme.current.colors
+    val theme = LocalAppTheme.current
+    val c = theme.colors
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val active = remember(messages) { TimelineReconciler.activeMessages(messages) }
@@ -185,8 +191,9 @@ fun ChatMessageList(
     if (editTarget != null) {
         AlertDialog(
             onDismissRequest = { editTarget = null },
+            shape = RoundedCornerShape(22.dp),
             containerColor = c.surfaceElevated,
-            title = { Text(strings.chat.editResend, color = c.ink, fontWeight = FontWeight.ExtraBold) },
+            title = { Text(strings.chat.editResend, color = c.ink, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold) },
             text = {
                 GuTextField(
                     value = editBuffer,
@@ -210,7 +217,7 @@ fun ChatMessageList(
             },
             dismissButton = {
                 TextButton(onClick = { editTarget = null }) {
-                    Text(strings.common.cancel, color = c.muted)
+                    Text(strings.common.cancel, color = c.muted, fontWeight = FontWeight.SemiBold)
                 }
             },
         )
@@ -219,11 +226,13 @@ fun ChatMessageList(
     if (editAssistantTarget != null) {
         AlertDialog(
             onDismissRequest = { editAssistantTarget = null },
+            shape = RoundedCornerShape(22.dp),
             containerColor = c.surfaceElevated,
             title = {
                 Text(
                     text = if (mode == ConversationMode.rp) strings.rp.editReplyTitle else strings.common.edit,
                     color = c.ink,
+                    fontSize = 17.sp,
                     fontWeight = FontWeight.ExtraBold,
                 )
             },
@@ -250,7 +259,7 @@ fun ChatMessageList(
             },
             dismissButton = {
                 TextButton(onClick = { editAssistantTarget = null }) {
-                    Text(strings.common.cancel, color = c.muted)
+                    Text(strings.common.cancel, color = c.muted, fontWeight = FontWeight.SemiBold)
                 }
             },
         )
@@ -283,12 +292,11 @@ fun ChatMessageList(
     Box(modifier = modifier.fillMaxSize()) {
         LazyColumn(
             state = listState,
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
-            item { Spacer(Modifier.height(4.dp)) }
+            item { Spacer(Modifier.height(2.dp)) }
 
             items(active, key = { it.id }) { msg ->
                 val isUser = msg.role == "user"
@@ -338,7 +346,7 @@ fun ChatMessageList(
                 }
             }
 
-            item { Spacer(Modifier.height(8.dp)) }
+            item { Spacer(Modifier.height(10.dp)) }
         }
 
         AnimatedVisibility(
@@ -346,8 +354,8 @@ fun ChatMessageList(
             enter = fadeIn(),
             exit = fadeOut(),
             modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(end = 14.dp, bottom = 10.dp),
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 12.dp),
         ) {
             Surface(
                 onClick = {
@@ -358,16 +366,16 @@ fun ChatMessageList(
                 },
                 shape = CircleShape,
                 color = c.surfaceElevated,
-                border = BorderStroke(1.dp, c.outline),
-                shadowElevation = 4.dp,
-                modifier = Modifier.size(40.dp),
+                border = BorderStroke(theme.borderWidth, c.outline.copy(alpha = 0.8f)),
+                shadowElevation = if (theme.isDark) 6.dp else 4.dp,
+                modifier = Modifier.size(38.dp),
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Icon(
                         imageVector = Icons.Default.KeyboardArrowDown,
                         contentDescription = null,
                         tint = c.ink,
-                        modifier = Modifier.size(22.dp),
+                        modifier = Modifier.size(20.dp),
                     )
                 }
             }
@@ -390,7 +398,8 @@ private fun ChatEmptyWelcomeCanvas(
     modifier: Modifier = Modifier,
 ) {
     val strings = LocalAppStrings.current
-    val c = LocalAppTheme.current.colors
+    val theme = LocalAppTheme.current
+    val c = theme.colors
     val isZh = strings.language == AppLanguage.ZH
 
     if ((mode == ConversationMode.rp && rpConfig != null) || (mode == ConversationMode.novel && novelConfig != null)) {
@@ -407,10 +416,11 @@ private fun ChatEmptyWelcomeCanvas(
                     onClick = onOpenModelSheet,
                     shape = RoundedCornerShape(999.dp),
                     color = c.surface,
-                    border = BorderStroke(1.dp, c.border),
+                    border = BorderStroke(theme.borderWidth, c.border),
+                    modifier = Modifier.heightIn(min = 36.dp),
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                        modifier = Modifier.padding(horizontal = 13.dp, vertical = 7.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
@@ -420,115 +430,214 @@ private fun ChatEmptyWelcomeCanvas(
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold,
                         )
-                        Icon(Icons.Default.KeyboardArrowDown, contentDescription = null, tint = c.muted, modifier = Modifier.size(15.dp))
+                        Icon(
+                            Icons.Default.KeyboardArrowDown,
+                            contentDescription = null,
+                            tint = c.muted,
+                            modifier = Modifier.size(15.dp),
+                        )
                     }
                 }
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(14.dp))
             }
 
             if (mode == ConversationMode.rp && rpConfig != null) {
-                GuCard(
+                GuGroupedCard(
                     modifier = Modifier.fillMaxWidth(),
                     borderColor = c.primary.copy(alpha = 0.35f),
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(
+                                Brush.horizontalGradient(
+                                    listOf(
+                                        c.primarySoft.copy(alpha = if (theme.isDark) 0.9f else 0.85f),
+                                        c.accentSoft.copy(alpha = if (theme.isDark) 0.55f else 0.7f),
+                                    ),
+                                ),
+                            )
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
                     ) {
-                        Icon(Icons.Default.Casino, contentDescription = null, tint = c.primary, modifier = Modifier.size(20.dp))
-                        Text(
-                            text = rpConfig.title,
-                            color = c.ink,
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            modifier = Modifier.weight(1f),
-                        )
-                        GuBadge(strings.rp.badge, variant = GuBadgeVariant.BLUE)
-                    }
-                    if (rpConfig.worldview.isNotBlank()) {
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            text = rpConfig.worldview,
-                            color = c.muted,
-                            fontSize = 13.sp,
-                            lineHeight = 20.sp,
-                            maxLines = 5,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                    val npcs = rpConfig.cast.filter { !it.isPlayer }
-                    if (npcs.isNotEmpty() || rpConfig.playerName.isNotBlank()) {
-                        Spacer(Modifier.height(10.dp))
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            if (rpConfig.playerName.isNotBlank()) {
-                                GuBadge("🎭 ${rpConfig.playerName}", variant = GuBadgeVariant.NEUTRAL)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            GuIconTile(
+                                icon = Icons.Default.Casino,
+                                tint = c.primarySoftInk,
+                                backgroundColor = c.surface,
+                                size = 42.dp,
+                                iconSize = 21.dp,
+                                cornerRadius = 12.dp,
+                            )
+                            Column(
+                                modifier = Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(3.dp),
+                            ) {
+                                Text(
+                                    text = rpConfig.title,
+                                    color = c.ink,
+                                    fontSize = 16.5.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                if (rpConfig.playerName.isNotBlank()) {
+                                    Text(
+                                        text = "🎭 ${rpConfig.playerName}",
+                                        color = c.muted,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium,
+                                    )
+                                }
                             }
-                            npcs.forEach { npc ->
-                                GuBadge("${npc.name} ♥${npc.affinity}", variant = GuBadgeVariant.HONEY)
-                            }
+                            GuBadge(strings.rp.badge, variant = GuBadgeVariant.BLUE)
                         }
                     }
-                    Spacer(Modifier.height(14.dp))
-                    GuButton(
-                        onClick = {
-                            onStarterPrompt(
-                                if (isZh) "开始第一幕，请描写我身处的初始场景并给出行动选择。"
-                                else "Start Scene 1: describe the opening setting and suggest my first choices.",
-                            )
-                        },
-                        modifier = Modifier.fillMaxWidth(),
+
+                    HorizontalDivider(thickness = theme.borderWidth, color = c.border.copy(alpha = 0.7f))
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text(strings.rp.wizardStartBtn, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
+                        if (rpConfig.worldview.isNotBlank()) {
+                            Text(
+                                text = rpConfig.worldview,
+                                color = c.muted,
+                                fontSize = 13.5.sp,
+                                lineHeight = 20.5.sp,
+                                maxLines = 5,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        val npcs = rpConfig.cast.filter { !it.isPlayer }
+                        if (npcs.isNotEmpty()) {
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                npcs.forEach { npc ->
+                                    Row(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(999.dp))
+                                            .background(c.surfaceSoft)
+                                            .border(theme.borderWidth, c.border, RoundedCornerShape(999.dp))
+                                            .padding(start = 4.dp, end = 9.dp, top = 3.dp, bottom = 3.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    ) {
+                                        RpNpcPortraitAvatar(
+                                            character = npc,
+                                            fallbackName = npc.name,
+                                            size = 20.dp,
+                                        )
+                                        Text(
+                                            text = "${npc.name} ♥${npc.affinity}",
+                                            color = c.ink,
+                                            fontSize = 11.5.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            maxLines = 1,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        GuButton(
+                            onClick = {
+                                onStarterPrompt(
+                                    if (isZh) "开始第一幕，请描写我身处的初始场景并给出行动选择。"
+                                    else "Start Scene 1: describe the opening setting and suggest my first choices.",
+                                )
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(strings.rp.wizardStartBtn, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
             } else if (mode == ConversationMode.novel && novelConfig != null) {
-                GuCard(
+                GuGroupedCard(
                     modifier = Modifier.fillMaxWidth(),
                     borderColor = c.accent.copy(alpha = 0.4f),
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(
+                                Brush.horizontalGradient(
+                                    listOf(
+                                        c.accentSoft,
+                                        c.tag.copy(alpha = if (theme.isDark) 0.5f else 0.65f),
+                                    ),
+                                ),
+                            )
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
                     ) {
-                        Icon(Icons.Default.AutoStories, contentDescription = null, tint = c.accent, modifier = Modifier.size(20.dp))
-                        Text(
-                            text = novelConfig.title,
-                            color = c.ink,
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            modifier = Modifier.weight(1f),
-                        )
-                        if (novelConfig.genre.isNotBlank()) {
-                            GuBadge(novelConfig.genre, variant = GuBadgeVariant.HONEY)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            GuIconTile(
+                                icon = Icons.Default.AutoStories,
+                                tint = c.tagInk,
+                                backgroundColor = c.surface,
+                                size = 42.dp,
+                                iconSize = 21.dp,
+                                cornerRadius = 12.dp,
+                            )
+                            Text(
+                                text = novelConfig.title,
+                                color = c.ink,
+                                fontSize = 16.5.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f),
+                            )
+                            if (novelConfig.genre.isNotBlank()) {
+                                GuBadge(novelConfig.genre, variant = GuBadgeVariant.HONEY)
+                            }
                         }
                     }
-                    if (novelConfig.synopsis.isNotBlank()) {
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            text = novelConfig.synopsis,
-                            color = c.muted,
-                            fontSize = 13.sp,
-                            lineHeight = 20.sp,
-                            maxLines = 5,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                    Spacer(Modifier.height(14.dp))
-                    GuButton(
-                        onClick = {
-                            onStarterPrompt(
-                                if (isZh) "请正式开启第一章，以有画面感的场景切入故事。"
-                                else "Begin Chapter 1 with a vivid opening scene.",
-                            )
-                        },
-                        variant = GuButtonVariant.HONEY,
-                        modifier = Modifier.fillMaxWidth(),
+
+                    HorizontalDivider(thickness = theme.borderWidth, color = c.border.copy(alpha = 0.7f))
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text(strings.novel.wizardEmptyBtn, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
+                        if (novelConfig.synopsis.isNotBlank()) {
+                            Text(
+                                text = novelConfig.synopsis,
+                                color = c.muted,
+                                fontSize = 13.5.sp,
+                                lineHeight = 20.5.sp,
+                                maxLines = 5,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        GuButton(
+                            onClick = {
+                                onStarterPrompt(
+                                    if (isZh) "请正式开启第一章，以有画面感的场景切入故事。"
+                                    else "Begin Chapter 1 with a vivid opening scene.",
+                                )
+                            },
+                            variant = GuButtonVariant.HONEY,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(strings.novel.wizardEmptyBtn, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
             }
@@ -540,7 +649,7 @@ private fun ChatEmptyWelcomeCanvas(
         modifier = modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 20.dp),
+            .padding(horizontal = 16.dp, vertical = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterVertically),
     ) {
@@ -549,14 +658,16 @@ private fun ChatEmptyWelcomeCanvas(
                 .size(56.dp)
                 .clip(RoundedCornerShape(16.dp))
                 .background(c.primarySoft)
-                .border(1.dp, c.primary.copy(alpha = 0.28f), RoundedCornerShape(16.dp)),
+                .border(theme.borderWidth, c.primary.copy(alpha = 0.25f), RoundedCornerShape(16.dp)),
             contentAlignment = Alignment.Center,
         ) {
             Image(
                 painter = painterResource(id = R.drawable.img_logo),
                 contentDescription = strings.common.appName,
                 contentScale = ContentScale.Crop,
-                modifier = Modifier.size(48.dp).clip(RoundedCornerShape(13.dp)),
+                modifier = Modifier
+                    .size(46.dp)
+                    .clip(RoundedCornerShape(12.dp)),
             )
         }
 
@@ -568,7 +679,7 @@ private fun ChatEmptyWelcomeCanvas(
         Text(
             text = heading,
             color = c.ink,
-            fontSize = 20.sp,
+            fontSize = 21.sp,
             fontWeight = FontWeight.ExtraBold,
             textAlign = TextAlign.Center,
         )
@@ -578,10 +689,11 @@ private fun ChatEmptyWelcomeCanvas(
                 onClick = onOpenModelSheet,
                 shape = RoundedCornerShape(999.dp),
                 color = c.surface,
-                border = BorderStroke(1.dp, c.border),
+                border = BorderStroke(theme.borderWidth, c.border),
+                modifier = Modifier.heightIn(min = 36.dp),
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                    modifier = Modifier.padding(horizontal = 13.dp, vertical = 7.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
@@ -594,7 +706,12 @@ private fun ChatEmptyWelcomeCanvas(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false),
                     )
-                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = null, tint = c.muted, modifier = Modifier.size(15.dp))
+                    Icon(
+                        Icons.Default.KeyboardArrowDown,
+                        contentDescription = null,
+                        tint = c.muted,
+                        modifier = Modifier.size(15.dp),
+                    )
                 }
             }
         } else if (selectedModelLabel.isNotBlank()) {
@@ -603,17 +720,38 @@ private fun ChatEmptyWelcomeCanvas(
                 if (selectedGroupLabel.isNotBlank()) append("$selectedGroupLabel · ")
                 append("${strings.chat.memoryShort}$memLabel")
             }
-            Text(
-                text = metaLine,
-                color = c.muted,
-                fontSize = 12.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                textAlign = TextAlign.Center,
-            )
+            Surface(
+                onClick = onOpenModelSheet,
+                shape = RoundedCornerShape(999.dp),
+                color = c.surfaceSoft,
+                border = BorderStroke(theme.borderWidth, c.border),
+                modifier = Modifier.heightIn(min = 32.dp),
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(6.dp)
+                            .clip(CircleShape)
+                            .background(c.primary),
+                    )
+                    Text(
+                        text = metaLine,
+                        color = c.muted,
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
         }
 
         if (mode == ConversationMode.chat) {
+            Spacer(Modifier.height(4.dp))
             val starters = listOf(
                 StarterTileSpec(
                     icon = Icons.Default.Code,
@@ -644,17 +782,24 @@ private fun ChatEmptyWelcomeCanvas(
                     prompt = strings.chat.starterMemoryPrompt,
                 ),
             )
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
                 starters.chunked(2).forEach { pair ->
                     Row(
-                        modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Max),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(IntrinsicSize.Max),
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
                         pair.forEach { spec ->
                             StarterGridCard(
                                 spec = spec,
                                 onClick = { onStarterPrompt(spec.prompt) },
-                                modifier = Modifier.weight(1f).fillMaxHeight(),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxHeight(),
                             )
                         }
                     }
@@ -683,20 +828,19 @@ private fun StarterGridCard(
         onClick = onClick,
         modifier = modifier,
     ) {
-        Box(
-            modifier = Modifier
-                .size(34.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(spec.bg),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(spec.icon, contentDescription = null, tint = spec.tint, modifier = Modifier.size(18.dp))
-        }
+        GuIconTile(
+            icon = spec.icon,
+            tint = spec.tint,
+            backgroundColor = spec.bg,
+            size = 36.dp,
+            iconSize = 18.dp,
+            cornerRadius = 10.dp,
+        )
         Spacer(Modifier.height(10.dp))
         Text(
             text = spec.title,
             color = c.ink,
-            fontSize = 13.sp,
+            fontSize = 13.5.sp,
             fontWeight = FontWeight.ExtraBold,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -706,7 +850,7 @@ private fun StarterGridCard(
             text = spec.prompt,
             color = c.muted,
             fontSize = 11.5.sp,
-            lineHeight = 16.sp,
+            lineHeight = 16.5.sp,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
@@ -724,8 +868,11 @@ private fun UserMessageBlock(
     onDelete: () -> Unit,
 ) {
     val strings = LocalAppStrings.current
-    val c = LocalAppTheme.current.colors
-    val bubbleShape = RoundedCornerShape(topStart = 18.dp, topEnd = 6.dp, bottomStart = 18.dp, bottomEnd = 18.dp)
+    val theme = LocalAppTheme.current
+    val c = theme.colors
+    val bubbleShape = RoundedCornerShape(topStart = 20.dp, topEnd = 6.dp, bottomStart = 20.dp, bottomEnd = 20.dp)
+    val bubbleBg = if (theme.isDark) c.surfaceSoft else c.primarySoft
+    val bubbleBorder = if (theme.isDark) c.primary.copy(alpha = 0.34f) else c.primary.copy(alpha = 0.22f)
 
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -733,11 +880,11 @@ private fun UserMessageBlock(
     ) {
         Column(
             modifier = Modifier
-                .widthIn(max = 296.dp)
+                .widthIn(max = 304.dp)
                 .clip(bubbleShape)
-                .background(c.primarySoft)
-                .border(1.dp, c.primary.copy(alpha = 0.28f), bubbleShape)
-                .padding(horizontal = 14.dp, vertical = 10.dp),
+                .background(bubbleBg)
+                .border(theme.borderWidth, bubbleBorder, bubbleShape)
+                .padding(horizontal = 15.dp, vertical = 11.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             msg.rpInputKind?.let { kind ->
@@ -759,7 +906,9 @@ private fun UserMessageBlock(
                             painter = rememberAsyncImagePainter(attachmentPathResolver(id)),
                             contentDescription = null,
                             contentScale = ContentScale.Crop,
-                            modifier = Modifier.size(64.dp).clip(RoundedCornerShape(10.dp)),
+                            modifier = Modifier
+                                .size(66.dp)
+                                .clip(RoundedCornerShape(12.dp)),
                         )
                     }
                 }
@@ -779,7 +928,7 @@ private fun UserMessageBlock(
                         text = msg.content,
                         color = c.ink,
                         fontSize = 15.sp,
-                        lineHeight = 22.sp,
+                        lineHeight = 22.5.sp,
                     )
                 }
             }
@@ -787,27 +936,42 @@ private fun UserMessageBlock(
 
         Row(
             modifier = Modifier.padding(top = 2.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             IconButton(
                 onClick = onEdit,
                 enabled = !isStreaming,
                 modifier = Modifier.size(36.dp),
             ) {
-                Icon(Icons.Default.Edit, contentDescription = strings.chat.editResend, tint = c.muted, modifier = Modifier.size(16.dp))
+                Icon(
+                    Icons.Default.Edit,
+                    contentDescription = strings.chat.editResend,
+                    tint = c.muted.copy(alpha = 0.85f),
+                    modifier = Modifier.size(16.dp),
+                )
             }
             IconButton(
                 onClick = onBranch,
                 modifier = Modifier.size(36.dp),
             ) {
-                Icon(Icons.Default.AccountTree, contentDescription = strings.novel.branchBtn, tint = c.muted, modifier = Modifier.size(16.dp))
+                Icon(
+                    Icons.Default.AccountTree,
+                    contentDescription = strings.novel.branchBtn,
+                    tint = c.muted.copy(alpha = 0.85f),
+                    modifier = Modifier.size(16.dp),
+                )
             }
             IconButton(
                 onClick = onDelete,
                 enabled = !isStreaming,
                 modifier = Modifier.size(36.dp),
             ) {
-                Icon(Icons.Default.Delete, contentDescription = strings.common.delete, tint = c.muted, modifier = Modifier.size(16.dp))
+                Icon(
+                    Icons.Default.Delete,
+                    contentDescription = strings.common.delete,
+                    tint = c.muted.copy(alpha = 0.85f),
+                    modifier = Modifier.size(16.dp),
+                )
             }
         }
     }
@@ -837,11 +1001,13 @@ private fun AssistantMessageBlock(
     onToast: (String) -> Unit,
 ) {
     val strings = LocalAppStrings.current
-    val c = LocalAppTheme.current.colors
+    val theme = LocalAppTheme.current
+    val c = theme.colors
     val isZh = strings.language == AppLanguage.ZH
     val (parsedReasoning, cleanBody) = remember(msg.content, msg.reasoning, mode) {
         extractMessageThinkAndBody(msg.reasoning, msg.content, mode)
     }
+    val isThisMsgStreaming = isStreaming && msg.status == "streaming"
 
     when (mode) {
         ConversationMode.rp -> {
@@ -855,9 +1021,9 @@ private fun AssistantMessageBlock(
 
             Surface(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
+                shape = RoundedCornerShape(theme.cardRadius),
                 color = c.surface,
-                border = BorderStroke(1.dp, c.border),
+                border = BorderStroke(theme.borderWidth, c.border),
             ) {
                 Column(
                     modifier = Modifier
@@ -947,19 +1113,21 @@ private fun AssistantMessageBlock(
                         )
                     }
 
-                    AssistantFooterRow(
-                        msg = msg,
-                        showVariantBar = msg.variants.size > 1,
-                        isStreaming = isStreaming,
-                        showContinue = isLatestAssistant && !isStreaming,
-                        onContinue = onContinueRp,
-                        onEdit = { onEditAssistant(cleanBody.ifBlank { msg.content }) },
-                        onCopy = { onCopyText(cleanBody) },
-                        onRegenerate = onRegenerate,
-                        onBranch = onBranch,
-                        onDelete = onDelete,
-                        onSwitchVariant = onSwitchVariant,
-                    )
+                    if (!isThisMsgStreaming) {
+                        AssistantFooterRow(
+                            msg = msg,
+                            showVariantBar = msg.variants.size > 1,
+                            isStreaming = isStreaming,
+                            showContinue = isLatestAssistant && !isStreaming,
+                            onContinue = onContinueRp,
+                            onEdit = { onEditAssistant(cleanBody.ifBlank { msg.content }) },
+                            onCopy = { onCopyText(cleanBody) },
+                            onRegenerate = onRegenerate,
+                            onBranch = onBranch,
+                            onDelete = onDelete,
+                            onSwitchVariant = onSwitchVariant,
+                        )
+                    }
                 }
             }
         }
@@ -967,9 +1135,9 @@ private fun AssistantMessageBlock(
         ConversationMode.novel -> {
             Surface(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
+                shape = RoundedCornerShape(theme.cardRadius),
                 color = c.surface,
-                border = BorderStroke(1.dp, c.border.copy(alpha = 0.75f)),
+                border = BorderStroke(theme.borderWidth, c.border.copy(alpha = 0.8f)),
             ) {
                 Column(
                     modifier = Modifier
@@ -988,10 +1156,14 @@ private fun AssistantMessageBlock(
                             fontWeight = FontWeight.Bold,
                         )
                         Spacer(Modifier.width(8.dp))
-                        HorizontalDivider(modifier = Modifier.weight(1f), color = c.border.copy(alpha = 0.7f))
+                        HorizontalDivider(
+                            modifier = Modifier.weight(1f),
+                            thickness = theme.borderWidth,
+                            color = c.border.copy(alpha = 0.7f),
+                        )
                         if (!msg.model.isNullOrBlank()) {
                             Spacer(Modifier.width(8.dp))
-                            Text(msg.model, color = c.muted, fontSize = 10.5.sp)
+                            Text(msg.model, color = c.muted, fontSize = 11.sp)
                         }
                     }
 
@@ -1001,8 +1173,8 @@ private fun AssistantMessageBlock(
                         msg = msg,
                         isStreaming = isStreaming,
                         useSerif = true,
-                        fontSize = 15.5.sp,
-                        lineHeight = 26.sp,
+                        fontSize = 16.sp,
+                        lineHeight = 27.sp,
                         onRetry = onRegenerate,
                         onToast = onToast,
                     )
@@ -1020,25 +1192,27 @@ private fun AssistantMessageBlock(
                         }
                     }
 
-                    AssistantFooterRow(
-                        msg = msg,
-                        showVariantBar = msg.variants.size > 1,
-                        isStreaming = isStreaming,
-                        onEdit = { onEditAssistant(cleanBody.ifBlank { msg.content }) },
-                        onCopy = { onCopyText(cleanBody) },
-                        onRegenerate = onRegenerate,
-                        onBranch = onBranch,
-                        onDelete = onDelete,
-                        onSwitchVariant = onSwitchVariant,
-                    )
+                    if (!isThisMsgStreaming) {
+                        AssistantFooterRow(
+                            msg = msg,
+                            showVariantBar = msg.variants.size > 1,
+                            isStreaming = isStreaming,
+                            onEdit = { onEditAssistant(cleanBody.ifBlank { msg.content }) },
+                            onCopy = { onCopyText(cleanBody) },
+                            onRegenerate = onRegenerate,
+                            onBranch = onBranch,
+                            onDelete = onDelete,
+                            onSwitchVariant = onSwitchVariant,
+                        )
+                    }
                 }
             }
         }
 
         ConversationMode.chat -> {
             Column(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(9.dp),
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -1052,13 +1226,13 @@ private fun AssistantMessageBlock(
                         modifier = Modifier
                             .size(22.dp)
                             .clip(CircleShape)
-                            .border(1.dp, c.border, CircleShape),
+                            .border(theme.borderWidth, c.border, CircleShape),
                     )
                     Text(
                         text = msg.model?.takeIf { it.isNotBlank() } ?: strings.common.appName,
-                        color = c.ink,
-                        fontSize = 12.5.sp,
-                        fontWeight = FontWeight.Bold,
+                        color = c.muted,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f),
@@ -1071,23 +1245,25 @@ private fun AssistantMessageBlock(
                     msg = msg,
                     isStreaming = isStreaming,
                     useSerif = false,
-                    fontSize = 15.sp,
-                    lineHeight = 23.sp,
+                    fontSize = 15.5.sp,
+                    lineHeight = 25.sp,
                     onRetry = onRegenerate,
                     onToast = onToast,
                 )
 
-                AssistantFooterRow(
-                    msg = msg,
-                    showVariantBar = msg.variants.size > 1,
-                    isStreaming = isStreaming,
-                    onEdit = { onEditAssistant(cleanBody.ifBlank { msg.content }) },
-                    onCopy = { onCopyText(cleanBody) },
-                    onRegenerate = onRegenerate,
-                    onBranch = onBranch,
-                    onDelete = onDelete,
-                    onSwitchVariant = onSwitchVariant,
-                )
+                if (!isThisMsgStreaming) {
+                    AssistantFooterRow(
+                        msg = msg,
+                        showVariantBar = msg.variants.size > 1,
+                        isStreaming = isStreaming,
+                        onEdit = { onEditAssistant(cleanBody.ifBlank { msg.content }) },
+                        onCopy = { onCopyText(cleanBody) },
+                        onRegenerate = onRegenerate,
+                        onBranch = onBranch,
+                        onDelete = onDelete,
+                        onSwitchVariant = onSwitchVariant,
+                    )
+                }
             }
         }
     }
@@ -1111,7 +1287,8 @@ private fun AssistantBodyAndNotices(
     onFrontendAdjustAffinity: (String, Int) -> Unit = { _, _ -> },
 ) {
     val strings = LocalAppStrings.current
-    val c = LocalAppTheme.current.colors
+    val theme = LocalAppTheme.current
+    val c = theme.colors
 
     if (parsedReasoning.isNotBlank()) {
         ReasoningCard(
@@ -1143,14 +1320,14 @@ private fun AssistantBodyAndNotices(
             )
         }
     } else if (msg.status == "streaming") {
-        Text(strings.chat.streamingWriting, color = c.muted, fontSize = 13.sp)
+        Text(strings.chat.streamingWriting, color = c.muted, fontSize = 13.5.sp)
     }
 
     if (!msg.error.isNullOrBlank()) {
         Surface(
             shape = RoundedCornerShape(12.dp),
             color = c.dangerBg,
-            border = BorderStroke(1.dp, c.danger.copy(alpha = 0.45f)),
+            border = BorderStroke(theme.borderWidth, c.danger.copy(alpha = 0.42f)),
             modifier = Modifier.fillMaxWidth(),
         ) {
             Row(
@@ -1164,7 +1341,9 @@ private fun AssistantBodyAndNotices(
                     imageVector = Icons.Default.ErrorOutline,
                     contentDescription = null,
                     tint = c.danger,
-                    modifier = Modifier.size(18.dp).padding(top = 1.dp),
+                    modifier = Modifier
+                        .size(18.dp)
+                        .padding(top = 1.dp),
                 )
                 Text(
                     text = msg.error,
@@ -1193,12 +1372,13 @@ private fun DramaticChoiceCard(
     metaBadge: String?,
     onClick: () -> Unit,
 ) {
-    val c = LocalAppTheme.current.colors
+    val theme = LocalAppTheme.current
+    val c = theme.colors
     Surface(
         onClick = onClick,
         shape = RoundedCornerShape(12.dp),
         color = c.surfaceSoft,
-        border = BorderStroke(1.dp, c.primary.copy(alpha = 0.35f)),
+        border = BorderStroke(theme.borderWidth, c.primary.copy(alpha = 0.35f)),
         modifier = Modifier.fillMaxWidth(),
     ) {
         Row(
@@ -1243,43 +1423,48 @@ private fun VariantSwipePill(
     total: Int,
     onSwitch: (Int) -> Unit,
 ) {
-    val c = LocalAppTheme.current.colors
+    val theme = LocalAppTheme.current
+    val c = theme.colors
     Row(
         modifier = Modifier
+            .height(36.dp)
             .clip(RoundedCornerShape(999.dp))
             .background(c.surfaceSoft)
-            .border(1.dp, c.border, RoundedCornerShape(999.dp))
-            .padding(horizontal = 2.dp),
+            .border(theme.borderWidth, c.border, RoundedCornerShape(999.dp)),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        IconButton(
-            onClick = { onSwitch((index - 1).coerceAtLeast(0)) },
-            enabled = index > 0,
-            modifier = Modifier.size(32.dp),
+        Box(
+            modifier = Modifier
+                .size(width = 30.dp, height = 36.dp)
+                .clip(CircleShape)
+                .clickable(enabled = index > 0) { onSwitch((index - 1).coerceAtLeast(0)) },
+            contentAlignment = Alignment.Center,
         ) {
             Icon(
                 Icons.Default.ChevronLeft,
                 contentDescription = null,
-                tint = if (index > 0) c.ink else c.muted.copy(alpha = 0.4f),
+                tint = if (index > 0) c.ink else c.muted.copy(alpha = 0.38f),
                 modifier = Modifier.size(16.dp),
             )
         }
         Text(
             text = "${index + 1}/$total",
             color = c.ink,
-            fontSize = 11.5.sp,
+            fontSize = 11.sp,
             fontWeight = FontWeight.Bold,
             fontFamily = FontFamily.Monospace,
         )
-        IconButton(
-            onClick = { onSwitch((index + 1).coerceAtMost(total - 1)) },
-            enabled = index < total - 1,
-            modifier = Modifier.size(32.dp),
+        Box(
+            modifier = Modifier
+                .size(width = 30.dp, height = 36.dp)
+                .clip(CircleShape)
+                .clickable(enabled = index < total - 1) { onSwitch((index + 1).coerceAtMost(total - 1)) },
+            contentAlignment = Alignment.Center,
         ) {
             Icon(
                 Icons.Default.ChevronRight,
                 contentDescription = null,
-                tint = if (index < total - 1) c.ink else c.muted.copy(alpha = 0.4f),
+                tint = if (index < total - 1) c.ink else c.muted.copy(alpha = 0.38f),
                 modifier = Modifier.size(16.dp),
             )
         }
@@ -1301,7 +1486,8 @@ private fun AssistantFooterRow(
     onContinue: () -> Unit = {},
 ) {
     val strings = LocalAppStrings.current
-    val c = LocalAppTheme.current.colors
+    val theme = LocalAppTheme.current
+    val c = theme.colors
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -1317,10 +1503,11 @@ private fun AssistantFooterRow(
                     enabled = !isStreaming,
                     shape = RoundedCornerShape(999.dp),
                     color = c.primarySoft,
-                    border = BorderStroke(1.dp, c.primary.copy(alpha = 0.4f)),
+                    border = BorderStroke(theme.borderWidth, c.primary.copy(alpha = 0.4f)),
+                    modifier = Modifier.heightIn(min = 36.dp),
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 11.dp, vertical = 5.dp),
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
@@ -1333,7 +1520,7 @@ private fun AssistantFooterRow(
                         Text(
                             text = strings.rp.continueBtn,
                             color = c.primarySoftInk,
-                            fontSize = 11.5.sp,
+                            fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
                         )
                     }
@@ -1343,22 +1530,46 @@ private fun AssistantFooterRow(
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            IconButton(onClick = onCopy, modifier = Modifier.size(34.dp)) {
-                Icon(Icons.Default.ContentCopy, contentDescription = strings.common.copy, tint = c.muted, modifier = Modifier.size(16.dp))
+            IconButton(onClick = onCopy, modifier = Modifier.size(36.dp)) {
+                Icon(
+                    Icons.Default.ContentCopy,
+                    contentDescription = strings.common.copy,
+                    tint = c.muted.copy(alpha = 0.85f),
+                    modifier = Modifier.size(16.dp),
+                )
             }
-            IconButton(onClick = onEdit, enabled = !isStreaming, modifier = Modifier.size(34.dp)) {
-                Icon(Icons.Default.Edit, contentDescription = strings.common.edit, tint = c.muted, modifier = Modifier.size(16.dp))
+            IconButton(onClick = onEdit, enabled = !isStreaming, modifier = Modifier.size(36.dp)) {
+                Icon(
+                    Icons.Default.Edit,
+                    contentDescription = strings.common.edit,
+                    tint = c.muted.copy(alpha = 0.85f),
+                    modifier = Modifier.size(16.dp),
+                )
             }
-            IconButton(onClick = onRegenerate, enabled = !isStreaming, modifier = Modifier.size(34.dp)) {
-                Icon(Icons.Default.Refresh, contentDescription = strings.chat.regenerate, tint = c.muted, modifier = Modifier.size(16.dp))
+            IconButton(onClick = onRegenerate, enabled = !isStreaming, modifier = Modifier.size(36.dp)) {
+                Icon(
+                    Icons.Default.Refresh,
+                    contentDescription = strings.chat.regenerate,
+                    tint = c.muted.copy(alpha = 0.85f),
+                    modifier = Modifier.size(16.dp),
+                )
             }
-            IconButton(onClick = onBranch, modifier = Modifier.size(34.dp)) {
-                Icon(Icons.Default.AccountTree, contentDescription = strings.novel.branchBtn, tint = c.muted, modifier = Modifier.size(16.dp))
+            IconButton(onClick = onBranch, modifier = Modifier.size(36.dp)) {
+                Icon(
+                    Icons.Default.AccountTree,
+                    contentDescription = strings.novel.branchBtn,
+                    tint = c.muted.copy(alpha = 0.85f),
+                    modifier = Modifier.size(16.dp),
+                )
             }
-            IconButton(onClick = onDelete, enabled = !isStreaming, modifier = Modifier.size(34.dp)) {
-                Icon(Icons.Default.Delete, contentDescription = strings.common.delete, tint = c.muted, modifier = Modifier.size(16.dp))
+            IconButton(onClick = onDelete, enabled = !isStreaming, modifier = Modifier.size(36.dp)) {
+                Icon(
+                    Icons.Default.Delete,
+                    contentDescription = strings.common.delete,
+                    tint = c.muted.copy(alpha = 0.85f),
+                    modifier = Modifier.size(16.dp),
+                )
             }
             Spacer(Modifier.weight(1f))
             if (showVariantBar && msg.variants.size > 1) {
@@ -1367,9 +1578,9 @@ private fun AssistantFooterRow(
                     total = msg.variants.size,
                     onSwitch = onSwitchVariant,
                 )
-                Spacer(Modifier.width(6.dp))
             }
             msg.usage?.totalTokens?.let { tok ->
+                Spacer(Modifier.width(6.dp))
                 GuBadge("${tok}t", variant = GuBadgeVariant.NEUTRAL)
             }
         }

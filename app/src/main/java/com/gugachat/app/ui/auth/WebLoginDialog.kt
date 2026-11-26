@@ -7,6 +7,7 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,6 +21,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
@@ -36,6 +38,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -71,7 +75,8 @@ fun WebLoginDialog(
     onTokensCaptured: (accessToken: String, refreshToken: String?, userJson: String?) -> Unit,
 ) {
     val strings = LocalAppStrings.current
-    val c = LocalAppTheme.current.colors
+    val theme = LocalAppTheme.current
+    val c = theme.colors
     val targetUrl = remember(serverUrl) { ServerUrlUtils.buildWebLoginUrl(serverUrl, "/login") }
 
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
@@ -140,15 +145,35 @@ fun WebLoginDialog(
                         .height(56.dp)
                         .padding(horizontal = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                     IconButton(onClick = onDismiss, modifier = Modifier.size(44.dp)) {
-                        Icon(Icons.Default.Close, contentDescription = strings.common.close, tint = c.ink)
+                        Box(
+                            modifier = Modifier
+                                .size(34.dp)
+                                .clip(CircleShape)
+                                .background(c.surfaceSoft)
+                                .border(theme.borderWidth, c.border, CircleShape),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = strings.common.close,
+                                tint = c.muted,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
                     }
-                    Column(modifier = Modifier.weight(1f)) {
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(horizontal = 2.dp),
+                        verticalArrangement = Arrangement.spacedBy(1.dp),
+                    ) {
                         Text(
                             text = strings.auth.webLoginTitle,
                             color = c.ink,
-                            fontSize = 15.sp,
+                            fontSize = 15.5.sp,
                             fontWeight = FontWeight.ExtraBold,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -156,15 +181,23 @@ fun WebLoginDialog(
                         Text(
                             text = strings.auth.webLoginHint,
                             color = c.muted,
-                            fontSize = 11.sp,
+                            fontSize = 11.5.sp,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
-                    IconButton(onClick = { webViewRef?.reload() }, modifier = Modifier.size(44.dp)) {
-                        Icon(Icons.Default.Refresh, contentDescription = strings.common.refresh, tint = c.ink)
+                    IconButton(
+                        onClick = { webViewRef?.reload() },
+                        modifier = Modifier.size(44.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = strings.common.refresh,
+                            tint = c.ink,
+                            modifier = Modifier.size(20.dp),
+                        )
                     }
-                    Spacer(Modifier.width(4.dp))
+                    Spacer(Modifier.width(2.dp))
                     GuButton(
                         onClick = { evaluateLocalStorageToken(webViewRef) },
                         compact = true,
@@ -178,13 +211,19 @@ fun WebLoginDialog(
             if (loadProgress in 1..99) {
                 LinearProgressIndicator(
                     progress = { loadProgress / 100f },
-                    modifier = Modifier.fillMaxWidth().height(3.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(2.5.dp),
                     color = c.primary,
-                    trackColor = c.surfaceSoft,
+                    trackColor = Color.Transparent,
                 )
             }
 
-            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+            ) {
                 AndroidView(
                     modifier = Modifier.fillMaxSize(),
                     factory = { ctx ->

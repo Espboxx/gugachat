@@ -2,6 +2,7 @@ package com.gugachat.app.ui.chat
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -118,19 +119,19 @@ fun ChatComposerBar(
     }
 
     Surface(
-        color = c.surface,
-        shape = RoundedCornerShape(22.dp),
-        border = BorderStroke(1.dp, c.border),
-        shadowElevation = if (theme.isDark) 2.dp else 4.dp,
+        color = if (theme.isDark) c.surfaceElevated else c.surface,
+        shape = RoundedCornerShape(26.dp),
+        border = BorderStroke(theme.borderWidth, c.border),
+        shadowElevation = if (theme.isDark) 4.dp else 5.dp,
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 10.dp, vertical = 6.dp)
+            .padding(horizontal = 12.dp, vertical = 6.dp)
             .imePadding(),
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 8.dp),
+                .padding(horizontal = 12.dp, vertical = 9.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             if (draftAttachments.isNotEmpty()) {
@@ -139,7 +140,7 @@ fun ChatComposerBar(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     draftAttachments.forEach { att ->
-                        Box(modifier = Modifier.size(58.dp)) {
+                        Box(modifier = Modifier.size(60.dp)) {
                             Image(
                                 painter = rememberAsyncImagePainter(File(att.localPath)),
                                 contentDescription = null,
@@ -147,8 +148,8 @@ fun ChatComposerBar(
                                 modifier = Modifier
                                     .size(54.dp)
                                     .align(Alignment.BottomStart)
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .border(1.dp, c.border, RoundedCornerShape(10.dp)),
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .border(theme.borderWidth, c.border, RoundedCornerShape(12.dp)),
                             )
                             Box(
                                 modifier = Modifier
@@ -183,7 +184,7 @@ fun ChatComposerBar(
                     modifier = Modifier
                         .clip(RoundedCornerShape(999.dp))
                         .background(c.tag)
-                        .border(1.dp, c.accent.copy(alpha = 0.45f), RoundedCornerShape(999.dp))
+                        .border(theme.borderWidth, c.accent.copy(alpha = 0.45f), RoundedCornerShape(999.dp))
                         .padding(start = 10.dp, end = 4.dp, top = 3.dp, bottom = 3.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -221,7 +222,7 @@ fun ChatComposerBar(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(min = 38.dp)
+                    .heightIn(min = 42.dp)
                     .padding(horizontal = 4.dp, vertical = 2.dp),
                 contentAlignment = Alignment.CenterStart,
             ) {
@@ -229,7 +230,7 @@ fun ChatComposerBar(
                     Text(
                         text = placeholder,
                         color = c.muted,
-                        fontSize = 15.sp,
+                        fontSize = 15.5.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -240,28 +241,28 @@ fun ChatComposerBar(
                     maxLines = 6,
                     textStyle = TextStyle(
                         color = c.ink,
-                        fontSize = 15.sp,
-                        lineHeight = 22.sp,
+                        fontSize = 15.5.sp,
+                        lineHeight = 22.5.sp,
                     ),
                     cursorBrush = SolidColor(c.primary),
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
 
-            // Row 2: Balanced toolbar with 40dp+ primary controls
+            // Row 2: DeepSeek-inspired balanced bottom toolbar
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                Box(modifier = Modifier.size(40.dp)) {
+                Box(modifier = Modifier.size(38.dp)) {
                     Box(
                         modifier = Modifier
-                            .size(40.dp)
+                            .size(38.dp)
                             .clip(CircleShape)
                             .background(if (showToolsPanel) c.primarySoft else c.surfaceSoft)
                             .border(
-                                width = 1.dp,
+                                width = theme.borderWidth,
                                 color = if (showToolsPanel) c.primary.copy(alpha = 0.55f) else c.border,
                                 shape = CircleShape,
                             )
@@ -272,7 +273,7 @@ fun ChatComposerBar(
                             imageVector = if (showToolsPanel) Icons.Default.Close else Icons.Default.Add,
                             contentDescription = strings.chat.composerTools,
                             tint = if (showToolsPanel) c.primarySoftInk else c.muted,
-                            modifier = Modifier.size(20.dp),
+                            modifier = Modifier.size(19.dp),
                         )
                     }
                     if (!showToolsPanel && waterline.exceedsModelWindow) {
@@ -305,7 +306,7 @@ fun ChatComposerBar(
                     }
                     val pillBg = if (mode == ConversationMode.novel) c.tag else c.primarySoft
                     val pillFg = if (mode == ConversationMode.novel) c.tagInk else c.primarySoftInk
-                    val pillBorder = (if (mode == ConversationMode.novel) c.accent else c.primary).copy(alpha = 0.45f)
+                    val pillBorder = (if (mode == ConversationMode.novel) c.accent else c.primary).copy(alpha = 0.42f)
 
                     Box {
                         Row(
@@ -313,7 +314,7 @@ fun ChatComposerBar(
                                 .height(36.dp)
                                 .clip(RoundedCornerShape(999.dp))
                                 .background(pillBg)
-                                .border(1.dp, pillBorder, RoundedCornerShape(999.dp))
+                                .border(theme.borderWidth, pillBorder, RoundedCornerShape(999.dp))
                                 .clickable { showKindMenu = true }
                                 .padding(horizontal = 11.dp),
                             verticalAlignment = Alignment.CenterVertically,
@@ -395,10 +396,9 @@ fun ChatComposerBar(
                     }
                 }
 
-                // Always-visible Deep Think chip so users see active mode at a glance
-                ComposerChip(
+                // Iconic DeepSeek DeepThink cobalt pill
+                DeepThinkTogglePill(
                     label = strings.chat.deepThinkToggle,
-                    icon = Icons.Default.AutoAwesome,
                     active = enableReasoning,
                     onClick = onToggleReasoning,
                 )
@@ -417,7 +417,7 @@ fun ChatComposerBar(
                 if (isStreaming) {
                     Box(
                         modifier = Modifier
-                            .size(40.dp)
+                            .size(38.dp)
                             .clip(CircleShape)
                             .background(c.danger)
                             .clickable(onClick = onStop),
@@ -427,18 +427,22 @@ fun ChatComposerBar(
                             Icons.Default.Stop,
                             contentDescription = strings.chat.stop,
                             tint = Color.White,
-                            modifier = Modifier.size(19.dp),
+                            modifier = Modifier.size(18.dp),
                         )
                     }
                 } else {
                     val canSend = draftText.isNotBlank() || draftAttachments.isNotEmpty()
+                    val sendBg by animateColorAsState(
+                        targetValue = if (canSend) c.primary else c.surfaceSoft,
+                        label = "composer_send_bg",
+                    )
                     Box(
                         modifier = Modifier
-                            .size(40.dp)
+                            .size(38.dp)
                             .clip(CircleShape)
-                            .background(if (canSend) c.primary else c.surfaceSoft)
+                            .background(sendBg)
                             .border(
-                                width = 1.dp,
+                                width = theme.borderWidth,
                                 color = if (canSend) c.primary else c.border,
                                 shape = CircleShape,
                             )
@@ -449,7 +453,7 @@ fun ChatComposerBar(
                             Icons.Default.ArrowUpward,
                             contentDescription = strings.chat.send,
                             tint = if (canSend) Color.White else c.muted,
-                            modifier = Modifier.size(20.dp),
+                            modifier = Modifier.size(19.dp),
                         )
                     }
                 }
@@ -457,7 +461,10 @@ fun ChatComposerBar(
 
             AnimatedVisibility(visible = showToolsPanel) {
                 Column(modifier = Modifier.fillMaxWidth()) {
-                    HorizontalDivider(color = c.border.copy(alpha = 0.6f))
+                    HorizontalDivider(
+                        thickness = theme.borderWidth,
+                        color = c.border.copy(alpha = 0.7f),
+                    )
                     FlowRow(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -565,6 +572,54 @@ fun ChatComposerBar(
     }
 }
 
+@Composable
+private fun DeepThinkTogglePill(
+    label: String,
+    active: Boolean,
+    onClick: () -> Unit,
+) {
+    val theme = LocalAppTheme.current
+    val c = theme.colors
+    val bg by animateColorAsState(
+        targetValue = if (active) c.primary else c.surfaceSoft,
+        label = "deep_think_bg",
+    )
+    val fg by animateColorAsState(
+        targetValue = if (active) Color.White else c.muted,
+        label = "deep_think_fg",
+    )
+    Row(
+        modifier = Modifier
+            .height(36.dp)
+            .clip(RoundedCornerShape(999.dp))
+            .background(bg)
+            .border(
+                width = theme.borderWidth,
+                color = if (active) c.primary else c.border,
+                shape = RoundedCornerShape(999.dp),
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 11.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
+        Icon(
+            imageVector = Icons.Default.AutoAwesome,
+            contentDescription = null,
+            tint = fg,
+            modifier = Modifier.size(14.dp),
+        )
+        Text(
+            text = label,
+            color = fg,
+            fontSize = 12.sp,
+            fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
 private enum class ComposerChipTone {
     PRIMARY,
     ACCENT,
@@ -582,7 +637,8 @@ private fun ComposerChip(
     enabled: Boolean = true,
     loading: Boolean = false,
 ) {
-    val c = LocalAppTheme.current.colors
+    val theme = LocalAppTheme.current
+    val c = theme.colors
     val bg = when {
         tone == ComposerChipTone.DANGER -> c.dangerBg
         active && tone == ComposerChipTone.ACCENT -> c.tag
@@ -597,20 +653,20 @@ private fun ComposerChip(
     }
     val border = when {
         tone == ComposerChipTone.DANGER -> c.danger.copy(alpha = 0.45f)
-        active && tone == ComposerChipTone.ACCENT -> c.accent.copy(alpha = 0.5f)
-        active && tone == ComposerChipTone.PRIMARY -> c.primary.copy(alpha = 0.45f)
+        active && tone == ComposerChipTone.ACCENT -> c.accent.copy(alpha = 0.48f)
+        active && tone == ComposerChipTone.PRIMARY -> c.primary.copy(alpha = 0.42f)
         else -> c.border
     }
 
     Row(
         modifier = Modifier
-            .height(34.dp)
+            .height(36.dp)
             .alpha(if (enabled || loading) 1f else 0.48f)
             .clip(RoundedCornerShape(999.dp))
             .background(bg)
-            .border(1.dp, border, RoundedCornerShape(999.dp))
+            .border(theme.borderWidth, border, RoundedCornerShape(999.dp))
             .clickable(enabled = enabled && !loading, onClick = onClick)
-            .padding(horizontal = 10.dp),
+            .padding(horizontal = 11.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(5.dp),
     ) {
@@ -626,7 +682,7 @@ private fun ComposerChip(
         Text(
             text = label,
             color = fg,
-            fontSize = 11.5.sp,
+            fontSize = 12.sp,
             fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,

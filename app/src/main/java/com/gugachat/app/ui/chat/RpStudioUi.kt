@@ -42,6 +42,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.CallSplit
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.AutoStories
+import androidx.compose.material.icons.filled.Book
 import androidx.compose.material.icons.filled.BookmarkAdd
 import androidx.compose.material.icons.filled.Casino
 import androidx.compose.material.icons.filled.Check
@@ -60,11 +62,13 @@ import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Landscape
-import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PersonAdd
+import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Theaters
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.UploadFile
@@ -96,9 +100,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
@@ -119,7 +129,12 @@ import com.gugachat.app.core.theme.GuButtonVariant
 import com.gugachat.app.core.theme.GuCard
 import com.gugachat.app.core.theme.GuConfirmDialog
 import com.gugachat.app.core.theme.GuEmptyState
+import com.gugachat.app.core.theme.GuGroupedCard
+import com.gugachat.app.core.theme.GuIconTile
 import com.gugachat.app.core.theme.GuPill
+import com.gugachat.app.core.theme.GuSectionHeader
+import com.gugachat.app.core.theme.GuSegmentedControl
+import com.gugachat.app.core.theme.GuSettingsRow
 import com.gugachat.app.core.theme.GuSheetHeader
 import com.gugachat.app.core.theme.GuSwitchRow
 import com.gugachat.app.core.theme.GuTextField
@@ -262,6 +277,70 @@ private val RP_ACCENT_SWATCHES = listOf(
 private val RP_DIALOG_STYLE_KEYS = listOf("glass", "classic_vn", "minimal", "cyber", "parchment")
 private val RP_STAGE_SLOT_KEYS = listOf("auto", "left", "center", "right")
 
+private data class RpPresetCoverVisual(
+    val startColor: Color,
+    val endColor: Color,
+    val accentTint: Color,
+    val icon: ImageVector,
+)
+
+private fun resolveRpPresetCoverVisual(presetId: String): RpPresetCoverVisual = when (presetId.lowercase()) {
+    "palace_intrigue" -> RpPresetCoverVisual(
+        startColor = Color(0xFF6E1D34),
+        endColor = Color(0xFF2B0E1A),
+        accentTint = Color(0xFFF6D38A),
+        icon = Icons.Default.EmojiEvents,
+    )
+    "modern_tavern" -> RpPresetCoverVisual(
+        startColor = Color(0xFF2B2D63),
+        endColor = Color(0xFF141736),
+        accentTint = Color(0xFFF6B95E),
+        icon = Icons.Default.AutoStories,
+    )
+    "fantasy_rpg" -> RpPresetCoverVisual(
+        startColor = Color(0xFF5A3718),
+        endColor = Color(0xFF251A10),
+        accentTint = Color(0xFFFCD34D),
+        icon = Icons.Default.Security,
+    )
+    "cyberpunk_noir" -> RpPresetCoverVisual(
+        startColor = Color(0xFF0E4A60),
+        endColor = Color(0xFF091B2C),
+        accentTint = Color(0xFF67E8F9),
+        icon = Icons.Default.Code,
+    )
+    "wuxia" -> RpPresetCoverVisual(
+        startColor = Color(0xFF2F3D52),
+        endColor = Color(0xFF141B28),
+        accentTint = Color(0xFFE2E8F0),
+        icon = Icons.Default.Landscape,
+    )
+    "steampunk_coc" -> RpPresetCoverVisual(
+        startColor = Color(0xFF453224),
+        endColor = Color(0xFF1C1612),
+        accentTint = Color(0xFFD9B27C),
+        icon = Icons.Default.Search,
+    )
+    "space_mercenary" -> RpPresetCoverVisual(
+        startColor = Color(0xFF1B3A63),
+        endColor = Color(0xFF0B1830),
+        accentTint = Color(0xFF7DD3FC),
+        icon = Icons.Default.Public,
+    )
+    "modern_romance" -> RpPresetCoverVisual(
+        startColor = Color(0xFF832E55),
+        endColor = Color(0xFF3A162D),
+        accentTint = Color(0xFFFBCFE8),
+        icon = Icons.Default.Favorite,
+    )
+    else -> RpPresetCoverVisual(
+        startColor = Color(0xFF334155),
+        endColor = Color(0xFF1E293B),
+        accentTint = Color(0xFFCBD5E1),
+        icon = Icons.Default.Theaters,
+    )
+}
+
 private fun localizeStageSlot(slot: String, rpStrings: RpStrings): String = when (slot.trim().lowercase()) {
     "left" -> rpStrings.slotLeft
     "center" -> rpStrings.slotCenter
@@ -286,7 +365,7 @@ private fun RpArtProgressBanner(
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
         color = c.primarySoft,
-        border = BorderStroke(1.dp, c.primary.copy(alpha = 0.35f)),
+        border = BorderStroke(LocalAppTheme.current.borderWidth, c.primary.copy(alpha = 0.35f)),
     ) {
         Column(
             modifier = Modifier
@@ -337,7 +416,8 @@ fun RpStatusHudBar(
     onUpdateAuthorNote: (String) -> Unit,
 ) {
     val strings = LocalAppStrings.current
-    val c = LocalAppTheme.current.colors
+    val theme = LocalAppTheme.current
+    val c = theme.colors
     val isZh = strings.language == AppLanguage.ZH
     val leadNpc = rp.cast.firstOrNull { !it.isPlayer }
     val leadTier = leadNpc?.let { RpEngine.affinityTier(it.affinity) }
@@ -381,16 +461,16 @@ fun RpStatusHudBar(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(c.surfaceSoft.copy(alpha = 0.86f)),
+            .background(c.surface),
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(min = 44.dp)
+                .heightIn(min = 46.dp)
                 .clickable { expanded = !expanded }
                 .padding(horizontal = 12.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
         ) {
             Column(
                 modifier = Modifier.weight(1f),
@@ -399,7 +479,7 @@ fun RpStatusHudBar(
                 Text(
                     text = headerLine,
                     color = c.ink,
-                    fontSize = 12.sp,
+                    fontSize = 12.5.sp,
                     fontWeight = FontWeight.Bold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -418,18 +498,18 @@ fun RpStatusHudBar(
 
             Surface(
                 modifier = Modifier
-                    .heightIn(min = 36.dp)
+                    .heightIn(min = 34.dp)
                     .clip(RoundedCornerShape(999.dp))
                     .clickable(onClick = onToggleTheaterMode),
                 shape = RoundedCornerShape(999.dp),
-                color = if (rp.theaterMode) c.primary else c.surface,
+                color = if (rp.theaterMode) c.primary else c.surfaceSoft,
                 border = BorderStroke(
-                    width = 1.dp,
+                    width = theme.borderWidth,
                     color = if (rp.theaterMode) c.primary else c.border,
                 ),
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
@@ -452,15 +532,15 @@ fun RpStatusHudBar(
             if (!expanded) {
                 Surface(
                     modifier = Modifier
-                        .heightIn(min = 36.dp)
+                        .heightIn(min = 34.dp)
                         .clip(RoundedCornerShape(999.dp))
                         .clickable(onClick = onOpenStudio),
                     shape = RoundedCornerShape(999.dp),
                     color = c.tag,
-                    border = BorderStroke(1.dp, c.accent.copy(alpha = 0.45f)),
+                    border = BorderStroke(theme.borderWidth, c.accent.copy(alpha = 0.45f)),
                 ) {
                     Box(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
                         contentAlignment = Alignment.Center,
                     ) {
                         Text(
@@ -478,7 +558,7 @@ fun RpStatusHudBar(
                 imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
                 contentDescription = null,
                 tint = c.muted,
-                modifier = Modifier.size(20.dp),
+                modifier = Modifier.size(19.dp),
             )
         }
 
@@ -489,188 +569,167 @@ fun RpStatusHudBar(
                     .padding(start = 12.dp, end = 12.dp, bottom = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                val timeWeatherLine = buildString {
-                    if (rp.state.time.isNotBlank()) append("🕒 ${rp.state.time}")
-                    if (rp.state.weather.isNotBlank()) {
-                        if (isNotEmpty()) append(" · ")
-                        append("☁ ${rp.state.weather}")
-                    }
-                    if (rp.state.mood.isNotBlank()) {
-                        if (isNotEmpty()) append(" · ")
-                        append(rp.state.mood)
-                    }
-                }
-                if (timeWeatherLine.isNotEmpty() || triggeredLoreCount > 0) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        if (timeWeatherLine.isNotEmpty()) {
-                            Text(
-                                text = timeWeatherLine,
-                                color = c.muted,
-                                fontSize = 11.5.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f),
-                            )
-                        } else {
-                            Spacer(Modifier.weight(1f))
-                        }
-                        if (triggeredLoreCount > 0) {
-                            GuBadge(
-                                text = "📖 ${strings.rp.worldbookTriggeredCount.fmt("count" to triggeredLoreCount)}",
-                                variant = GuBadgeVariant.EMERALD,
-                            )
-                        }
-                    }
-                }
-
-                Row(
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = c.surfaceSoft.copy(alpha = if (theme.isDark) 0.72f else 0.78f),
+                    border = BorderStroke(theme.borderWidth, c.border),
                     modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     Column(
-                        modifier = Modifier.weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(3.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        Text(
-                            text = "HP ${rp.state.hp}/${rp.state.maxHp}",
-                            color = c.ink,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                        )
-                        LinearProgressIndicator(
-                            progress = { hpFrac },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(6.dp)
-                                .clip(RoundedCornerShape(999.dp)),
-                            color = c.danger,
-                            trackColor = c.surface,
-                        )
-                    }
-                    Column(
-                        modifier = Modifier.weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(3.dp),
-                    ) {
-                        Text(
-                            text = "MP ${rp.state.mp}/${rp.state.maxMp}",
-                            color = c.ink,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                        )
-                        LinearProgressIndicator(
-                            progress = { mpFrac },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(6.dp)
-                                .clip(RoundedCornerShape(999.dp)),
-                            color = c.primary,
-                            trackColor = c.surface,
-                        )
-                    }
-                    GuBadge("🪙 ${rp.state.gold}", variant = GuBadgeVariant.HONEY)
-                }
+                        val timeWeatherLine = buildString {
+                            if (rp.state.time.isNotBlank()) append("🕒 ${rp.state.time}")
+                            if (rp.state.weather.isNotBlank()) {
+                                if (isNotEmpty()) append(" · ")
+                                append("☁ ${rp.state.weather}")
+                            }
+                            if (rp.state.mood.isNotBlank()) {
+                                if (isNotEmpty()) append(" · ")
+                                append(rp.state.mood)
+                            }
+                        }
+                        if (timeWeatherLine.isNotEmpty() || triggeredLoreCount > 0) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                if (timeWeatherLine.isNotEmpty()) {
+                                    Text(
+                                        text = timeWeatherLine,
+                                        color = c.muted,
+                                        fontSize = 11.5.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                } else {
+                                    Spacer(Modifier.weight(1f))
+                                }
+                                if (triggeredLoreCount > 0) {
+                                    GuBadge(
+                                        text = "📖 ${strings.rp.worldbookTriggeredCount.fmt("count" to triggeredLoreCount)}",
+                                        variant = GuBadgeVariant.EMERALD,
+                                    )
+                                }
+                            }
+                        }
 
-                if (leadNpc != null && leadTier != null && leadTierLabel != null) {
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Favorite,
-                                contentDescription = null,
-                                tint = affinityBarColor(leadTier.code, c),
-                                modifier = Modifier.size(14.dp),
-                            )
-                            Text(
-                                text = "${leadNpc.name} · ${leadNpc.affinity}",
-                                color = c.ink,
-                                fontSize = 11.5.sp,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f, fill = false),
-                            )
-                            GuBadge(
-                                text = leadTierLabel,
-                                variant = affinityBadgeVariant(leadTier.code),
-                            )
-                            if (leadNpc.mood.isNotBlank()) {
-                                GuBadge(
-                                    text = leadNpc.mood,
-                                    variant = GuBadgeVariant.NEUTRAL,
+                            Column(
+                                modifier = Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                Text(
+                                    text = "HP ${rp.state.hp}/${rp.state.maxHp}",
+                                    color = c.ink,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                                LinearProgressIndicator(
+                                    progress = { hpFrac },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(6.dp)
+                                        .clip(RoundedCornerShape(999.dp)),
+                                    color = c.danger,
+                                    trackColor = c.surface,
+                                )
+                            }
+                            Column(
+                                modifier = Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                Text(
+                                    text = "MP ${rp.state.mp}/${rp.state.maxMp}",
+                                    color = c.ink,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                                LinearProgressIndicator(
+                                    progress = { mpFrac },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(6.dp)
+                                        .clip(RoundedCornerShape(999.dp)),
+                                    color = c.primary,
+                                    trackColor = c.surface,
+                                )
+                            }
+                            GuBadge("🪙 ${rp.state.gold}", variant = GuBadgeVariant.HONEY)
+                        }
+
+                        if (leadNpc != null && leadTier != null && leadTierLabel != null) {
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Favorite,
+                                        contentDescription = null,
+                                        tint = affinityBarColor(leadTier.code, c),
+                                        modifier = Modifier.size(14.dp),
+                                    )
+                                    Text(
+                                        text = "${leadNpc.name} · ${leadNpc.affinity}",
+                                        color = c.ink,
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f, fill = false),
+                                    )
+                                    GuBadge(
+                                        text = leadTierLabel,
+                                        variant = affinityBadgeVariant(leadTier.code),
+                                    )
+                                    if (leadNpc.mood.isNotBlank()) {
+                                        GuBadge(
+                                            text = leadNpc.mood,
+                                            variant = GuBadgeVariant.NEUTRAL,
+                                        )
+                                    }
+                                }
+                                LinearProgressIndicator(
+                                    progress = { leadTier.progress },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(6.dp)
+                                        .clip(RoundedCornerShape(999.dp)),
+                                    color = affinityBarColor(leadTier.code, c),
+                                    trackColor = c.surface,
                                 )
                             }
                         }
-                        LinearProgressIndicator(
-                            progress = { leadTier.progress },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(6.dp)
-                                .clip(RoundedCornerShape(999.dp)),
-                            color = affinityBarColor(leadTier.code, c),
-                            trackColor = c.surface,
-                        )
                     }
                 }
 
-                Surface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 40.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .clickable { showAuthorNoteDialog = true },
-                    shape = RoundedCornerShape(12.dp),
-                    color = c.surface,
-                    border = BorderStroke(1.dp, c.border),
+                GuGroupedCard(
+                    modifier = Modifier.fillMaxWidth(),
+                    cornerRadius = 13.dp,
                 ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 10.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.EditNote,
-                            contentDescription = null,
-                            tint = c.primary,
-                            modifier = Modifier.size(18.dp),
-                        )
-                        Column(
-                            modifier = Modifier.weight(1f),
-                            verticalArrangement = Arrangement.spacedBy(1.dp),
-                        ) {
-                            Text(
-                                text = strings.rp.authorNoteLabel,
-                                color = c.muted,
-                                fontSize = 10.5.sp,
-                                fontWeight = FontWeight.Bold,
-                            )
-                            Text(
-                                text = rp.authorNote.ifBlank { strings.rp.authorNotePlaceholder },
-                                color = if (rp.authorNote.isNotBlank()) c.ink else c.muted,
-                                fontSize = 12.sp,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                        Icon(
-                            imageVector = Icons.Default.Edit,
-                            contentDescription = strings.common.edit,
-                            tint = c.muted,
-                            modifier = Modifier.size(16.dp),
-                        )
-                    }
+                    GuSettingsRow(
+                        title = strings.rp.authorNoteLabel,
+                        subtitle = rp.authorNote.ifBlank { strings.rp.authorNotePlaceholder },
+                        icon = Icons.Default.EditNote,
+                        iconTint = c.primarySoftInk,
+                        iconBg = c.primarySoft,
+                        showChevron = true,
+                        onClick = { showAuthorNoteDialog = true },
+                    )
                 }
 
                 FlowRow(
@@ -715,7 +774,10 @@ fun RpStatusHudBar(
                 }
             }
         }
-        HorizontalDivider(color = c.border.copy(alpha = 0.65f))
+        HorizontalDivider(
+            thickness = theme.borderWidth,
+            color = c.border.copy(alpha = 0.85f),
+        )
     }
 }
 
@@ -787,7 +849,8 @@ fun RpWizardDialog(
     onImportCardUri: (Uri) -> Unit,
 ) {
     val strings = LocalAppStrings.current
-    val c = LocalAppTheme.current.colors
+    val theme = LocalAppTheme.current
+    val c = theme.colors
     val isZh = strings.language == AppLanguage.ZH
 
     val firstPreset = RpPresets.ALL.first()
@@ -804,6 +867,12 @@ fun RpWizardDialog(
         }
     }
 
+    val playStyles = remember {
+        listOf(RpPlayStyle.chengguang, RpPlayStyle.tavern, RpPlayStyle.trpg)
+    }
+    val playStyleLabels = remember(strings) {
+        playStyles.map { rpPlayStyleLabel(it, strings.rp) }
+    }
     val active = RpPresets.findById(selectedPreset)
     val greetingCount = (if (active.config.greeting.isNotBlank()) 1 else 0) + active.config.alternateGreetings.size
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -823,6 +892,7 @@ fun RpWizardDialog(
         ) {
             GuSheetHeader(
                 title = strings.rp.wizardTitle,
+                subtitle = if (isZh) "挑选剧本封面或导入 SillyTavern 角色卡" else "Browse scenario cards or import a SillyTavern V2/V3 card",
                 onClose = onDismiss,
                 closeContentDescription = strings.common.close,
             )
@@ -832,170 +902,326 @@ fun RpWizardDialog(
                     .fillMaxWidth()
                     .weight(1f)
                     .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 16.dp, vertical = 14.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                    .padding(vertical = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                GuButton(
-                    onClick = { cardLauncher.launch(arrayOf("application/json", "image/png", "*/*")) },
-                    variant = GuButtonVariant.SUBTLE,
-                    modifier = Modifier.fillMaxWidth(),
+                // SillyTavern Character Card Import Banner
+                GuGroupedCard(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp),
                 ) {
-                    Icon(Icons.Default.UploadFile, contentDescription = null, modifier = Modifier.size(17.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text(strings.rp.importCardBtn, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                }
-
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        text = strings.rp.playStyleLabel,
-                        color = c.ink,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold,
+                    GuSettingsRow(
+                        title = strings.rp.importCardBtn,
+                        subtitle = if (isZh) "支持 PNG / JSON V2 · V3 角色卡、世界书与正则脚本" else "Supports PNG / JSON V2 · V3 character cards, lorebooks & regex",
+                        icon = Icons.Default.UploadFile,
+                        iconTint = c.primarySoftInk,
+                        iconBg = c.primarySoft,
+                        showChevron = true,
+                        onClick = { cardLauncher.launch(arrayOf("application/json", "image/png", "*/*")) },
                     )
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        listOf(
-                            RpPlayStyle.chengguang,
-                            RpPlayStyle.tavern,
-                            RpPlayStyle.trpg,
-                        ).forEach { style ->
-                            GuPill(
-                                label = rpPlayStyleLabel(style, strings.rp),
-                                selected = selectedStyle == style,
-                                onClick = { selectedStyle = style },
-                                useHoneySelected = false,
-                                modifier = Modifier.heightIn(min = 36.dp),
-                            )
-                        }
-                    }
                 }
 
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        text = strings.rp.wizardPresetLabel,
-                        color = c.ink,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        RpPresets.ALL.forEach { p ->
-                            GuPill(
-                                label = strings.rp.presets[p.id] ?: p.name,
-                                selected = selectedPreset == p.id,
-                                onClick = {
-                                    selectedPreset = p.id
-                                    selectedStyle = p.config.playStyle
-                                },
-                                modifier = Modifier.heightIn(min = 36.dp),
-                            )
-                        }
-                    }
-                }
-
-                GuCard(
-                    modifier = Modifier.fillMaxWidth(),
-                    backgroundColor = c.surfaceSoft,
+                // 3-Segment Play Style Control
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    Row(
+                    GuSectionHeader(title = strings.rp.playStyleLabel)
+                    GuSegmentedControl(
+                        items = playStyleLabels,
+                        selectedIndex = playStyles.indexOf(selectedStyle).coerceAtLeast(0),
+                        onSelect = { idx -> selectedStyle = playStyles[idx] },
                         modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Text(
-                            text = active.config.title,
-                            color = c.ink,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f),
-                        )
-                        GuBadge(
-                            text = rpPlayStyleLabel(active.config.playStyle, strings.rp),
-                            variant = GuBadgeVariant.BLUE,
-                        )
-                    }
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        text = active.description,
-                        color = c.muted,
-                        fontSize = 12.5.sp,
-                        lineHeight = 18.sp,
                     )
-                    Spacer(Modifier.height(10.dp))
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                }
+
+                // SillyTavern Visual Cover-Card Preset Lobby
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    GuSectionHeader(
+                        title = strings.rp.wizardPresetLabel,
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                        trailing = {
+                            GuBadge("${RpPresets.ALL.size}", variant = GuBadgeVariant.BLUE)
+                        },
+                    )
+                    LazyRow(
+                        contentPadding = PaddingValues(horizontal = 16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        GuBadge(
-                            text = if (isZh) "${active.config.cast.size} 位角色" else "${active.config.cast.size} NPCs",
-                            variant = GuBadgeVariant.BLUE,
-                        )
-                        if (greetingCount > 0) {
-                            GuBadge(
-                                text = strings.rp.wizardGreetingCount.fmt("count" to greetingCount),
-                                variant = GuBadgeVariant.HONEY,
-                            )
-                        }
-                        if (active.starterLore.isNotEmpty()) {
-                            GuBadge(
-                                text = strings.rp.wizardLoreCount.fmt("count" to active.starterLore.size),
-                                variant = GuBadgeVariant.EMERALD,
-                            )
-                        }
-                    }
-                    if (active.config.state.stats.isNotEmpty()) {
-                        Spacer(Modifier.height(8.dp))
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            active.config.state.stats.forEach { (k, v) ->
-                                GuBadge("$k $v", variant = GuBadgeVariant.NEUTRAL)
+                        items(RpPresets.ALL, key = { it.id }) { preset ->
+                            val isSelected = selectedPreset == preset.id
+                            val visual = remember(preset.id) { resolveRpPresetCoverVisual(preset.id) }
+                            val presetLabel = strings.rp.presets[preset.id] ?: preset.name
+                            val presetGreetings = (if (preset.config.greeting.isNotBlank()) 1 else 0) +
+                                preset.config.alternateGreetings.size
+                            val presetMeta = if (isZh) {
+                                "${preset.config.cast.size}角 · ${presetGreetings}开场 · ${preset.starterLore.size}词条"
+                            } else {
+                                "${preset.config.cast.size} cast · ${presetGreetings} open · ${preset.starterLore.size} lore"
+                            }
+
+                            Surface(
+                                onClick = {
+                                    selectedPreset = preset.id
+                                    selectedStyle = preset.config.playStyle
+                                },
+                                shape = RoundedCornerShape(15.dp),
+                                color = c.surface,
+                                border = BorderStroke(
+                                    width = if (isSelected) 1.6.dp else theme.borderWidth,
+                                    color = if (isSelected) c.primary else c.border,
+                                ),
+                                shadowElevation = if (isSelected && !theme.isDark) 4.dp else 0.dp,
+                                modifier = Modifier
+                                    .width(164.dp)
+                                    .height(126.dp),
+                            ) {
+                                Column(modifier = Modifier.fillMaxSize()) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(46.dp)
+                                            .background(
+                                                Brush.horizontalGradient(
+                                                    listOf(visual.startColor, visual.endColor),
+                                                ),
+                                            )
+                                            .padding(horizontal = 10.dp),
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.fillMaxSize(),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(7.dp),
+                                        ) {
+                                            GuIconTile(
+                                                icon = visual.icon,
+                                                tint = visual.accentTint,
+                                                backgroundColor = Color.White.copy(alpha = 0.14f),
+                                                size = 28.dp,
+                                                iconSize = 15.dp,
+                                                cornerRadius = 8.dp,
+                                            )
+                                            Surface(
+                                                shape = RoundedCornerShape(999.dp),
+                                                color = Color.Black.copy(alpha = 0.34f),
+                                                border = BorderStroke(0.6.dp, Color.White.copy(alpha = 0.20f)),
+                                                modifier = Modifier.weight(1f, fill = false),
+                                            ) {
+                                                Text(
+                                                    text = rpPlayStyleLabel(preset.config.playStyle, strings.rp),
+                                                    color = Color(0xFFFDF7EC),
+                                                    fontSize = 9.5.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                                )
+                                            }
+                                            if (isSelected) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(18.dp)
+                                                        .clip(CircleShape)
+                                                        .background(c.primary),
+                                                    contentAlignment = Alignment.Center,
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.Check,
+                                                        contentDescription = null,
+                                                        tint = Color.White,
+                                                        modifier = Modifier.size(12.dp),
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                                        verticalArrangement = Arrangement.SpaceBetween,
+                                    ) {
+                                        Text(
+                                            text = presetLabel,
+                                            color = if (isSelected) c.primarySoftInk else c.ink,
+                                            fontSize = 12.5.sp,
+                                            lineHeight = 16.5.sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                        Text(
+                                            text = presetMeta,
+                                            color = c.muted,
+                                            fontSize = 10.5.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
                 }
 
-                GuTextField(
-                    value = worldTitle,
-                    onValueChange = { worldTitle = it },
-                    label = strings.rp.worldTitleLabel,
-                    placeholder = active.config.title,
-                )
-                GuTextField(
-                    value = playerName,
-                    onValueChange = { playerName = it },
-                    label = strings.rp.wizardPlayerNameLabel,
-                    placeholder = active.config.playerName,
-                )
-                GuTextField(
-                    value = playerPersona,
-                    onValueChange = { playerPersona = it },
-                    label = strings.rp.wizardPlayerPersonaLabel,
-                    placeholder = active.config.playerPersona.ifBlank { strings.rp.playerPersonaLabel },
-                    singleLine = false,
-                    minLines = 2,
-                    maxLines = 4,
-                )
+                // Rich Selected Scenario Preview Card
+                GuGroupedCard(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp),
+                    backgroundColor = c.surfaceSoft.copy(alpha = if (theme.isDark) 0.78f else 0.85f),
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text(
+                                text = active.config.title,
+                                color = c.ink,
+                                fontSize = 14.5.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f),
+                            )
+                            GuBadge(
+                                text = rpPlayStyleLabel(active.config.playStyle, strings.rp),
+                                variant = GuBadgeVariant.BLUE,
+                            )
+                        }
+                        Text(
+                            text = active.description,
+                            color = c.muted,
+                            fontSize = 12.5.sp,
+                            lineHeight = 18.sp,
+                        )
+                        if (active.config.greeting.isNotBlank()) {
+                            val excerpt = remember(active.config.greeting) {
+                                active.config.greeting.replace("**", "").trim()
+                            }
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = c.surface.copy(alpha = if (theme.isDark) 0.65f else 0.85f),
+                                border = BorderStroke(theme.borderWidth, c.border),
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text(
+                                    text = "“$excerpt”",
+                                    color = c.ink.copy(alpha = 0.88f),
+                                    fontSize = 11.5.sp,
+                                    lineHeight = 17.sp,
+                                    fontStyle = FontStyle.Italic,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                                )
+                            }
+                        }
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            GuBadge(
+                                text = if (isZh) "${active.config.cast.size} 位角色" else "${active.config.cast.size} NPCs",
+                                variant = GuBadgeVariant.BLUE,
+                            )
+                            if (greetingCount > 0) {
+                                GuBadge(
+                                    text = strings.rp.wizardGreetingCount.fmt("count" to greetingCount),
+                                    variant = GuBadgeVariant.HONEY,
+                                )
+                            }
+                            if (active.starterLore.isNotEmpty()) {
+                                GuBadge(
+                                    text = strings.rp.wizardLoreCount.fmt("count" to active.starterLore.size),
+                                    variant = GuBadgeVariant.EMERALD,
+                                )
+                            }
+                        }
+                        if (active.config.state.stats.isNotEmpty()) {
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                active.config.state.stats.forEach { (k, v) ->
+                                    GuBadge("$k $v", variant = GuBadgeVariant.NEUTRAL)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Grouped Persona & World Fields
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    GuSectionHeader(title = strings.rp.personaSectionTitle)
+                    GuGroupedCard(modifier = Modifier.fillMaxWidth()) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(11.dp),
+                        ) {
+                            GuTextField(
+                                value = worldTitle,
+                                onValueChange = { worldTitle = it },
+                                label = strings.rp.worldTitleLabel,
+                                placeholder = active.config.title,
+                            )
+                            GuTextField(
+                                value = playerName,
+                                onValueChange = { playerName = it },
+                                label = strings.rp.wizardPlayerNameLabel,
+                                placeholder = active.config.playerName,
+                            )
+                            GuTextField(
+                                value = playerPersona,
+                                onValueChange = { playerPersona = it },
+                                label = strings.rp.wizardPlayerPersonaLabel,
+                                placeholder = active.config.playerPersona.ifBlank { strings.rp.playerPersonaLabel },
+                                singleLine = false,
+                                minLines = 2,
+                                maxLines = 4,
+                            )
+                        }
+                    }
+                }
             }
 
-            HorizontalDivider(color = c.border.copy(alpha = 0.7f))
+            HorizontalDivider(
+                thickness = theme.borderWidth,
+                color = c.border.copy(alpha = 0.85f),
+            )
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .background(c.surface)
                     .padding(horizontal = 16.dp, vertical = 12.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 TextButton(
                     onClick = onDismiss,
-                    modifier = Modifier.heightIn(min = 40.dp),
+                    modifier = Modifier.heightIn(min = 42.dp),
                 ) {
                     Text(strings.common.cancel, color = c.muted, fontWeight = FontWeight.SemiBold)
                 }
@@ -1012,6 +1238,8 @@ fun RpWizardDialog(
                     },
                     modifier = Modifier.weight(1f),
                 ) {
+                    Icon(Icons.Default.Theaters, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
                     Text(strings.rp.wizardStartBtn, fontWeight = FontWeight.Bold)
                 }
             }
@@ -1039,18 +1267,34 @@ fun RpDiceDialog(
         mutableStateOf(if (isD100Ruleset) "50" else "12")
     }
     var mode by remember { mutableStateOf("normal") }
+    val diceModes = remember { listOf("normal", "advantage", "disadvantage") }
+    val diceModeLabels = remember(isZh) {
+        if (isZh) listOf("普通", "优势", "劣势") else listOf("Normal", "Adv", "Disadv")
+    }
 
     val stats = rp?.state?.stats.orEmpty()
 
     AlertDialog(
         onDismissRequest = onDismiss,
+        shape = RoundedCornerShape(22.dp),
         containerColor = c.surfaceElevated,
         title = {
-            Text(
-                text = strings.rp.diceTitle,
-                color = c.ink,
-                fontWeight = FontWeight.ExtraBold,
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                GuIconTile(
+                    icon = Icons.Default.Casino,
+                    tint = c.tagInk,
+                    backgroundColor = c.tag,
+                )
+                Text(
+                    text = strings.rp.diceTitle,
+                    color = c.ink,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                )
+            }
         },
         text = {
             Column(
@@ -1122,29 +1366,13 @@ fun RpDiceDialog(
                     label = strings.rp.diceDcLabel,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 )
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    GuPill(
-                        label = if (isZh) "普通" else "Normal",
-                        selected = mode == "normal",
-                        onClick = { mode = "normal" },
-                        modifier = Modifier.heightIn(min = 36.dp),
-                    )
-                    GuPill(
-                        label = if (isZh) "优势" else "Advantage",
-                        selected = mode == "advantage",
-                        onClick = { mode = "advantage" },
-                        modifier = Modifier.heightIn(min = 36.dp),
-                    )
-                    GuPill(
-                        label = if (isZh) "劣势" else "Disadvantage",
-                        selected = mode == "disadvantage",
-                        onClick = { mode = "disadvantage" },
-                        modifier = Modifier.heightIn(min = 36.dp),
-                    )
-                }
+                GuSegmentedControl(
+                    items = diceModeLabels,
+                    selectedIndex = diceModes.indexOf(mode).coerceAtLeast(0),
+                    onSelect = { idx -> mode = diceModes[idx] },
+                    compact = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
         },
         confirmButton = {
@@ -1505,7 +1733,8 @@ fun RpStudioSheet(
                 state = tabListState,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 10.dp),
+                    .background(c.surface)
+                    .padding(vertical = 9.dp),
                 contentPadding = PaddingValues(horizontal = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
@@ -1515,10 +1744,15 @@ fun RpStudioSheet(
                         selected = tab == idx,
                         onClick = { tab = idx },
                         useHoneySelected = false,
-                        modifier = Modifier.heightIn(min = 36.dp),
+                        modifier = Modifier.heightIn(min = 34.dp),
                     )
                 }
             }
+            HorizontalDivider(
+                thickness = LocalAppTheme.current.borderWidth,
+                color = c.border.copy(alpha = 0.8f),
+            )
+            Spacer(Modifier.height(10.dp))
 
             AnimatedVisibility(visible = isGeneratingArt) {
                 RpArtProgressBanner(
@@ -1670,23 +1904,32 @@ private fun RpCastTab(
     onAdjustAffinity: (String, Int) -> Unit,
 ) {
     val strings = LocalAppStrings.current
-    val c = LocalAppTheme.current.colors
+    val theme = LocalAppTheme.current
+    val c = theme.colors
     val isZh = strings.language == AppLanguage.ZH
 
     LazyColumn(
         modifier = modifier.padding(horizontal = 16.dp),
-        contentPadding = PaddingValues(bottom = 20.dp),
+        contentPadding = PaddingValues(bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        item(key = "__cast_add__") {
-            GuButton(
-                onClick = onAddNpc,
-                variant = GuButtonVariant.SUBTLE,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Icon(Icons.Default.PersonAdd, contentDescription = null, modifier = Modifier.size(17.dp))
-                Spacer(Modifier.width(6.dp))
-                Text(stripLeadingPlus(strings.rp.addNpcBtn), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        item(key = "__cast_header__") {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                GuSectionHeader(
+                    title = strings.rp.castTab,
+                    trailing = {
+                        GuBadge("${cast.size}", variant = GuBadgeVariant.BLUE)
+                    },
+                )
+                GuButton(
+                    onClick = onAddNpc,
+                    variant = GuButtonVariant.SUBTLE,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(Icons.Default.PersonAdd, contentDescription = null, modifier = Modifier.size(17.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(stripLeadingPlus(strings.rp.addNpcBtn), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                }
             }
         }
 
@@ -1695,6 +1938,7 @@ private fun RpCastTab(
                 GuEmptyState(
                     title = if (isZh) "暂无角色" else "No characters yet",
                     subtitle = if (isZh) "添加同伴或关键 NPC 以追踪好感、立绘与秘密" else "Add companions or key NPCs to track portraits and affinity",
+                    icon = Icons.Default.Face,
                 )
             }
         } else {
@@ -1725,10 +1969,10 @@ private fun RpCastTab(
                     ) {
                         Box(
                             modifier = Modifier
-                                .size(54.dp)
+                                .size(52.dp)
                                 .clip(RoundedCornerShape(14.dp))
                                 .background(c.primarySoft)
-                                .border(1.5.dp, c.primary.copy(alpha = 0.45f), RoundedCornerShape(14.dp))
+                                .border(theme.borderWidth, c.primary.copy(alpha = 0.45f), RoundedCornerShape(14.dp))
                                 .clickable { onManageSprites(npc) },
                             contentAlignment = Alignment.Center,
                         ) {
@@ -2259,38 +2503,30 @@ private fun RpNpcSpriteManagerDialog(
                         .padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
+                    val slotLabels = remember(strings) {
+                        RP_STAGE_SLOT_KEYS.map { localizeStageSlot(it, strings.rp) }
+                    }
+                    val selectedSlotIdx = RP_STAGE_SLOT_KEYS.indexOfFirst {
+                        it.equals(stageSlot, ignoreCase = true)
+                    }.coerceAtLeast(0)
+
                     // Stage positioning & AI art appearance anchor
+                    GuSectionHeader(
+                        title = strings.rp.stageSlotLabel,
+                        trailing = if (hasStageChanges) {
+                            { GuBadge(if (isZh) "未保存" else "Unsaved", variant = GuBadgeVariant.AMBER) }
+                        } else {
+                            null
+                        },
+                    )
                     GuCard(modifier = Modifier.fillMaxWidth()) {
-                        Row(
+                        GuSegmentedControl(
+                            items = slotLabels,
+                            selectedIndex = selectedSlotIdx,
+                            onSelect = { idx -> stageSlot = RP_STAGE_SLOT_KEYS[idx] },
+                            compact = true,
                             modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            Text(
-                                text = strings.rp.stageSlotLabel,
-                                color = c.ink,
-                                fontSize = 13.5.sp,
-                                fontWeight = FontWeight.ExtraBold,
-                                modifier = Modifier.weight(1f),
-                            )
-                            if (hasStageChanges) {
-                                GuBadge(if (isZh) "未保存" else "Unsaved", variant = GuBadgeVariant.AMBER)
-                            }
-                        }
-                        Spacer(Modifier.height(8.dp))
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            RP_STAGE_SLOT_KEYS.forEach { key ->
-                                GuPill(
-                                    label = localizeStageSlot(key, strings.rp),
-                                    selected = stageSlot.equals(key, ignoreCase = true),
-                                    onClick = { stageSlot = key },
-                                    modifier = Modifier.heightIn(min = 36.dp),
-                                )
-                            }
-                        }
+                        )
 
                         Spacer(Modifier.height(12.dp))
                         Row(
@@ -2378,147 +2614,136 @@ private fun RpNpcSpriteManagerDialog(
                         }
                     }
 
-                    // 8 Expression Sprite Slots
-                    GuCard(modifier = Modifier.fillMaxWidth()) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            Text(
-                                text = strings.rp.expressionsTitle,
-                                color = c.ink,
-                                fontSize = 13.5.sp,
-                                fontWeight = FontWeight.ExtraBold,
-                                modifier = Modifier.weight(1f),
-                            )
-                            GuBadge("$boundCount / 8", variant = GuBadgeVariant.BLUE)
-                        }
-                        Spacer(Modifier.height(10.dp))
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            RpEngine.STANDARD_EXPRESSIONS.forEach { exprKey ->
-                                val boundPath = npc.expressionSprites.entries
-                                    .firstOrNull { it.key.equals(exprKey, ignoreCase = true) }
-                                    ?.value
-                                    ?.trim()
-                                    ?.takeIf { it.isNotEmpty() }
-                                val exprFile = remember(boundPath) {
-                                    boundPath?.let(::File)?.takeIf { it.isFile }
-                                }
-                                val exprLabel = strings.rp.expressionLabels[exprKey] ?: exprKey
+                    // 8 Expression Sprite Slots (Grouped with hairline dividers — zero nested borders)
+                    GuSectionHeader(
+                        title = strings.rp.expressionsTitle,
+                        trailing = { GuBadge("$boundCount / 8", variant = GuBadgeVariant.BLUE) },
+                    )
+                    GuGroupedCard(modifier = Modifier.fillMaxWidth()) {
+                        val borderW = LocalAppTheme.current.borderWidth
+                        RpEngine.STANDARD_EXPRESSIONS.forEachIndexed { idx, exprKey ->
+                            val boundPath = npc.expressionSprites.entries
+                                .firstOrNull { it.key.equals(exprKey, ignoreCase = true) }
+                                ?.value
+                                ?.trim()
+                                ?.takeIf { it.isNotEmpty() }
+                            val exprFile = remember(boundPath) {
+                                boundPath?.let(::File)?.takeIf { it.isFile }
+                            }
+                            val exprLabel = strings.rp.expressionLabels[exprKey] ?: exprKey
 
-                                Surface(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    shape = RoundedCornerShape(14.dp),
-                                    color = c.surfaceSoft,
-                                    border = BorderStroke(
-                                        width = 1.dp,
-                                        color = if (exprFile != null) c.primary.copy(alpha = 0.45f) else c.border,
-                                    ),
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(width = 48.dp, height = 62.dp)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(c.surfaceSoft)
+                                        .border(
+                                            width = borderW,
+                                            color = if (exprFile != null) c.primary.copy(alpha = 0.55f) else c.border,
+                                            shape = RoundedCornerShape(10.dp),
+                                        )
+                                        .clickable { onPickExpressionSprite(exprKey) },
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    if (exprFile != null) {
+                                        Image(
+                                            painter = rememberAsyncImagePainter(exprFile),
+                                            contentDescription = exprLabel,
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier.fillMaxSize(),
+                                        )
+                                    } else {
+                                        Icon(
+                                            imageVector = Icons.Default.Face,
+                                            contentDescription = null,
+                                            tint = c.muted.copy(alpha = 0.65f),
+                                            modifier = Modifier.size(22.dp),
+                                        )
+                                    }
+                                }
+
+                                Column(
+                                    modifier = Modifier.weight(1f),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp),
                                 ) {
                                     Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(10.dp),
                                         verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
                                     ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(width = 50.dp, height = 64.dp)
-                                                .clip(RoundedCornerShape(10.dp))
-                                                .background(c.surface)
-                                                .border(1.dp, c.border, RoundedCornerShape(10.dp))
-                                                .clickable { onPickExpressionSprite(exprKey) },
-                                            contentAlignment = Alignment.Center,
-                                        ) {
-                                            if (exprFile != null) {
-                                                Image(
-                                                    painter = rememberAsyncImagePainter(exprFile),
-                                                    contentDescription = exprLabel,
-                                                    contentScale = ContentScale.Crop,
-                                                    modifier = Modifier.fillMaxSize(),
-                                                )
-                                            } else {
-                                                Icon(
-                                                    imageVector = Icons.Default.Face,
-                                                    contentDescription = null,
-                                                    tint = c.muted.copy(alpha = 0.65f),
-                                                    modifier = Modifier.size(22.dp),
-                                                )
-                                            }
+                                        Text(
+                                            text = exprLabel,
+                                            color = c.ink,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                        if (boundPath != null) {
+                                            GuBadge(
+                                                text = if (isZh) "已设" else "Set",
+                                                variant = GuBadgeVariant.EMERALD,
+                                            )
                                         }
-
-                                        Column(
-                                            modifier = Modifier.weight(1f),
-                                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                                    }
+                                    FlowRow(
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                                    ) {
+                                        GuButton(
+                                            onClick = { onPickExpressionSprite(exprKey) },
+                                            compact = true,
+                                            variant = GuButtonVariant.SUBTLE,
+                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                            modifier = Modifier.heightIn(min = 34.dp),
                                         ) {
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                            Icon(Icons.Default.Image, contentDescription = null, modifier = Modifier.size(13.dp))
+                                            Spacer(Modifier.width(4.dp))
+                                            Text(strings.rp.pickSpriteBtn, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                        GuButton(
+                                            onClick = { onGenerateExpressionSprite(exprKey) },
+                                            enabled = !isGeneratingArt,
+                                            compact = true,
+                                            variant = GuButtonVariant.HONEY,
+                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                            modifier = Modifier.heightIn(min = 34.dp),
+                                        ) {
+                                            Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(13.dp))
+                                            Spacer(Modifier.width(4.dp))
+                                            Text(strings.rp.aiGenExpressionBtn, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                        if (boundPath != null) {
+                                            GuButton(
+                                                onClick = { onClearExpressionSprite(exprKey) },
+                                                compact = true,
+                                                variant = GuButtonVariant.SECONDARY,
+                                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                                modifier = Modifier.heightIn(min = 34.dp),
                                             ) {
                                                 Text(
-                                                    text = exprLabel,
-                                                    color = c.ink,
-                                                    fontSize = 13.sp,
+                                                    text = strings.rp.clearSpriteBtn,
+                                                    color = c.danger,
+                                                    fontSize = 11.5.sp,
                                                     fontWeight = FontWeight.Bold,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis,
                                                 )
-                                                if (boundPath != null) {
-                                                    GuBadge(
-                                                        text = if (isZh) "已设" else "Set",
-                                                        variant = GuBadgeVariant.EMERALD,
-                                                    )
-                                                }
-                                            }
-                                            FlowRow(
-                                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                                verticalArrangement = Arrangement.spacedBy(6.dp),
-                                            ) {
-                                                GuButton(
-                                                    onClick = { onPickExpressionSprite(exprKey) },
-                                                    compact = true,
-                                                    variant = GuButtonVariant.SUBTLE,
-                                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                                                    modifier = Modifier.heightIn(min = 34.dp),
-                                                ) {
-                                                    Icon(Icons.Default.Image, contentDescription = null, modifier = Modifier.size(13.dp))
-                                                    Spacer(Modifier.width(4.dp))
-                                                    Text(strings.rp.pickSpriteBtn, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
-                                                }
-                                                GuButton(
-                                                    onClick = { onGenerateExpressionSprite(exprKey) },
-                                                    enabled = !isGeneratingArt,
-                                                    compact = true,
-                                                    variant = GuButtonVariant.HONEY,
-                                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                                                    modifier = Modifier.heightIn(min = 34.dp),
-                                                ) {
-                                                    Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(13.dp))
-                                                    Spacer(Modifier.width(4.dp))
-                                                    Text(strings.rp.aiGenExpressionBtn, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
-                                                }
-                                                if (boundPath != null) {
-                                                    GuButton(
-                                                        onClick = { onClearExpressionSprite(exprKey) },
-                                                        compact = true,
-                                                        variant = GuButtonVariant.SECONDARY,
-                                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                                                        modifier = Modifier.heightIn(min = 34.dp),
-                                                    ) {
-                                                        Text(
-                                                            text = strings.rp.clearSpriteBtn,
-                                                            color = c.danger,
-                                                            fontSize = 11.5.sp,
-                                                            fontWeight = FontWeight.Bold,
-                                                        )
-                                                    }
-                                                }
                                             }
                                         }
                                     }
                                 }
+                            }
+                            if (idx < RpEngine.STANDARD_EXPRESSIONS.lastIndex) {
+                                HorizontalDivider(
+                                    modifier = Modifier.padding(start = 70.dp),
+                                    thickness = borderW,
+                                    color = c.border.copy(alpha = 0.75f),
+                                )
                             }
                         }
                     }
@@ -2593,138 +2818,146 @@ private fun RpStatsTab(
 
     val hpFrac = (rp.state.hp.toFloat() / rp.state.maxHp.coerceAtLeast(1)).coerceIn(0f, 1f)
     val mpFrac = (rp.state.mp.toFloat() / rp.state.maxMp.coerceAtLeast(1)).coerceIn(0f, 1f)
+    val borderW = LocalAppTheme.current.borderWidth
 
     Column(
         modifier = modifier
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 16.dp)
-            .padding(bottom = 20.dp),
+            .padding(bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         // 1. Scene, Chapter, Time, Weather, HP, MP, Gold
-        GuCard(modifier = Modifier.fillMaxWidth()) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.Top,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(3.dp),
-                ) {
-                    val chapterText = formatRpActChapter(rp.state.actNumber, rp.state.chapterTitle, isZh)
-                    Text(
-                        text = chapterText,
-                        color = c.primary,
-                        fontSize = 11.5.sp,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    Text(
-                        text = "📍 ${rp.state.scene.ifBlank { rp.title }}",
-                        color = c.ink,
-                        fontWeight = FontWeight.ExtraBold,
-                        fontSize = 14.sp,
-                    )
-                    if (rp.state.time.isNotBlank() || rp.state.weather.isNotBlank()) {
-                        val weatherPart = rp.state.weather.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty()
-                        Text(
-                            text = "${rp.state.time}$weatherPart",
-                            color = c.muted,
-                            fontSize = 12.sp,
-                        )
-                    }
-                }
+        GuSectionHeader(
+            title = if (isZh) "当前场景与基础数值" else "Scene & Vitals",
+            trailing = {
                 GuButton(
                     onClick = onOpenVitalsEditor,
                     compact = true,
                     variant = GuButtonVariant.SUBTLE,
-                    modifier = Modifier.heightIn(min = 36.dp),
+                    modifier = Modifier.heightIn(min = 34.dp),
                 ) {
-                    Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(14.dp))
+                    Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(13.5.dp))
                     Spacer(Modifier.width(4.dp))
                     Text(strings.common.edit, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
                 }
-            }
-
-            Spacer(Modifier.height(10.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            },
+        )
+        GuGroupedCard(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(3.dp),
             ) {
-                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text("HP ${rp.state.hp}/${rp.state.maxHp}", color = c.ink, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    LinearProgressIndicator(
-                        progress = { hpFrac },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(6.dp)
-                            .clip(RoundedCornerShape(999.dp)),
-                        color = c.danger,
-                        trackColor = c.surfaceSoft,
+                val chapterText = formatRpActChapter(rp.state.actNumber, rp.state.chapterTitle, isZh)
+                Text(
+                    text = chapterText,
+                    color = c.primary,
+                    fontSize = 11.5.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+                Text(
+                    text = "📍 ${rp.state.scene.ifBlank { rp.title }}",
+                    color = c.ink,
+                    fontWeight = FontWeight.ExtraBold,
+                    fontSize = 14.5.sp,
+                )
+                if (rp.state.time.isNotBlank() || rp.state.weather.isNotBlank()) {
+                    val weatherPart = rp.state.weather.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty()
+                    Text(
+                        text = "${rp.state.time}$weatherPart",
+                        color = c.muted,
+                        fontSize = 12.sp,
                     )
                 }
-                GuButton(
-                    onClick = { onUpdateState { s -> s.copy(hp = (s.hp - 10).coerceIn(0, s.maxHp)) } },
-                    compact = true,
-                    variant = GuButtonVariant.SECONDARY,
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                    modifier = Modifier.heightIn(min = 36.dp),
-                ) {
-                    Text("-10", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
-                }
-                GuButton(
-                    onClick = { onUpdateState { s -> s.copy(hp = (s.hp + 10).coerceIn(0, s.maxHp)) } },
-                    compact = true,
-                    variant = GuButtonVariant.SECONDARY,
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                    modifier = Modifier.heightIn(min = 36.dp),
-                ) {
-                    Text("+10", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
-                }
             }
-
-            Spacer(Modifier.height(8.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            HorizontalDivider(thickness = borderW, color = c.border.copy(alpha = 0.78f))
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text("MP ${rp.state.mp}/${rp.state.maxMp}", color = c.ink, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    LinearProgressIndicator(
-                        progress = { mpFrac },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(6.dp)
-                            .clip(RoundedCornerShape(999.dp)),
-                        color = c.primary,
-                        trackColor = c.surfaceSoft,
-                    )
-                }
-                GuButton(
-                    onClick = { onUpdateState { s -> s.copy(mp = (s.mp - 10).coerceIn(0, s.maxMp)) } },
-                    compact = true,
-                    variant = GuButtonVariant.SECONDARY,
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                    modifier = Modifier.heightIn(min = 36.dp),
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Text("-10", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("HP ${rp.state.hp}/${rp.state.maxHp}", color = c.ink, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        LinearProgressIndicator(
+                            progress = { hpFrac },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(6.dp)
+                                .clip(RoundedCornerShape(999.dp)),
+                            color = c.danger,
+                            trackColor = c.surfaceSoft,
+                        )
+                    }
+                    GuButton(
+                        onClick = { onUpdateState { s -> s.copy(hp = (s.hp - 10).coerceIn(0, s.maxHp)) } },
+                        compact = true,
+                        variant = GuButtonVariant.SECONDARY,
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                        modifier = Modifier.heightIn(min = 34.dp),
+                    ) {
+                        Text("-10", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                    }
+                    GuButton(
+                        onClick = { onUpdateState { s -> s.copy(hp = (s.hp + 10).coerceIn(0, s.maxHp)) } },
+                        compact = true,
+                        variant = GuButtonVariant.SECONDARY,
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                        modifier = Modifier.heightIn(min = 34.dp),
+                    ) {
+                        Text("+10", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                    }
                 }
-                GuButton(
-                    onClick = { onUpdateState { s -> s.copy(mp = (s.mp + 10).coerceIn(0, s.maxMp)) } },
-                    compact = true,
-                    variant = GuButtonVariant.SECONDARY,
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                    modifier = Modifier.heightIn(min = 36.dp),
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Text("+10", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("MP ${rp.state.mp}/${rp.state.maxMp}", color = c.ink, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        LinearProgressIndicator(
+                            progress = { mpFrac },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(6.dp)
+                                .clip(RoundedCornerShape(999.dp)),
+                            color = c.primary,
+                            trackColor = c.surfaceSoft,
+                        )
+                    }
+                    GuButton(
+                        onClick = { onUpdateState { s -> s.copy(mp = (s.mp - 10).coerceIn(0, s.maxMp)) } },
+                        compact = true,
+                        variant = GuButtonVariant.SECONDARY,
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                        modifier = Modifier.heightIn(min = 34.dp),
+                    ) {
+                        Text("-10", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                    }
+                    GuButton(
+                        onClick = { onUpdateState { s -> s.copy(mp = (s.mp + 10).coerceIn(0, s.maxMp)) } },
+                        compact = true,
+                        variant = GuButtonVariant.SECONDARY,
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                        modifier = Modifier.heightIn(min = 34.dp),
+                    ) {
+                        Text("+10", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                    }
                 }
             }
-
-            Spacer(Modifier.height(10.dp))
+            HorizontalDivider(thickness = borderW, color = c.border.copy(alpha = 0.78f))
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
@@ -2735,7 +2968,7 @@ private fun RpStatsTab(
                     compact = true,
                     variant = GuButtonVariant.SECONDARY,
                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                    modifier = Modifier.heightIn(min = 36.dp),
+                    modifier = Modifier.heightIn(min = 34.dp),
                 ) {
                     Text("-10", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
                 }
@@ -2744,36 +2977,19 @@ private fun RpStatsTab(
                     compact = true,
                     variant = GuButtonVariant.SECONDARY,
                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                    modifier = Modifier.heightIn(min = 36.dp),
+                    modifier = Modifier.heightIn(min = 34.dp),
                 ) {
                     Text("+10", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }
 
-        // 1b. Event & Scene CG Gallery
+        // 1b. Event & Scene CG Gallery (Chengguang 2-Col Showcase)
+        GuSectionHeader(
+            title = strings.rp.cgGalleryTitle,
+            trailing = { GuBadge("${rp.state.unlockedCgs.size}", variant = GuBadgeVariant.BLUE) },
+        )
         GuCard(modifier = Modifier.fillMaxWidth()) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Collections,
-                    contentDescription = null,
-                    tint = c.primary,
-                    modifier = Modifier.size(18.dp),
-                )
-                Text(
-                    text = strings.rp.cgGalleryTitle,
-                    color = c.ink,
-                    fontWeight = FontWeight.ExtraBold,
-                    fontSize = 13.5.sp,
-                    modifier = Modifier.weight(1f),
-                )
-                GuBadge("${rp.state.unlockedCgs.size}", variant = GuBadgeVariant.BLUE)
-            }
-            Spacer(Modifier.height(10.dp))
             FlowRow(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -2815,20 +3031,10 @@ private fun RpStatsTab(
             }
             Spacer(Modifier.height(10.dp))
             if (rp.state.unlockedCgs.isEmpty()) {
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                    color = c.surfaceSoft,
-                    border = BorderStroke(1.dp, c.border),
-                ) {
-                    Text(
-                        text = strings.rp.cgGalleryEmpty,
-                        color = c.muted,
-                        fontSize = 12.sp,
-                        lineHeight = 17.sp,
-                        modifier = Modifier.padding(12.dp),
-                    )
-                }
+                GuEmptyState(
+                    title = strings.rp.cgGalleryEmpty,
+                    icon = Icons.Default.Collections,
+                )
             } else {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     rp.state.unlockedCgs.chunked(2).forEach { pair ->
@@ -2847,60 +3053,72 @@ private fun RpStatsTab(
                                     shape = RoundedCornerShape(14.dp),
                                     color = c.surfaceSoft,
                                     border = BorderStroke(
-                                        width = if (isActive) 1.5.dp else 1.dp,
+                                        width = if (isActive) 1.6.dp else borderW,
                                         color = if (isActive) c.primary else c.border,
                                     ),
                                 ) {
-                                    Column {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(132.dp)
+                                            .background(c.surface),
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        if (cgFile != null) {
+                                            Image(
+                                                painter = rememberAsyncImagePainter(cgFile),
+                                                contentDescription = cg.title,
+                                                contentScale = ContentScale.Crop,
+                                                modifier = Modifier.fillMaxSize(),
+                                            )
+                                        } else {
+                                            Icon(
+                                                imageVector = Icons.Default.Landscape,
+                                                contentDescription = null,
+                                                tint = c.muted,
+                                                modifier = Modifier.size(26.dp),
+                                            )
+                                        }
                                         Box(
                                             modifier = Modifier
-                                                .fillMaxWidth()
-                                                .height(104.dp)
-                                                .background(c.surface),
-                                            contentAlignment = Alignment.Center,
-                                        ) {
-                                            if (cgFile != null) {
-                                                Image(
-                                                    painter = rememberAsyncImagePainter(cgFile),
-                                                    contentDescription = cg.title,
-                                                    contentScale = ContentScale.Crop,
-                                                    modifier = Modifier.fillMaxSize(),
+                                                .fillMaxSize()
+                                                .background(
+                                                    Brush.verticalGradient(
+                                                        0.0f to Color.Transparent,
+                                                        0.45f to Color.Transparent,
+                                                        1.0f to Color(0xD90A0D14),
+                                                    ),
+                                                ),
+                                        )
+                                        if (isActive) {
+                                            Surface(
+                                                modifier = Modifier
+                                                    .align(Alignment.TopStart)
+                                                    .padding(7.dp),
+                                                shape = RoundedCornerShape(999.dp),
+                                                color = c.primary,
+                                            ) {
+                                                Text(
+                                                    text = if (isZh) "当前场景" else "Active",
+                                                    color = Color.White,
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
                                                 )
-                                            } else {
-                                                Icon(
-                                                    imageVector = Icons.Default.Landscape,
-                                                    contentDescription = null,
-                                                    tint = c.muted,
-                                                    modifier = Modifier.size(24.dp),
-                                                )
-                                            }
-                                            if (isActive) {
-                                                Surface(
-                                                    modifier = Modifier
-                                                        .align(Alignment.TopStart)
-                                                        .padding(6.dp),
-                                                    shape = RoundedCornerShape(999.dp),
-                                                    color = c.primary,
-                                                ) {
-                                                    Text(
-                                                        text = if (isZh) "当前场景" else "Active",
-                                                        color = Color.White,
-                                                        fontSize = 10.sp,
-                                                        fontWeight = FontWeight.Bold,
-                                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
-                                                    )
-                                                }
                                             }
                                         }
                                         Column(
-                                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 7.dp),
-                                            verticalArrangement = Arrangement.spacedBy(2.dp),
+                                            modifier = Modifier
+                                                .align(Alignment.BottomStart)
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 9.dp, vertical = 7.dp),
+                                            verticalArrangement = Arrangement.spacedBy(1.dp),
                                         ) {
                                             Text(
                                                 text = cg.title,
-                                                color = c.ink,
+                                                color = Color(0xFFFDF8EE),
                                                 fontSize = 12.sp,
-                                                fontWeight = FontWeight.Bold,
+                                                fontWeight = FontWeight.ExtraBold,
                                                 maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis,
                                             )
@@ -2909,8 +3127,8 @@ private fun RpStatsTab(
                                             if (subtitle != null) {
                                                 Text(
                                                     text = subtitle,
-                                                    color = c.muted,
-                                                    fontSize = 10.5.sp,
+                                                    color = Color(0xFFCBD5E1),
+                                                    fontSize = 10.sp,
                                                     maxLines = 1,
                                                     overflow = TextOverflow.Ellipsis,
                                                 )
@@ -2928,93 +3146,97 @@ private fun RpStatsTab(
             }
         }
 
-        // 2. Attributes (stats)
-        GuCard(modifier = Modifier.fillMaxWidth()) {
-            Text(strings.rp.statsTitle, color = c.ink, fontWeight = FontWeight.ExtraBold, fontSize = 13.5.sp)
-            Spacer(Modifier.height(8.dp))
+        // 2. Attributes (stats — grouped rows with inset hairlines, zero nested boxes)
+        GuSectionHeader(
+            title = strings.rp.statsTitle,
+            trailing = { GuBadge("${rp.state.stats.size}", variant = GuBadgeVariant.NEUTRAL) },
+        )
+        GuGroupedCard(modifier = Modifier.fillMaxWidth()) {
             if (rp.state.stats.isEmpty()) {
                 Text(
                     text = if (isZh) "暂无自定义属性" else "No custom attributes yet",
                     color = c.muted,
                     fontSize = 12.sp,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
                 )
             } else {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    rp.state.stats.forEach { (statName, statValue) ->
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = c.surfaceSoft,
-                            border = BorderStroke(1.dp, c.border),
-                            modifier = Modifier.fillMaxWidth(),
+                val statEntries = rp.state.stats.entries.toList()
+                statEntries.forEachIndexed { idx, (statName, statValue) ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text(
+                            text = statName,
+                            color = c.ink,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        GuButton(
+                            onClick = {
+                                onUpdateState { s ->
+                                    s.copy(stats = s.stats + (statName to (statValue - 1)))
+                                }
+                            },
+                            compact = true,
+                            variant = GuButtonVariant.SECONDARY,
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                            modifier = Modifier.heightIn(min = 34.dp),
                         ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 10.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            ) {
-                                Text(
-                                    text = statName,
-                                    color = c.ink,
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f),
-                                )
-                                GuButton(
-                                    onClick = {
-                                        onUpdateState { s ->
-                                            s.copy(stats = s.stats + (statName to (statValue - 1)))
-                                        }
-                                    },
-                                    compact = true,
-                                    variant = GuButtonVariant.SECONDARY,
-                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                                    modifier = Modifier.heightIn(min = 36.dp),
-                                ) {
-                                    Text("-1", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                }
-                                GuBadge(
-                                    text = "$statValue",
-                                    variant = GuBadgeVariant.BLUE,
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(999.dp))
-                                        .clickable { editingStat = statName to statValue },
-                                )
-                                GuButton(
-                                    onClick = {
-                                        onUpdateState { s ->
-                                            s.copy(stats = s.stats + (statName to (statValue + 1)))
-                                        }
-                                    },
-                                    compact = true,
-                                    variant = GuButtonVariant.SECONDARY,
-                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                                    modifier = Modifier.heightIn(min = 36.dp),
-                                ) {
-                                    Text("+1", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                }
-                                IconButton(
-                                    onClick = { onUpdateState { s -> s.copy(stats = s.stats - statName) } },
-                                    modifier = Modifier.size(36.dp),
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Close,
-                                        contentDescription = strings.common.delete,
-                                        tint = c.muted,
-                                        modifier = Modifier.size(16.dp),
-                                    )
-                                }
-                            }
+                            Text("-1", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
+                        GuBadge(
+                            text = "$statValue",
+                            variant = GuBadgeVariant.BLUE,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(999.dp))
+                                .clickable { editingStat = statName to statValue },
+                        )
+                        GuButton(
+                            onClick = {
+                                onUpdateState { s ->
+                                    s.copy(stats = s.stats + (statName to (statValue + 1)))
+                                }
+                            },
+                            compact = true,
+                            variant = GuButtonVariant.SECONDARY,
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                            modifier = Modifier.heightIn(min = 34.dp),
+                        ) {
+                            Text("+1", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                        IconButton(
+                            onClick = { onUpdateState { s -> s.copy(stats = s.stats - statName) } },
+                            modifier = Modifier.size(34.dp),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = strings.common.delete,
+                                tint = c.muted,
+                                modifier = Modifier.size(16.dp),
+                            )
+                        }
+                    }
+                    if (idx < statEntries.lastIndex) {
+                        HorizontalDivider(
+                            modifier = Modifier.padding(start = 14.dp),
+                            thickness = borderW,
+                            color = c.border.copy(alpha = 0.75f),
+                        )
                     }
                 }
             }
-            Spacer(Modifier.height(10.dp))
+            HorizontalDivider(thickness = borderW, color = c.border.copy(alpha = 0.78f))
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(12.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
@@ -3051,9 +3273,11 @@ private fun RpStatsTab(
         }
 
         // 3. Inventory
+        GuSectionHeader(
+            title = strings.rp.inventoryTitle,
+            trailing = { GuBadge("${rp.state.inventory.size}", variant = GuBadgeVariant.NEUTRAL) },
+        )
         GuCard(modifier = Modifier.fillMaxWidth()) {
-            Text(strings.rp.inventoryTitle, color = c.ink, fontWeight = FontWeight.ExtraBold, fontSize = 13.5.sp)
-            Spacer(Modifier.height(8.dp))
             if (rp.state.inventory.isEmpty()) {
                 Text(
                     text = if (isZh) "背包空空如也" else "No items in inventory",
@@ -3106,62 +3330,65 @@ private fun RpStatsTab(
             }
         }
 
-        // 4. Quests
-        GuCard(modifier = Modifier.fillMaxWidth()) {
-            Text(strings.rp.questsTitle, color = c.ink, fontWeight = FontWeight.ExtraBold, fontSize = 13.5.sp)
-            Spacer(Modifier.height(8.dp))
+        // 4. Quests (grouped rows with inset hairlines)
+        GuSectionHeader(
+            title = strings.rp.questsTitle,
+            trailing = { GuBadge("${rp.state.quests.size}", variant = GuBadgeVariant.BLUE) },
+        )
+        GuGroupedCard(modifier = Modifier.fillMaxWidth()) {
             if (rp.state.quests.isEmpty()) {
                 Text(
                     text = if (isZh) "暂无进行中的任务" else "No active quests",
                     color = c.muted,
                     fontSize = 12.sp,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
                 )
             } else {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    rp.state.quests.forEachIndexed { idx, quest ->
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = c.surfaceSoft,
-                            border = BorderStroke(1.dp, c.border),
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(start = 10.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                Text(
-                                    text = "• $quest",
-                                    color = c.ink,
-                                    fontSize = 12.5.sp,
-                                    lineHeight = 18.sp,
-                                    modifier = Modifier.weight(1f),
-                                )
-                                IconButton(
-                                    onClick = {
-                                        onUpdateState { s ->
-                                            s.copy(quests = s.quests.filterIndexed { i, _ -> i != idx })
-                                        }
-                                    },
-                                    modifier = Modifier.size(36.dp),
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.CheckCircleOutline,
-                                        contentDescription = strings.rp.questStatuses["completed"] ?: "Complete",
-                                        tint = c.success,
-                                        modifier = Modifier.size(19.dp),
-                                    )
+                rp.state.quests.forEachIndexed { idx, quest ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 14.dp, end = 6.dp, top = 8.dp, bottom = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            text = "• $quest",
+                            color = c.ink,
+                            fontSize = 12.5.sp,
+                            lineHeight = 18.sp,
+                            modifier = Modifier.weight(1f),
+                        )
+                        IconButton(
+                            onClick = {
+                                onUpdateState { s ->
+                                    s.copy(quests = s.quests.filterIndexed { i, _ -> i != idx })
                                 }
-                            }
+                            },
+                            modifier = Modifier.size(36.dp),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.CheckCircleOutline,
+                                contentDescription = strings.rp.questStatuses["completed"] ?: "Complete",
+                                tint = c.success,
+                                modifier = Modifier.size(19.dp),
+                            )
                         }
+                    }
+                    if (idx < rp.state.quests.lastIndex) {
+                        HorizontalDivider(
+                            modifier = Modifier.padding(start = 14.dp),
+                            thickness = borderW,
+                            color = c.border.copy(alpha = 0.75f),
+                        )
                     }
                 }
             }
-            Spacer(Modifier.height(10.dp))
+            HorizontalDivider(thickness = borderW, color = c.border.copy(alpha = 0.78f))
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(12.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
@@ -3189,9 +3416,11 @@ private fun RpStatsTab(
         }
 
         // 5. Story Flags
+        GuSectionHeader(
+            title = strings.rp.flagsTitle,
+            trailing = { GuBadge("${rp.state.flags.size}", variant = GuBadgeVariant.NEUTRAL) },
+        )
         GuCard(modifier = Modifier.fillMaxWidth()) {
-            Text(strings.rp.flagsTitle, color = c.ink, fontWeight = FontWeight.ExtraBold, fontSize = 13.5.sp)
-            Spacer(Modifier.height(8.dp))
             if (rp.state.flags.isEmpty()) {
                 Text(
                     text = if (isZh) "暂无剧情旗标" else "No story flags set",
@@ -3251,39 +3480,25 @@ private fun RpStatsTab(
         }
 
         // 6. Unlocked Endings
-        GuCard(modifier = Modifier.fillMaxWidth()) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                Icon(
-                    imageVector = Icons.Default.EmojiEvents,
-                    contentDescription = null,
-                    tint = c.accent,
-                    modifier = Modifier.size(18.dp),
-                )
-                Text(
-                    text = strings.rp.endingsTitle,
-                    color = c.ink,
-                    fontWeight = FontWeight.ExtraBold,
-                    fontSize = 13.5.sp,
-                    modifier = Modifier.weight(1f),
-                )
-                GuBadge("${rp.state.unlockedEndings.size}", variant = GuBadgeVariant.HONEY)
-            }
-            Spacer(Modifier.height(8.dp))
-            if (rp.state.unlockedEndings.isEmpty()) {
-                Text(
-                    text = strings.rp.endingsEmpty,
-                    color = c.muted,
-                    fontSize = 12.sp,
-                    lineHeight = 17.sp,
-                )
-            } else {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    rp.state.unlockedEndings.forEach { ending ->
-                        RpEndingTrophyRow(ending = ending)
+        GuSectionHeader(
+            title = strings.rp.endingsTitle,
+            trailing = { GuBadge("${rp.state.unlockedEndings.size}", variant = GuBadgeVariant.HONEY) },
+        )
+        if (rp.state.unlockedEndings.isEmpty()) {
+            GuEmptyState(
+                title = strings.rp.endingsEmpty,
+                icon = Icons.Default.EmojiEvents,
+            )
+        } else {
+            GuGroupedCard(modifier = Modifier.fillMaxWidth()) {
+                rp.state.unlockedEndings.forEachIndexed { idx, ending ->
+                    RpEndingTrophyRow(ending = ending)
+                    if (idx < rp.state.unlockedEndings.lastIndex) {
+                        HorizontalDivider(
+                            modifier = Modifier.padding(start = 14.dp),
+                            thickness = borderW,
+                            color = c.border.copy(alpha = 0.75f),
+                        )
                     }
                 }
             }
@@ -3296,15 +3511,16 @@ private fun RpRemovableChip(
     text: String,
     onRemove: () -> Unit,
 ) {
-    val c = LocalAppTheme.current.colors
+    val theme = LocalAppTheme.current
+    val c = theme.colors
     Surface(
         shape = RoundedCornerShape(999.dp),
         color = c.surfaceSoft,
-        border = BorderStroke(1.dp, c.border),
-        modifier = Modifier.heightIn(min = 36.dp),
+        border = BorderStroke(theme.borderWidth, c.border),
+        modifier = Modifier.heightIn(min = 34.dp),
     ) {
         Row(
-            modifier = Modifier.padding(start = 10.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+            modifier = Modifier.padding(start = 10.dp, end = 4.dp, top = 3.dp, bottom = 3.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
@@ -3318,7 +3534,7 @@ private fun RpRemovableChip(
             )
             Box(
                 modifier = Modifier
-                    .size(28.dp)
+                    .size(26.dp)
                     .clip(CircleShape)
                     .clickable(onClick = onRemove),
                 contentAlignment = Alignment.Center,
@@ -3337,45 +3553,38 @@ private fun RpRemovableChip(
 @Composable
 private fun RpEndingTrophyRow(ending: RpEndingRecord) {
     val c = LocalAppTheme.current.colors
-    Surface(
-        shape = RoundedCornerShape(12.dp),
-        color = c.surfaceSoft,
-        border = BorderStroke(1.dp, c.accent.copy(alpha = 0.45f)),
-        modifier = Modifier.fillMaxWidth(),
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 11.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(10.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                GuBadge(ending.code.uppercase(), variant = endingBadgeVariant(ending.code))
-                Text(
-                    text = ending.title,
-                    color = c.ink,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
-                if (ending.turnSeq > 0) {
-                    GuBadge("#${ending.turnSeq}", variant = GuBadgeVariant.NEUTRAL)
-                }
+            GuBadge(ending.code.uppercase(), variant = endingBadgeVariant(ending.code))
+            Text(
+                text = ending.title,
+                color = c.ink,
+                fontSize = 13.5.sp,
+                fontWeight = FontWeight.ExtraBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            if (ending.turnSeq > 0) {
+                GuBadge("#${ending.turnSeq}", variant = GuBadgeVariant.NEUTRAL)
             }
-            if (ending.summary.isNotBlank()) {
-                Text(
-                    text = ending.summary,
-                    color = c.muted,
-                    fontSize = 12.sp,
-                    lineHeight = 17.sp,
-                )
-            }
+        }
+        if (ending.summary.isNotBlank()) {
+            Text(
+                text = ending.summary,
+                color = c.muted,
+                fontSize = 12.sp,
+                lineHeight = 17.5.sp,
+            )
         }
     }
 }
@@ -3548,167 +3757,208 @@ private fun RpWorldbookTab(
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         item(key = "__wb_summary__") {
-            GuCard(
-                modifier = Modifier.fillMaxWidth(),
-                backgroundColor = c.surfaceSoft,
-            ) {
-                FlowRow(
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                GuSectionHeader(
+                    title = strings.rp.worldbookTab,
+                    trailing = {
+                        Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                            GuBadge("${lore.size}", variant = GuBadgeVariant.NEUTRAL)
+                            if (triggeredCount > 0) {
+                                GuBadge(
+                                    text = strings.rp.worldbookTriggeredCount.fmt("count" to triggeredCount),
+                                    variant = GuBadgeVariant.EMERALD,
+                                )
+                            }
+                        }
+                    },
+                )
+                GuCard(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    backgroundColor = c.surfaceSoft.copy(alpha = if (theme.isDark) 0.75f else 0.85f),
                 ) {
-                    GuBadge(
-                        text = if (isZh) "共 ${lore.size} 条" else "${lore.size} total",
-                        variant = GuBadgeVariant.NEUTRAL,
-                    )
-                    GuBadge(
-                        text = "${strings.rp.worldbookConstantToggle} $constantCount",
-                        variant = GuBadgeVariant.BLUE,
-                    )
-                    GuBadge(
-                        text = strings.rp.worldbookTriggeredCount.fmt("count" to triggeredCount),
-                        variant = if (triggeredCount > 0) GuBadgeVariant.EMERALD else GuBadgeVariant.NEUTRAL,
-                    )
-                }
-                Spacer(Modifier.height(10.dp))
-                GuButton(
-                    onClick = onAddEntry,
-                    variant = GuButtonVariant.PRIMARY,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(17.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text(stripLeadingPlus(strings.rp.worldbookAddBtn), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        GuBadge(
+                            text = if (isZh) "共 ${lore.size} 条" else "${lore.size} total",
+                            variant = GuBadgeVariant.NEUTRAL,
+                        )
+                        GuBadge(
+                            text = "${strings.rp.worldbookConstantToggle} $constantCount",
+                            variant = GuBadgeVariant.BLUE,
+                        )
+                        GuBadge(
+                            text = strings.rp.worldbookTriggeredCount.fmt("count" to triggeredCount),
+                            variant = if (triggeredCount > 0) GuBadgeVariant.EMERALD else GuBadgeVariant.NEUTRAL,
+                        )
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    GuButton(
+                        onClick = onAddEntry,
+                        variant = GuButtonVariant.PRIMARY,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(17.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(stripLeadingPlus(strings.rp.worldbookAddBtn), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    }
                 }
             }
         }
 
         if (lore.isEmpty()) {
             item(key = "__wb_empty__") {
-                GuEmptyState(title = strings.rp.worldbookEmpty)
+                GuEmptyState(
+                    title = strings.rp.worldbookEmpty,
+                    icon = Icons.Default.Book,
+                )
             }
         } else {
             items(lore, key = { it.id }) { entry ->
                 val isTriggered = entry.id in triggeredLoreIds
                 val catLabel = localizeRpLoreCategory(entry.category, strings.novel.loreCats, isZh)
+                val triggeredAccent = c.success
 
-                GuCard(
+                Surface(
+                    shape = RoundedCornerShape(theme.cardRadius),
+                    color = c.surface,
+                    border = BorderStroke(
+                        width = theme.borderWidth,
+                        color = if (isTriggered) c.success.copy(alpha = 0.55f) else c.border,
+                    ),
+                    shadowElevation = if (theme.isDark) 0.dp else 0.5.dp,
                     modifier = Modifier.fillMaxWidth(),
-                    borderColor = if (isTriggered) c.success.copy(alpha = 0.6f) else c.border,
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .drawBehind {
+                                if (isTriggered) {
+                                    drawRect(
+                                        color = triggeredAccent,
+                                        topLeft = Offset.Zero,
+                                        size = Size(3.dp.toPx(), size.height),
+                                    )
+                                }
+                            }
+                            .padding(start = 15.dp, end = 14.dp, top = 12.dp, bottom = 12.dp),
                     ) {
-                        GuBadge(catLabel, variant = GuBadgeVariant.HONEY)
-                        Text(
-                            text = entry.title,
-                            color = if (entry.enabled) c.ink else c.muted,
-                            fontWeight = FontWeight.ExtraBold,
-                            fontSize = 14.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f),
-                        )
-                        Switch(
-                            checked = entry.enabled,
-                            onCheckedChange = { onToggleEnabled(entry.id) },
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = Color.White,
-                                checkedTrackColor = c.primary,
-                                checkedBorderColor = c.primary,
-                                uncheckedThumbColor = if (theme.isDark) Color(0xFFB4C0D6) else Color(0xFF64748B),
-                                uncheckedTrackColor = c.surfaceSoft,
-                                uncheckedBorderColor = if (theme.isDark) Color(0xFF526280) else c.outline,
-                            ),
-                        )
-                    }
-
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        if (entry.alwaysActive) {
-                            GuBadge(strings.rp.worldbookConstantToggle, variant = GuBadgeVariant.BLUE)
-                        }
-                        if (isTriggered) {
-                            GuBadge(
-                                text = if (isZh) "已触发" else "Triggered",
-                                variant = GuBadgeVariant.EMERALD,
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            GuBadge(catLabel, variant = GuBadgeVariant.HONEY)
+                            Text(
+                                text = entry.title,
+                                color = if (entry.enabled) c.ink else c.muted,
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 14.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Switch(
+                                checked = entry.enabled,
+                                onCheckedChange = { onToggleEnabled(entry.id) },
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = Color.White,
+                                    checkedTrackColor = c.primary,
+                                    checkedBorderColor = c.primary,
+                                    uncheckedThumbColor = if (theme.isDark) Color(0xFFB4C0D6) else Color(0xFF64748B),
+                                    uncheckedTrackColor = c.surfaceSoft,
+                                    uncheckedBorderColor = c.outline,
+                                ),
                             )
                         }
-                        GuBadge(
-                            text = "~${entry.estimatedTokens.coerceAtLeast(1)} tok",
-                            variant = GuBadgeVariant.NEUTRAL,
-                        )
-                    }
 
-                    if (entry.keywords.isNotEmpty()) {
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            if (entry.alwaysActive) {
+                                GuBadge(strings.rp.worldbookConstantToggle, variant = GuBadgeVariant.BLUE)
+                            }
+                            if (isTriggered) {
+                                GuBadge(
+                                    text = if (isZh) "已触发" else "Triggered",
+                                    variant = GuBadgeVariant.EMERALD,
+                                )
+                            }
+                            GuBadge(
+                                text = "~${entry.estimatedTokens.coerceAtLeast(1)} tok",
+                                variant = GuBadgeVariant.NEUTRAL,
+                            )
+                        }
+
+                        if (entry.keywords.isNotEmpty()) {
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                text = "🔑 ${entry.keywords.joinToString(", ")}",
+                                color = c.muted,
+                                fontSize = 11.5.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+
                         Spacer(Modifier.height(6.dp))
                         Text(
-                            text = "🔑 ${entry.keywords.joinToString(", ")}",
-                            color = c.muted,
-                            fontSize = 11.5.sp,
-                            maxLines = 1,
+                            text = entry.content,
+                            color = if (entry.enabled) c.ink.copy(alpha = 0.85f) else c.muted,
+                            fontSize = 12.sp,
+                            lineHeight = 17.5.sp,
+                            maxLines = 3,
                             overflow = TextOverflow.Ellipsis,
                         )
-                    }
 
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        text = entry.content,
-                        color = if (entry.enabled) c.ink.copy(alpha = 0.85f) else c.muted,
-                        fontSize = 12.sp,
-                        lineHeight = 17.sp,
-                        maxLines = 3,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-
-                    Spacer(Modifier.height(10.dp))
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        GuButton(
-                            onClick = { onToggleAlwaysActive(entry.id) },
-                            compact = true,
-                            variant = if (entry.alwaysActive) GuButtonVariant.SUBTLE else GuButtonVariant.SECONDARY,
-                            modifier = Modifier.heightIn(min = 36.dp),
+                        Spacer(Modifier.height(10.dp))
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
-                            Text(strings.rp.worldbookConstantToggle, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
-                        }
-                        GuButton(
-                            onClick = { onEditEntry(entry) },
-                            compact = true,
-                            variant = GuButtonVariant.SECONDARY,
-                            modifier = Modifier.heightIn(min = 36.dp),
-                        ) {
-                            Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(14.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text(strings.common.edit, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
-                        }
-                        GuButton(
-                            onClick = { onRequestDelete(entry) },
-                            compact = true,
-                            variant = GuButtonVariant.SECONDARY,
-                            modifier = Modifier.heightIn(min = 36.dp),
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Delete,
-                                contentDescription = null,
-                                tint = c.danger,
-                                modifier = Modifier.size(14.dp),
-                            )
-                            Spacer(Modifier.width(4.dp))
-                            Text(
-                                text = strings.common.delete,
-                                color = c.danger,
-                                fontSize = 11.5.sp,
-                                fontWeight = FontWeight.Bold,
-                            )
+                            GuButton(
+                                onClick = { onToggleAlwaysActive(entry.id) },
+                                compact = true,
+                                variant = if (entry.alwaysActive) GuButtonVariant.SUBTLE else GuButtonVariant.SECONDARY,
+                                modifier = Modifier.heightIn(min = 36.dp),
+                            ) {
+                                Text(strings.rp.worldbookConstantToggle, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                            }
+                            GuButton(
+                                onClick = { onEditEntry(entry) },
+                                compact = true,
+                                variant = GuButtonVariant.SECONDARY,
+                                modifier = Modifier.heightIn(min = 36.dp),
+                            ) {
+                                Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(14.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text(strings.common.edit, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                            }
+                            GuButton(
+                                onClick = { onRequestDelete(entry) },
+                                compact = true,
+                                variant = GuButtonVariant.SECONDARY,
+                                modifier = Modifier.heightIn(min = 36.dp),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Delete,
+                                    contentDescription = null,
+                                    tint = c.danger,
+                                    modifier = Modifier.size(14.dp),
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    text = strings.common.delete,
+                                    color = c.danger,
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                            }
                         }
                     }
                 }
@@ -3840,60 +4090,70 @@ private fun RpSavesTab(
     onRequestDelete: (RpSaveSlot) -> Unit,
 ) {
     val strings = LocalAppStrings.current
-    val c = LocalAppTheme.current.colors
+    val theme = LocalAppTheme.current
+    val c = theme.colors
     var saveName by remember { mutableStateOf("") }
     var saveNote by remember { mutableStateOf("") }
 
     LazyColumn(
         modifier = modifier.padding(horizontal = 16.dp),
-        contentPadding = PaddingValues(bottom = 20.dp),
+        contentPadding = PaddingValues(bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         item(key = "__save_form__") {
-            GuCard(
-                modifier = Modifier.fillMaxWidth(),
-                backgroundColor = c.surfaceSoft,
-            ) {
-                Text(
-                    text = strings.rp.savesHint,
-                    color = c.muted,
-                    fontSize = 11.5.sp,
-                    lineHeight = 16.sp,
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                GuSectionHeader(
+                    title = strings.rp.createSaveBtn,
+                    subtitle = strings.rp.savesHint,
                 )
-                Spacer(Modifier.height(8.dp))
-                GuTextField(
-                    value = saveName,
-                    onValueChange = { saveName = it },
-                    placeholder = strings.rp.saveNamePlaceholder,
-                )
-                Spacer(Modifier.height(8.dp))
-                GuTextField(
-                    value = saveNote,
-                    onValueChange = { saveNote = it },
-                    placeholder = strings.rp.saveNotePlaceholder,
-                )
-                Spacer(Modifier.height(10.dp))
-                GuButton(
-                    onClick = {
-                        onCreateSaveSlot(
-                            saveName.trim().ifBlank { strings.rp.quickSaveBtn },
-                            saveNote.trim(),
-                        )
-                        saveName = ""
-                        saveNote = ""
-                    },
+                GuCard(
                     modifier = Modifier.fillMaxWidth(),
+                    backgroundColor = c.surfaceSoft.copy(alpha = if (theme.isDark) 0.75f else 0.85f),
                 ) {
-                    Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text(strings.rp.createSaveBtn, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    GuTextField(
+                        value = saveName,
+                        onValueChange = { saveName = it },
+                        placeholder = strings.rp.saveNamePlaceholder,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    GuTextField(
+                        value = saveNote,
+                        onValueChange = { saveNote = it },
+                        placeholder = strings.rp.saveNotePlaceholder,
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    GuButton(
+                        onClick = {
+                            onCreateSaveSlot(
+                                saveName.trim().ifBlank { strings.rp.quickSaveBtn },
+                                saveNote.trim(),
+                            )
+                            saveName = ""
+                            saveNote = ""
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(strings.rp.createSaveBtn, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    }
                 }
             }
         }
 
+        item(key = "__saves_header__") {
+            GuSectionHeader(
+                title = strings.rp.savesTab,
+                trailing = { GuBadge("${saveSlots.size}", variant = GuBadgeVariant.BLUE) },
+            )
+        }
+
         if (saveSlots.isEmpty()) {
             item(key = "__saves_empty__") {
-                GuEmptyState(title = strings.rp.savesEmpty)
+                GuEmptyState(
+                    title = strings.rp.savesEmpty,
+                    icon = Icons.Default.Save,
+                )
             }
         } else {
             items(saveSlots, key = { it.id }) { slot ->
@@ -3909,106 +4169,126 @@ private fun RpSavesTab(
                 val topNpcs = remember(slot.rpConfig.cast) {
                     slot.rpConfig.cast.filter { !it.isPlayer }.take(3)
                 }
+                val railColor = c.primary.copy(alpha = 0.78f)
 
-                GuCard(modifier = Modifier.fillMaxWidth()) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                Surface(
+                    shape = RoundedCornerShape(theme.cardRadius),
+                    color = c.surface,
+                    border = BorderStroke(theme.borderWidth, c.border),
+                    shadowElevation = if (theme.isDark) 0.dp else 0.5.dp,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .drawBehind {
+                                drawRect(
+                                    color = railColor,
+                                    topLeft = Offset.Zero,
+                                    size = Size(3.dp.toPx(), size.height),
+                                )
+                            }
+                            .padding(start = 15.dp, end = 14.dp, top = 12.dp, bottom = 12.dp),
                     ) {
-                        Text(
-                            text = slot.name,
-                            color = c.ink,
-                            fontWeight = FontWeight.ExtraBold,
-                            fontSize = 14.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f),
-                        )
-                        GuBadge("Seq #${slot.messageSeq}", variant = GuBadgeVariant.BLUE)
-                    }
-                    if (slot.note.isNotBlank()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text(
+                                text = slot.name,
+                                color = c.ink,
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 14.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f),
+                            )
+                            GuBadge("Seq #${slot.messageSeq}", variant = GuBadgeVariant.BLUE)
+                        }
+                        if (slot.note.isNotBlank()) {
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                text = slot.note,
+                                color = c.ink.copy(alpha = 0.85f),
+                                fontSize = 12.sp,
+                                lineHeight = 17.sp,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            text = slot.note,
-                            color = c.ink.copy(alpha = 0.85f),
-                            fontSize = 12.sp,
-                            lineHeight = 17.sp,
-                            maxLines = 2,
+                            text = locationLine,
+                            color = c.muted,
+                            fontSize = 11.5.sp,
+                            maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
-                    }
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        text = locationLine,
-                        color = c.muted,
-                        fontSize = 11.5.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        GuBadge("HP ${stateSnap.hp}/${stateSnap.maxHp}", variant = GuBadgeVariant.NEUTRAL)
-                        topNpcs.forEach { npc ->
-                            GuBadge("♥ ${npc.name} ${npc.affinity}", variant = GuBadgeVariant.HONEY)
-                        }
-                    }
-                    Spacer(Modifier.height(10.dp))
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        GuButton(
-                            onClick = { onRequestRewind(slot) },
-                            compact = true,
-                            variant = GuButtonVariant.HONEY,
-                            modifier = Modifier.heightIn(min = 36.dp),
+                        Spacer(Modifier.height(8.dp))
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
-                            Icon(Icons.Default.Restore, contentDescription = null, modifier = Modifier.size(14.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text(strings.rp.loadRewindBtn, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                            GuBadge("HP ${stateSnap.hp}/${stateSnap.maxHp}", variant = GuBadgeVariant.NEUTRAL)
+                            topNpcs.forEach { npc ->
+                                GuBadge("♥ ${npc.name} ${npc.affinity}", variant = GuBadgeVariant.HONEY)
+                            }
                         }
-                        GuButton(
-                            onClick = { onBranchSaveSlot(slot) },
-                            compact = true,
-                            variant = GuButtonVariant.SUBTLE,
-                            modifier = Modifier.heightIn(min = 36.dp),
+                        Spacer(Modifier.height(10.dp))
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
-                            Icon(Icons.AutoMirrored.Filled.CallSplit, contentDescription = null, modifier = Modifier.size(14.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text(strings.rp.saveBranchBtn, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
-                        }
-                        GuButton(
-                            onClick = { onOverwriteSaveSlot(slot.id) },
-                            compact = true,
-                            variant = GuButtonVariant.SECONDARY,
-                            modifier = Modifier.heightIn(min = 36.dp),
-                        ) {
-                            Text(strings.rp.saveOverwriteBtn, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
-                        }
-                        GuButton(
-                            onClick = { onRequestDelete(slot) },
-                            compact = true,
-                            variant = GuButtonVariant.SECONDARY,
-                            modifier = Modifier.heightIn(min = 36.dp),
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Delete,
-                                contentDescription = null,
-                                tint = c.danger,
-                                modifier = Modifier.size(14.dp),
-                            )
-                            Spacer(Modifier.width(3.dp))
-                            Text(
-                                text = strings.common.delete,
-                                color = c.danger,
-                                fontSize = 11.5.sp,
-                                fontWeight = FontWeight.Bold,
-                            )
+                            GuButton(
+                                onClick = { onRequestRewind(slot) },
+                                compact = true,
+                                variant = GuButtonVariant.HONEY,
+                                modifier = Modifier.heightIn(min = 36.dp),
+                            ) {
+                                Icon(Icons.Default.Restore, contentDescription = null, modifier = Modifier.size(14.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text(strings.rp.loadRewindBtn, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                            }
+                            GuButton(
+                                onClick = { onBranchSaveSlot(slot) },
+                                compact = true,
+                                variant = GuButtonVariant.SUBTLE,
+                                modifier = Modifier.heightIn(min = 36.dp),
+                            ) {
+                                Icon(Icons.AutoMirrored.Filled.CallSplit, contentDescription = null, modifier = Modifier.size(14.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text(strings.rp.saveBranchBtn, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                            }
+                            GuButton(
+                                onClick = { onOverwriteSaveSlot(slot.id) },
+                                compact = true,
+                                variant = GuButtonVariant.SECONDARY,
+                                modifier = Modifier.heightIn(min = 36.dp),
+                            ) {
+                                Text(strings.rp.saveOverwriteBtn, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                            }
+                            GuButton(
+                                onClick = { onRequestDelete(slot) },
+                                compact = true,
+                                variant = GuButtonVariant.SECONDARY,
+                                modifier = Modifier.heightIn(min = 36.dp),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Delete,
+                                    contentDescription = null,
+                                    tint = c.danger,
+                                    modifier = Modifier.size(14.dp),
+                                )
+                                Spacer(Modifier.width(3.dp))
+                                Text(
+                                    text = strings.common.delete,
+                                    color = c.danger,
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                            }
                         }
                     }
                 }
@@ -4032,8 +4312,11 @@ private fun RpWorldAndExportTab(
     onExportCardJson: () -> Unit,
 ) {
     val strings = LocalAppStrings.current
-    val c = LocalAppTheme.current.colors
+    val theme = LocalAppTheme.current
+    val c = theme.colors
     val isZh = strings.language == AppLanguage.ZH
+    val playStyles = remember { listOf(RpPlayStyle.chengguang, RpPlayStyle.tavern, RpPlayStyle.trpg) }
+    val playStyleLabels = remember(strings) { playStyles.map { rpPlayStyleLabel(it, strings.rp) } }
 
     var playerName by remember(rp.playerName) { mutableStateOf(rp.playerName) }
     var playerPersona by remember(rp.playerPersona) { mutableStateOf(rp.playerPersona) }
@@ -4064,76 +4347,57 @@ private fun RpWorldAndExportTab(
             .padding(bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        // Play style & feature switches
-        GuCard(modifier = Modifier.fillMaxWidth()) {
-            Text(strings.rp.playStyleLabel, color = c.ink, fontSize = 13.5.sp, fontWeight = FontWeight.ExtraBold)
-            Spacer(Modifier.height(8.dp))
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                listOf(
-                    RpPlayStyle.chengguang,
-                    RpPlayStyle.tavern,
-                    RpPlayStyle.trpg,
-                ).forEach { style ->
-                    GuPill(
-                        label = rpPlayStyleLabel(style, strings.rp),
-                        selected = rp.playStyle == style,
-                        onClick = { onSetPlayStyle(style) },
-                        useHoneySelected = false,
-                        modifier = Modifier.heightIn(min = 36.dp),
-                    )
-                }
+        // Play style & grouped feature switches
+        GuSectionHeader(title = strings.rp.playStyleLabel)
+        GuSegmentedControl(
+            items = playStyleLabels,
+            selectedIndex = playStyles.indexOf(rp.playStyle).coerceAtLeast(0),
+            onSelect = { idx -> onSetPlayStyle(playStyles[idx]) },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        GuGroupedCard(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp)) {
+                GuSwitchRow(
+                    label = if (isZh) "剧场模式（视觉小说舞台）" else "Theater Mode (Visual Novel Stage)",
+                    checked = rp.theaterMode,
+                    onCheckedChange = { v -> onUpdateConfig { it.copy(theaterMode = v) } },
+                )
+                HorizontalDivider(thickness = theme.borderWidth, color = c.border.copy(alpha = 0.75f))
+                GuSwitchRow(
+                    label = strings.rp.enableHudToggle,
+                    checked = rp.enableStateHud,
+                    onCheckedChange = { v -> onUpdateConfig { it.copy(enableStateHud = v) } },
+                )
+                HorizontalDivider(thickness = theme.borderWidth, color = c.border.copy(alpha = 0.75f))
+                GuSwitchRow(
+                    label = strings.rp.enableChoicesToggle,
+                    checked = rp.enableChoices,
+                    onCheckedChange = { v -> onUpdateConfig { it.copy(enableChoices = v) } },
+                )
+                HorizontalDivider(thickness = theme.borderWidth, color = c.border.copy(alpha = 0.75f))
+                GuSwitchRow(
+                    label = strings.rp.enableDiceToggle,
+                    checked = rp.enableDiceCheck,
+                    onCheckedChange = { v -> onUpdateConfig { it.copy(enableDiceCheck = v) } },
+                )
+                HorizontalDivider(thickness = theme.borderWidth, color = c.border.copy(alpha = 0.75f))
+                GuSwitchRow(
+                    label = strings.rp.enableLedgerToggle,
+                    checked = rp.enableLedger,
+                    onCheckedChange = { v -> onUpdateConfig { it.copy(enableLedger = v) } },
+                )
+                HorizontalDivider(thickness = theme.borderWidth, color = c.border.copy(alpha = 0.75f))
+                GuSwitchRow(
+                    label = strings.rp.autoSkillBonusToggle,
+                    checked = rp.autoDiceSkillBonus,
+                    onCheckedChange = { v -> onUpdateConfig { it.copy(autoDiceSkillBonus = v) } },
+                )
             }
-            Spacer(Modifier.height(10.dp))
-            HorizontalDivider(color = c.border.copy(alpha = 0.6f))
-            GuSwitchRow(
-                label = if (isZh) "剧场模式（视觉小说舞台）" else "Theater Mode (Visual Novel Stage)",
-                checked = rp.theaterMode,
-                onCheckedChange = { v -> onUpdateConfig { it.copy(theaterMode = v) } },
-            )
-            HorizontalDivider(color = c.border.copy(alpha = 0.6f))
-            GuSwitchRow(
-                label = strings.rp.enableHudToggle,
-                checked = rp.enableStateHud,
-                onCheckedChange = { v -> onUpdateConfig { it.copy(enableStateHud = v) } },
-            )
-            HorizontalDivider(color = c.border.copy(alpha = 0.6f))
-            GuSwitchRow(
-                label = strings.rp.enableChoicesToggle,
-                checked = rp.enableChoices,
-                onCheckedChange = { v -> onUpdateConfig { it.copy(enableChoices = v) } },
-            )
-            HorizontalDivider(color = c.border.copy(alpha = 0.6f))
-            GuSwitchRow(
-                label = strings.rp.enableDiceToggle,
-                checked = rp.enableDiceCheck,
-                onCheckedChange = { v -> onUpdateConfig { it.copy(enableDiceCheck = v) } },
-            )
-            HorizontalDivider(color = c.border.copy(alpha = 0.6f))
-            GuSwitchRow(
-                label = strings.rp.enableLedgerToggle,
-                checked = rp.enableLedger,
-                onCheckedChange = { v -> onUpdateConfig { it.copy(enableLedger = v) } },
-            )
-            HorizontalDivider(color = c.border.copy(alpha = 0.6f))
-            GuSwitchRow(
-                label = strings.rp.autoSkillBonusToggle,
-                checked = rp.autoDiceSkillBonus,
-                onCheckedChange = { v -> onUpdateConfig { it.copy(autoDiceSkillBonus = v) } },
-            )
         }
 
         // Scene CG Backdrop card
+        GuSectionHeader(title = if (isZh) "场景 CG 背景图" else "Scene CG Backdrop")
         GuCard(modifier = Modifier.fillMaxWidth()) {
-            Text(
-                text = if (isZh) "场景 CG 背景图" else "Scene CG Backdrop",
-                color = c.ink,
-                fontSize = 13.5.sp,
-                fontWeight = FontWeight.ExtraBold,
-            )
-            Spacer(Modifier.height(8.dp))
             if (sceneFile != null) {
                 Image(
                     painter = rememberAsyncImagePainter(sceneFile),
@@ -4141,9 +4405,9 @@ private fun RpWorldAndExportTab(
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(132.dp)
+                        .height(136.dp)
                         .clip(RoundedCornerShape(12.dp))
-                        .border(1.dp, c.border, RoundedCornerShape(12.dp)),
+                        .border(theme.borderWidth, c.border, RoundedCornerShape(12.dp)),
                 )
             } else {
                 Box(
@@ -4152,7 +4416,7 @@ private fun RpWorldAndExportTab(
                         .height(68.dp)
                         .clip(RoundedCornerShape(12.dp))
                         .background(c.surfaceSoft)
-                        .border(1.dp, c.border, RoundedCornerShape(12.dp)),
+                        .border(theme.borderWidth, c.border, RoundedCornerShape(12.dp)),
                     contentAlignment = Alignment.Center,
                 ) {
                     Row(
@@ -4225,24 +4489,15 @@ private fun RpWorldAndExportTab(
         }
 
         // Editable World & SillyTavern Prompt fields
+        GuSectionHeader(
+            title = strings.rp.personaSectionTitle,
+            trailing = if (hasUnsavedChanges) {
+                { GuBadge(if (isZh) "未保存" else "Unsaved", variant = GuBadgeVariant.AMBER) }
+            } else {
+                null
+            },
+        )
         GuCard(modifier = Modifier.fillMaxWidth()) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text(
-                    text = strings.rp.personaSectionTitle,
-                    color = c.ink,
-                    fontSize = 13.5.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    modifier = Modifier.weight(1f),
-                )
-                if (hasUnsavedChanges) {
-                    GuBadge(if (isZh) "未保存" else "Unsaved", variant = GuBadgeVariant.AMBER)
-                }
-            }
-            Spacer(Modifier.height(10.dp))
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 GuTextField(
                     value = playerName,
@@ -4332,35 +4587,28 @@ private fun RpWorldAndExportTab(
             }
         }
 
-        // Card Export Section
-        GuCard(modifier = Modifier.fillMaxWidth()) {
-            Text(
-                text = strings.rp.exportTitle,
-                color = c.ink,
-                fontSize = 13.5.sp,
-                fontWeight = FontWeight.ExtraBold,
+        // Card Export Section (Grouped Settings Rows)
+        GuSectionHeader(title = strings.rp.exportTitle)
+        GuGroupedCard(modifier = Modifier.fillMaxWidth()) {
+            GuSettingsRow(
+                title = strings.rp.exportStPngBtn,
+                subtitle = if (isZh) "含立绘封面与 V2/V3 完整元数据 (.png)" else "Portrait cover with embedded V2/V3 metadata (.png)",
+                icon = Icons.Default.Image,
+                iconTint = c.tagInk,
+                iconBg = c.tag,
+                showChevron = true,
+                showDivider = true,
+                onClick = onExportCardPng,
             )
-            Spacer(Modifier.height(10.dp))
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                GuButton(
-                    onClick = onExportCardPng,
-                    variant = GuButtonVariant.HONEY,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Icon(Icons.Default.Image, contentDescription = null, modifier = Modifier.size(17.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text(strings.rp.exportStPngBtn, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                }
-                GuButton(
-                    onClick = onExportCardJson,
-                    variant = GuButtonVariant.SUBTLE,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(17.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text(strings.rp.exportStBtn, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                }
-            }
+            GuSettingsRow(
+                title = strings.rp.exportStBtn,
+                subtitle = if (isZh) "纯文本结构化角色卡与世界书 (.json)" else "Structured SillyTavern character card & lorebook (.json)",
+                icon = Icons.Default.Download,
+                iconTint = c.primarySoftInk,
+                iconBg = c.primarySoft,
+                showChevron = true,
+                onClick = onExportCardJson,
+            )
         }
     }
 }
@@ -4611,6 +4859,11 @@ private fun RpFrontendTab(
         lineHeight = 17.sp,
     )
 
+    val spriteLayoutKeys = remember { listOf("stage", "portrait_card", "hidden") }
+    val spriteLayoutLabels = remember(strings) {
+        listOf(strings.rp.spriteLayoutStage, strings.rp.spriteLayoutCard, strings.rp.spriteLayoutHidden)
+    }
+
     Column(
         modifier = modifier
             .verticalScroll(rememberScrollState())
@@ -4618,51 +4871,47 @@ private fun RpFrontendTab(
             .padding(bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        // Card A — Stage & UI Visual Theme
+        // Section A — Stage & UI Visual Theme
+        GuSectionHeader(
+            title = strings.rp.visualThemeTitle,
+            trailing = {
+                GuButton(
+                    onClick = onResetVisualTheme,
+                    compact = true,
+                    variant = GuButtonVariant.SUBTLE,
+                    modifier = Modifier.heightIn(min = 32.dp),
+                ) {
+                    Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(13.5.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text(strings.rp.resetThemeBtn, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+            },
+        )
         GuCard(modifier = Modifier.fillMaxWidth()) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Palette,
-                    contentDescription = null,
-                    tint = c.primary,
-                    modifier = Modifier.size(18.dp),
-                )
-                Text(
-                    text = strings.rp.visualThemeTitle,
-                    color = c.ink,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    modifier = Modifier.weight(1f),
-                )
-            }
-
-            Spacer(Modifier.height(12.dp))
+            // 5 Mini Visual Style Preview Cards
             Text(
                 text = strings.rp.dialogStyleLabel,
                 color = c.ink,
                 fontSize = 12.5.sp,
                 fontWeight = FontWeight.Bold,
             )
-            Spacer(Modifier.height(6.dp))
-            FlowRow(
+            Spacer(Modifier.height(8.dp))
+            LazyRow(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                RP_DIALOG_STYLE_KEYS.forEach { key ->
-                    GuPill(
-                        label = strings.rp.dialogStyles[key] ?: key,
-                        selected = vt.dialogStyle.equals(key, ignoreCase = true),
+                items(RP_DIALOG_STYLE_KEYS, key = { it }) { key ->
+                    val isSelected = vt.dialogStyle.equals(key, ignoreCase = true)
+                    val label = strings.rp.dialogStyles[key] ?: key
+                    RpMiniDialogStyleCard(
+                        styleKey = key,
+                        label = label,
+                        selected = isSelected,
                         onClick = { onUpdateVisualTheme { it.copy(dialogStyle = key) } },
-                        modifier = Modifier.heightIn(min = 36.dp),
                     )
                 }
             }
 
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(14.dp))
             Text(
                 text = strings.rp.spriteLayoutLabel,
                 color = c.ink,
@@ -4670,26 +4919,15 @@ private fun RpFrontendTab(
                 fontWeight = FontWeight.Bold,
             )
             Spacer(Modifier.height(6.dp))
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                listOf(
-                    "stage" to strings.rp.spriteLayoutStage,
-                    "portrait_card" to strings.rp.spriteLayoutCard,
-                    "hidden" to strings.rp.spriteLayoutHidden,
-                ).forEach { (key, label) ->
-                    GuPill(
-                        label = label,
-                        selected = vt.spriteLayout.equals(key, ignoreCase = true),
-                        onClick = { onUpdateVisualTheme { it.copy(spriteLayout = key) } },
-                        useHoneySelected = true,
-                        modifier = Modifier.heightIn(min = 36.dp),
-                    )
-                }
-            }
+            GuSegmentedControl(
+                items = spriteLayoutLabels,
+                selectedIndex = spriteLayoutKeys.indexOfFirst { it.equals(vt.spriteLayout, ignoreCase = true) }.coerceAtLeast(0),
+                onSelect = { idx -> onUpdateVisualTheme { it.copy(spriteLayout = spriteLayoutKeys[idx]) } },
+                compact = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
 
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(14.dp))
             val activeSwatch = RP_ACCENT_SWATCHES.firstOrNull {
                 it.hex.equals(vt.accentHex.trim(), ignoreCase = true)
             } ?: RP_ACCENT_SWATCHES.first()
@@ -4720,11 +4958,11 @@ private fun RpFrontendTab(
                     val fillColor = swatch.color ?: c.primary
                     Box(
                         modifier = Modifier
-                            .size(36.dp)
+                            .size(32.dp)
                             .clip(CircleShape)
                             .background(fillColor)
                             .border(
-                                width = if (isSelected) 2.5.dp else 1.dp,
+                                width = if (isSelected) 2.2.dp else theme.borderWidth,
                                 color = if (isSelected) c.ink else c.outline,
                                 shape = CircleShape,
                             )
@@ -4738,161 +4976,140 @@ private fun RpFrontendTab(
                                 imageVector = Icons.Default.Check,
                                 contentDescription = if (isZh) swatch.zhName else swatch.enName,
                                 tint = Color.White,
-                                modifier = Modifier.size(18.dp),
+                                modifier = Modifier.size(16.dp),
                             )
                         }
                     }
                 }
             }
+        }
 
-            Spacer(Modifier.height(14.dp))
-            HorizontalDivider(color = c.border.copy(alpha = 0.6f))
-            Spacer(Modifier.height(10.dp))
-
-            // Slider 1: Dialog Opacity
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
+        // Grouped Sliders & Stage Switches
+        GuGroupedCard(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
             ) {
-                Text(strings.rp.dialogOpacityLabel, color = c.ink, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold)
-                GuBadge("${(dialogOpacity * 100f).roundToInt()}%", variant = GuBadgeVariant.BLUE)
+                // Slider 1: Dialog Opacity
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(strings.rp.dialogOpacityLabel, color = c.ink, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold)
+                    GuBadge("${(dialogOpacity * 100f).roundToInt()}%", variant = GuBadgeVariant.BLUE)
+                }
+                Slider(
+                    value = dialogOpacity,
+                    onValueChange = { dialogOpacity = it.coerceIn(0.45f, 1.0f) },
+                    onValueChangeFinished = {
+                        val committed = dialogOpacity.coerceIn(0.45f, 1.0f)
+                        onUpdateVisualTheme { it.copy(dialogOpacity = committed) }
+                    },
+                    valueRange = 0.45f..1.0f,
+                    colors = sliderColors,
+                )
+
+                // Slider 2: Backdrop Dim
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(strings.rp.backdropDimLabel, color = c.ink, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold)
+                    GuBadge("${(backdropDim * 100f).roundToInt()}%", variant = GuBadgeVariant.NEUTRAL)
+                }
+                Slider(
+                    value = backdropDim,
+                    onValueChange = { backdropDim = it.coerceIn(0.0f, 0.75f) },
+                    onValueChangeFinished = {
+                        val committed = backdropDim.coerceIn(0.0f, 0.75f)
+                        onUpdateVisualTheme { it.copy(backdropDim = committed) }
+                    },
+                    valueRange = 0.0f..0.75f,
+                    colors = sliderColors,
+                )
+
+                // Slider 3: Body Font Size
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(strings.rp.fontSizeLabel, color = c.ink, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold)
+                    GuBadge("${String.format(Locale.US, "%.1f", fontSizeSp)} sp", variant = GuBadgeVariant.BLUE)
+                }
+                Slider(
+                    value = fontSizeSp,
+                    onValueChange = { fontSizeSp = ((it * 2f).roundToInt() / 2f).coerceIn(13f, 20f) },
+                    onValueChangeFinished = {
+                        val committed = ((fontSizeSp * 2f).roundToInt() / 2f).coerceIn(13f, 20f)
+                        onUpdateVisualTheme { it.copy(fontSizeSp = committed) }
+                    },
+                    valueRange = 13f..20f,
+                    colors = sliderColors,
+                )
+
+                // Slider 4: Sprite Stage Height
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(strings.rp.spriteHeightLabel, color = c.ink, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold)
+                    GuBadge("${(spriteHeightRatio * 100f).roundToInt()}%", variant = GuBadgeVariant.NEUTRAL)
+                }
+                Slider(
+                    value = spriteHeightRatio,
+                    onValueChange = { spriteHeightRatio = it.coerceIn(0.30f, 0.58f) },
+                    onValueChangeFinished = {
+                        val committed = spriteHeightRatio.coerceIn(0.30f, 0.58f)
+                        onUpdateVisualTheme { it.copy(spriteHeightRatio = committed) }
+                    },
+                    valueRange = 0.30f..0.58f,
+                    colors = sliderColors,
+                )
             }
-            Slider(
-                value = dialogOpacity,
-                onValueChange = { dialogOpacity = it.coerceIn(0.45f, 1.0f) },
-                onValueChangeFinished = {
-                    val committed = dialogOpacity.coerceIn(0.45f, 1.0f)
-                    onUpdateVisualTheme { it.copy(dialogOpacity = committed) }
-                },
-                valueRange = 0.45f..1.0f,
-                colors = sliderColors,
-            )
 
-            // Slider 2: Backdrop Dim
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Text(strings.rp.backdropDimLabel, color = c.ink, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold)
-                GuBadge("${(backdropDim * 100f).roundToInt()}%", variant = GuBadgeVariant.NEUTRAL)
-            }
-            Slider(
-                value = backdropDim,
-                onValueChange = { backdropDim = it.coerceIn(0.0f, 0.75f) },
-                onValueChangeFinished = {
-                    val committed = backdropDim.coerceIn(0.0f, 0.75f)
-                    onUpdateVisualTheme { it.copy(backdropDim = committed) }
-                },
-                valueRange = 0.0f..0.75f,
-                colors = sliderColors,
-            )
-
-            // Slider 3: Body Font Size
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Text(strings.rp.fontSizeLabel, color = c.ink, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold)
-                GuBadge("${String.format(Locale.US, "%.1f", fontSizeSp)} sp", variant = GuBadgeVariant.BLUE)
-            }
-            Slider(
-                value = fontSizeSp,
-                onValueChange = { fontSizeSp = ((it * 2f).roundToInt() / 2f).coerceIn(13f, 20f) },
-                onValueChangeFinished = {
-                    val committed = ((fontSizeSp * 2f).roundToInt() / 2f).coerceIn(13f, 20f)
-                    onUpdateVisualTheme { it.copy(fontSizeSp = committed) }
-                },
-                valueRange = 13f..20f,
-                colors = sliderColors,
-            )
-
-            // Slider 4: Sprite Stage Height
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Text(strings.rp.spriteHeightLabel, color = c.ink, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold)
-                GuBadge("${(spriteHeightRatio * 100f).roundToInt()}%", variant = GuBadgeVariant.NEUTRAL)
-            }
-            Slider(
-                value = spriteHeightRatio,
-                onValueChange = { spriteHeightRatio = it.coerceIn(0.30f, 0.58f) },
-                onValueChangeFinished = {
-                    val committed = spriteHeightRatio.coerceIn(0.30f, 0.58f)
-                    onUpdateVisualTheme { it.copy(spriteHeightRatio = committed) }
-                },
-                valueRange = 0.30f..0.58f,
-                colors = sliderColors,
-            )
-
-            HorizontalDivider(color = c.border.copy(alpha = 0.6f))
-            GuSwitchRow(
-                label = strings.rp.useSerifToggle,
-                checked = vt.useSerif,
-                onCheckedChange = { v -> onUpdateVisualTheme { it.copy(useSerif = v) } },
-            )
-            HorizontalDivider(color = c.border.copy(alpha = 0.6f))
-            GuSwitchRow(
-                label = strings.rp.showNameplateToggle,
-                checked = vt.showNameplate,
-                onCheckedChange = { v -> onUpdateVisualTheme { it.copy(showNameplate = v) } },
-            )
-            HorizontalDivider(color = c.border.copy(alpha = 0.6f))
-            GuSwitchRow(
-                label = strings.rp.showDeltasToggle,
-                checked = vt.showTurnDeltas,
-                onCheckedChange = { v -> onUpdateVisualTheme { it.copy(showTurnDeltas = v) } },
-            )
-            HorizontalDivider(color = c.border.copy(alpha = 0.6f))
-            GuSwitchRow(
-                label = strings.rp.enableHtmlCardsToggle,
-                checked = rp.enableHtmlCards,
-                onCheckedChange = { v -> onUpdateConfig { it.copy(enableHtmlCards = v) } },
-            )
-
-            Spacer(Modifier.height(8.dp))
-            GuButton(
-                onClick = onResetVisualTheme,
-                compact = true,
-                variant = GuButtonVariant.SUBTLE,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(15.dp))
-                Spacer(Modifier.width(6.dp))
-                Text(strings.rp.resetThemeBtn, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            HorizontalDivider(thickness = theme.borderWidth, color = c.border.copy(alpha = 0.75f))
+            Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp)) {
+                GuSwitchRow(
+                    label = strings.rp.useSerifToggle,
+                    checked = vt.useSerif,
+                    onCheckedChange = { v -> onUpdateVisualTheme { it.copy(useSerif = v) } },
+                )
+                HorizontalDivider(thickness = theme.borderWidth, color = c.border.copy(alpha = 0.75f))
+                GuSwitchRow(
+                    label = strings.rp.showNameplateToggle,
+                    checked = vt.showNameplate,
+                    onCheckedChange = { v -> onUpdateVisualTheme { it.copy(showNameplate = v) } },
+                )
+                HorizontalDivider(thickness = theme.borderWidth, color = c.border.copy(alpha = 0.75f))
+                GuSwitchRow(
+                    label = strings.rp.showDeltasToggle,
+                    checked = vt.showTurnDeltas,
+                    onCheckedChange = { v -> onUpdateVisualTheme { it.copy(showTurnDeltas = v) } },
+                )
+                HorizontalDivider(thickness = theme.borderWidth, color = c.border.copy(alpha = 0.75f))
+                GuSwitchRow(
+                    label = strings.rp.enableHtmlCardsToggle,
+                    checked = rp.enableHtmlCards,
+                    onCheckedChange = { v -> onUpdateConfig { it.copy(enableHtmlCards = v) } },
+                )
             }
         }
 
-        // Card B — Custom HTML/CSS Frontend Status Widget
+        // Section B — Custom HTML/CSS Frontend Status Widget
+        GuSectionHeader(
+            title = strings.rp.statusWidgetTitle,
+            trailing = if (hasFrontendChanges) {
+                { GuBadge(if (isZh) "未应用" else "Unsaved", variant = GuBadgeVariant.AMBER) }
+            } else {
+                null
+            },
+        )
         GuCard(modifier = Modifier.fillMaxWidth()) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Code,
-                    contentDescription = null,
-                    tint = c.primary,
-                    modifier = Modifier.size(18.dp),
-                )
-                Text(
-                    text = strings.rp.statusWidgetTitle,
-                    color = c.ink,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    modifier = Modifier.weight(1f),
-                )
-                if (hasFrontendChanges) {
-                    GuBadge(if (isZh) "未应用" else "Unsaved", variant = GuBadgeVariant.AMBER)
-                }
-            }
-
-            Spacer(Modifier.height(6.dp))
             GuSwitchRow(
                 label = strings.rp.showStatusWidgetToggle,
                 checked = vt.showCustomStatusWidget,
@@ -4982,7 +5199,7 @@ private fun RpFrontendTab(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(14.dp),
                     color = c.surfaceSoft,
-                    border = BorderStroke(1.dp, c.outline),
+                    border = BorderStroke(theme.borderWidth, c.outline),
                 ) {
                     Box(
                         modifier = Modifier
@@ -5002,30 +5219,12 @@ private fun RpFrontendTab(
             }
         }
 
-        // Card C — SillyTavern Regex Beautification Scripts
+        // Section C — SillyTavern Regex Beautification Scripts
+        GuSectionHeader(
+            title = strings.rp.regexScriptsTitle,
+            trailing = { GuBadge("${rp.regexScripts.size}", variant = GuBadgeVariant.BLUE) },
+        )
         GuCard(modifier = Modifier.fillMaxWidth()) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Tune,
-                    contentDescription = null,
-                    tint = c.primary,
-                    modifier = Modifier.size(18.dp),
-                )
-                Text(
-                    text = strings.rp.regexScriptsTitle,
-                    color = c.ink,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    modifier = Modifier.weight(1f),
-                )
-                GuBadge("${rp.regexScripts.size}", variant = GuBadgeVariant.BLUE)
-            }
-
-            Spacer(Modifier.height(10.dp))
             FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -5059,7 +5258,7 @@ private fun RpFrontendTab(
                         .padding(top = 10.dp),
                     shape = RoundedCornerShape(12.dp),
                     color = c.surfaceSoft,
-                    border = BorderStroke(1.dp, c.border),
+                    border = BorderStroke(theme.borderWidth, c.border),
                 ) {
                     Column(
                         modifier = Modifier
@@ -5098,140 +5297,130 @@ private fun RpFrontendTab(
 
             Spacer(Modifier.height(10.dp))
             if (rp.regexScripts.isEmpty()) {
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                    color = c.surfaceSoft,
-                    border = BorderStroke(1.dp, c.border),
-                ) {
-                    Text(
-                        text = strings.rp.regexEmpty,
-                        color = c.muted,
-                        fontSize = 12.sp,
-                        lineHeight = 17.sp,
-                        modifier = Modifier.padding(12.dp),
-                    )
-                }
+                GuEmptyState(
+                    title = strings.rp.regexEmpty,
+                    icon = Icons.Default.Tune,
+                )
             } else {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    rp.regexScripts.forEach { script ->
+                GuGroupedCard(
+                    modifier = Modifier.fillMaxWidth(),
+                    backgroundColor = c.surfaceSoft,
+                    cornerRadius = 12.dp,
+                ) {
+                    rp.regexScripts.forEachIndexed { idx, script ->
                         val placementLabel = localizeRegexPlacement(script.placement, strings.rp)
                         val patternPreview = remember(script.findRegex, script.flags) {
                             RpRegexEngine.formatRegexLiteral(script.findRegex, script.flags)
                         }
 
-                        Surface(
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(14.dp),
-                            color = c.surfaceSoft,
-                            border = BorderStroke(
-                                width = 1.dp,
-                                color = if (script.enabled) c.primary.copy(alpha = 0.35f) else c.border,
-                            ),
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(10.dp),
-                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                ) {
-                                    Column(
-                                        modifier = Modifier.weight(1f),
-                                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                                    ) {
-                                        Text(
-                                            text = script.name,
-                                            color = if (script.enabled) c.ink else c.muted,
-                                            fontSize = 13.5.sp,
-                                            fontWeight = FontWeight.ExtraBold,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                        )
-                                        FlowRow(
-                                            horizontalArrangement = Arrangement.spacedBy(5.dp),
-                                            verticalArrangement = Arrangement.spacedBy(4.dp),
-                                        ) {
-                                            GuBadge(placementLabel, variant = GuBadgeVariant.BLUE)
-                                            if (script.markdownOnly) {
-                                                GuBadge(
-                                                    text = if (isZh) "仅显示" else "Display Only",
-                                                    variant = GuBadgeVariant.HONEY,
-                                                )
-                                            }
-                                        }
-                                    }
-                                    Switch(
-                                        checked = script.enabled,
-                                        onCheckedChange = { onToggleRegexScript(script.id) },
-                                        colors = SwitchDefaults.colors(
-                                            checkedThumbColor = Color.White,
-                                            checkedTrackColor = c.primary,
-                                            checkedBorderColor = c.primary,
-                                            uncheckedThumbColor = if (theme.isDark) Color(0xFFB4C0D6) else Color(0xFF64748B),
-                                            uncheckedTrackColor = c.surface,
-                                            uncheckedBorderColor = if (theme.isDark) Color(0xFF526280) else c.outline,
-                                        ),
-                                    )
-                                }
-
-                                Surface(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    shape = RoundedCornerShape(8.dp),
-                                    color = c.surface,
-                                    border = BorderStroke(1.dp, c.border),
+                                Column(
+                                    modifier = Modifier.weight(1f),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp),
                                 ) {
                                     Text(
-                                        text = patternPreview,
-                                        color = c.muted,
-                                        fontFamily = FontFamily.Monospace,
-                                        fontSize = 11.5.sp,
+                                        text = script.name,
+                                        color = if (script.enabled) c.ink else c.muted,
+                                        fontSize = 13.5.sp,
+                                        fontWeight = FontWeight.ExtraBold,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                                    )
+                                    FlowRow(
+                                        horizontalArrangement = Arrangement.spacedBy(5.dp),
+                                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                                    ) {
+                                        GuBadge(placementLabel, variant = GuBadgeVariant.BLUE)
+                                        if (script.markdownOnly) {
+                                            GuBadge(
+                                                text = if (isZh) "仅显示" else "Display Only",
+                                                variant = GuBadgeVariant.HONEY,
+                                            )
+                                        }
+                                    }
+                                }
+                                Switch(
+                                    checked = script.enabled,
+                                    onCheckedChange = { onToggleRegexScript(script.id) },
+                                    colors = SwitchDefaults.colors(
+                                        checkedThumbColor = Color.White,
+                                        checkedTrackColor = c.primary,
+                                        checkedBorderColor = c.primary,
+                                        uncheckedThumbColor = if (theme.isDark) Color(0xFFB4C0D6) else Color(0xFF64748B),
+                                        uncheckedTrackColor = c.surface,
+                                        uncheckedBorderColor = c.outline,
+                                    ),
+                                )
+                            }
+
+                            Surface(
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(8.dp),
+                                color = c.surface,
+                                border = BorderStroke(theme.borderWidth, c.border),
+                            ) {
+                                Text(
+                                    text = patternPreview,
+                                    color = c.muted,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 11.5.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                                )
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                GuButton(
+                                    onClick = { onEditRegexScript(script) },
+                                    compact = true,
+                                    variant = GuButtonVariant.SECONDARY,
+                                    modifier = Modifier.heightIn(min = 34.dp),
+                                ) {
+                                    Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(13.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(strings.common.edit, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                                }
+                                GuButton(
+                                    onClick = { onRequestDeleteRegex(script) },
+                                    compact = true,
+                                    variant = GuButtonVariant.SECONDARY,
+                                    modifier = Modifier.heightIn(min = 34.dp),
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Delete,
+                                        contentDescription = null,
+                                        tint = c.danger,
+                                        modifier = Modifier.size(13.dp),
+                                    )
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(
+                                        text = strings.common.delete,
+                                        color = c.danger,
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.Bold,
                                     )
                                 }
-
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                ) {
-                                    GuButton(
-                                        onClick = { onEditRegexScript(script) },
-                                        compact = true,
-                                        variant = GuButtonVariant.SECONDARY,
-                                        modifier = Modifier.heightIn(min = 34.dp),
-                                    ) {
-                                        Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(13.dp))
-                                        Spacer(Modifier.width(4.dp))
-                                        Text(strings.common.edit, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
-                                    }
-                                    GuButton(
-                                        onClick = { onRequestDeleteRegex(script) },
-                                        compact = true,
-                                        variant = GuButtonVariant.SECONDARY,
-                                        modifier = Modifier.heightIn(min = 34.dp),
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Delete,
-                                            contentDescription = null,
-                                            tint = c.danger,
-                                            modifier = Modifier.size(13.dp),
-                                        )
-                                        Spacer(Modifier.width(4.dp))
-                                        Text(
-                                            text = strings.common.delete,
-                                            color = c.danger,
-                                            fontSize = 11.5.sp,
-                                            fontWeight = FontWeight.Bold,
-                                        )
-                                    }
-                                }
                             }
+                        }
+                        if (idx < rp.regexScripts.lastIndex) {
+                            HorizontalDivider(
+                                thickness = theme.borderWidth,
+                                color = c.border.copy(alpha = 0.78f),
+                            )
                         }
                     }
                 }
@@ -5239,7 +5428,7 @@ private fun RpFrontendTab(
 
             // Inline Live Regex Tester
             Spacer(Modifier.height(12.dp))
-            HorizontalDivider(color = c.border.copy(alpha = 0.6f))
+            HorizontalDivider(thickness = theme.borderWidth, color = c.border.copy(alpha = 0.75f))
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -5321,7 +5510,7 @@ private fun RpFrontendTab(
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(10.dp),
                             color = c.surfaceSoft,
-                            border = BorderStroke(1.dp, c.border),
+                            border = BorderStroke(theme.borderWidth, c.border),
                         ) {
                             Text(
                                 text = regexTestOutput.ifBlank { if (isZh) "（匹配后为空）" else "(Empty after replacement)" },
@@ -5346,7 +5535,7 @@ private fun RpFrontendTab(
                                 modifier = Modifier.fillMaxWidth(),
                                 shape = RoundedCornerShape(12.dp),
                                 color = c.surfaceSoft,
-                                border = BorderStroke(1.dp, c.outline),
+                                border = BorderStroke(theme.borderWidth, c.outline),
                             ) {
                                 Box(
                                     modifier = Modifier
@@ -5367,6 +5556,114 @@ private fun RpFrontendTab(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun RpMiniDialogStyleCard(
+    styleKey: String,
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    val theme = LocalAppTheme.current
+    val c = theme.colors
+    val (bg, boxBg, accent, lineColor) = when (styleKey.lowercase()) {
+        "classic_vn" -> listOf(Color(0xFF281426), Color(0xFF1A101D), Color(0xFFE0B954), Color(0xFFEADBC0))
+        "minimal" -> listOf(Color(0xFF101624), Color(0xFF0A0E18), Color(0xFFCBD5E1), Color(0xFFDDE5F5))
+        "cyber" -> listOf(Color(0xFF0A1D2E), Color(0xFF07101B), Color(0xFF22D3EE), Color(0xFFBAE6FD))
+        "parchment" -> listOf(Color(0xFFEAD9B4), Color(0xFFF7F0E2), Color(0xFF9C723C), Color(0xFF5A3F26))
+        else -> listOf(Color(0xFF172038), Color(0xFF0E1320), Color(0xFF819BFF), Color(0xFFE2E8F0))
+    }
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(12.dp),
+        color = c.surface,
+        border = BorderStroke(
+            width = if (selected) 1.6.dp else theme.borderWidth,
+            color = if (selected) c.primary else c.border,
+        ),
+        modifier = Modifier.width(104.dp),
+    ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(54.dp)
+                    .background(bg)
+                    .padding(7.dp),
+            ) {
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth(),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .width(28.dp)
+                            .height(6.dp)
+                            .clip(RoundedCornerShape(topStart = 3.dp, topEnd = 3.dp))
+                            .background(accent),
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(22.dp)
+                            .clip(RoundedCornerShape(topEnd = 5.dp, bottomStart = 5.dp, bottomEnd = 5.dp))
+                            .background(boxBg)
+                            .border(
+                                width = if (styleKey == "minimal") 0.dp else 0.8.dp,
+                                color = if (styleKey == "minimal") Color.Transparent else accent.copy(alpha = 0.75f),
+                                shape = RoundedCornerShape(topEnd = 5.dp, bottomStart = 5.dp, bottomEnd = 5.dp),
+                            )
+                            .padding(horizontal = 5.dp, vertical = 4.dp),
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth(0.85f)
+                                    .height(2.5.dp)
+                                    .clip(RoundedCornerShape(999.dp))
+                                    .background(lineColor.copy(alpha = 0.75f)),
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth(0.55f)
+                                    .height(2.5.dp)
+                                    .clip(RoundedCornerShape(999.dp))
+                                    .background(lineColor.copy(alpha = 0.45f)),
+                            )
+                        }
+                    }
+                }
+                if (selected) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .size(16.dp)
+                            .clip(CircleShape)
+                            .background(c.primary),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Check,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(10.dp),
+                        )
+                    }
+                }
+            }
+            Text(
+                text = label,
+                color = if (selected) c.primarySoftInk else c.ink,
+                fontSize = 11.sp,
+                fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+            )
         }
     }
 }

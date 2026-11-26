@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.State
@@ -23,12 +24,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.gugachat.app.core.theme.LocalAppTheme
+import com.gugachat.app.core.theme.resolveAppTheme
 import com.gugachat.app.domain.chat.RpConfig
 import com.gugachat.app.domain.chat.RpRegexEngine
 import java.util.Locale
@@ -110,7 +113,7 @@ fun RpHtmlCardSandbox(
         onFrontendAction = onFrontendAction,
         onFrontendSetFlag = onFrontendSetFlag,
         onFrontendAdjustAffinity = onFrontendAdjustAffinity,
-        modifier = modifier,
+        modifier = modifier.clip(RoundedCornerShape(14.dp)),
     )
 }
 
@@ -133,36 +136,41 @@ internal fun RpHtmlCardSandboxInternal(
     val theme = LocalAppTheme.current
     val c = theme.colors
     val effectiveIsDark = forceDark ?: theme.isDark
+    val effectiveColors = remember(theme.style, effectiveIsDark) {
+        resolveAppTheme(theme.style, effectiveIsDark).colors
+    }
     val customAccent = remember(rp?.visualTheme?.accentHex) {
         parseOptionalHexColor(rp?.visualTheme?.accentHex)
     }
 
-    val primaryHex = remember(c.primary) { c.primary.toHexRgb() }
-    val accentHex = remember(customAccent, c.accent) { (customAccent ?: c.accent).toHexRgb() }
-    val surfaceHex = remember(effectiveIsDark, theme.isDark, c.surface) {
+    val primaryHex = remember(effectiveColors.primary) { effectiveColors.primary.toHexRgb() }
+    val accentHex = remember(customAccent, effectiveColors.accent) {
+        (customAccent ?: effectiveColors.accent).toHexRgb()
+    }
+    val surfaceHex = remember(effectiveIsDark, theme.isDark, effectiveColors.surface, c.surface) {
         when {
-            effectiveIsDark && !theme.isDark -> "#141A29"
+            effectiveIsDark && !theme.isDark -> effectiveColors.surface.toHexRgb()
             !effectiveIsDark && theme.isDark -> "#F6EFE0"
             else -> c.surface.toHexRgb()
         }
     }
-    val inkHex = remember(effectiveIsDark, theme.isDark, c.ink) {
+    val inkHex = remember(effectiveIsDark, theme.isDark, effectiveColors.ink, c.ink) {
         when {
-            effectiveIsDark && !theme.isDark -> "#F3F6FC"
+            effectiveIsDark && !theme.isDark -> effectiveColors.ink.toHexRgb()
             !effectiveIsDark && theme.isDark -> "#2C2117"
             else -> c.ink.toHexRgb()
         }
     }
-    val mutedHex = remember(effectiveIsDark, theme.isDark, c.muted) {
+    val mutedHex = remember(effectiveIsDark, theme.isDark, effectiveColors.muted, c.muted) {
         when {
-            effectiveIsDark && !theme.isDark -> "#B3BED4"
+            effectiveIsDark && !theme.isDark -> effectiveColors.muted.toHexRgb()
             !effectiveIsDark && theme.isDark -> "#6B5A47"
             else -> c.muted.toHexRgb()
         }
     }
-    val borderHex = remember(effectiveIsDark, theme.isDark, c.border) {
+    val borderHex = remember(effectiveIsDark, theme.isDark, effectiveColors.border, c.border) {
         when {
-            effectiveIsDark && !theme.isDark -> "#33415C"
+            effectiveIsDark && !theme.isDark -> effectiveColors.border.toHexRgb()
             !effectiveIsDark && theme.isDark -> "#CBB894"
             else -> c.border.toHexRgb()
         }
