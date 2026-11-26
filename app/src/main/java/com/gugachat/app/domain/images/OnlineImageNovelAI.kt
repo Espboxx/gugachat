@@ -36,7 +36,7 @@ data class NovelAIParams(
     val width: Int = 832,
     val height: Int = 1216,
     val steps: Int = 28,
-    val scale: Double = 5.5,
+    val scale: Double = 5.0,
     val cfgRescale: Double = 0.0,
     val sampler: String = "k_euler_ancestral",
     val noiseSchedule: String = "karras",
@@ -56,6 +56,9 @@ data class NovelAIParams(
 
 object OnlineImageNovelAI {
     const val MAX_CHARACTERS = 6
+    const val MAX_STEPS = 28
+    const val MAX_SCALE = 10.0
+    const val MAX_SEED = 4_294_967_295L
 
     val COORD_GRID_COLS = listOf("A", "B", "C", "D", "E")
     val COORD_GRID_VALUES = listOf(0.1f, 0.3f, 0.5f, 0.7f, 0.9f)
@@ -69,26 +72,21 @@ object OnlineImageNovelAI {
         0.5f to 0.3f, // C2
     )
 
-    val SAMPLERS_V3 = listOf(
+    val SAMPLERS = listOf(
         "k_euler_ancestral",
         "k_euler",
         "k_dpmpp_2s_ancestral",
-        "k_dpmpp_2m",
         "k_dpmpp_2m_sde",
-        "k_dpmpp_sde",
-        "ddim_v3",
-    )
-
-    val SAMPLERS_V4 = listOf(
-        "k_euler_ancestral",
-        "k_euler",
-        "k_dpmpp_2s_ancestral",
         "k_dpmpp_2m",
-        "k_dpmpp_2m_sde",
         "k_dpmpp_sde",
     )
 
-    val NOISE_SCHEDULES = listOf("karras", "exponential", "polyexponential", "native")
+    val SAMPLERS_V3 = SAMPLERS
+    val SAMPLERS_V4 = SAMPLERS
+
+    val NOISE_SCHEDULES_V3 = listOf("karras", "exponential", "polyexponential", "native")
+    val NOISE_SCHEDULES_V4 = listOf("karras", "exponential", "polyexponential")
+    val NOISE_SCHEDULES = NOISE_SCHEDULES_V3
 
     val PRESET_DIMENSIONS = listOf(
         832 to 1216,
@@ -112,13 +110,16 @@ object OnlineImageNovelAI {
     fun availableSamplers(version: NovelAIVersion): List<String> =
         if (version == NovelAIVersion.V3) SAMPLERS_V3 else SAMPLERS_V4
 
+    fun availableNoiseSchedules(version: NovelAIVersion): List<String> =
+        if (version == NovelAIVersion.V3) NOISE_SCHEDULES_V3 else NOISE_SCHEDULES_V4
+
     fun defaultParamsForVersion(version: NovelAIVersion): NovelAIParams =
         if (version == NovelAIVersion.V3) {
             NovelAIParams(
                 steps = 28,
                 scale = 5.5,
                 sampler = "k_euler_ancestral",
-                noiseSchedule = "native",
+                noiseSchedule = "karras",
                 sm = false,
                 smDyn = false,
             )
@@ -135,8 +136,17 @@ object OnlineImageNovelAI {
 
     fun adaptParamsForVersion(existing: NovelAIParams, version: NovelAIVersion): NovelAIParams {
         val validSamplers = availableSamplers(version)
+        val validSchedules = availableNoiseSchedules(version)
         val normalizedSampler = if (existing.sampler in validSamplers) existing.sampler else validSamplers.first()
-        return existing.copy(sampler = normalizedSampler)
+        val normalizedSchedule = if (existing.noiseSchedule in validSchedules) existing.noiseSchedule else validSchedules.first()
+        return existing.copy(
+            sampler = normalizedSampler,
+            noiseSchedule = normalizedSchedule,
+            steps = existing.steps.coerceIn(1, MAX_STEPS),
+            scale = existing.scale.coerceIn(0.0, MAX_SCALE),
+            sm = if (version == NovelAIVersion.V3) existing.sm else false,
+            smDyn = if (version == NovelAIVersion.V3) existing.smDyn else false,
+        )
     }
 
     fun nextDefaultCharacterPosition(existing: List<NovelAICharacterPrompt>): Pair<Float, Float> {
@@ -189,6 +199,10 @@ object OnlineImageNovelAI {
             height = OnlineImageStudioUtils.normalizeDimensionMultiple64(height),
         )
 
+    /**
+     * Serializes NovelAI parameters into the gateway's strict `NovelAIParameters` JSON schema.
+     * The gateway translates `characterPrompts` + `use_coords` into upstream `v4_prompt` / `v4_negative_prompt`.
+     */
     fun buildNovelAIPayloadJsonObject(
         prompt: String,
         params: NovelAIParams,
@@ -198,11 +212,10 @@ object OnlineImageNovelAI {
         upstreamModel: String? = null,
     ): JsonObject {
         val version = detectVersion(modelId, upstreamModel)
-        val normalizedSampler = if (params.sampler in availableSamplers(version)) {
-            params.sampler
-        } else {
-            availableSamplers(version).first()
-        }
+        val validSamplers = availableSamplers(version)
+        val validSchedules = availableNoiseSchedules(version)
+        val normalizedSampler = if (params.sampler in validSamplers) params.sampler else validSamplers.first()
+        val normalizedSchedule = if (params.noiseSchedule in validSchedules) params.noiseSchedule else validSchedules.first()
         val width = OnlineImageStudioUtils.normalizeDimensionMultiple64(params.width)
         val height = OnlineImageStudioUtils.normalizeDimensionMultiple64(params.height)
 
@@ -210,36 +223,34 @@ object OnlineImageNovelAI {
             put("negative_prompt", params.negativePrompt)
             put("width", width)
             put("height", height)
-            put("steps", params.steps.coerceIn(1, 50))
-            put("scale", params.scale.coerceIn(1.0, 20.0))
+            put("steps", params.steps.coerceIn(1, MAX_STEPS))
+            put("scale", params.scale.coerceIn(0.0, MAX_SCALE))
             put("cfg_rescale", params.cfgRescale.coerceIn(0.0, 1.0))
             put("sampler", normalizedSampler)
-            put("noise_schedule", params.noiseSchedule)
-            put("ucPreset", params.ucPreset.coerceIn(0, 3))
+            put("noise_schedule", normalizedSchedule)
+            put("ucPreset", params.ucPreset.coerceIn(0, 4))
             put("qualityToggle", params.qualityToggle)
-            params.seed?.takeIf { it >= 0L }?.let { put("seed", it) }
+            params.seed?.takeIf { it in 0L..MAX_SEED }?.let { put("seed", it) }
 
             if (version == NovelAIVersion.V3) {
-                put("sm", params.sm)
+                put("sm", params.sm || params.smDyn)
                 put("sm_dyn", params.smDyn)
             } else {
-                put("skip_cfg_above_sigma", if (params.varietyPlus) 19.0 else 0.0)
+                if (params.varietyPlus) {
+                    put("skip_cfg_above_sigma", 19.0)
+                }
                 val activeCharacters = params.characters
                     .take(MAX_CHARACTERS)
                     .filter { it.prompt.isNotBlank() || it.negativePrompt.isNotBlank() }
                 if (activeCharacters.isNotEmpty()) {
-                    put("v4_prompt", buildV4PromptObject(prompt, activeCharacters, params.useCoords))
-                    put("v4_negative_prompt", buildV4NegativeObject(params.negativePrompt, activeCharacters))
+                    put("characterPrompts", buildCharacterPromptsArray(activeCharacters))
+                    put("use_coords", params.useCoords)
                 }
             }
 
             if (isImg2Img) {
                 put("strength", params.strength.coerceIn(0.01, 0.99))
                 put("noise", params.noise.coerceIn(0.0, 0.99))
-            }
-            if (hasReferenceImages) {
-                put("reference_strength", params.referenceStrength.coerceIn(0.0, 1.0))
-                put("reference_information_extracted", params.infoExtracted.coerceIn(0.0, 1.0))
             }
         }
     }
@@ -249,36 +260,53 @@ object OnlineImageNovelAI {
         modelId: String = "",
         upstreamModel: String? = null,
     ): NovelAIParams {
-        val base = defaultParamsForVersion(detectVersion(modelId, upstreamModel))
-        val negPrompt = raw.str("negative_prompt") ?: raw.str("negativePrompt") ?: base.negativePrompt
+        val version = detectVersion(modelId, upstreamModel)
+        val base = defaultParamsForVersion(version)
+        val v4PromptObj = raw["v4_prompt"] as? JsonObject
+        val v4NegObj = raw["v4_negative_prompt"] as? JsonObject
+
+        val negPrompt = raw.str("negative_prompt")
+            ?: raw.str("negativePrompt")
+            ?: (v4NegObj?.get("caption") as? JsonObject)?.str("base_caption")
+            ?: base.negativePrompt
         val width = raw.int("width")?.let { OnlineImageStudioUtils.normalizeDimensionMultiple64(it) } ?: base.width
         val height = raw.int("height")?.let { OnlineImageStudioUtils.normalizeDimensionMultiple64(it) } ?: base.height
-        val steps = (raw.int("steps") ?: base.steps).coerceIn(1, 50)
-        val scale = (raw.dbl("scale") ?: base.scale).coerceIn(1.0, 20.0)
+        val steps = (raw.int("steps") ?: base.steps).coerceIn(1, MAX_STEPS)
+        val scale = (raw.dbl("scale") ?: base.scale).coerceIn(0.0, MAX_SCALE)
         val cfgRescale = (raw.dbl("cfg_rescale") ?: raw.dbl("cfgRescale") ?: base.cfgRescale).coerceIn(0.0, 1.0)
-        val sampler = raw.str("sampler") ?: base.sampler
-        val noiseSchedule = raw.str("noise_schedule") ?: raw.str("noiseSchedule") ?: base.noiseSchedule
-        val seed = raw.lng("seed")?.takeIf { it >= 0L }
-        val sm = raw.bool("sm") ?: base.sm
-        val smDyn = raw.bool("sm_dyn") ?: raw.bool("smDyn") ?: base.smDyn
+        val validSamplers = availableSamplers(version)
+        val rawSampler = raw.str("sampler") ?: base.sampler
+        val sampler = if (rawSampler in validSamplers) rawSampler else validSamplers.first()
+        val validSchedules = availableNoiseSchedules(version)
+        val rawSchedule = raw.str("noise_schedule") ?: raw.str("noiseSchedule") ?: base.noiseSchedule
+        val noiseSchedule = if (rawSchedule in validSchedules) rawSchedule else validSchedules.first()
+        val seed = raw.lng("seed")?.takeIf { it in 0L..MAX_SEED }
+        val sm = if (version == NovelAIVersion.V3) (raw.bool("sm") ?: base.sm) else false
+        val smDyn = if (version == NovelAIVersion.V3) (raw.bool("sm_dyn") ?: raw.bool("smDyn") ?: base.smDyn) else false
         val varietyPlus = raw.bool("varietyPlus")
             ?: raw.dbl("skip_cfg_above_sigma")?.let { it > 0.0 }
             ?: base.varietyPlus
         val qualityToggle = raw.bool("qualityToggle") ?: raw.bool("quality_toggle") ?: base.qualityToggle
-        val ucPreset = (raw.int("ucPreset") ?: raw.int("uc_preset") ?: base.ucPreset).coerceIn(0, 3)
+        val ucPreset = (raw.int("ucPreset") ?: raw.int("uc_preset") ?: base.ucPreset).coerceIn(0, 4)
         val strength = (raw.dbl("strength") ?: base.strength).coerceIn(0.01, 0.99)
         val noise = (raw.dbl("noise") ?: base.noise).coerceIn(0.0, 0.99)
         val refStrength = (raw.dbl("reference_strength") ?: raw.dbl("referenceStrength") ?: base.referenceStrength).coerceIn(0.0, 1.0)
         val infoExtracted = (raw.dbl("reference_information_extracted") ?: raw.dbl("infoExtracted") ?: base.infoExtracted).coerceIn(0.0, 1.0)
 
-        val v4PromptObj = raw["v4_prompt"] as? JsonObject
-        val v4NegObj = raw["v4_negative_prompt"] as? JsonObject
-        val useCoords = v4PromptObj?.bool("use_coords")
-            ?: raw.bool("use_coords")
-            ?: raw.bool("useCoords")
-            ?: base.useCoords
+        val useCoords = if (version == NovelAIVersion.V3) {
+            false
+        } else {
+            raw.bool("use_coords")
+                ?: v4PromptObj?.bool("use_coords")
+                ?: raw.bool("useCoords")
+                ?: base.useCoords
+        }
 
-        val parsedChars = parseCharactersFromRaw(raw, v4PromptObj, v4NegObj)
+        val parsedChars = if (version == NovelAIVersion.V3) {
+            emptyList()
+        } else {
+            parseCharactersFromRaw(raw, v4PromptObj, v4NegObj)
+        }
 
         return NovelAIParams(
             negativePrompt = negPrompt,
@@ -316,6 +344,22 @@ object OnlineImageNovelAI {
         v4PromptObj: JsonObject?,
         v4NegObj: JsonObject?,
     ): List<NovelAICharacterPrompt> {
+        // 1. Canonical gateway schema: characterPrompts: [{ prompt, uc, center: { x, y } }]
+        val gwArr = raw["characterPrompts"] as? JsonArray
+        if (gwArr != null && gwArr.isNotEmpty()) {
+            return gwArr.mapNotNull { elem ->
+                val obj = elem as? JsonObject ?: return@mapNotNull null
+                val pos = obj.str("prompt") ?: obj.str("char_caption") ?: ""
+                val neg = obj.str("uc") ?: obj.str("negative_prompt") ?: obj.str("negativePrompt") ?: ""
+                val centerObj = obj["center"] as? JsonObject
+                val cx = (centerObj?.flt("x") ?: obj.flt("centerX") ?: obj.flt("center_x") ?: 0.5f).coerceIn(0f, 1f)
+                val cy = (centerObj?.flt("y") ?: obj.flt("centerY") ?: obj.flt("center_y") ?: 0.5f).coerceIn(0f, 1f)
+                if (pos.isBlank() && neg.isBlank()) null
+                else NovelAICharacterPrompt(prompt = pos, negativePrompt = neg, centerX = cx, centerY = cy)
+            }.take(MAX_CHARACTERS)
+        }
+
+        // 2. Upstream NovelAI expanded format: v4_prompt.caption.char_captions + v4_negative_prompt.caption.char_captions
         val posCaps = (v4PromptObj?.get("caption") as? JsonObject)?.get("char_captions") as? JsonArray
         val negCaps = (v4NegObj?.get("caption") as? JsonObject)?.get("char_captions") as? JsonArray
         if (posCaps != null && posCaps.isNotEmpty()) {
@@ -328,7 +372,8 @@ object OnlineImageNovelAI {
                     ?: ((negObj?.get("centers") as? JsonArray)?.firstOrNull() as? JsonObject)
                 val cx = (centerObj?.flt("x") ?: 0.5f).coerceIn(0f, 1f)
                 val cy = (centerObj?.flt("y") ?: 0.5f).coerceIn(0f, 1f)
-                NovelAICharacterPrompt(
+                if (posPrompt.isBlank() && negPrompt.isBlank()) null
+                else NovelAICharacterPrompt(
                     prompt = posPrompt,
                     negativePrompt = negPrompt,
                     centerX = cx,
@@ -336,16 +381,39 @@ object OnlineImageNovelAI {
                 )
             }.take(MAX_CHARACTERS)
         }
+
+        // 3. Legacy simple format: characters: [{ prompt, negativePrompt, centerX, centerY }]
         val simpleArr = raw["characters"] as? JsonArray ?: return emptyList()
         return simpleArr.mapNotNull { elem ->
             val obj = elem as? JsonObject ?: return@mapNotNull null
             val pos = obj.str("prompt") ?: obj.str("char_caption") ?: ""
             val neg = obj.str("negativePrompt") ?: obj.str("negative_prompt") ?: obj.str("uc") ?: ""
-            val cx = (obj.flt("centerX") ?: obj.flt("center_x") ?: obj.flt("x") ?: 0.5f).coerceIn(0f, 1f)
-            val cy = (obj.flt("centerY") ?: obj.flt("center_y") ?: obj.flt("y") ?: 0.5f).coerceIn(0f, 1f)
-            NovelAICharacterPrompt(prompt = pos, negativePrompt = neg, centerX = cx, centerY = cy)
+            val centerObj = obj["center"] as? JsonObject
+            val cx = (centerObj?.flt("x") ?: obj.flt("centerX") ?: obj.flt("center_x") ?: obj.flt("x") ?: 0.5f).coerceIn(0f, 1f)
+            val cy = (centerObj?.flt("y") ?: obj.flt("centerY") ?: obj.flt("center_y") ?: obj.flt("y") ?: 0.5f).coerceIn(0f, 1f)
+            if (pos.isBlank() && neg.isBlank()) null
+            else NovelAICharacterPrompt(prompt = pos, negativePrompt = neg, centerX = cx, centerY = cy)
         }.take(MAX_CHARACTERS)
     }
+
+    private fun buildCharacterPromptsArray(chars: List<NovelAICharacterPrompt>): JsonArray =
+        buildJsonArray {
+            chars.forEach { ch ->
+                add(
+                    buildJsonObject {
+                        put("prompt", ch.prompt.trim())
+                        put("uc", ch.negativePrompt.trim())
+                        put(
+                            "center",
+                            buildJsonObject {
+                                put("x", roundCoordDouble(ch.centerX))
+                                put("y", roundCoordDouble(ch.centerY))
+                            },
+                        )
+                    },
+                )
+            }
+        }
 
     private fun JsonObject.str(key: String): String? = (this[key] as? JsonPrimitive)?.contentOrNull
     private fun JsonObject.int(key: String): Int? = (this[key] as? JsonPrimitive)?.intOrNull
@@ -353,76 +421,4 @@ object OnlineImageNovelAI {
     private fun JsonObject.dbl(key: String): Double? = (this[key] as? JsonPrimitive)?.doubleOrNull
     private fun JsonObject.flt(key: String): Float? = (this[key] as? JsonPrimitive)?.floatOrNull
     private fun JsonObject.bool(key: String): Boolean? = (this[key] as? JsonPrimitive)?.booleanOrNull
-
-    private fun buildV4PromptObject(
-        basePrompt: String,
-        chars: List<NovelAICharacterPrompt>,
-        useCoords: Boolean,
-    ): JsonObject =
-        buildJsonObject {
-            put(
-                "caption",
-                buildJsonObject {
-                    put("base_caption", basePrompt)
-                    put(
-                        "char_captions",
-                        buildJsonArray {
-                            chars.forEach { ch ->
-                                add(
-                                    buildJsonObject {
-                                        put("char_caption", ch.prompt)
-                                        put(
-                                            "centers",
-                                            buildJsonArray {
-                                                add(
-                                                    buildJsonObject {
-                                                        put("x", roundCoordDouble(ch.centerX))
-                                                        put("y", roundCoordDouble(ch.centerY))
-                                                    },
-                                                )
-                                            },
-                                        )
-                                    },
-                                )
-                            }
-                        },
-                    )
-                },
-            )
-            put("use_coords", useCoords)
-            put("use_order", true)
-        }
-
-    private fun buildV4NegativeObject(baseUc: String, chars: List<NovelAICharacterPrompt>): JsonObject =
-        buildJsonObject {
-            put(
-                "caption",
-                buildJsonObject {
-                    put("base_caption", baseUc)
-                    put(
-                        "char_captions",
-                        buildJsonArray {
-                            chars.forEach { ch ->
-                                add(
-                                    buildJsonObject {
-                                        put("char_caption", ch.negativePrompt)
-                                        put(
-                                            "centers",
-                                            buildJsonArray {
-                                                add(
-                                                    buildJsonObject {
-                                                        put("x", roundCoordDouble(ch.centerX))
-                                                        put("y", roundCoordDouble(ch.centerY))
-                                                    },
-                                                )
-                                            },
-                                        )
-                                    },
-                                )
-                            }
-                        },
-                    )
-                },
-            )
-        }
 }

@@ -102,6 +102,7 @@ fun NovelAIParamsPanel(
     val isZh = strings.language == AppLanguage.ZH
     val version = OnlineImageNovelAI.detectVersion(modelId, upstreamModel)
     val samplers = OnlineImageNovelAI.availableSamplers(version)
+    val noiseSchedules = OnlineImageNovelAI.availableNoiseSchedules(version)
 
     var showAdvanced by remember { mutableStateOf(false) }
     var activeCharIndex by remember { mutableIntStateOf(0) }
@@ -247,9 +248,9 @@ fun NovelAIParamsPanel(
                     MonoValuePill(text = "${params.steps}", highlighted = true)
                 }
                 Slider(
-                    value = params.steps.toFloat(),
-                    onValueChange = { v -> onChange { it.copy(steps = v.roundToInt().coerceIn(1, 50)) } },
-                    valueRange = 1f..50f,
+                    value = params.steps.coerceIn(1, OnlineImageNovelAI.MAX_STEPS).toFloat(),
+                    onValueChange = { v -> onChange { it.copy(steps = v.roundToInt().coerceIn(1, OnlineImageNovelAI.MAX_STEPS)) } },
+                    valueRange = 1f..OnlineImageNovelAI.MAX_STEPS.toFloat(),
                     colors = sliderColors,
                 )
             }
@@ -264,9 +265,9 @@ fun NovelAIParamsPanel(
                     MonoValuePill(text = "${((params.scale * 10).roundToInt() / 10.0)}", highlighted = true)
                 }
                 Slider(
-                    value = params.scale.toFloat(),
-                    onValueChange = { v -> onChange { it.copy(scale = (v * 10).roundToInt() / 10.0) } },
-                    valueRange = 1f..15f,
+                    value = params.scale.coerceIn(0.0, OnlineImageNovelAI.MAX_SCALE).toFloat(),
+                    onValueChange = { v -> onChange { it.copy(scale = ((v * 10).roundToInt() / 10.0).coerceIn(0.0, OnlineImageNovelAI.MAX_SCALE)) } },
+                    valueRange = 0f..OnlineImageNovelAI.MAX_SCALE.toFloat(),
                     colors = sliderColors,
                 )
             }
@@ -365,7 +366,7 @@ fun NovelAIParamsPanel(
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(strings.images.novelaiNoiseSchedule, color = c.ink, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        OnlineImageNovelAI.NOISE_SCHEDULES.forEach { ns ->
+                        noiseSchedules.forEach { ns ->
                             GuPill(ns, params.noiseSchedule == ns, { onChange { it.copy(noiseSchedule = ns) } })
                         }
                     }
