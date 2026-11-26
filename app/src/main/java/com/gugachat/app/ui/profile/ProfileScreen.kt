@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FolderZip
 import androidx.compose.material.icons.filled.FormatSize
+import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.OpenInBrowser
@@ -92,6 +93,7 @@ import com.gugachat.app.core.theme.UiScalePreset
 import com.gugachat.app.core.util.FormatUtils
 import com.gugachat.app.data.api.AppUpdateService
 import com.gugachat.app.data.api.UpdateChannel
+import com.gugachat.app.domain.chat.RetrievalMode
 import com.gugachat.app.ui.chat.ExternalImportSheet
 import com.gugachat.app.ui.providers.ApiProviderDraft
 import com.gugachat.app.ui.providers.ApiProviderEditorSheet
@@ -114,9 +116,41 @@ fun ProfileScreen(
 
     var showLogoutConfirm by remember { mutableStateOf(false) }
     var showDeepSeekImport by remember { mutableStateOf(false) }
+    var showRetrievalSettings by remember { mutableStateOf(false) }
     var editingProviderDraft by remember { mutableStateOf<ApiProviderDraft?>(null) }
     var showProviderImport by remember { mutableStateOf(false) }
     var activeBackupOp by remember { mutableStateOf<String?>(null) }
+
+    if (showRetrievalSettings) {
+        RetrievalSettingsSheet(
+            retrievalSettings = state.retrievalSettings,
+            apiProviders = state.providers,
+            localModelSpecs = state.localModelSpecs,
+            localModelStates = state.localModelStates,
+            vectorIndexProgress = state.vectorIndexProgress,
+            indexedVectorCount = state.indexedVectorCount,
+            isLocalEmbedLoaded = state.isLocalEmbedLoaded,
+            embeddingTestStatus = state.embeddingTestStatus,
+            isTestingEmbedding = state.isTestingEmbedding,
+            discoveredRetrievalModels = state.discoveredRetrievalModels,
+            isFetchingRetrievalModels = state.isFetchingRetrievalModels,
+            onSetRetrievalMode = viewModel::setRetrievalMode,
+            onSelectLocalModel = viewModel::selectLocalModel,
+            onDownloadLocalModel = viewModel::downloadLocalModel,
+            onCancelLocalModelDownload = viewModel::cancelLocalModelDownload,
+            onDeleteLocalModel = viewModel::deleteLocalModel,
+            onUnloadLocalModelNow = viewModel::unloadLocalModelNow,
+            onUpdateRemoteEmbeddingConfig = viewModel::updateRemoteEmbeddingConfig,
+            onUpdateRemoteRerankConfig = viewModel::updateRemoteRerankConfig,
+            onTestRemoteEmbedding = viewModel::testRemoteEmbedding,
+            onFetchRemoteRetrievalModels = viewModel::fetchRemoteRetrievalModels,
+            onClearVectorCache = viewModel::clearVectorCache,
+            onDismiss = {
+                viewModel.clearEmbeddingTestStatus()
+                showRetrievalSettings = false
+            },
+        )
+    }
 
     if (showDeepSeekImport) {
         ExternalImportSheet(
@@ -480,9 +514,9 @@ fun ProfileScreen(
             }
             val indigoTint = if (theme.isDark) Color(0xFFA5B4FC) else Color(0xFF4F46E5)
             val indigoBg = if (theme.isDark) Color(0xFF1E1F42) else Color(0xFFEEF2FF)
-            val memoryIndex = when (state.settings.memoryBudget) {
-                "low" -> 0
-                "high" -> 2
+            val memoryIndex = when (state.settings.memoryBudget.trim().lowercase()) {
+                "2k", "low" -> 0
+                "8k", "high" -> 2
                 else -> 1
             }
             val memoryBadgeText = when (memoryIndex) {
@@ -645,9 +679,9 @@ fun ProfileScreen(
                             selectedIndex = memoryIndex,
                             onSelect = { idx ->
                                 val preset = when (idx) {
-                                    0 -> "low"
-                                    2 -> "high"
-                                    else -> "standard"
+                                    0 -> "2K"
+                                    2 -> "8K"
+                                    else -> "4K"
                                 }
                                 viewModel.setMemoryBudget(preset)
                             },
@@ -662,6 +696,47 @@ fun ProfileScreen(
                         modifier = Modifier.padding(start = 56.dp),
                         thickness = theme.borderWidth,
                         color = c.border.copy(alpha = 0.78f),
+                    )
+
+                    // Row 4.5: Semantic Retrieval & Vector Model Settings Hub
+                    val ctxUi = strings.contextUi
+                    val retCfg = state.retrievalSettings
+                    val retrievalModeBadge = remember(retCfg, ctxUi) {
+                        when (retCfg.mode) {
+                            RetrievalMode.LEXICAL_ONLY -> ctxUi.badgeLexical to GuBadgeVariant.NEUTRAL
+                            RetrievalMode.LOCAL_SMALL_MODEL -> {
+                                val shortLocal = retCfg.localModelId
+                                    .removeSuffix("-int8")
+                                    .ifBlank { "gte-small-zh" }
+                                "${ctxUi.badgeLocalPrefix} · $shortLocal" to GuBadgeVariant.EMERALD
+                            }
+                            RetrievalMode.REMOTE_API -> {
+                                val shortRemote = retCfg.remoteEmbedding.modelId
+                                    .substringAfterLast('/')
+                                    .ifBlank { "API" }
+                                val rerankTag = if (retCfg.remoteRerank.enabled) " + ${ctxUi.badgeRerankSuffix}" else ""
+                                "${ctxUi.badgeCloudPrefix} · $shortRemote$rerankTag" to GuBadgeVariant.BLUE
+                            }
+                        }
+                    }
+                    GuSettingsRow(
+                        title = ctxUi.retrievalEntryTitle,
+                        subtitle = ctxUi.retrievalEntrySubtitle,
+                        icon = Icons.Default.Hub,
+                        iconTint = indigoTint,
+                        iconBg = indigoBg,
+                        showChevron = true,
+                        showDivider = true,
+                        onClick = {
+                            viewModel.refreshVectorStats()
+                            showRetrievalSettings = true
+                        },
+                        trailing = {
+                            GuBadge(
+                                text = retrievalModeBadge.first,
+                                variant = retrievalModeBadge.second,
+                            )
+                        },
                     )
 
                     // Row 5: SSE Stream Auto-Retry Count (default 3, range 0..10)

@@ -82,6 +82,7 @@ fun StandardChatWorkspace(
     onUpdateAttachmentInjectMode: (String, FileInjectMode) -> Unit = { _, _ -> },
     onReadAttachmentText: (suspend (String) -> String?)? = null,
     onOpenRecallInspector: () -> Unit,
+    onOpenContextSettings: () -> Unit = onOpenRecallInspector,
     onSend: () -> Unit,
     onStop: () -> Unit,
     onToast: (String) -> Unit,
@@ -258,6 +259,7 @@ fun StandardChatWorkspace(
             onOpenDiceDialog = {},
             onClearDiceRoll = {},
             onOpenRecallInspector = onOpenRecallInspector,
+            onOpenContextSettings = onOpenContextSettings,
             onSend = onSend,
             onStop = onStop,
         )

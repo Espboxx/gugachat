@@ -52,8 +52,10 @@ import com.gugachat.app.core.i18n.fmt
 import com.gugachat.app.core.theme.GuConfirmDialog
 import com.gugachat.app.core.theme.GuPopupMenu
 import com.gugachat.app.core.theme.LocalAppTheme
+import com.gugachat.app.data.api.DirectProtocolCodec
 import com.gugachat.app.data.local.AttachmentFileStore
 import com.gugachat.app.domain.chat.ConversationMode
+import com.gugachat.app.domain.chat.FileContextBudgeter
 import com.gugachat.app.domain.chat.TimelineReconciler
 import kotlinx.coroutines.launch
 import java.io.File
@@ -64,6 +66,7 @@ fun ChatWorkspaceScreen(
     viewModel: ChatViewModel,
 ) {
     val state by viewModel.ui.collectAsStateWithLifecycle()
+    val appSettings by container.settingsState.collectAsStateWithLifecycle()
     val strings = LocalAppStrings.current
     val outerTheme = LocalAppTheme.current
     val ctx = LocalContext.current
@@ -140,6 +143,11 @@ fun ChatWorkspaceScreen(
 
     val activeModel = state.models.firstOrNull { it.id == state.selectedModelId }
     val activeConv = state.activeConversation
+    val effectiveModelId = activeConv?.model?.takeIf { it.isNotBlank() } ?: state.selectedModelId
+    val nativeModelWindow = state.models.firstOrNull { it.id == effectiveModelId }?.context_window
+        ?: effectiveModelId?.let { DirectProtocolCodec.inferChatModelMeta(it).context_window }
+        ?: state.waterline.modelContextWindow
+    val isRerankActive = container.retrievalCoordinator.isRerankEnabled(appSettings.retrievalSettings)
     val mode = activeConv?.mode ?: ConversationMode.chat
     val activeGroupName = state.groups.firstOrNull { it.id == state.selectedGroupId }?.name.orEmpty()
     val novelConfig = activeConv?.novel
@@ -209,6 +217,8 @@ fun ChatWorkspaceScreen(
             params = state.effectiveChatParams,
             waterline = state.waterline,
             isCompacting = state.isCompacting,
+            compactingProgressText = state.compactingProgressText,
+            nativeModelWindow = nativeModelWindow,
             onSave = viewModel::updateConversationParams,
             onCompactNow = viewModel::triggerManualCompaction,
             onDismiss = { showParamsSheet = false },
@@ -223,6 +233,10 @@ fun ChatWorkspaceScreen(
             waterline = state.waterline,
             isExtracting = state.isExtractingMemory,
             initialTab = memorySheetInitialTab,
+            mutedRecallKeys = state.mutedRecallKeys,
+            vectorIndexProgress = state.vectorIndexProgress,
+            activeRetrievalMode = state.activeRetrievalMode,
+            isRerankActive = isRerankActive,
             onExtractMemories = viewModel::extractUserMemoriesNow,
             onAddMemory = viewModel::addUserMemory,
             onToggleMemoryPin = viewModel::toggleUserMemoryPin,
@@ -231,6 +245,14 @@ fun ChatWorkspaceScreen(
             onAddLedger = viewModel::addLedgerItem,
             onToggleLedgerPin = viewModel::toggleLedgerPin,
             onDeleteLedger = viewModel::deleteLedgerItem,
+            onToggleMuteRecall = viewModel::toggleMuteRecallKey,
+            onTogglePinRecall = viewModel::togglePinRecallItem,
+            onDisableRecall = viewModel::disableRecallItem,
+            onReindexVectors = viewModel::reindexActiveConversationVectors,
+            onOpenContextSettings = {
+                showMemorySheet = false
+                showParamsSheet = true
+            },
             onDismiss = { showMemorySheet = false },
         )
     }
@@ -406,6 +428,8 @@ fun ChatWorkspaceScreen(
                 }
             },
             onDismiss = { showDeepSeekImport = false },
+            selectedGroupId = state.selectedGroupId,
+            selectedModelId = state.selectedModelId,
         )
     }
 
@@ -489,12 +513,30 @@ fun ChatWorkspaceScreen(
                         showParamsSheet = true
                     },
                 )
+                val overflowStatusColor = when {
+                    state.waterline.hardOverflow -> mc.danger
+                    state.waterline.isSliding -> mc.warning
+                    else -> mc.muted
+                }
+                val overflowSentShort = FileContextBudgeter.formatShortTokens(state.waterline.sentTokens)
+                val overflowLimitShort = FileContextBudgeter.formatShortTokens(state.waterline.effectiveLimitTokens)
+                val overflowRecallSuffix = if (state.waterline.retrievedMemoryCount > 0) {
+                    strings.contextUi.overflowSubtitleRecallSuffix.fmt("count" to state.waterline.retrievedMemoryCount)
+                } else {
+                    ""
+                }
+                val overflowSubtitle = strings.contextUi.overflowSubtitleSent.fmt(
+                    "pct" to state.waterline.sentPercentage,
+                    "sent" to overflowSentShort,
+                    "limit" to overflowLimitShort,
+                ) + overflowRecallSuffix
+
                 DropdownMenuItem(
                     leadingIcon = {
                         Icon(
                             Icons.Default.Bookmarks,
                             contentDescription = null,
-                            tint = if (state.waterline.exceedsModelWindow) mc.danger else mc.muted,
+                            tint = overflowStatusColor,
                             modifier = Modifier.size(18.dp),
                         )
                     },
@@ -507,8 +549,8 @@ fun ChatWorkspaceScreen(
                                 fontWeight = FontWeight.Medium,
                             )
                             Text(
-                                text = "${state.waterline.percentage}% · ${state.waterline.usedTokens / 1000}K / ${state.waterline.effectiveLimitTokens / 1000}K",
-                                color = if (state.waterline.exceedsModelWindow) mc.danger else mc.muted,
+                                text = overflowSubtitle,
+                                color = overflowStatusColor,
                                 fontSize = 11.sp,
                                 fontFamily = FontFamily.Monospace,
                                 fontWeight = FontWeight.SemiBold,
@@ -803,6 +845,7 @@ fun ChatWorkspaceScreen(
                         memorySheetInitialTab = 3
                         showMemorySheet = true
                     },
+                    onOpenContextSettings = { showParamsSheet = true },
                     onSend = { viewModel.sendMessage() },
                     onStop = viewModel::stopStreaming,
                     onToast = { container.toastController.show(it) },
@@ -879,6 +922,7 @@ fun ChatWorkspaceScreen(
                         memorySheetInitialTab = 3
                         showMemorySheet = true
                     },
+                    onOpenContextSettings = { showParamsSheet = true },
                     onImpersonate = viewModel::impersonatePlayerDraft,
                     onSend = { viewModel.sendMessage() },
                     onStop = viewModel::stopStreaming,
@@ -928,6 +972,7 @@ fun ChatWorkspaceScreen(
                         memorySheetInitialTab = 3
                         showMemorySheet = true
                     },
+                    onOpenContextSettings = { showParamsSheet = true },
                     onSend = { viewModel.sendMessage() },
                     onStop = viewModel::stopStreaming,
                     onToast = { container.toastController.show(it) },

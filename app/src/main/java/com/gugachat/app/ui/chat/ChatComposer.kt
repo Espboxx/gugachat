@@ -114,6 +114,7 @@ fun ChatComposerBar(
     onOpenDiceDialog: () -> Unit,
     onClearDiceRoll: () -> Unit,
     onOpenRecallInspector: () -> Unit,
+    onOpenContextSettings: () -> Unit = onOpenRecallInspector,
     onSend: () -> Unit,
     onStop: () -> Unit,
     isImpersonating: Boolean = false,
@@ -369,14 +370,21 @@ fun ChatComposerBar(
                                 },
                             )
                         }
+                        val sentPct = waterline.sentPercentage
+                        val sentLabel = "${strings.contextUi.sentShortPrefix} ${sentPct}% · ${FileContextBudgeter.formatShortTokens(waterline.sentTokens)}"
+                        val waterlineTone = when {
+                            waterline.hardOverflow -> ComposerChipTone.DANGER
+                            waterline.isSliding -> ComposerChipTone.WARNING
+                            else -> ComposerChipTone.NEUTRAL
+                        }
                         ComposerChip(
-                            label = "${waterline.percentage}% · ${waterline.usedTokens / 1000}K",
+                            label = sentLabel,
                             icon = null,
-                            active = waterline.exceedsModelWindow,
-                            tone = if (waterline.exceedsModelWindow) ComposerChipTone.DANGER else ComposerChipTone.NEUTRAL,
+                            active = waterline.hardOverflow || waterline.isSliding,
+                            tone = waterlineTone,
                             onClick = {
                                 showToolsPanel = false
-                                onOpenRecallInspector()
+                                onOpenContextSettings()
                             },
                         )
                     }
@@ -589,7 +597,8 @@ fun ChatComposerBar(
                     }
                     val dotColor = when {
                         showToolsPanel -> null
-                        waterline.exceedsModelWindow -> c.danger
+                        waterline.hardOverflow -> c.danger
+                        waterline.isSliding -> c.warning
                         draftHasImages && !supportsVision -> c.warning
                         draftDiceRoll != null -> c.warning
                         else -> null
@@ -935,6 +944,7 @@ private fun DeepThinkTogglePill(
 private enum class ComposerChipTone {
     PRIMARY,
     ACCENT,
+    WARNING,
     DANGER,
     NEUTRAL,
 }
@@ -953,18 +963,21 @@ private fun ComposerChip(
     val c = theme.colors
     val bg = when {
         tone == ComposerChipTone.DANGER -> c.dangerBg
+        tone == ComposerChipTone.WARNING -> c.warningBg
         active && tone == ComposerChipTone.ACCENT -> c.tag
         active && tone == ComposerChipTone.PRIMARY -> c.primarySoft
         else -> c.surfaceSoft
     }
     val fg = when {
         tone == ComposerChipTone.DANGER -> c.danger
+        tone == ComposerChipTone.WARNING -> c.warning
         active && tone == ComposerChipTone.ACCENT -> c.tagInk
         active && tone == ComposerChipTone.PRIMARY -> c.primarySoftInk
         else -> c.muted
     }
     val border = when {
         tone == ComposerChipTone.DANGER -> c.danger.copy(alpha = 0.45f)
+        tone == ComposerChipTone.WARNING -> c.warning.copy(alpha = 0.45f)
         active && tone == ComposerChipTone.ACCENT -> c.accent.copy(alpha = 0.48f)
         active && tone == ComposerChipTone.PRIMARY -> c.primary.copy(alpha = 0.42f)
         else -> c.border

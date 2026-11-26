@@ -1,5 +1,6 @@
 package com.gugachat.app.ui.chat
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -22,11 +23,16 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -63,6 +69,7 @@ import com.gugachat.app.core.theme.GuTextField
 import com.gugachat.app.core.theme.LocalAppTheme
 import com.gugachat.app.domain.chat.ChatParams
 import com.gugachat.app.domain.chat.ContextWaterlineSummary
+import com.gugachat.app.domain.chat.FileContextBudgeter
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -73,6 +80,8 @@ fun ChatParamsSheet(
     params: ChatParams,
     waterline: ContextWaterlineSummary,
     isCompacting: Boolean,
+    compactingProgressText: String? = null,
+    nativeModelWindow: Int = waterline.modelContextWindow,
     onSave: (String, ChatParams) -> Unit,
     onCompactNow: () -> Unit,
     onDismiss: () -> Unit,
@@ -146,44 +155,75 @@ fun ChatParamsSheet(
                     .padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                // Section 1: Context Budget / Waterline
+                // Section 1: Dual-Metric Context Budget / Waterline
+                val ctxUi = strings.contextUi
+                val sentTokens = waterline.sentTokens.coerceAtLeast(0)
+                val sentPct = waterline.sentPercentage.coerceIn(0, 100)
+                val limitTokens = waterline.effectiveLimitTokens.coerceAtLeast(1)
+                val sentShort = FileContextBudgeter.formatShortTokens(sentTokens)
+                val limitShort = FileContextBudgeter.formatShortTokens(limitTokens)
+                val archiveShort = FileContextBudgeter.formatShortTokens(waterline.archiveTotalTokens.coerceAtLeast(sentTokens))
+                val nativeWindowShort = FileContextBudgeter.formatShortTokens(nativeModelWindow.coerceAtLeast(1))
+
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     GuSectionHeader(
                         title = strings.chat.contextBudget,
                         trailing = {
                             val pctVariant = when {
-                                waterline.exceedsModelWindow || waterline.percentage >= 90 -> GuBadgeVariant.DANGER
-                                waterline.percentage >= 65 -> GuBadgeVariant.AMBER
+                                waterline.hardOverflow -> GuBadgeVariant.DANGER
+                                waterline.isSliding || sentPct >= 80 -> GuBadgeVariant.AMBER
                                 else -> GuBadgeVariant.EMERALD
                             }
-                            GuBadge(text = "${waterline.percentage}%", variant = pctVariant)
+                            GuBadge(text = "${ctxUi.sentShortPrefix} ${sentPct}%", variant = pctVariant)
                         },
                     )
 
                     GuCard(modifier = Modifier.fillMaxWidth()) {
-                        Text(
-                            text = strings.chat.contextWaterline.fmt(
-                                "used" to waterline.usedTokens,
-                                "budget" to waterline.effectiveLimitTokens,
-                                "pct" to waterline.percentage,
-                            ),
-                            color = c.ink,
-                            fontSize = 12.5.sp,
-                            fontWeight = FontWeight.SemiBold,
-                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text(
+                                text = ctxUi.sentPayloadHeader.fmt(
+                                    "sent" to sentShort,
+                                    "limit" to limitShort,
+                                    "pct" to sentPct,
+                                ),
+                                color = c.ink,
+                                fontSize = 12.5.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.weight(1f),
+                            )
+                            if (waterline.archiveTotalTokens > sentTokens) {
+                                GuBadge(
+                                    text = ctxUi.archiveTotalLabel.fmt("archive" to archiveShort),
+                                    variant = if (waterline.hardOverflow) GuBadgeVariant.DANGER else GuBadgeVariant.AMBER,
+                                )
+                            }
+                        }
 
                         Spacer(Modifier.height(10.dp))
 
-                        val systemTokens = waterline.summaryTokens.coerceAtLeast(0)
-                        val memoryTokens = (waterline.memoryTokens + waterline.recalledMemoryTokens + waterline.novelLoreTokens).coerceAtLeast(0)
-                        val historyTokens = (waterline.usedTokens - systemTokens - memoryTokens).coerceAtLeast(0)
-                        val limit = waterline.effectiveLimitTokens.coerceAtLeast(1)
-                        val scaleDenom = maxOf(limit, waterline.usedTokens).coerceAtLeast(1).toFloat()
+                        // Calibrated, strictly non-overlapping Actual Sent Payload segments
+                        val systemTokens = (waterline.baseSystemTokens + waterline.summaryTokens).coerceAtLeast(0)
+                        val memoryTokens = (
+                            waterline.memoryTokens +
+                                waterline.novelLoreTokens +
+                                waterline.recalledMemoryTokens
+                            ).coerceAtLeast(0)
+                        val historyTokens = (sentTokens - systemTokens - memoryTokens).coerceAtLeast(0)
+                        val barTotal = systemTokens + memoryTokens + historyTokens
+                        val scaleDenom = maxOf(limitTokens, barTotal).coerceAtLeast(1).toFloat()
                         val sysFrac = (systemTokens / scaleDenom).coerceIn(0f, 1f)
                         val memFrac = (memoryTokens / scaleDenom).coerceIn(0f, 1f)
                         val histFrac = (historyTokens / scaleDenom).coerceIn(0f, 1f)
                         val freeFrac = (1f - sysFrac - memFrac - histFrac).coerceAtLeast(0f)
-                        val histColor = if (waterline.exceedsModelWindow) c.danger else c.primary
+                        val histColor = when {
+                            waterline.hardOverflow -> c.danger
+                            waterline.isSliding || sentPct >= 80 -> c.warning
+                            else -> c.primary
+                        }
 
                         Row(
                             modifier = Modifier
@@ -230,19 +270,72 @@ fun ChatParamsSheet(
                         ) {
                             WaterlineLegendDot(
                                 color = c.accent,
-                                label = if (isZh) "系统/摘要" else "System",
-                                value = formatCompactTokens(systemTokens),
+                                label = ctxUi.legendSystemSummary,
+                                value = FileContextBudgeter.formatShortTokens(systemTokens),
                             )
                             WaterlineLegendDot(
                                 color = c.success,
-                                label = if (isZh) "记忆" else "Memory",
-                                value = formatCompactTokens(memoryTokens),
+                                label = ctxUi.legendMemoryLore,
+                                value = FileContextBudgeter.formatShortTokens(memoryTokens),
                             )
                             WaterlineLegendDot(
                                 color = histColor,
-                                label = if (isZh) "历史" else "History",
-                                value = formatCompactTokens(historyTokens),
+                                label = ctxUi.legendHistoryDraft,
+                                value = FileContextBudgeter.formatShortTokens(historyTokens),
                             )
+                            if (waterline.fileTokens > 0) {
+                                WaterlineLegendDot(
+                                    color = c.muted,
+                                    label = ctxUi.legendFiles,
+                                    value = FileContextBudgeter.formatShortTokens(waterline.fileTokens),
+                                )
+                            }
+                        }
+
+                        if (waterline.hardOverflow || waterline.isSliding || waterline.trimmedMessageCount > 0) {
+                            Spacer(Modifier.height(10.dp))
+                            val isDanger = waterline.hardOverflow
+                            val stripBg = if (isDanger) c.dangerBg else c.warningBg
+                            val stripFg = if (isDanger) c.danger else c.warning
+                            val statusCopy = if (isDanger) {
+                                ctxUi.hardOverflowWarning.fmt(
+                                    "sent" to sentShort,
+                                    "window" to FileContextBudgeter.formatShortTokens(waterline.modelContextWindow),
+                                )
+                            } else {
+                                ctxUi.slidingExplanation.fmt(
+                                    "archive" to archiveShort,
+                                    "trimmed" to waterline.trimmedMessageCount,
+                                )
+                            }
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = stripBg,
+                                border = BorderStroke(theme.borderWidth, stripFg.copy(alpha = 0.4f)),
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                                    verticalAlignment = Alignment.Top,
+                                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                                ) {
+                                    Icon(
+                                        imageVector = if (isDanger) Icons.Default.WarningAmber else Icons.Default.Info,
+                                        contentDescription = null,
+                                        tint = stripFg,
+                                        modifier = Modifier
+                                            .padding(top = 1.dp)
+                                            .size(15.dp),
+                                    )
+                                    Text(
+                                        text = statusCopy,
+                                        color = stripFg,
+                                        fontSize = 11.5.sp,
+                                        lineHeight = 16.5.sp,
+                                        fontWeight = FontWeight.Medium,
+                                    )
+                                }
+                            }
                         }
 
                         Spacer(Modifier.height(12.dp))
@@ -254,16 +347,16 @@ fun ChatParamsSheet(
                             GuTextField(
                                 value = contextWindowKText,
                                 onValueChange = { contextWindowKText = it.filter { ch -> ch.isDigit() }.take(4) },
-                                label = if (isZh) "上下文上限 (K)" else "Context Limit (K)",
-                                placeholder = if (isZh) "自动 (${waterline.modelContextWindow / 1000}K)" else "Auto (${waterline.modelContextWindow / 1000}K)",
+                                label = ctxUi.contextLimitLabel,
+                                placeholder = ctxUi.contextLimitAuto.fmt("window" to nativeWindowShort),
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                 modifier = Modifier.weight(1f),
                             )
                             GuTextField(
                                 value = maxHistoryText,
                                 onValueChange = { maxHistoryText = it.filter { ch -> ch.isDigit() }.take(3) },
-                                label = if (isZh) "附带消息条数" else "Max History",
-                                placeholder = if (isZh) "不限" else "Unlimited",
+                                label = ctxUi.maxHistoryLabel,
+                                placeholder = ctxUi.maxHistoryUnlimited,
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                 modifier = Modifier.weight(1f),
                             )
@@ -275,9 +368,21 @@ fun ChatParamsSheet(
                             onClick = onCompactNow,
                             loading = isCompacting,
                             compact = true,
-                            variant = GuButtonVariant.SUBTLE,
+                            variant = when {
+                                waterline.hardOverflow -> GuButtonVariant.DANGER
+                                waterline.isSliding -> GuButtonVariant.HONEY
+                                else -> GuButtonVariant.SUBTLE
+                            },
                         ) {
-                            Text(strings.chat.compactNow, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text(
+                                text = if (isCompacting && !compactingProgressText.isNullOrBlank()) {
+                                    compactingProgressText
+                                } else {
+                                    strings.chat.compactNow
+                                },
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                            )
                         }
                     }
                 }
@@ -571,9 +676,4 @@ private fun WaterlineLegendDot(
             fontWeight = FontWeight.SemiBold,
         )
     }
-}
-
-private fun formatCompactTokens(tokens: Int): String = when {
-    tokens >= 1000 -> String.format(Locale.US, "%.1fK", tokens / 1000f)
-    else -> "${tokens}t"
 }
