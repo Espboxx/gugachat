@@ -851,7 +851,7 @@ object RpEngine {
                                     origin = "ai",
                                     createdAt = now,
                                     updatedAt = now,
-                                    estimatedTokens = max(10, (title.length + content.length) / 2 + 8),
+                                    estimatedTokens = TokenEstimator.estimateItem(title, content, overhead = 8, minTokens = 10),
                                 ),
                             )
                         }

@@ -4,7 +4,6 @@ import com.gugachat.app.data.api.AppJson
 import com.gugachat.app.data.api.WireChatMessageDto
 import kotlinx.serialization.Serializable
 import java.util.UUID
-import kotlin.math.ceil
 import kotlin.math.max
 
 @Serializable
@@ -16,18 +15,9 @@ private data class ExtractedMemoryDto(
 )
 
 object MemoryExtractor {
-    fun estimateUserMemoryTokens(content: String): Int {
+    fun estimateUserMemoryTokens(content: String, modelId: String? = null): Int {
         if (content.isBlank()) return 0
-        var cjk = 0
-        var other = 0
-        for (ch in content) {
-            if (CjkSearch.isHanChar(ch) || ch.code in 0x3000..0x303F || ch.code in 0xFF00..0xFFEF) {
-                cjk++
-            } else if (!ch.isWhitespace()) {
-                other++
-            }
-        }
-        return max(6, ceil(cjk * 1.45 + other * 0.38).toInt() + 6)
+        return max(6, TokenEstimator.estimateText(content, modelId) + 6)
     }
 
     fun buildMemoryExtractionMessages(

@@ -38,7 +38,12 @@ object UuSaveCodec {
     private val GOLD_KEYS = setOf("现金", "金钱", "资金", "银两", "金币", "余额", "cash", "gold", "money")
     private val PLACEHOLDER_PREFIXES = listOf("新属性", "attr-", "attr_")
     private val IGNORED_SETUP_VALUES = setOf("无", "暂无", "none", "n/a", "-")
+    private val GENERIC_LORE_KEYWORDS = setOf("消息", "动态", "微信", "朋友圈", "论坛", "热帖", "日记")
     private const val FRIEND_VERIFY_BOILERPLATE = "我通过了你的朋友验证请求"
+    private const val STAGE0_HUGE_TURN_THRESHOLD = 12
+    private const val STAGE0_HUGE_TOKEN_THRESHOLD = 40_000
+    private const val STAGE0_DEFAULT_EFFECTIVE_LIMIT = 100_352 // 128K * 0.80 - 2048
+    private const val STAGE0_TARGET_WINDOW_RATIO = 0.55
 
     fun isUuGameSave(root: JsonElement): Boolean {
         val obj = root as? JsonObject ?: return false
@@ -446,10 +451,10 @@ object UuSaveCodec {
                     keyEntities = listOf(playerName),
                     fromSeq = 1,
                     toSeq = maxSeq,
-                    locked = true,
+                    locked = false,
                     createdAt = exportedAt,
                     updatedAt = exportedAt,
-                    estimatedTokens = ContextBuilder.estimateMessageTokens(summary),
+                    estimatedTokens = EpisodeConsolidator.estimateEpisodeTokens("主线阶段 · $tLabel", summary),
                 ),
             )
         }
@@ -471,10 +476,10 @@ object UuSaveCodec {
                     keyEntities = listOf(playerName, evTitle).filter { it.isNotBlank() }.distinct(),
                     fromSeq = 1,
                     toSeq = maxSeq,
-                    locked = true,
+                    locked = false,
                     createdAt = created,
                     updatedAt = created,
-                    estimatedTokens = ContextBuilder.estimateMessageTokens(body),
+                    estimatedTokens = EpisodeConsolidator.estimateEpisodeTokens(epTitle, body),
                 ),
             )
         }
@@ -482,6 +487,24 @@ object UuSaveCodec {
         // 10. Keyword-Triggered Worldbook (`assets`, `events`, `contactChats`, `contactMomentPosts`, `forumPosts`, `diaryEntries`)
         val loreEntries = ArrayList<NovelLoreEntry>()
         val allNpcNames = cast.map { it.name }.filter { it.isNotBlank() }
+
+        fun sanitizeLoreKeywords(rawKeywords: List<String>, fallbackTitle: String): List<String> {
+            val cleaned = rawKeywords
+                .map { it.trim() }
+                .filter { kw ->
+                    kw.length >= 2 &&
+                        kw !in GENERIC_LORE_KEYWORDS &&
+                        !kw.equals(playerName, ignoreCase = true)
+                }
+                .distinct()
+            if (cleaned.isNotEmpty()) return cleaned
+            val safeTitle = fallbackTitle.trim()
+            return if (safeTitle.length >= 2 && safeTitle !in GENERIC_LORE_KEYWORDS && !safeTitle.equals(playerName, ignoreCase = true)) {
+                listOf(safeTitle)
+            } else {
+                emptyList()
+            }
+        }
 
         fun addLore(
             idSuffix: String,
@@ -500,7 +523,7 @@ object UuSaveCodec {
                 category = category,
                 title = title.trim().take(60),
                 content = cleanBody,
-                keywords = keywords.map { it.trim() }.filter { it.isNotEmpty() }.distinct().ifEmpty { listOf(title.trim()) },
+                keywords = sanitizeLoreKeywords(keywords, title),
                 alwaysActive = alwaysActive,
                 priority = priority,
                 enabled = true,
@@ -593,7 +616,7 @@ object UuSaveCodec {
                     category = "concept",
                     title = "私聊记录 · $npcName",
                     content = content.take(2000),
-                    keywords = listOf(npcName, "微信", "私聊", "消息"),
+                    keywords = listOf(npcName, "$npcName&私聊"),
                     priority = 65,
                 )
             }
@@ -624,7 +647,7 @@ object UuSaveCodec {
                     category = "concept",
                     title = "朋友圈动态（${lines.size} 条）",
                     content = lines.joinToString("\n\n").take(2400),
-                    keywords = listOf("朋友圈", "动态") + momentAuthors.toList(),
+                    keywords = momentAuthors.filter { it != "好友" }.toList(),
                     priority = 50,
                 )
             }
@@ -654,7 +677,7 @@ object UuSaveCodec {
                 category = "concept",
                 title = "论坛 · ${title.ifBlank { "帖子 #${idx + 1}" }}",
                 content = full.take(2200),
-                keywords = (listOf(title.take(18), "论坛", "热帖", "八卦") + mentionedNpcs).distinct(),
+                keywords = (listOf(title.take(18)) + mentionedNpcs).distinct(),
                 priority = 45,
             )
         }
@@ -666,12 +689,13 @@ object UuSaveCodec {
             val dTitle = d.strOrNull("title")?.trim()?.takeIf { it.isNotEmpty() }
                 ?: d.strOrNull("timeLabel")?.trim()?.takeIf { it.isNotEmpty() }
                 ?: "日记 #${idx + 1}"
+            val mentionedNpcs = allNpcNames.filter { n -> dTitle.contains(n) || body.contains(n) }
             addLore(
                 idSuffix = "diary_$idx",
                 category = "concept",
                 title = "日记 · $dTitle",
                 content = body.take(1800),
-                keywords = listOf("日记", dTitle, playerName),
+                keywords = (listOf(dTitle) + mentionedNpcs).distinct(),
                 priority = 50,
             )
         }
@@ -705,12 +729,43 @@ object UuSaveCodec {
             quickActions = quickActions,
         )
 
+        // Stage-0 Cold-Start: for huge saves (>12 turns or >40K est tokens), set activeWindowStartSeq
+        // so the conversation opens cleanly inside ~55% of the default context window with zero API cost.
+        val totalEstMsgTokens = messages.sumOf { it.tokenEstimate }
+        val stage0WindowStartSeq: Int? = if (messages.size > STAGE0_HUGE_TURN_THRESHOLD || totalEstMsgTokens > STAGE0_HUGE_TOKEN_THRESHOLD) {
+            val prefixEst = TokenEstimator.estimateText(worldview) +
+                TokenEstimator.estimateText(systemRules) +
+                TokenEstimator.estimateText(playerPersona) +
+                cast.size * 60 +
+                minOf(8_000, memoryEpisodes.sumOf { it.estimatedTokens }) +
+                rpConfig.loreTokenBudget +
+                1_200
+            val targetTotal = (STAGE0_DEFAULT_EFFECTIVE_LIMIT * STAGE0_TARGET_WINDOW_RATIO).toInt()
+            val historyBudget = (targetTotal - prefixEst).coerceIn(8_000, 50_000)
+            var keptTokens = 0
+            var keptCount = 0
+            var startSeq = messages.last().seq
+            val maxInitialTurns = if (totalEstMsgTokens > STAGE0_HUGE_TOKEN_THRESHOLD) messages.size else STAGE0_HUGE_TURN_THRESHOLD
+            for (i in messages.indices.reversed()) {
+                val msg = messages[i]
+                if (keptCount >= maxInitialTurns) break
+                if (keptCount >= 2 && keptTokens + msg.tokenEstimate > historyBudget) break
+                keptTokens += msg.tokenEstimate
+                keptCount++
+                startSeq = msg.seq
+            }
+            startSeq.takeIf { it > messages.first().seq }
+        } else {
+            null
+        }
+
         val createdAt = messages.firstOrNull()?.createdAt ?: exportedAt
         val updatedAt = maxOf(exportedAt, messages.maxOfOrNull { it.createdAt } ?: exportedAt)
         val conversation = ChatConversation(
             id = convId,
             title = convTitle,
             mode = ConversationMode.rp,
+            params = ChatParams(activeWindowStartSeq = stage0WindowStartSeq),
             rp = rpConfig,
             createdAt = createdAt,
             updatedAt = updatedAt,

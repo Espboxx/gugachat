@@ -69,6 +69,7 @@ data class ChatParams(
     val enableAutoConsolidate: Boolean = true,
     val contextWindowOverride: Int? = null,
     val maxHistoryMessages: Int? = null,
+    val activeWindowStartSeq: Int? = null,
 )
 
 @Serializable
@@ -506,6 +507,7 @@ data class RecalledMemoryInspectItem(
     val score: Double? = null,
     val estimatedTokens: Int = 0,
     val matchedTerms: List<String> = emptyList(),
+    val triggerKind: String = "lexical", // constant | pinned_ledger | keyword | semantic | lexical | recursion_1hop
 )
 
 @Serializable
@@ -529,6 +531,17 @@ data class ContextWaterlineSummary(
     val retrievedMemoryCount: Int = 0,
     val recalledMemoryTokens: Int = 0,
     val recalledItems: List<RecalledMemoryInspectItem> = emptyList(),
+    val sentTokens: Int = 0,
+    val sentPercentage: Int = 0,
+    val archiveTotalTokens: Int = 0,
+    val isSliding: Boolean = false,
+    val hardOverflow: Boolean = false,
+    val uncompactedOverflowCount: Int = 0,
+    val baseSystemTokens: Int = 0,
+    val recallBudgetTokens: Int = 0,
+    val recalledTotalTokens: Int = 0,
+    val retrievalModeUsed: String = "lexical",
+    val droppedRecallCount: Int = 0,
 )
 
 @Serializable

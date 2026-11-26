@@ -1,6 +1,5 @@
 package com.gugachat.app.domain.chat
 
-import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
@@ -25,6 +24,11 @@ data class ContextBuildInput(
     val semanticScorer: SemanticScorer? = null,
     val resolveAttachmentDataUrl: (suspend (String) -> String?)? = null,
     val resolveAttachmentText: (suspend (String) -> String?)? = null,
+    val precomputedSemanticScores: Map<String, Double>? = null,
+    val mutedRecallKeys: Set<String> = emptySet(),
+    val modelId: String? = null,
+    val externalCalibration: Double? = null,
+    val minSemanticCosine: Double = 0.50,
 )
 
 data class CoreMemoryBlockResult(
@@ -41,6 +45,7 @@ data class SystemPrefixResult(
     val novelLoreTokens: Int,
     val archivalUserMemories: List<UserMemory>,
     val overflowEpisodes: List<MemoryEpisode>,
+    val baseSystemTokens: Int = 0,
 )
 
 data class TailRecallBundle(
@@ -53,6 +58,9 @@ data class TailRecallBundle(
     val tailRecallTokens: Int = 0,
     val retrievedMemoryCount: Int = 0,
     val recalledItems: List<RecalledMemoryInspectItem> = emptyList(),
+    val recallBudgetTokens: Int = 0,
+    val droppedRecallCount: Int = 0,
+    val retrievalModeUsed: String = "lexical",
 )
 
 object ContextBuilder {
@@ -64,23 +72,13 @@ object ContextBuilder {
         MemoryCategory.other to "备忘",
     )
 
-    fun estimateTextTokens(text: String): Int {
-        if (text.isEmpty()) return 0
-        var cjk = 0
-        var other = 0
-        var spaces = 0
-        for (ch in text) {
-            when {
-                CjkSearch.isHanChar(ch) || ch.code in 0x3000..0x303F || ch.code in 0xFF00..0xFFEF -> cjk++
-                ch.isWhitespace() -> spaces++
-                else -> other++
-            }
-        }
-        return max(1, ceil(cjk * 1.45 + other * 0.38 + spaces * 0.20).toInt())
-    }
+    private const val MAX_SUMMARY_CAP_TOKENS = 8000
 
-    fun estimateMessageTokens(text: String, imageCount: Int = 0): Int =
-        estimateTextTokens(text) + max(0, imageCount) * 765 + 8
+    fun estimateTextTokens(text: String, modelId: String? = null): Int =
+        TokenEstimator.estimateText(text, modelId)
+
+    fun estimateMessageTokens(text: String, imageCount: Int = 0, modelId: String? = null): Int =
+        TokenEstimator.estimateMessage(text, imageCount, modelId)
 
     fun coreMemoryLimit(budget: MemoryBudget): Int = when (budget) {
         MemoryBudget.low -> 400
@@ -100,9 +98,42 @@ object ContextBuilder {
         MemoryBudget.high -> 0.22
     }
 
+    fun tailRecallPresetCap(budget: MemoryBudget): Int = when (budget) {
+        MemoryBudget.low -> 2000
+        MemoryBudget.standard -> 4000
+        MemoryBudget.high -> 8000
+    }
+
+    fun topKRecallCap(budget: MemoryBudget): Int = when (budget) {
+        MemoryBudget.low -> 4
+        MemoryBudget.standard -> 8
+        MemoryBudget.high -> 12
+    }
+
+    fun computeTailBudget(effectiveLimitTokens: Int, budget: MemoryBudget): Int =
+        min(floor(effectiveLimitTokens * tailRecallShare(budget)).toInt(), tailRecallPresetCap(budget))
+
+    fun computeSummaryCap(effectiveLimitTokens: Int): Int =
+        min(max(400, (effectiveLimitTokens * 0.16).toInt()), MAX_SUMMARY_CAP_TOKENS)
+
+    private fun mutedIdsForSource(mutedKeys: Set<String>, source: String): Set<String> {
+        if (mutedKeys.isEmpty()) return emptySet()
+        val prefix = "$source:"
+        val out = HashSet<String>()
+        for (k in mutedKeys) {
+            if (k.startsWith(prefix)) {
+                out.add(k.removePrefix(prefix))
+            } else if (!k.contains(':')) {
+                out.add(k)
+            }
+        }
+        return out
+    }
+
     fun buildCoreUserMemoryBlock(
         memories: List<UserMemory>,
         budget: MemoryBudget,
+        modelId: String? = null,
     ): CoreMemoryBlockResult {
         val enabled = memories.filter { it.enabled && it.content.isNotBlank() }
         if (enabled.isEmpty()) return CoreMemoryBlockResult("", 0, emptyList())
@@ -119,7 +150,11 @@ object ContextBuilder {
         var used = 16
 
         for (mem in sorted) {
-            val tok = if (mem.estimatedTokens > 0) mem.estimatedTokens else MemoryExtractor.estimateUserMemoryTokens(mem.content)
+            val tok = if (modelId == null && mem.estimatedTokens > 0) {
+                mem.estimatedTokens
+            } else {
+                MemoryExtractor.estimateUserMemoryTokens(mem.content, modelId)
+            }
             val isCoreCandidate = mem.pinned || mem.category == MemoryCategory.rule || mem.category == MemoryCategory.profile
             if (isCoreCandidate && used + tok <= cap) {
                 val tag = CATEGORY_TAG[mem.category] ?: "其他"
@@ -135,7 +170,7 @@ object ContextBuilder {
         } else {
             ""
         }
-        val actualTokens = if (block.isNotEmpty()) estimateTextTokens(block) + 8 else 0
+        val actualTokens = if (block.isNotEmpty()) estimateTextTokens(block, modelId) + 8 else 0
         return CoreMemoryBlockResult(block, actualTokens, archival)
     }
 
@@ -145,6 +180,8 @@ object ContextBuilder {
         val decayedImageMessageIds: Set<String>,
         val decayedFileMessageIds: Set<String>,
         val activeChapter: NovelChapter?,
+        val allActiveMessages: List<ChatMessage> = active,
+        val uncompactedExcludedCount: Int = 0,
     )
 
     fun sliceActiveWindow(
@@ -153,8 +190,22 @@ object ContextBuilder {
         novelChapters: List<NovelChapter>,
         attachmentsById: Map<String, ChatAttachmentMeta> = emptyMap(),
     ): ActiveWindowSlice {
-        val active = TimelineReconciler.activeMessages(messages)
-        val tipSeq = active.maxOfOrNull { it.seq } ?: 0
+        val allActive = TimelineReconciler.activeMessages(messages)
+        val tipSeq = allActive.maxOfOrNull { it.seq } ?: 0
+
+        // C1 fix: always exclude compacted turns (seq <= summarizedUntilSeq) from the raw active window,
+        // and honor Stage-0 / hysteresis activeWindowStartSeq if set beyond summarizedUntilSeq.
+        val compactedCutoff = conversation.summarizedUntilSeq.coerceAtLeast(0)
+        val uncompacted = allActive.filter { it.seq > compactedCutoff }
+        val windowStart = conversation.params.activeWindowStartSeq?.takeIf { it > compactedCutoff }
+        val active = if (windowStart != null) {
+            val windowed = uncompacted.filter { it.seq >= windowStart }
+            if (windowed.isNotEmpty()) windowed else uncompacted.takeLast(1)
+        } else {
+            uncompacted
+        }
+        val uncompactedExcludedCount = max(0, uncompacted.size - active.size)
+
         val maxImgTurns = max(0, conversation.params.maxImageTurns)
         val maxFileTurns = max(0, conversation.params.maxFileTurns)
 
@@ -191,7 +242,15 @@ object ContextBuilder {
             null
         }
 
-        return ActiveWindowSlice(active, tipSeq, decayedImages, decayedFiles, activeChapter)
+        return ActiveWindowSlice(
+            active = active,
+            effectiveTipSeq = tipSeq,
+            decayedImageMessageIds = decayedImages,
+            decayedFileMessageIds = decayedFiles,
+            activeChapter = activeChapter,
+            allActiveMessages = allActive,
+            uncompactedExcludedCount = uncompactedExcludedCount,
+        )
     }
 
     fun buildSystemPrefix(
@@ -203,6 +262,7 @@ object ContextBuilder {
         episodes: List<MemoryEpisode>,
         effectiveTipSeq: Int,
         effectiveLimitTokens: Int,
+        modelId: String? = null,
     ): SystemPrefixResult {
         val isNovel = conversation.mode == ConversationMode.novel && conversation.novel != null
         val isRp = conversation.mode == ConversationMode.rp && conversation.rp != null
@@ -211,13 +271,17 @@ object ContextBuilder {
             .filter { !it.stale && it.toSeq <= effectiveTipSeq }
             .sortedWith(compareByDescending<MemoryEpisode> { it.level }.thenBy { it.fromSeq })
 
-        val summaryCap = max(400, (effectiveLimitTokens * 0.16).toInt())
+        val summaryCap = computeSummaryCap(effectiveLimitTokens)
         val tier1Episodes = ArrayList<MemoryEpisode>()
         val overflowEpisodes = ArrayList<MemoryEpisode>()
         var sumUsed = 0
 
         for (ep in activeEpisodes) {
-            val tok = if (ep.estimatedTokens > 0) ep.estimatedTokens else EpisodeConsolidator.estimateEpisodeTokens(ep.title, ep.summary)
+            val tok = if (modelId == null && ep.estimatedTokens > 0) {
+                ep.estimatedTokens
+            } else {
+                EpisodeConsolidator.estimateEpisodeTokens(ep.title, ep.summary, modelId)
+            }
             if (sumUsed + tok <= summaryCap) {
                 tier1Episodes.add(ep)
                 sumUsed += tok
@@ -237,7 +301,9 @@ object ContextBuilder {
             }
         }
 
-        val coreMem = buildCoreUserMemoryBlock(memories, memoryBudget)
+        // H5 fix: honor conversation.params.enableAutoMemory for personal UserMemory injection
+        val effectiveMemories = if (conversation.params.enableAutoMemory) memories else emptyList()
+        val coreMem = buildCoreUserMemoryBlock(effectiveMemories, memoryBudget, modelId)
 
         val activeChapter = if (isNovel) {
             val cid = conversation.novel!!.activeChapterId
@@ -280,9 +346,10 @@ object ContextBuilder {
             }
         }.trim()
 
-        val loreTok = constantLore.sumOf { NovelEngine.estimateLoreTokens(it) }
-        val chronicleTok = if (chronicleText.isNotBlank()) estimateTextTokens(chronicleText) else 0
-        val sysTok = if (fullSystem.isNotBlank()) estimateTextTokens(fullSystem) + 12 else 0
+        val loreTok = constantLore.sumOf { NovelEngine.estimateLoreTokens(it, modelId) }
+        val chronicleTok = if (chronicleText.isNotBlank()) estimateTextTokens(chronicleText, modelId) else 0
+        val sysTok = if (fullSystem.isNotBlank()) estimateTextTokens(fullSystem, modelId) + 12 else 0
+        val baseSystemTok = max(0, sysTok - coreMem.usedTokens - chronicleTok - loreTok)
 
         return SystemPrefixResult(
             systemText = fullSystem,
@@ -292,6 +359,7 @@ object ContextBuilder {
             novelLoreTokens = loreTok,
             archivalUserMemories = coreMem.archivalMemories,
             overflowEpisodes = overflowEpisodes,
+            baseSystemTokens = baseSystemTok,
         )
     }
 
@@ -308,11 +376,16 @@ object ContextBuilder {
         overflowEpisodes: List<MemoryEpisode>,
         activeChapter: NovelChapter?,
         semanticScorer: SemanticScorer? = null,
+        semanticScores: Map<String, Double>? = null,
+        modelId: String? = null,
+        mutedRecallKeys: Set<String> = emptySet(),
+        minSemanticCosine: Double = 0.50,
     ): TailRecallBundle {
         val isNovel = conversation.mode == ConversationMode.novel && conversation.novel != null
         val isRp = conversation.mode == ConversationMode.rp && conversation.rp != null
 
-        val tailBudget = floor(effectiveLimitTokens * tailRecallShare(memoryBudget)).toInt()
+        val tailBudget = computeTailBudget(effectiveLimitTokens, memoryBudget)
+        val topKCap = topKRecallCap(memoryBudget)
         val presentNames = when {
             isNovel -> conversation.novel?.currentStatus?.present.orEmpty()
             isRp -> conversation.rp?.cast?.filter { it.inScene }?.map { it.name }.orEmpty()
@@ -325,11 +398,19 @@ object ContextBuilder {
         }.joinToString("\n")
         val query = CjkSearch.buildMemoryQuery(querySeed, active, presentNames)
 
+        val effectiveArchivalMemories = if (conversation.params.enableAutoMemory) archivalUserMemories else emptyList()
+        val mutedLedger = mutedIdsForSource(mutedRecallKeys, "rp_ledger")
+        val mutedEpisodes = mutedIdsForSource(mutedRecallKeys, "episode_archived")
+        val mutedUserMems = mutedIdsForSource(mutedRecallKeys, "user_memory_archival")
+
         if (isRp) {
             val validLedger = memoryLedger.filter {
-                TimelineReconciler.isItemValidAtTip(it.enabled, it.stale, it.validFromSeq, it.supersededAtSeq, effectiveTipSeq)
+                it.id !in mutedLedger &&
+                    TimelineReconciler.isItemValidAtTip(it.enabled, it.stale, it.validFromSeq, it.supersededAtSeq, effectiveTipSeq)
             }
-            val activeLedger = validLedger.filter { it.pinned || it.locked || (!it.resolved && (it.kind == "promise" || it.kind == "quest")) }.take(6)
+            val activeLedger = validLedger
+                .filter { it.pinned || it.locked || (!it.resolved && (it.kind == "promise" || it.kind == "quest")) }
+                .take(6)
             val activeIds = activeLedger.map { it.id }.toSet()
             val restLedger = validLedger.filter { it.id !in activeIds }
             val ledgerCap = max(0, (tailBudget * 0.55).toInt())
@@ -337,7 +418,16 @@ object ContextBuilder {
                 CjkSearch.scoreMemoryCandidates(
                     candidates = restLedger.map { CjkSearch.ledgerItemToSearchCandidate(it) },
                     query = query,
-                    options = ScoreMemoryOptions(effectiveTipSeq, ledgerCap, semanticScorer = semanticScorer),
+                    options = ScoreMemoryOptions(
+                        activeTipSeq = effectiveTipSeq,
+                        maxTokens = ledgerCap,
+                        semanticScores = semanticScores,
+                        semanticScorer = if (semanticScores == null) semanticScorer else null,
+                        minSemanticCosine = minSemanticCosine,
+                        maxResults = topKCap,
+                        modelId = modelId,
+                        mutedIds = mutedLedger,
+                    ),
                 )
             } else {
                 ScoreMemoryResult(emptyList(), emptyList(), 0)
@@ -348,13 +438,46 @@ object ContextBuilder {
                 CjkSearch.scoreMemoryCandidates(
                     candidates = overflowEpisodes.map { CjkSearch.episodeToSearchCandidate(it) },
                     query = query,
-                    options = ScoreMemoryOptions(effectiveTipSeq, epCap, semanticScorer = semanticScorer),
+                    options = ScoreMemoryOptions(
+                        activeTipSeq = effectiveTipSeq,
+                        maxTokens = epCap,
+                        semanticScores = semanticScores,
+                        semanticScorer = if (semanticScores == null) semanticScorer else null,
+                        minSemanticCosine = minSemanticCosine,
+                        maxResults = topKCap,
+                        modelId = modelId,
+                        mutedIds = mutedEpisodes,
+                    ),
                 )
             } else {
                 ScoreMemoryResult(emptyList(), emptyList(), 0)
             }
 
+            val activeLines = ArrayList<String>(activeLedger.size)
+            val activeInspect = ArrayList<RecalledMemoryInspectItem>(activeLedger.size)
+            var activeTok = 0
+            for (item in activeLedger) {
+                val line = "- [${item.kind}] ${item.title}: ${item.content}"
+                val tok = estimateTextTokens(line, modelId)
+                activeLines.add(line)
+                activeTok += tok
+                activeInspect.add(
+                    RecalledMemoryInspectItem(
+                        id = item.id,
+                        title = item.title,
+                        contentPreview = item.content.take(80),
+                        category = item.kind,
+                        source = "rp_ledger",
+                        score = null,
+                        estimatedTokens = tok,
+                        matchedTerms = emptyList(),
+                        triggerKind = "pinned_ledger",
+                    ),
+                )
+            }
+
             val inspect = buildList {
+                addAll(activeInspect)
                 recalledLedger.selected.forEach { s ->
                     add(
                         RecalledMemoryInspectItem(
@@ -366,6 +489,7 @@ object ContextBuilder {
                             score = (s.score * 1000).roundToInt() / 1000.0,
                             estimatedTokens = s.estimatedTokens,
                             matchedTerms = s.matchedTerms,
+                            triggerKind = s.triggerKind,
                         ),
                     )
                 }
@@ -380,15 +504,15 @@ object ContextBuilder {
                             score = (s.score * 1000).roundToInt() / 1000.0,
                             estimatedTokens = s.estimatedTokens,
                             matchedTerms = s.matchedTerms,
+                            triggerKind = s.triggerKind,
                         ),
                     )
                 }
             }
-            val activeLines = activeLedger.map { "- [${it.kind}] ${it.title}: ${it.content}" }
             val recalledLines = recalledLedger.selected.map { "- [${it.item.kind ?: "fact"}] ${it.item.title.orEmpty()}: ${it.item.content.orEmpty()}" }
             val epLines = recalledEps.selected.map { "- [${it.item.title.orEmpty()}] ${(it.item.summary ?: it.item.content).orEmpty()}" }
-            val activeTok = activeLines.sumOf { estimateTextTokens(it) }
             val totalTok = activeTok + recalledLedger.usedTokens + recalledEps.usedTokens
+            val modeUsed = if (recalledLedger.retrievalModeUsed == "hybrid" || recalledEps.retrievalModeUsed == "hybrid") "hybrid" else "lexical"
             return TailRecallBundle(
                 rpActiveLedgerLines = activeLines,
                 rpRecalledMemoryLines = recalledLines,
@@ -396,6 +520,9 @@ object ContextBuilder {
                 tailRecallTokens = totalTok,
                 retrievedMemoryCount = inspect.size,
                 recalledItems = inspect,
+                recallBudgetTokens = tailBudget,
+                droppedRecallCount = recalledLedger.droppedCount + recalledEps.droppedCount,
+                retrievalModeUsed = modeUsed,
             )
         }
 
@@ -405,7 +532,16 @@ object ContextBuilder {
                 CjkSearch.scoreMemoryCandidates(
                     candidates = overflowEpisodes.map { CjkSearch.episodeToSearchCandidate(it) },
                     query = query,
-                    options = ScoreMemoryOptions(effectiveTipSeq, epCap, semanticScorer = semanticScorer),
+                    options = ScoreMemoryOptions(
+                        activeTipSeq = effectiveTipSeq,
+                        maxTokens = epCap,
+                        semanticScores = semanticScores,
+                        semanticScorer = if (semanticScores == null) semanticScorer else null,
+                        minSemanticCosine = minSemanticCosine,
+                        maxResults = topKCap,
+                        modelId = modelId,
+                        mutedIds = mutedEpisodes,
+                    ),
                 )
             } else {
                 ScoreMemoryResult(emptyList(), emptyList(), 0)
@@ -421,15 +557,25 @@ object ContextBuilder {
                     score = (s.score * 1000).roundToInt() / 1000.0,
                     estimatedTokens = s.estimatedTokens,
                     matchedTerms = s.matchedTerms,
+                    triggerKind = s.triggerKind,
                 )
             }
 
             val crossModeCap = max(0, min(tailBudget - epRes.usedTokens, totalUserMemoryLimit(memoryBudget) - coreMemoryTokens))
-            val archRes = if (archivalUserMemories.isNotEmpty() && crossModeCap > 0) {
+            val archRes = if (effectiveArchivalMemories.isNotEmpty() && crossModeCap > 0) {
                 CjkSearch.scoreMemoryCandidates(
-                    candidates = archivalUserMemories.map { CjkSearch.chatMemoryToSearchCandidate(it) },
+                    candidates = effectiveArchivalMemories.map { CjkSearch.chatMemoryToSearchCandidate(it) },
                     query = query,
-                    options = ScoreMemoryOptions(Int.MAX_VALUE, crossModeCap, semanticScorer = semanticScorer),
+                    options = ScoreMemoryOptions(
+                        activeTipSeq = Int.MAX_VALUE,
+                        maxTokens = crossModeCap,
+                        semanticScores = semanticScores,
+                        semanticScorer = if (semanticScores == null) semanticScorer else null,
+                        minSemanticCosine = minSemanticCosine,
+                        maxResults = topKCap,
+                        modelId = modelId,
+                        mutedIds = mutedUserMems,
+                    ),
                 )
             } else {
                 ScoreMemoryResult(emptyList(), emptyList(), 0)
@@ -451,9 +597,11 @@ object ContextBuilder {
                     score = (s.score * 1000).roundToInt() / 1000.0,
                     estimatedTokens = s.estimatedTokens,
                     matchedTerms = s.matchedTerms,
+                    triggerKind = s.triggerKind,
                 )
             }
             val crossTok = if (crossBlock.isNotEmpty()) archRes.usedTokens + 16 else 0
+            val modeUsed = if (epRes.retrievalModeUsed == "hybrid" || archRes.retrievalModeUsed == "hybrid") "hybrid" else "lexical"
             return TailRecallBundle(
                 chatTailRecallBlock = crossBlock,
                 chatRecallTokens = crossTok,
@@ -461,6 +609,9 @@ object ContextBuilder {
                 tailRecallTokens = epRes.usedTokens + crossTok,
                 retrievedMemoryCount = epInspect.size + crossInspect.size,
                 recalledItems = epInspect + crossInspect,
+                recallBudgetTokens = tailBudget,
+                droppedRecallCount = epRes.droppedCount + archRes.droppedCount,
+                retrievalModeUsed = modeUsed,
             )
         }
 
@@ -468,20 +619,33 @@ object ContextBuilder {
         val sections = ArrayList<String>()
         val inspected = ArrayList<RecalledMemoryInspectItem>()
         var chatTokens = 0
+        var dropped = 0
+        var usedHybrid = false
 
-        if (archivalUserMemories.isNotEmpty() && tailBudget > 0) {
+        if (effectiveArchivalMemories.isNotEmpty() && tailBudget > 0) {
             val epReserve = if (overflowEpisodes.isNotEmpty()) floor(tailBudget * 0.25).toInt() else 0
             val remMemLimit = max(0, totalUserMemoryLimit(memoryBudget) - coreMemoryTokens)
             val memCap = min(max(0, tailBudget - epReserve), remMemLimit)
             val archRes = if (memCap > 0) {
                 CjkSearch.scoreMemoryCandidates(
-                    candidates = archivalUserMemories.map { CjkSearch.chatMemoryToSearchCandidate(it) },
+                    candidates = effectiveArchivalMemories.map { CjkSearch.chatMemoryToSearchCandidate(it) },
                     query = query,
-                    options = ScoreMemoryOptions(Int.MAX_VALUE, memCap, semanticScorer = semanticScorer),
+                    options = ScoreMemoryOptions(
+                        activeTipSeq = Int.MAX_VALUE,
+                        maxTokens = memCap,
+                        semanticScores = semanticScores,
+                        semanticScorer = if (semanticScores == null) semanticScorer else null,
+                        minSemanticCosine = minSemanticCosine,
+                        maxResults = topKCap,
+                        modelId = modelId,
+                        mutedIds = mutedUserMems,
+                    ),
                 )
             } else {
                 ScoreMemoryResult(emptyList(), emptyList(), 0)
             }
+            dropped += archRes.droppedCount
+            if (archRes.retrievalModeUsed == "hybrid") usedHybrid = true
             if (archRes.selected.isNotEmpty()) {
                 val lines = archRes.selected.map { s ->
                     val catName = s.item.category ?: "other"
@@ -497,6 +661,7 @@ object ContextBuilder {
                             score = (s.score * 1000).roundToInt() / 1000.0,
                             estimatedTokens = s.estimatedTokens,
                             matchedTerms = s.matchedTerms,
+                            triggerKind = s.triggerKind,
                         ),
                     )
                     "- [$tag] ${(s.item.content ?: "").trim()}"
@@ -511,8 +676,18 @@ object ContextBuilder {
             val epRes = CjkSearch.scoreMemoryCandidates(
                 candidates = overflowEpisodes.map { CjkSearch.episodeToSearchCandidate(it) },
                 query = query,
-                options = ScoreMemoryOptions(effectiveTipSeq, remForEps, semanticScorer = semanticScorer),
+                options = ScoreMemoryOptions(
+                    activeTipSeq = effectiveTipSeq,
+                    maxTokens = remForEps,
+                    semanticScores = semanticScores,
+                    semanticScorer = if (semanticScores == null) semanticScorer else null,
+                    maxResults = topKCap,
+                    modelId = modelId,
+                    mutedIds = mutedEpisodes,
+                ),
             )
+            dropped += epRes.droppedCount
+            if (epRes.retrievalModeUsed == "hybrid") usedHybrid = true
             if (epRes.selected.isNotEmpty()) {
                 val lines = epRes.selected.map { s ->
                     inspected.add(
@@ -525,6 +700,7 @@ object ContextBuilder {
                             score = (s.score * 1000).roundToInt() / 1000.0,
                             estimatedTokens = s.estimatedTokens,
                             matchedTerms = s.matchedTerms,
+                            triggerKind = s.triggerKind,
                         ),
                     )
                     "- [${s.item.title ?: "历史片段"}] ${(s.item.summary ?: s.item.content ?: "").trim()}"
@@ -540,17 +716,23 @@ object ContextBuilder {
             tailRecallTokens = chatTokens,
             retrievedMemoryCount = inspected.size,
             recalledItems = inspected,
+            recallBudgetTokens = tailBudget,
+            droppedRecallCount = dropped,
+            retrievalModeUsed = if (usedHybrid) "hybrid" else "lexical",
         )
     }
 
     private data class ComputedPipeline(
         val active: List<ChatMessage>,
+        val allActiveMessages: List<ChatMessage>,
+        val uncompactedExcludedCount: Int,
         val activeChapter: NovelChapter?,
         val novelLore: List<NovelLoreEntry>,
         val windowLimit: Int,
         val budgetTokens: Int,
         val effectiveLimitTokens: Int,
         val calibration: Double,
+        val effectiveModelId: String?,
         val isNovel: Boolean,
         val isRp: Boolean,
         val loreMatch: LoreMatchResult,
@@ -559,6 +741,53 @@ object ContextBuilder {
         val dynamicOverhead: Int,
         val waterline: ContextWaterlineSummary,
     )
+
+    private fun precomputeSinglePassSemanticScores(
+        input: ContextBuildInput,
+        slice: ActiveWindowSlice,
+        isNovel: Boolean,
+        isRp: Boolean,
+    ): Map<String, Double>? {
+        if (input.precomputedSemanticScores != null) return input.precomputedSemanticScores
+        val scorer = input.semanticScorer ?: return null
+
+        val conv = input.conversation
+        val presentNames = when {
+            isNovel -> conv.novel?.currentStatus?.present.orEmpty()
+            isRp -> conv.rp?.cast?.filter { it.inScene }?.map { it.name }.orEmpty()
+            else -> emptyList()
+        }
+        val seed = buildList {
+            if (input.draftText.isNotBlank()) add(input.draftText)
+            if (isNovel && !slice.activeChapter?.outline.isNullOrBlank()) add(slice.activeChapter!!.outline)
+            if (isRp && !conv.rp?.state?.scene.isNullOrBlank()) add(conv.rp!!.state.scene)
+        }.joinToString("\n")
+        val budgetedQuery = CjkSearch.buildMemoryQuery(seed, slice.active, presentNames)
+        if (budgetedQuery.rawQueryText.isBlank()) return emptyMap()
+
+        val allCandidates = buildList {
+            if (isNovel || isRp) {
+                input.novelLore
+                    .filter { !it.alwaysActive && it.enabled && !it.stale }
+                    .forEach { add(CjkSearch.novelLoreToSearchCandidate(it)) }
+            }
+            if (isRp) {
+                input.memoryLedger
+                    .filter { it.enabled && !it.stale }
+                    .forEach { add(CjkSearch.ledgerItemToSearchCandidate(it)) }
+            }
+            input.memoryEpisodes
+                .filter { !it.stale && it.toSeq <= slice.effectiveTipSeq }
+                .forEach { add(CjkSearch.episodeToSearchCandidate(it)) }
+            if (conv.params.enableAutoMemory) {
+                input.memories
+                    .filter { it.enabled && it.content.isNotBlank() }
+                    .forEach { add(CjkSearch.chatMemoryToSearchCandidate(it)) }
+            }
+        }
+        if (allCandidates.isEmpty()) return emptyMap()
+        return scorer.score(budgetedQuery.rawQueryText, allCandidates)
+    }
 
     private fun runSharedPipeline(input: ContextBuildInput, allowScorer: Boolean): ComputedPipeline {
         val conv = input.conversation
@@ -569,11 +798,28 @@ object ContextBuilder {
         val maxReserve = max(512, min(32768, budgetTokens / 2))
         val outputReserve = (conv.params.maxTokens ?: 2048).coerceIn(512, maxReserve)
         val effectiveLimitTokens = max(1024, budgetTokens - outputReserve)
-        val calibration = if (conv.tokenCalibration in 0.4..2.5) conv.tokenCalibration else 1.0
+
+        val effectiveModelId = input.modelId?.takeIf { it.isNotBlank() }
+            ?: conv.model?.takeIf { it.isNotBlank() }
+        val calibration = when {
+            input.externalCalibration != null && input.externalCalibration in 0.4..2.5 -> input.externalCalibration
+            conv.tokenCalibration in 0.4..2.5 -> conv.tokenCalibration
+            else -> 1.0
+        }
 
         val isNovel = conv.mode == ConversationMode.novel && conv.novel != null
         val isRp = conv.mode == ConversationMode.rp && conv.rp != null
-        val scorer = if (allowScorer) input.semanticScorer else null
+
+        // Single-pass semantic scoring: use precomputedSemanticScores if given (including on synchronous
+        // waterline preview), otherwise invoke semanticScorer at most ONCE when allowScorer == true.
+        val resolvedSemanticScores: Map<String, Double>? = when {
+            input.precomputedSemanticScores != null -> input.precomputedSemanticScores
+            allowScorer && input.semanticScorer != null -> precomputeSinglePassSemanticScores(input, slice, isNovel, isRp)
+            else -> null
+        }
+
+        val mutedLoreIds = mutedIdsForSource(input.mutedRecallKeys, "novel_lore")
+        val topKCap = topKRecallCap(input.memoryBudget)
 
         val loreMatch = when {
             isNovel -> NovelEngine.matchNovelLore(
@@ -585,7 +831,12 @@ object ContextBuilder {
                 activeTipSeq = slice.effectiveTipSeq,
                 presentEntities = conv.novel.currentStatus?.present.orEmpty(),
                 sceneTitle = conv.novel.currentStatus?.location,
-                semanticScorer = scorer,
+                semanticScorer = null,
+                semanticScores = resolvedSemanticScores,
+                modelId = effectiveModelId,
+                mutedIds = mutedLoreIds,
+                maxTriggered = topKCap,
+                minSemanticCosine = input.minSemanticCosine,
             )
             isRp -> {
                 val rpCfg = conv.rp!!
@@ -598,7 +849,12 @@ object ContextBuilder {
                     activeTipSeq = slice.effectiveTipSeq,
                     presentEntities = rpCfg.cast.filter { it.inScene }.map { it.name },
                     sceneTitle = rpCfg.state.scene,
-                    semanticScorer = scorer,
+                    semanticScorer = null,
+                    semanticScores = resolvedSemanticScores,
+                    modelId = effectiveModelId,
+                    mutedIds = mutedLoreIds,
+                    maxTriggered = topKCap,
+                    minSemanticCosine = input.minSemanticCosine,
                 )
             }
             else -> LoreMatchResult(emptyList(), emptyList(), 0, 0)
@@ -613,6 +869,7 @@ object ContextBuilder {
             episodes = input.memoryEpisodes,
             effectiveTipSeq = slice.effectiveTipSeq,
             effectiveLimitTokens = effectiveLimitTokens,
+            modelId = effectiveModelId,
         )
 
         val tailBundle = buildTailRecallBundle(
@@ -627,7 +884,11 @@ object ContextBuilder {
             memoryLedger = input.memoryLedger,
             overflowEpisodes = prefix.overflowEpisodes,
             activeChapter = slice.activeChapter,
-            semanticScorer = scorer,
+            semanticScorer = null,
+            semanticScores = resolvedSemanticScores,
+            modelId = effectiveModelId,
+            mutedRecallKeys = input.mutedRecallKeys,
+            minSemanticCosine = input.minSemanticCosine,
         )
 
         val dynamicOverhead = when {
@@ -635,19 +896,29 @@ object ContextBuilder {
                 val novelCfg = conv.novel!!
                 loreMatch.triggeredTokens +
                     tailBundle.tailRecallTokens +
-                    estimateTextTokens(novelCfg.authorNote) +
-                    estimateTextTokens(slice.activeChapter?.outline.orEmpty()) +
+                    estimateTextTokens(novelCfg.authorNote, effectiveModelId) +
                     (if (novelCfg.enableStatusHud) 90 else 0) +
                     (if (novelCfg.autoSyncLore) 110 else 0) +
                     (if (novelCfg.autoAdvanceChapter) 85 else 0) +
-                    (if (novelCfg.enableChoices) 90 else 0)
+                    (if (novelCfg.enableChoices && novelCfg.playStyle != "author") 90 else 0)
             }
             isRp -> {
                 val rpCfg = conv.rp!!
-                180 + min(280, rpCfg.state.inventory.size * 12 + rpCfg.state.quests.size * 16 + rpCfg.cast.size * 20) +
+                val hudOverhead = 160 + min(
+                    360,
+                    rpCfg.state.inventory.size * 12 +
+                        rpCfg.state.quests.size * 16 +
+                        rpCfg.state.flags.size * 10 +
+                        rpCfg.state.stats.size * 8 +
+                        rpCfg.cast.size * 20,
+                )
+                val suffixOverhead = (if (rpCfg.enableStateHud) 160 else 0) +
+                    (if (rpCfg.enableLedger) 65 else 0) +
+                    (if (rpCfg.enableChoices) 120 else 0)
+                hudOverhead + suffixOverhead +
                     loreMatch.triggeredTokens +
-                    estimateTextTokens(rpCfg.authorNote) +
-                    estimateTextTokens(rpCfg.postHistoryInstructions) +
+                    estimateTextTokens(rpCfg.authorNote, effectiveModelId) +
+                    estimateTextTokens(rpCfg.postHistoryInstructions, effectiveModelId) +
                     tailBundle.tailRecallTokens
             }
             else -> tailBundle.tailRecallTokens
@@ -671,9 +942,10 @@ object ContextBuilder {
                 fileDecayed = msg.id in slice.decayedFileMessageIds,
                 attachmentsById = input.attachmentsById,
                 perTurnFileBudget = fileTurnBudget,
+                modelId = effectiveModelId,
             )
         }
-        val activeFileTokensTotal = slice.active.sumOf { msg ->
+        val msgFileCosts = slice.active.map { msg ->
             resolveMsgFileTokens(
                 msg = msg,
                 fileDecayed = msg.id in slice.decayedFileMessageIds,
@@ -687,27 +959,63 @@ object ContextBuilder {
             reservedFixedTokens = prefix.systemTokens + dynamicOverhead,
         )
         val draftTokens = if (input.draftText.isNotBlank() || effectiveDraftImages > 0 || effectiveDraftFiles.isNotEmpty()) {
-            estimateMessageTokens(input.draftText, effectiveDraftImages) + draftFileTokens
+            estimateMessageTokens(input.draftText, effectiveDraftImages, effectiveModelId) + draftFileTokens
         } else {
             0
         }
+
         val maxHistoryLimit = conv.params.maxHistoryMessages?.takeIf { it > 0 }
         var running = ((prefix.systemTokens + draftTokens + dynamicOverhead) * calibration).roundToInt()
         var kept = 0
         var keptHistoryRaw = 0
+        var keptFileTokensRaw = 0
         for (i in slice.active.indices.reversed()) {
             if (maxHistoryLimit != null && kept >= maxHistoryLimit) break
             val msgTok = (msgCosts[i] * calibration).roundToInt()
             if (kept > 0 && running + msgTok > effectiveLimitTokens) break
             running += msgTok
             keptHistoryRaw += msgCosts[i]
+            keptFileTokensRaw += msgFileCosts[i]
             kept++
         }
-        val activeMsgsRawTotal = if (maxHistoryLimit != null) keptHistoryRaw else msgCosts.sum()
-        val totalRaw = prefix.systemTokens + draftTokens + dynamicOverhead + activeMsgsRawTotal
-        val calibratedTotal = (totalRaw * calibration).roundToInt()
 
-        val loreInspect = loreMatch.triggered.map { entry ->
+        // Dual-Metric accounting:
+        // - sentTokens = actual kept payload + prefix + overhead + draft (drives bar/warning color)
+        // - archiveTotalTokens = full untrimmed non-deleted history + prefix + overhead + draft (informational)
+        val sentRaw = prefix.systemTokens + draftTokens + dynamicOverhead + keptHistoryRaw
+        val sentTokens = (sentRaw * calibration).roundToInt()
+        val sentPct = min(100, ((sentTokens.toDouble() / max(1, effectiveLimitTokens)) * 100.0).roundToInt())
+
+        val allArchiveHistoryRaw = slice.allActiveMessages.sumOf { msg ->
+            resolveMsgTokenCost(
+                msg = msg,
+                imageDecayed = msg.id in slice.decayedImageMessageIds,
+                fileDecayed = msg.id in slice.decayedFileMessageIds,
+                attachmentsById = input.attachmentsById,
+                perTurnFileBudget = fileTurnBudget,
+                modelId = effectiveModelId,
+            )
+        }
+        val archiveTotalTokens = ((prefix.systemTokens + draftTokens + dynamicOverhead + allArchiveHistoryRaw) * calibration).roundToInt()
+
+        val trimmedCount = slice.uncompactedExcludedCount + max(0, slice.active.size - kept)
+        val isSliding = trimmedCount > 0
+        val hardOverflow = sentTokens > windowLimit
+
+        val constantLoreInspect = loreMatch.constant.map { entry ->
+            RecalledMemoryInspectItem(
+                id = entry.id,
+                title = entry.title,
+                contentPreview = entry.content.take(80),
+                category = entry.category,
+                source = "novel_lore",
+                score = null,
+                estimatedTokens = NovelEngine.estimateLoreTokens(entry, effectiveModelId),
+                matchedTerms = emptyList(),
+                triggerKind = "constant",
+            )
+        }
+        val triggeredLoreInspect = loreMatch.triggered.map { entry ->
             RecalledMemoryInspectItem(
                 id = entry.id,
                 title = entry.title,
@@ -715,43 +1023,71 @@ object ContextBuilder {
                 category = entry.category,
                 source = "novel_lore",
                 score = loreMatch.triggeredScores[entry.id]?.let { (it * 1000).roundToInt() / 1000.0 },
-                estimatedTokens = NovelEngine.estimateLoreTokens(entry),
+                estimatedTokens = NovelEngine.estimateLoreTokens(entry, effectiveModelId),
                 matchedTerms = loreMatch.triggeredMatchedTerms[entry.id].orEmpty(),
+                triggerKind = loreMatch.triggeredKinds[entry.id] ?: "lexical",
             )
         }
-        val allRecalled = loreInspect + tailBundle.recalledItems
-        val pct = min(100, ((calibratedTotal.toDouble() / max(1, effectiveLimitTokens)) * 100.0).roundToInt())
+        val allRecalled = constantLoreInspect + triggeredLoreInspect + tailBundle.recalledItems
+        val recalledTotalTokens = allRecalled.sumOf { it.estimatedTokens }
+
+        val recallBudgetTokens = when {
+            isNovel -> conv.novel!!.loreTokenBudget + tailBundle.recallBudgetTokens
+            isRp -> conv.rp!!.loreTokenBudget + tailBundle.recallBudgetTokens
+            else -> tailBundle.recallBudgetTokens
+        }
+        val retrievalModeUsed = if (loreMatch.retrievalModeUsed == "hybrid" || tailBundle.retrievalModeUsed == "hybrid") {
+            "hybrid"
+        } else {
+            "lexical"
+        }
+
+        fun cal(raw: Int): Int = (raw * calibration).roundToInt()
 
         val waterline = ContextWaterlineSummary(
-            usedTokens = calibratedTotal,
+            usedTokens = sentTokens,
             budgetTokens = budgetTokens,
             effectiveLimitTokens = effectiveLimitTokens,
             modelContextWindow = windowLimit,
-            percentage = pct,
-            exceedsModelWindow = calibratedTotal > windowLimit,
-            activeMessageCount = slice.active.size,
-            trimmedMessageCount = max(0, slice.active.size - kept),
+            percentage = sentPct,
+            exceedsModelWindow = hardOverflow,
+            activeMessageCount = slice.allActiveMessages.size,
+            trimmedMessageCount = trimmedCount,
             decayedImageMessageIds = slice.decayedImageMessageIds,
             decayedFileMessageIds = slice.decayedFileMessageIds,
-            fileTokens = activeFileTokensTotal + draftFileTokens,
-            memoryTokens = prefix.memoryTokens + tailBundle.chatRecallTokens,
-            summaryTokens = prefix.summaryTokens,
+            fileTokens = cal(keptFileTokensRaw + draftFileTokens),
+            memoryTokens = cal(prefix.memoryTokens),
+            summaryTokens = cal(prefix.summaryTokens),
             triggeredLoreIds = loreMatch.triggered.map { it.id },
             triggeredLoreTitles = loreMatch.triggered.map { it.title },
-            novelLoreTokens = prefix.novelLoreTokens + loreMatch.triggeredTokens,
+            novelLoreTokens = cal(prefix.novelLoreTokens + loreMatch.triggeredTokens),
             retrievedMemoryCount = allRecalled.size,
-            recalledMemoryTokens = tailBundle.tailRecallTokens,
+            recalledMemoryTokens = cal(tailBundle.tailRecallTokens),
             recalledItems = allRecalled,
+            sentTokens = sentTokens,
+            sentPercentage = sentPct,
+            archiveTotalTokens = archiveTotalTokens,
+            isSliding = isSliding,
+            hardOverflow = hardOverflow,
+            uncompactedOverflowCount = trimmedCount,
+            baseSystemTokens = cal(prefix.baseSystemTokens),
+            recallBudgetTokens = recallBudgetTokens,
+            recalledTotalTokens = recalledTotalTokens,
+            retrievalModeUsed = retrievalModeUsed,
+            droppedRecallCount = loreMatch.droppedCount + tailBundle.droppedRecallCount,
         )
 
         return ComputedPipeline(
             active = slice.active,
+            allActiveMessages = slice.allActiveMessages,
+            uncompactedExcludedCount = slice.uncompactedExcludedCount,
             activeChapter = slice.activeChapter,
             novelLore = input.novelLore,
             windowLimit = windowLimit,
             budgetTokens = budgetTokens,
             effectiveLimitTokens = effectiveLimitTokens,
             calibration = calibration,
+            effectiveModelId = effectiveModelId,
             isNovel = isNovel,
             isRp = isRp,
             loreMatch = loreMatch,
@@ -782,6 +1118,7 @@ object ContextBuilder {
         fileDecayed: Boolean,
         attachmentsById: Map<String, ChatAttachmentMeta>,
         perTurnFileBudget: Int,
+        modelId: String? = null,
     ): Int {
         val imageIds = if (msg.role == "user") {
             msg.attachmentIds.filter { id -> attachmentsById[id]?.isFile != true }
@@ -790,7 +1127,7 @@ object ContextBuilder {
         }
         val imgCount = if (!imageDecayed) imageIds.size else 0
         val fileTok = resolveMsgFileTokens(msg, fileDecayed, attachmentsById, perTurnFileBudget)
-        val base = estimateMessageTokens(msg.content, imgCount) + fileTok
+        val base = estimateMessageTokens(msg.content, imgCount, modelId) + fileTok
         return if (imageDecayed && imageIds.isNotEmpty()) base + 12 else base
     }
 
@@ -808,23 +1145,31 @@ object ContextBuilder {
             reservedFixedTokens = pipe.prefix.systemTokens + pipe.dynamicOverhead,
         )
 
+        val maxHistoryLimit = conv.params.maxHistoryMessages?.takeIf { it > 0 }
+        val candidateWindow = if (maxHistoryLimit != null && active.size > maxHistoryLimit) {
+            active.takeLast(maxHistoryLimit)
+        } else {
+            active
+        }
+
         fun calcTotal(): Int {
             var tok = pipe.prefix.systemTokens + pipe.dynamicOverhead
-            for (msg in active) {
+            for (msg in candidateWindow) {
                 tok += resolveMsgTokenCost(
                     msg = msg,
                     imageDecayed = msg.id in decayedImages,
                     fileDecayed = msg.id in decayedFiles,
                     attachmentsById = input.attachmentsById,
                     perTurnFileBudget = fileTurnBudget,
+                    modelId = pipe.effectiveModelId,
                 )
             }
             return (tok * pipe.calibration).roundToInt()
         }
 
         if (calcTotal() > pipe.effectiveLimitTokens) {
-            for (i in 0 until max(0, active.size - 1)) {
-                val msg = active[i]
+            for (i in 0 until max(0, candidateWindow.size - 1)) {
+                val msg = candidateWindow[i]
                 val hasFiles = msg.attachmentIds.any { input.attachmentsById[it]?.isFile == true }
                 val hasImgs = msg.attachmentIds.any { input.attachmentsById[it]?.isFile != true }
                 if (hasFiles && msg.id !in decayedFiles) {
@@ -838,23 +1183,31 @@ object ContextBuilder {
             }
         }
 
-        val maxHistoryLimit = conv.params.maxHistoryMessages?.takeIf { it > 0 }
         val selected = ArrayList<ChatMessage>()
         var used = ((pipe.prefix.systemTokens + pipe.dynamicOverhead) * pipe.calibration).roundToInt()
+        var selectedRawHistory = 0
+        var selectedRawFiles = 0
         for (i in active.indices.reversed()) {
             if (maxHistoryLimit != null && selected.size >= maxHistoryLimit) break
             val msg = active[i]
-            val msgTok = (
-                resolveMsgTokenCost(
-                    msg = msg,
-                    imageDecayed = msg.id in decayedImages,
-                    fileDecayed = msg.id in decayedFiles,
-                    attachmentsById = input.attachmentsById,
-                    perTurnFileBudget = fileTurnBudget,
-                ) * pipe.calibration
-                ).roundToInt()
+            val rawCost = resolveMsgTokenCost(
+                msg = msg,
+                imageDecayed = msg.id in decayedImages,
+                fileDecayed = msg.id in decayedFiles,
+                attachmentsById = input.attachmentsById,
+                perTurnFileBudget = fileTurnBudget,
+                modelId = pipe.effectiveModelId,
+            )
+            val msgTok = (rawCost * pipe.calibration).roundToInt()
             if (selected.isNotEmpty() && used + msgTok > pipe.effectiveLimitTokens) break
             used += msgTok
+            selectedRawHistory += rawCost
+            selectedRawFiles += resolveMsgFileTokens(
+                msg = msg,
+                fileDecayed = msg.id in decayedFiles,
+                attachmentsById = input.attachmentsById,
+                perTurnFileBudget = fileTurnBudget,
+            )
             selected.add(0, msg)
         }
 
@@ -870,7 +1223,7 @@ object ContextBuilder {
         // Cross-turn follow-up: if the latest user turn explicitly mentions a decayed earlier file, re-retrieve it on demand
         val reRecalledDecayedFiles = if (lastUserIdx >= 0 && latestUserQuery.isNotBlank()) {
             val latestOwnIds = selected[lastUserIdx].attachmentIds.toSet()
-            active
+            pipe.allActiveMessages
                 .filter { it.role == "user" && it.id in decayedFiles }
                 .flatMap { it.attachmentIds }
                 .filter { it !in latestOwnIds }
@@ -881,6 +1234,8 @@ object ContextBuilder {
         } else {
             emptyList()
         }
+
+        var reRecalledInjectedRawTokens = 0
 
         for (idx in selected.indices) {
             val msg = selected[idx]
@@ -987,6 +1342,7 @@ object ContextBuilder {
                                 budgetTokens = allocations[fm.id] ?: (fileTurnBudget / 2),
                                 modeOverride = FileInjectMode.retrieve,
                             )
+                            reRecalledInjectedRawTokens += fitted.injectedTokens
                             appendLine(fitted.formattedBlock)
                             appendLine()
                         }
@@ -1074,12 +1430,30 @@ object ContextBuilder {
             }
         }
 
+        // C2 fix: recompute sentTokens / sentPercentage / fileTokens / hardOverflow for actual `selected` payload
+        val actualSentRaw = pipe.prefix.systemTokens + pipe.dynamicOverhead + selectedRawHistory + reRecalledInjectedRawTokens
+        val actualSentTokens = (actualSentRaw * pipe.calibration).roundToInt()
+        val actualSentPct = min(100, ((actualSentTokens.toDouble() / max(1, pipe.effectiveLimitTokens)) * 100.0).roundToInt())
+        val actualFileTokens = ((selectedRawFiles + reRecalledInjectedRawTokens) * pipe.calibration).roundToInt()
+        val actualTrimmedCount = pipe.uncompactedExcludedCount + max(0, active.size - selected.size)
+        val actualHardOverflow = actualSentTokens > pipe.windowLimit
+        val actualIsSliding = actualTrimmedCount > 0
+
         return BuiltChatContext(
             wireMessages = wireMessages,
             summary = pipe.waterline.copy(
+                usedTokens = actualSentTokens,
+                percentage = actualSentPct,
+                exceedsModelWindow = actualHardOverflow,
                 decayedImageMessageIds = decayedImages,
                 decayedFileMessageIds = decayedFiles,
-                trimmedMessageCount = max(0, active.size - selected.size),
+                trimmedMessageCount = actualTrimmedCount,
+                fileTokens = actualFileTokens,
+                sentTokens = actualSentTokens,
+                sentPercentage = actualSentPct,
+                isSliding = actualIsSliding,
+                hardOverflow = actualHardOverflow,
+                uncompactedOverflowCount = actualTrimmedCount,
             ),
         )
     }

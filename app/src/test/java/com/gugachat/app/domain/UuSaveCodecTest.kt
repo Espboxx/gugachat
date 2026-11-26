@@ -339,4 +339,63 @@ class UuSaveCodecTest {
         assertFalse(extracted.text.contains("attr-4mio1"))
         assertFalse(extracted.text.contains("新属性_2"))
     }
+
+    @Test
+    fun parseBytes_removesGenericKeywordsUnlocksEpisodesAndSetsStage0WindowOnHugeSaves() {
+        // 1. Small sample save: no generic keywords, L2/L3 unlocked, activeWindowStartSeq remains null
+        val smallItem = ExternalImportCodec.parseBytes(
+            sampleUuSaveJson.toByteArray(Charsets.UTF_8),
+            fileName = "small.json",
+        ).items.first()
+
+        val forbiddenGeneric = setOf("消息", "动态", "微信", "朋友圈", "论坛", "热帖", "日记", "林逸朗")
+        for (lore in smallItem.loreEntries) {
+            assertTrue(
+                "Lore '${lore.title}' must not contain ultra-generic keywords: ${lore.keywords}",
+                lore.keywords.none { it in forbiddenGeneric },
+            )
+        }
+        assertTrue("Imported L2/L3 episodes must be unlocked for rollback", smallItem.memoryEpisodes.all { !it.locked })
+        assertEquals(null, smallItem.conversation.params.activeWindowStartSeq)
+
+        // 2. Huge 30-turn save (~150K CJK chars): sets Stage-0 activeWindowStartSeq so initial waterline stays ~55%
+        val bigTurnProse = "深港夜色璀璨，兰溪谷公馆水晶灯下众人举杯畅谈二奢拍卖行情与古董钟表收藏细节。".repeat(120)
+        val hugeMsgsJson = (1..30).joinToString(",") { idx ->
+            val role = if (idx % 2 == 1) "user" else "narrator"
+            """{"id":"hm$idx","role":"$role","content":"第${idx}轮：$bigTurnProse"}"""
+        }
+        val hugeJson = """
+            {
+              "format": "uu-game-save",
+              "version": 1,
+              "gameState": {
+                "playthroughId": "pt:huge-stage0",
+                "playerName": "林逸朗",
+                "round": 15,
+                "location": "兰溪谷公馆",
+                "timeLabel": "第2年·6月",
+                "messages": [$hugeMsgsJson]
+              }
+            }
+        """.trimIndent()
+
+        val hugeItem = UuSaveCodec.parseJsonText(hugeJson, "huge.json").items.first()
+        val startSeq = hugeItem.conversation.params.activeWindowStartSeq
+        assertNotNull("Huge save must set Stage-0 activeWindowStartSeq", startSeq)
+        assertTrue("Stage-0 startSeq ($startSeq) must skip older turns", startSeq!! > 1)
+        assertEquals(0, hugeItem.conversation.summarizedUntilSeq)
+
+        val wl = com.gugachat.app.domain.chat.ContextBuilder.computeContextWaterline(
+            com.gugachat.app.domain.chat.ContextBuildInput(
+                conversation = hugeItem.conversation,
+                messages = hugeItem.messages,
+                modelContextWindow = 128_000,
+            ),
+        )
+        assertFalse("Huge UU save should open cleanly without red hardOverflow", wl.hardOverflow)
+        assertFalse(wl.exceedsModelWindow)
+        assertTrue("Initial sent percentage (${wl.sentPercentage}%) should stay around <= 65%", wl.sentPercentage <= 65)
+        assertTrue("Archive total (${wl.archiveTotalTokens}) must exceed sent (${wl.sentTokens})", wl.archiveTotalTokens > wl.sentTokens)
+        assertTrue("Uncompacted overflow count should reflect archived earlier turns", wl.uncompactedOverflowCount > 0)
+    }
 }

@@ -4,8 +4,6 @@ import com.gugachat.app.data.api.AppJson
 import com.gugachat.app.data.api.WireChatMessageDto
 import kotlinx.serialization.Serializable
 import java.util.UUID
-import kotlin.math.ceil
-import kotlin.math.max
 
 @Serializable
 private data class EpisodeConsolidationJson(
@@ -26,20 +24,8 @@ object EpisodeConsolidator {
     const val ARC_TRIGGER_EPISODES = 4
     const val CHRONICLE_TRIGGER_ARCS = 4
 
-    fun estimateEpisodeTokens(title: String, summary: String): Int {
-        val text = "$title: $summary"
-        if (text.isBlank()) return 0
-        var cjk = 0
-        var other = 0
-        for (ch in text) {
-            if (CjkSearch.isHanChar(ch) || ch.code in 0x3000..0x303F || ch.code in 0xFF00..0xFFEF) {
-                cjk++
-            } else if (!ch.isWhitespace()) {
-                other++
-            }
-        }
-        return max(12, ceil(cjk * 1.45 + other * 0.38).toInt() + 8)
-    }
+    fun estimateEpisodeTokens(title: String, summary: String, modelId: String? = null): Int =
+        TokenEstimator.estimateItem(title, summary, modelId = modelId, overhead = 8, minTokens = 12)
 
     fun findNextMessagesBatch(
         activeMessages: List<ChatMessage>,

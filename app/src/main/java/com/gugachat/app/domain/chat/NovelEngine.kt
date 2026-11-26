@@ -4,8 +4,8 @@ import com.gugachat.app.data.api.AppJson
 import com.gugachat.app.data.api.WireChatMessageDto
 import kotlinx.serialization.Serializable
 import java.util.UUID
-import kotlin.math.ceil
 import kotlin.math.max
+import kotlin.math.min
 
 data class LoreMatchResult(
     val constant: List<NovelLoreEntry>,
@@ -14,6 +14,9 @@ data class LoreMatchResult(
     val triggeredTokens: Int,
     val triggeredScores: Map<String, Double> = emptyMap(),
     val triggeredMatchedTerms: Map<String, List<String>> = emptyMap(),
+    val triggeredKinds: Map<String, String> = emptyMap(),
+    val droppedCount: Int = 0,
+    val retrievalModeUsed: String = "lexical",
 )
 
 @Serializable
@@ -113,16 +116,16 @@ object NovelEngine {
     private val CHAPTER_END_RE = Regex("<chapter_end>([\\s\\S]*?)</chapter_end>", RegexOption.IGNORE_CASE)
     private val CHOICES_RE = Regex("<choices>([\\s\\S]*?)</choices>", RegexOption.IGNORE_CASE)
 
-    fun estimateLoreTokens(entry: NovelLoreEntry): Int {
-        if (entry.estimatedTokens > 0) return entry.estimatedTokens
-        val text = "${entry.title}: ${entry.content}"
-        var cjk = 0
-        var other = 0
-        for (ch in text) {
-            if (CjkSearch.isHanChar(ch) || ch.code in 0x3000..0x303F || ch.code in 0xFF00..0xFFEF) cjk++
-            else if (!ch.isWhitespace()) other++
-        }
-        return max(8, ceil(cjk * 1.45 + other * 0.38).toInt() + 8)
+    private val CANONICAL_LORE_COMPARATOR: Comparator<NovelLoreEntry> =
+        compareByDescending<NovelLoreEntry> { it.priority }
+            .thenBy { it.createdAt }
+            .thenBy { it.id }
+
+    private const val MAX_ONE_HOP_ENTRIES = 3
+
+    fun estimateLoreTokens(entry: NovelLoreEntry, modelId: String? = null): Int {
+        if (modelId == null && entry.estimatedTokens > 0) return entry.estimatedTokens
+        return TokenEstimator.estimateItem(entry.title, entry.content, modelId = modelId, overhead = 8, minTokens = 8)
     }
 
     fun recalculateChapterWordCounts(
@@ -148,25 +151,31 @@ object NovelEngine {
         presentEntities: List<String> = emptyList(),
         sceneTitle: String? = null,
         semanticScorer: SemanticScorer? = null,
+        semanticScores: Map<String, Double>? = null,
+        modelId: String? = null,
+        mutedIds: Set<String> = emptySet(),
+        maxTriggered: Int = 8,
+        minSemanticCosine: Double = 0.50,
     ): LoreMatchResult {
         val valid = lore.filter { entry ->
-            TimelineReconciler.isItemValidAtTip(
-                enabled = entry.enabled,
-                stale = entry.stale,
-                validFromSeq = entry.validFromSeq,
-                supersededAtSeq = entry.supersededAtSeq,
-                tipSeq = activeTipSeq,
-            )
+            entry.id !in mutedIds &&
+                TimelineReconciler.isItemValidAtTip(
+                    enabled = entry.enabled,
+                    stale = entry.stale,
+                    validFromSeq = entry.validFromSeq,
+                    supersededAtSeq = entry.supersededAtSeq,
+                    tipSeq = activeTipSeq,
+                )
         }
         if (valid.isEmpty() || loreTokenBudget <= 0) {
             return LoreMatchResult(emptyList(), emptyList(), 0, 0)
         }
 
-        val constantPool = valid.filter { it.alwaysActive }.sortedByDescending { it.priority }
+        val constantPool = valid.filter { it.alwaysActive }.sortedWith(CANONICAL_LORE_COMPARATOR)
         val constant = ArrayList<NovelLoreEntry>()
         var constantTokens = 0
         for (entry in constantPool) {
-            val cost = estimateLoreTokens(entry)
+            val cost = estimateLoreTokens(entry, modelId)
             if (constantTokens + cost <= loreTokenBudget) {
                 constant.add(entry)
                 constantTokens += cost
@@ -193,7 +202,12 @@ object NovelEngine {
             options = ScoreMemoryOptions(
                 activeTipSeq = activeTipSeq,
                 maxTokens = remainingBudget,
-                semanticScorer = semanticScorer,
+                semanticScores = semanticScores,
+                semanticScorer = if (semanticScores == null) semanticScorer else null,
+                minSemanticCosine = minSemanticCosine,
+                maxResults = maxTriggered,
+                modelId = modelId,
+                mutedIds = mutedIds,
             ),
         )
 
@@ -201,8 +215,10 @@ object NovelEngine {
         val picked = ArrayList<NovelLoreEntry>()
         val scores = LinkedHashMap<String, Double>()
         val terms = LinkedHashMap<String, List<String>>()
+        val kinds = LinkedHashMap<String, String>()
         val pickedIds = HashSet<String>()
         var usedDynamic = 0
+        var dropped = firstPass.droppedCount
 
         for (s in firstPass.selected) {
             val e = entryById[s.item.id] ?: continue
@@ -210,44 +226,83 @@ object NovelEngine {
             pickedIds.add(e.id)
             scores[e.id] = s.score
             terms[e.id] = s.matchedTerms
+            kinds[e.id] = s.triggerKind
             usedDynamic += s.estimatedTokens
         }
 
-        // 1-hop lore recursion: expand entries explicitly referenced inside top-3 triggered lore texts
+        // Exact-key-only 1-hop recursion: expand up to 3 entries whose keywords/aliases/title are
+        // explicitly referenced inside the top-3 triggered lore bodies (no presentEntities or fuzzy BM25 leak).
         val hopRemaining = max(0, remainingBudget - usedDynamic)
-        if (picked.isNotEmpty() && hopRemaining > 16) {
-            val hopText = picked.take(3).joinToString("\n") { "${it.title} ${it.content}" }
-            val hopQuery = CjkSearch.buildMemoryQuery(hopText, emptyList(), presentEntities)
-            val secondCandidates = dynamicPool
+        val hopBudgetCap = min(hopRemaining, max(128, (remainingBudget * 0.25).toInt()))
+        if (picked.isNotEmpty() && hopBudgetCap > 16) {
+            val hopRaw = picked.take(3).joinToString("\n") { "${it.title} ${it.content}" }
+            val hopQuery = MemoryQuery(
+                rawQueryText = CjkSearch.normalizeForSearch(hopRaw),
+                terms = emptyMap(),
+                demonstratives = emptyList(),
+                detectedPronounGenders = emptyList(),
+                presentEntityNames = emptyList(),
+                recentTexts = emptyList(),
+            )
+            data class HopCandidate(
+                val entry: NovelLoreEntry,
+                val aliasRes: CjkSearch.AliasHitResult,
+            )
+            val hopHits = dynamicPool
+                .asSequence()
                 .filter { it.id !in pickedIds }
-                .map { CjkSearch.novelLoreToSearchCandidate(it) }
-            if (secondCandidates.isNotEmpty()) {
-                val secondPass = CjkSearch.scoreMemoryCandidates(
-                    candidates = secondCandidates,
-                    query = hopQuery,
-                    options = ScoreMemoryOptions(activeTipSeq = activeTipSeq, maxTokens = hopRemaining),
-                )
-                for (s in secondPass.selected) {
-                    if (s.aliasHit <= 0.0 && s.normBm25 < 0.25) continue
-                    val e = entryById[s.item.id] ?: continue
-                    val cost = estimateLoreTokens(e)
-                    if (usedDynamic + cost > remainingBudget) break
-                    picked.add(e)
-                    pickedIds.add(e.id)
-                    scores[e.id] = s.score * 0.8
-                    terms[e.id] = (s.matchedTerms + "1-hop").distinct().take(6)
-                    usedDynamic += cost
+                .mapNotNull { entry ->
+                    val aliasRes = CjkSearch.computeAliasAndDemonstrativeHit(
+                        candidate = CjkSearch.novelLoreToSearchCandidate(entry),
+                        query = hopQuery,
+                        effectivePronounNames = emptySet(),
+                    )
+                    if (aliasRes.exactMatchCount > 0) HopCandidate(entry, aliasRes) else null
                 }
+                .sortedWith(
+                    compareByDescending<HopCandidate> { it.aliasRes.exactMatchCount }
+                        .thenByDescending { it.entry.priority }
+                        .thenBy { it.entry.createdAt }
+                        .thenBy { it.entry.id },
+                )
+                .toList()
+
+            var hopAdded = 0
+            var hopTokensUsed = 0
+            for (hit in hopHits) {
+                if (hopAdded >= MAX_ONE_HOP_ENTRIES) {
+                    dropped++
+                    continue
+                }
+                val cost = estimateLoreTokens(hit.entry, modelId)
+                if (hopTokensUsed + cost > hopBudgetCap || usedDynamic + cost > remainingBudget) {
+                    dropped++
+                    continue
+                }
+                picked.add(hit.entry)
+                pickedIds.add(hit.entry.id)
+                scores[hit.entry.id] = hit.aliasRes.aliasHit * 0.8
+                terms[hit.entry.id] = (hit.aliasRes.matchedAliases + "1-hop").distinct().take(6)
+                kinds[hit.entry.id] = "recursion_1hop"
+                usedDynamic += cost
+                hopTokensUsed += cost
+                hopAdded++
             }
         }
 
+        // Canonical deterministic order for KV-cache stability
+        val canonicalTriggered = picked.sortedWith(CANONICAL_LORE_COMPARATOR)
+
         return LoreMatchResult(
             constant = constant,
-            triggered = picked,
+            triggered = canonicalTriggered,
             constantTokens = constantTokens,
             triggeredTokens = usedDynamic,
             triggeredScores = scores,
             triggeredMatchedTerms = terms,
+            triggeredKinds = kinds,
+            droppedCount = dropped,
+            retrievalModeUsed = firstPass.retrievalModeUsed,
         )
     }
 
@@ -302,7 +357,7 @@ object NovelEngine {
             sb.appendLine("</style_reference>")
         }
         if (activeChapter != null) {
-            sb.appendLine("\n【当前撰写章节】第${activeChapter.order}章：${activeChapter.title}（已写约 ${activeChapter.wordCount} / 目标 ${novel.targetWordsPerChapter} 字）")
+            sb.appendLine("\n【当前撰写章节】第${activeChapter.order}章：${activeChapter.title}（目标约 ${novel.targetWordsPerChapter} 字）")
             if (activeChapter.outline.isNotBlank()) sb.appendLine("本章细纲：${activeChapter.outline.trim()}")
         }
         sb.appendLine("\n【写作规范】")

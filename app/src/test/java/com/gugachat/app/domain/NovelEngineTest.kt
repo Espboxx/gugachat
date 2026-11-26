@@ -56,6 +56,93 @@ class NovelEngineTest {
         val trigIds = res.triggered.map { it.id }
         assertTrue(trigIds.contains("hop0"))
         assertTrue(trigIds.contains("hop1"))
+        assertEquals("keyword", res.triggeredKinds["hop0"])
+        assertEquals("recursion_1hop", res.triggeredKinds["hop1"])
+    }
+
+    @Test
+    fun matchNovelLore_oneHopIsExactKeyOnlyCappedAt3AndSortedCanonically() {
+        val lore = listOf(
+            NovelLoreEntry(
+                id = "seed",
+                conversationId = "n1",
+                category = "location",
+                title = "青岚剑冢",
+                content = "剑冢深处刻着残碑、玄霜剑、星陨石、苍龙印，风声呼啸。",
+                keywords = listOf("剑冢"),
+                priority = 50,
+                createdAt = 10L,
+            ),
+            NovelLoreEntry(
+                id = "hop-a",
+                conversationId = "n1",
+                category = "item",
+                title = "太古残碑",
+                content = "第一块碑",
+                keywords = listOf("残碑"),
+                priority = 90,
+                createdAt = 20L,
+            ),
+            NovelLoreEntry(
+                id = "hop-b",
+                conversationId = "n1",
+                category = "item",
+                title = "玄霜剑",
+                content = "寒冰名剑",
+                keywords = listOf("玄霜剑"),
+                priority = 80,
+                createdAt = 30L,
+            ),
+            NovelLoreEntry(
+                id = "hop-c",
+                conversationId = "n1",
+                category = "item",
+                title = "星陨石",
+                content = "天外奇石",
+                keywords = listOf("星陨石"),
+                priority = 70,
+                createdAt = 40L,
+            ),
+            NovelLoreEntry(
+                id = "hop-d-overflow",
+                conversationId = "n1",
+                category = "item",
+                title = "苍龙印",
+                content = "第四条候选，应被 1-hop 上限 3 条截断",
+                keywords = listOf("苍龙印"),
+                priority = 40,
+                createdAt = 50L,
+            ),
+            NovelLoreEntry(
+                id = "fuzzy-only-should-not-hop",
+                conversationId = "n1",
+                category = "concept",
+                title = "风声呼啸深处",
+                content = "深处风声呼啸的模糊重叠不应触发 1-hop 级联",
+                keywords = listOf("绝对不会匹配的词"),
+                priority = 95,
+                createdAt = 5L,
+            ),
+        )
+
+        val res = NovelEngine.matchNovelLore(
+            lore = lore,
+            recentMessages = emptyList(),
+            draftText = "夜探剑冢",
+            chapterOutline = "",
+            loreTokenBudget = 2000,
+            activeTipSeq = 5,
+            presentEntities = listOf("不应经由1hop泄漏的角色"),
+        )
+
+        val hopIds = res.triggeredKinds.filterValues { it == "recursion_1hop" }.keys
+        assertEquals(3, hopIds.size)
+        assertTrue(hopIds.containsAll(setOf("hop-a", "hop-b", "hop-c")))
+        assertFalse(hopIds.contains("hop-d-overflow"))
+        assertFalse(res.triggered.any { it.id == "fuzzy-only-should-not-hop" })
+
+        // Canonical sort: priority DESC -> hop-a (90), hop-b (80), hop-c (70), seed (50)
+        assertEquals(listOf("hop-a", "hop-b", "hop-c", "seed"), res.triggered.map { it.id })
     }
 
     @Test

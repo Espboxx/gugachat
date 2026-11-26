@@ -480,4 +480,339 @@ class ContextBuilderTest {
         assertTrue(latestUserWire.textContent!!.contains("<attached_file name=\"Q3_Report.pdf\""))
         assertTrue(latestUserWire.textContent!!.contains("68.4%"))
     }
+
+    @Test
+    fun compactionWindowExclusionAndRollbackReset_reducesSentTokensAndReconcilesCleanly() = runBlocking {
+        val longChunk = "兰溪谷公馆二楼大厅灯光微暗，众人在长桌旁激烈讨论并购细节。".repeat(30)
+        val messages = (1..10).map { seq ->
+            ChatMessage(
+                id = "m$seq",
+                conversationId = "conv-compact",
+                role = if (seq % 2 == 1) "user" else "assistant",
+                content = "第${seq}回合：$longChunk",
+                createdAt = seq.toLong(),
+                seq = seq,
+            )
+        }
+        val baseConv = ChatConversation(
+            id = "conv-compact",
+            title = "压缩测试",
+            mode = ConversationMode.chat,
+            createdAt = 1L,
+            updatedAt = 10L,
+        )
+        val beforeWaterline = ContextBuilder.computeContextWaterline(
+            ContextBuildInput(conversation = baseConv, messages = messages, modelContextWindow = 128_000),
+        )
+
+        val ep = MemoryEpisode(
+            id = "ep-1-6",
+            conversationId = "conv-compact",
+            level = 1,
+            title = "前六回合纪要",
+            summary = "完成了第一阶段谈判并签下保密协议。",
+            fromSeq = 1,
+            toSeq = 6,
+            createdAt = 11L,
+            updatedAt = 11L,
+        )
+        val compactedConv = baseConv.copy(
+            archivedSummary = ep.summary,
+            summarizedUntilSeq = 6,
+        )
+        val afterBuilt = ContextBuilder.buildChatContext(
+            ContextBuildInput(
+                conversation = compactedConv,
+                messages = messages,
+                memoryEpisodes = listOf(ep),
+                modelContextWindow = 128_000,
+            ),
+        )
+
+        // Compacted messages (seq <= 6) MUST be excluded from wire messages and reduce sentTokens
+        val nonSystem = afterBuilt.wireMessages.filter { it.role != "system" }
+        assertEquals(4, nonSystem.size)
+        assertTrue(nonSystem.first().textContent!!.startsWith("第7回合"))
+        assertTrue(afterBuilt.summary.sentTokens < beforeWaterline.sentTokens)
+        assertTrue(afterBuilt.summary.archiveTotalTokens > afterBuilt.summary.sentTokens)
+
+        // Rolling back past summarizedUntilSeq resets summarizedUntilSeq & archivedSummary cleanly
+        val rolled = TimelineReconciler.reconcileOnRollback(
+            cutoffSeq = 5,
+            inclusiveOfCutoff = true,
+            messages = messages,
+            episodes = listOf(ep),
+            summarizedUntilSeq = 6,
+            activeWindowStartSeq = 7,
+        )
+        assertEquals(0, rolled.resetSummarizedUntilSeq)
+        assertTrue(rolled.shouldClearArchivedSummary)
+        assertTrue(rolled.resetActiveWindowStartSeq)
+        val updatedConv = TimelineReconciler.applyRollbackToConversation(
+            compactedConv.copy(params = ChatParams(activeWindowStartSeq = 7)),
+            rolled,
+        )
+        assertEquals(0, updatedConv.summarizedUntilSeq)
+        assertEquals("", updatedConv.archivedSummary)
+        assertEquals(null, updatedConv.params.activeWindowStartSeq)
+    }
+
+    @Test
+    fun dualMetricWaterline_separatesSlidingArchiveFromHardOverflowAndRespectsBudgetCaps() = runBlocking {
+        val longBody = "这是一段很长的角色扮演对话正文内容用于触发滑动窗口裁剪验证双指标水位。".repeat(35)
+        val messages = (1..24).map { seq ->
+            ChatMessage(
+                id = "m$seq",
+                conversationId = "conv-slide",
+                role = if (seq % 2 == 1) "user" else "assistant",
+                content = "第${seq}轮：$longBody",
+                createdAt = seq.toLong(),
+                seq = seq,
+            )
+        }
+        val conv = ChatConversation(
+            id = "conv-slide",
+            title = "长对话滑动测试",
+            mode = ConversationMode.chat,
+            params = ChatParams(maxTokens = 1024),
+            createdAt = 1L,
+            updatedAt = 24L,
+        )
+
+        val built = ContextBuilder.buildChatContext(
+            ContextBuildInput(
+                conversation = conv,
+                messages = messages,
+                modelContextWindow = 16_384,
+                modelId = "deepseek-chat",
+            ),
+        )
+        val sum = built.summary
+        assertTrue("Expected sliding trim on 16K window", sum.isSliding)
+        assertTrue(sum.trimmedMessageCount > 0)
+        assertEquals(sum.trimmedMessageCount, sum.uncompactedOverflowCount)
+        assertFalse("Auto-trimmed sliding window should NOT fire hardOverflow alarm", sum.hardOverflow)
+        assertFalse(sum.exceedsModelWindow)
+        assertEquals(sum.sentTokens, sum.usedTokens)
+        assertEquals(sum.sentPercentage, sum.percentage)
+        assertTrue(sum.archiveTotalTokens > sum.sentTokens)
+        assertTrue("Compactor should recommend proactive compaction on overflow >= 8", ContextCompactor.shouldAutoCompact(sum))
+
+        // H4: Bounded tailBudget (2K/4K/8K) and summaryCap (<= 8K) even on 1M window
+        assertEquals(2000, ContextBuilder.computeTailBudget(800_000, MemoryBudget.low))
+        assertEquals(4000, ContextBuilder.computeTailBudget(800_000, MemoryBudget.standard))
+        assertEquals(8000, ContextBuilder.computeTailBudget(800_000, MemoryBudget.high))
+        assertEquals(8000, ContextBuilder.computeSummaryCap(800_000))
+    }
+
+    @Test
+    fun enableAutoMemoryFalse_skipsPersonalUserMemoryAndAccountingMatchesRecalledItems() = runBlocking {
+        val convDisabled = ChatConversation(
+            id = "conv-nomem",
+            title = "关闭个人记忆",
+            mode = ConversationMode.chat,
+            systemPrompt = "你是一个助手。",
+            params = ChatParams(enableAutoMemory = false),
+            createdAt = 1L,
+            updatedAt = 2L,
+        )
+        val memories = listOf(
+            UserMemory(
+                id = "m-core",
+                category = MemoryCategory.rule,
+                content = "始终使用 Kotlin 回答所有问题。",
+                pinned = true,
+                createdAt = 1L,
+                updatedAt = 1L,
+            ),
+            UserMemory(
+                id = "m-arch",
+                category = MemoryCategory.project,
+                content = "正在开发 GuGuChat Compose 应用。",
+                pinned = false,
+                createdAt = 1L,
+                updatedAt = 1L,
+            ),
+        )
+        val msgs = listOf(
+            ChatMessage(
+                id = "u1",
+                conversationId = convDisabled.id,
+                role = "user",
+                content = "帮我优化 GuGuChat Compose 列表性能",
+                createdAt = 1L,
+                seq = 1,
+            ),
+        )
+
+        val built = ContextBuilder.buildChatContext(
+            ContextBuildInput(
+                conversation = convDisabled,
+                messages = msgs,
+                memories = memories,
+                modelId = "deepseek-chat",
+            ),
+        )
+        val sysText = built.wireMessages.firstOrNull { it.role == "system" }?.textContent.orEmpty()
+        val userText = built.wireMessages.last { it.role == "user" }.textContent.orEmpty()
+        assertFalse(sysText.contains("<user_core_memory>"))
+        assertFalse(userText.contains("<recalled_user_memory>"))
+        assertEquals(0, built.summary.memoryTokens)
+        assertTrue(built.summary.baseSystemTokens > 0)
+        assertEquals(0, built.summary.recalledTotalTokens)
+    }
+
+    @Test
+    fun rpAccounting_includesPinnedLedgerAndConstantLoreWithExactTotalAndSupportsMuteAndModelRecompute() = runBlocking {
+        val preset = RpPresets.findById("modern_tavern")
+        val conv = ChatConversation(
+            id = "conv-rp-acct",
+            title = preset.config.title,
+            mode = ConversationMode.rp,
+            rp = preset.config,
+            createdAt = 1L,
+            updatedAt = 2L,
+        )
+        val lore = listOf(
+            NovelLoreEntry(
+                id = "const-1",
+                conversationId = conv.id,
+                category = "rule",
+                title = "清吧规矩",
+                content = "午夜后禁止开闪光灯。",
+                alwaysActive = true,
+                priority = 90,
+                estimatedTokens = 999, // Stale inflated DB value
+            ),
+            NovelLoreEntry(
+                id = "trig-1",
+                conversationId = conv.id,
+                category = "item",
+                title = "特调失眠蓝",
+                content = "海盐金酒与蝶豆花冷萃调制。",
+                keywords = listOf("失眠蓝"),
+                priority = 70,
+                estimatedTokens = 999, // Stale inflated DB value
+            ),
+        )
+        val ledger = listOf(
+            MemoryLedgerItem(
+                id = "led-pin",
+                conversationId = conv.id,
+                kind = "promise",
+                title = "周五之约",
+                content = "答应江晚柠周五带回旧黑胶唱片。",
+                pinned = true,
+                validFromSeq = 1,
+                estimatedTokens = 888,
+            ),
+        )
+        val msgs = listOf(
+            ChatMessage(
+                id = "u1",
+                conversationId = conv.id,
+                role = "user",
+                content = "今晚来一杯失眠蓝吧。",
+                createdAt = 1L,
+                seq = 1,
+            ),
+        )
+
+        val deepseekSummary = ContextBuilder.computeContextWaterline(
+            ContextBuildInput(
+                conversation = conv,
+                messages = msgs,
+                novelLore = lore,
+                memoryLedger = ledger,
+                modelId = "deepseek-chat",
+            ),
+        )
+        val claudeSummary = ContextBuilder.computeContextWaterline(
+            ContextBuildInput(
+                conversation = conv,
+                messages = msgs,
+                novelLore = lore,
+                memoryLedger = ledger,
+                modelId = "claude-3-7-sonnet",
+            ),
+        )
+
+        // Exact 1:1 recalledTotalTokens == recalledItems.sumOf { it.estimatedTokens }
+        assertEquals(deepseekSummary.recalledItems.sumOf { it.estimatedTokens }, deepseekSummary.recalledTotalTokens)
+        assertTrue(deepseekSummary.recalledItems.any { it.id == "const-1" && it.triggerKind == "constant" })
+        assertTrue(deepseekSummary.recalledItems.any { it.id == "trig-1" && it.triggerKind == "keyword" })
+        assertTrue(deepseekSummary.recalledItems.any { it.id == "led-pin" && it.triggerKind == "pinned_ledger" })
+        // Dynamic model-family recompute overrides stale 999 Room estimates
+        assertTrue(deepseekSummary.recalledTotalTokens < 200)
+        assertTrue(deepseekSummary.sentTokens < claudeSummary.sentTokens)
+
+        // Muting a recall key excludes it cleanly
+        val mutedSummary = ContextBuilder.computeContextWaterline(
+            ContextBuildInput(
+                conversation = conv,
+                messages = msgs,
+                novelLore = lore,
+                memoryLedger = ledger,
+                modelId = "deepseek-chat",
+                mutedRecallKeys = setOf("novel_lore:trig-1", "rp_ledger:led-pin"),
+            ),
+        )
+        assertFalse(mutedSummary.recalledItems.any { it.id == "trig-1" })
+        assertFalse(mutedSummary.recalledItems.any { it.id == "led-pin" })
+
+        // Precomputed semantic scores enable hybrid mode cleanly even on synchronous waterline preview
+        val semanticLore = lore + NovelLoreEntry(
+            id = "sem-only",
+            conversationId = conv.id,
+            category = "concept",
+            title = "雨夜往事",
+            content = "十年前码头旧事。",
+            keywords = listOf("旧码头"),
+            priority = 60,
+        )
+        val hybridSummary = ContextBuilder.computeContextWaterline(
+            ContextBuildInput(
+                conversation = conv,
+                messages = msgs,
+                novelLore = semanticLore,
+                memoryLedger = ledger,
+                modelId = "deepseek-chat",
+                precomputedSemanticScores = mapOf("sem-only" to 0.78, "trig-1" to 0.41),
+                minSemanticCosine = 0.55,
+            ),
+        )
+        assertEquals("hybrid", hybridSummary.retrievalModeUsed)
+        assertTrue(hybridSummary.recalledItems.any { it.id == "sem-only" && it.triggerKind == "semantic" })
+        assertTrue(hybridSummary.recalledItems.any { it.id == "trig-1" && it.triggerKind == "keyword" })
+    }
+
+    @Test
+    fun novelSystemPrompt_omitsVolatileWordCountAndCompactorChunksWithout1400Truncation() {
+        val novel = NovelConfig(title = "问道长生", targetWordsPerChapter = 3000)
+        val ch1 = NovelChapter(id = "c1", conversationId = "n1", order = 1, title = "第一章", wordCount = 120)
+        val ch2 = ch1.copy(wordCount = 2480)
+        val sys1 = NovelEngine.buildNovelSystemPrompt(novel, ch1, emptyList())
+        val sys2 = NovelEngine.buildNovelSystemPrompt(novel, ch2, emptyList())
+        assertEquals("System prefix must stay byte-identical as chapter wordCount grows", sys1, sys2)
+
+        // ContextCompactor chunks long 6K-char turns on paragraph boundaries instead of .take(1400)
+        val paraTurn = (1..20).joinToString("\n\n") { idx ->
+            "第${idx}段剧情：" + "海港夜雾弥漫，船坞灯火映照着旧货船的铁锈船身。".repeat(12)
+        }
+        val longMsgs = (1..6).map { seq ->
+            ChatMessage(
+                id = "cm$seq",
+                conversationId = "c-chunk",
+                role = if (seq % 2 == 1) "user" else "assistant",
+                content = "TURN#$seq\n\n$paraTurn\n\nTAIL_MARKER_$seq",
+                createdAt = seq.toLong(),
+                seq = seq,
+            )
+        }
+        val chunks = ContextCompactor.splitMessagesIntoTokenChunks(longMsgs, modelId = "deepseek-chat", targetChunkTokens = 6_000)
+        assertTrue("Expected multiple chunks for long transcript, got ${chunks.size}", chunks.size >= 2)
+        val joinedAll = chunks.flatten().joinToString("\n") { it.content }
+        assertTrue("Tail of long turn must be preserved, not truncated at 1400 chars", joinedAll.contains("TAIL_MARKER_1"))
+        assertTrue(joinedAll.contains("TAIL_MARKER_6"))
+    }
 }
