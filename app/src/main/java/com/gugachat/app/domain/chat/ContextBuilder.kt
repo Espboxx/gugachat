@@ -1,5 +1,10 @@
 package com.gugachat.app.domain.chat
 
+import com.gugachat.app.data.api.AppJson
+import com.gugachat.app.data.local.CharacterCardEntity
+import com.gugachat.app.data.local.PersonaEntity
+import com.gugachat.app.data.local.PromptPresetEntity
+import kotlinx.serialization.builtins.ListSerializer
 import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
@@ -29,6 +34,19 @@ data class ContextBuildInput(
     val modelId: String? = null,
     val externalCalibration: Double? = null,
     val minSemanticCosine: Double = 0.50,
+    val characterCard: CharacterCardEntity? = null,
+    val persona: PersonaEntity? = null,
+    val promptPreset: PromptPresetEntity? = null,
+    val mountedWorldbooks: List<WorldbookMountedBook> = emptyList(),
+    val worldbookEvalOverride: WorldbookEvalResult? = null,
+    val loreTimedStates: Map<String, LoreTimedEntryState> = emptyMap(),
+    val assistantPrefill: String = "",
+)
+
+data class BuiltChatContextV4(
+    val built: BuiltChatContext,
+    val worldbookResult: WorldbookEvalResult? = null,
+    val resolvedAssistantPrefill: String? = null,
 )
 
 data class CoreMemoryBlockResult(
@@ -64,6 +82,10 @@ data class TailRecallBundle(
 )
 
 object ContextBuilder {
+    const val SLIDE_STRIDE = 4
+
+    private val STATIC_MACRO_RE = Regex("\\{\\{\\s*(char|user)\\s*\\}\\}", RegexOption.IGNORE_CASE)
+
     private val CATEGORY_TAG = mapOf(
         MemoryCategory.preference to "偏好",
         MemoryCategory.profile to "个人档案",
@@ -722,6 +744,338 @@ object ContextBuilder {
         )
     }
 
+    private data class DepthInjectionItem(
+        val depth: Int,
+        val role: String,
+        val text: String,
+        val sortBucket: Int,
+        val subOrder: Int,
+    )
+
+    private fun isV4AssetMode(input: ContextBuildInput): Boolean =
+        input.characterCard != null ||
+            input.persona != null ||
+            input.promptPreset != null ||
+            input.mountedWorldbooks.isNotEmpty() ||
+            input.worldbookEvalOverride != null
+
+    private fun isDepthInjectionPosition(position: Int): Boolean =
+        position == 1 || position == WorldbookEngine.POSITION_AT_DEPTH
+
+    private fun normalizeWireRole(raw: String): String = when (raw.trim().lowercase()) {
+        "user" -> "user"
+        "assistant", "model" -> "assistant"
+        else -> "system"
+    }
+
+    private fun decodeStringList(rawJson: String): List<String> {
+        val trimmed = rawJson.trim()
+        if (trimmed.isEmpty() || trimmed == "[]") return emptyList()
+        return runCatching {
+            val arr = AppJson.parseToJsonElement(trimmed) as? kotlinx.serialization.json.JsonArray
+                ?: return@runCatching emptyList()
+            arr.mapNotNull { el ->
+                val prim = el as? kotlinx.serialization.json.JsonPrimitive
+                if (prim == null || prim is kotlinx.serialization.json.JsonNull) null else prim.content
+            }
+        }.getOrDefault(emptyList())
+    }
+
+    private fun parsePresetBlocks(preset: PromptPresetEntity?): List<PromptPresetBlock> {
+        val raw = preset?.blocksJson?.trim().orEmpty()
+        if (raw.isEmpty() || raw == "[]") return emptyList()
+        return runCatching {
+            AppJson.decodeFromString(ListSerializer(PromptPresetBlock.serializer()), raw)
+        }.getOrDefault(emptyList())
+    }
+
+    private fun parseCardCast(card: CharacterCardEntity?): List<RpCharacter> {
+        val raw = card?.castJson?.trim().orEmpty()
+        if (raw.isEmpty() || raw == "[]") return emptyList()
+        return runCatching {
+            AppJson.decodeFromString(ListSerializer(RpCharacter.serializer()), raw)
+        }.getOrDefault(emptyList())
+    }
+
+    private fun resolveStaticCharName(conv: ChatConversation, card: CharacterCardEntity?): String {
+        card?.name?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+        val rp = conv.rp
+        if (rp != null) {
+            rp.cast.firstOrNull { !it.isPlayer }?.name?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+            if (rp.title.isNotBlank()) return rp.title.trim()
+        }
+        return conv.title.trim().ifBlank { "角色" }
+    }
+
+    private fun resolveStaticUserName(conv: ChatConversation, persona: PersonaEntity?): String {
+        persona?.name?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+        conv.rp?.playerName?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+        return "旅人"
+    }
+
+    internal fun expandStaticMacros(text: String, charName: String, userName: String): String {
+        if (text.isEmpty() || !text.contains("{{")) return text
+        return STATIC_MACRO_RE.replace(text) { m ->
+            when (m.groupValues[1].lowercase()) {
+                "char" -> charName
+                "user" -> userName
+                else -> m.value
+            }
+        }
+    }
+
+    private fun expandDynamicV4Macros(
+        text: String,
+        conv: ChatConversation,
+        card: CharacterCardEntity?,
+        persona: PersonaEntity?,
+    ): String {
+        if (text.isEmpty() || !text.contains("{{")) return text
+        val charName = resolveStaticCharName(conv, card)
+        val userName = resolveStaticUserName(conv, persona)
+        val rp = conv.rp
+        if (rp != null) {
+            val effectiveCast = if (rp.cast.any { !it.isPlayer }) {
+                rp.cast
+            } else {
+                listOf(RpCharacter(id = "lead_macro", name = charName))
+            }
+            return RpEngine.replaceMacros(
+                text = text,
+                rp = rp.copy(playerName = userName, cast = effectiveCast),
+            )
+        }
+        return expandStaticMacros(text, charName, userName)
+    }
+
+    internal fun computeSlidingWindowKeepCount(
+        activeSize: Int,
+        rawKeptCount: Int,
+        maxHistoryLimit: Int?,
+    ): Int {
+        if (activeSize <= 0) return 0
+        val clampedRaw = rawKeptCount.coerceIn(1, activeSize)
+        if (clampedRaw >= activeSize) return activeSize
+        if (maxHistoryLimit != null && clampedRaw >= min(activeSize, maxHistoryLimit)) {
+            return min(activeSize, maxHistoryLimit)
+        }
+        val minDrop = activeSize - clampedRaw
+        val snappedDrop = ((minDrop + SLIDE_STRIDE - 1) / SLIDE_STRIDE) * SLIDE_STRIDE
+        val boundedDrop = min(snappedDrop, activeSize - 1)
+        return (activeSize - boundedDrop).coerceAtLeast(1)
+    }
+
+    private fun buildV4Zone0SystemPrefix(
+        input: ContextBuildInput,
+        episodes: List<MemoryEpisode>,
+        novelChapters: List<NovelChapter>,
+        worldbookResult: WorldbookEvalResult,
+        presetBlocks: List<PromptPresetBlock>,
+        effectiveTipSeq: Int,
+        effectiveLimitTokens: Int,
+        modelId: String?,
+    ): SystemPrefixResult {
+        val conv = input.conversation
+        val isNovel = conv.mode == ConversationMode.novel && conv.novel != null
+        val isRp = conv.mode == ConversationMode.rp && conv.rp != null
+        val charName = resolveStaticCharName(conv, input.characterCard)
+        val userName = resolveStaticUserName(conv, input.persona)
+
+        val activeEpisodes = episodes
+            .filter { !it.stale && it.toSeq <= effectiveTipSeq }
+            .sortedWith(compareByDescending<MemoryEpisode> { it.level }.thenBy { it.fromSeq })
+
+        val summaryCap = computeSummaryCap(effectiveLimitTokens)
+        val tier1Episodes = ArrayList<MemoryEpisode>()
+        val overflowEpisodes = ArrayList<MemoryEpisode>()
+        var sumUsed = 0
+
+        for (ep in activeEpisodes) {
+            val tok = if (modelId == null && ep.estimatedTokens > 0) {
+                ep.estimatedTokens
+            } else {
+                EpisodeConsolidator.estimateEpisodeTokens(ep.title, ep.summary, modelId)
+            }
+            if (sumUsed + tok <= summaryCap) {
+                tier1Episodes.add(ep)
+                sumUsed += tok
+            } else {
+                overflowEpisodes.add(ep)
+            }
+        }
+
+        val chronicleText = buildString {
+            val frozenLines = tier1Episodes
+                .sortedBy { it.fromSeq }
+                .map { "- [Seq ${it.fromSeq}~${it.toSeq} ${it.title}] ${it.summary}" }
+            if (frozenLines.isNotEmpty()) {
+                append(frozenLines.joinToString("\n"))
+            } else if (conv.archivedSummary.isNotBlank()) {
+                append(conv.archivedSummary.trim())
+            }
+        }
+
+        val effectiveMemories = if (conv.params.enableAutoMemory) input.memories else emptyList()
+        val coreMem = buildCoreUserMemoryBlock(effectiveMemories, input.memoryBudget, modelId)
+
+        val activeChapter = if (isNovel) {
+            val cid = conv.novel!!.activeChapterId
+            novelChapters.firstOrNull { it.id == cid } ?: novelChapters.maxByOrNull { it.order }
+        } else {
+            null
+        }
+
+        val staticPresetText = presetBlocks
+            .filter { it.enabled && !it.marker && it.content.isNotBlank() && !isDepthInjectionPosition(it.injectionPosition) }
+            .map { expandStaticMacros(it.content.trim(), charName, userName) }
+            .joinToString("\n\n")
+
+        val beforeCharConstant = worldbookResult.zone0ConstantEntries
+            .filter { it.position == WorldbookEngine.POSITION_BEFORE_CHAR }
+        val afterCharConstant = worldbookResult.zone0ConstantEntries
+            .filter { it.position != WorldbookEngine.POSITION_BEFORE_CHAR }
+
+        val card = input.characterCard
+        val baseStaticSection = when {
+            isNovel -> expandStaticMacros(
+                NovelEngine.buildNovelSystemPrompt(
+                    novel = conv.novel!!,
+                    activeChapter = activeChapter,
+                    constantLore = emptyList(),
+                    chronicleSummary = "",
+                    previousChapters = novelChapters,
+                ),
+                charName,
+                userName,
+            )
+            card != null -> buildString {
+                if (card.systemPrompt.isNotBlank()) {
+                    appendLine(card.systemPrompt.trim())
+                }
+                if (isRp && conv.rp != null) {
+                    val styleTitle = when (conv.rp.playStyle) {
+                        RpPlayStyle.chengguang -> "沉浸式互动剧场 / 视觉小说（橙光风格）"
+                        RpPlayStyle.tavern -> "深度角色沉浸互动（SillyTavern 酒馆风格）"
+                        RpPlayStyle.trpg -> "桌面角色扮演跑团（TRPG / GM 主持风格）"
+                    }
+                    if (isNotEmpty()) appendLine()
+                    appendLine("你正在主持$styleTitle《${conv.rp.title.ifBlank { charName }}》。")
+                    val personaHint = input.persona?.description?.trim()?.takeIf { it.isNotEmpty() }
+                        ?: conv.rp.playerPersona.trim()
+                    appendLine("玩家扮演角色：【$userName】${if (personaHint.isNotBlank() && input.persona == null) "—— $personaHint" else ""}")
+                } else {
+                    if (isNotEmpty()) appendLine()
+                    appendLine("角色档案：$charName")
+                }
+
+                val desc = card.description.trim()
+                if (desc.isNotEmpty()) appendLine("\n【角色设定与背景】\n$desc")
+                val pers = card.personality.trim()
+                if (pers.isNotEmpty()) appendLine("\n【性格特征】\n$pers")
+                val scen = card.scenario.trim().ifBlank { conv.rp?.worldview?.trim().orEmpty() }
+                if (scen.isNotEmpty()) appendLine("\n【世界观设定】\n$scen")
+
+                val rules = conv.rp?.systemRules?.trim().orEmpty()
+                if (rules.isNotEmpty() && rules != card.systemPrompt.trim()) {
+                    appendLine("\n【游戏与检定规则】\n$rules")
+                }
+                val narrator = conv.rp?.narratorStyle?.trim().orEmpty().ifBlank { card.creatorNotes.trim() }
+                if (narrator.isNotEmpty()) appendLine("\n【叙述风格】\n$narrator")
+
+                val example = card.mesExample.trim().ifBlank { conv.rp?.mesExample?.trim().orEmpty() }
+                if (example.isNotEmpty()) appendLine("\n【角色对话风格示例 (Example Dialogue)】\n$example")
+
+                val staticCast = parseCardCast(card).ifEmpty { conv.rp?.cast.orEmpty() }
+                if (staticCast.isNotEmpty()) {
+                    appendLine("\n【主要登场人物表（静态人设）】")
+                    staticCast.forEach { c ->
+                        append("- ${c.name}（${c.role}）")
+                        if (c.personality.isNotBlank()) append("；性格：${c.personality}")
+                        if (c.speakingStyle.isNotBlank()) append("；口吻：${c.speakingStyle}")
+                        if (c.appearance.isNotBlank()) append("；外貌：${c.appearance}")
+                        if (c.relationship.isNotBlank()) append("；关系：${c.relationship}")
+                        if (c.secret.isNotBlank()) append("；暗线秘密（仅GM掌握，切勿直白泄密）：${c.secret}")
+                        appendLine()
+                    }
+                }
+            }.trim().let { expandStaticMacros(it, charName, userName) }
+            isRp -> {
+                val rp = conv.rp!!
+                buildString {
+                    val styleTitle = when (rp.playStyle) {
+                        RpPlayStyle.chengguang -> "沉浸式互动剧场 / 视觉小说（橙光风格）"
+                        RpPlayStyle.tavern -> "深度角色沉浸互动（SillyTavern 酒馆风格）"
+                        RpPlayStyle.trpg -> "桌面角色扮演跑团（TRPG / GM 主持风格）"
+                    }
+                    appendLine("你正在主持$styleTitle《${rp.title}》。")
+                    appendLine("玩家扮演角色：【$userName】${if (rp.playerPersona.isNotBlank() && input.persona == null) "—— ${rp.playerPersona}" else ""}")
+                    if (rp.worldview.isNotBlank()) appendLine("\n【世界观设定】\n${rp.worldview.trim()}")
+                    if (rp.systemRules.isNotBlank()) appendLine("\n【游戏与检定规则】\n${rp.systemRules.trim()}")
+                    if (rp.narratorStyle.isNotBlank()) appendLine("\n【叙述风格】\n${rp.narratorStyle.trim()}")
+                    if (rp.mesExample.isNotBlank()) appendLine("\n【角色对话风格示例 (Example Dialogue)】\n${rp.mesExample.trim()}")
+                    if (rp.cast.isNotEmpty()) {
+                        appendLine("\n【主要登场人物表（静态人设）】")
+                        rp.cast.forEach { c ->
+                            append("- ${c.name}（${c.role}）")
+                            if (c.personality.isNotBlank()) append("；性格：${c.personality}")
+                            if (c.speakingStyle.isNotBlank()) append("；口吻：${c.speakingStyle}")
+                            if (c.appearance.isNotBlank()) append("；外貌：${c.appearance}")
+                            if (c.relationship.isNotBlank()) append("；关系：${c.relationship}")
+                            if (c.secret.isNotBlank()) append("；暗线秘密（仅GM掌握，切勿直白泄密）：${c.secret}")
+                            appendLine()
+                        }
+                    }
+                    appendLine("\n【演出与主持原则】")
+                    appendLine("1. 严格尊重玩家主权：禁止代替【$userName】说出对白、决定内心想法或擅自代做重大抉择。")
+                    appendLine("2. 若本回合包含骰子检定结果，必须忠实依据成败与大成功/大失败演绎客观后果。")
+                }.trim().let { expandStaticMacros(it, charName, userName) }
+            }
+            else -> expandStaticMacros(conv.systemPrompt.trim(), charName, userName)
+        }
+
+        val personaStaticSection = input.persona
+            ?.takeIf { it.description.isNotBlank() && !isDepthInjectionPosition(it.injectionPosition) }
+            ?.let { p ->
+                val expanded = expandStaticMacros(p.description.trim(), charName, userName)
+                "<user_persona name=\"$userName\">\n$expanded\n</user_persona>"
+            }.orEmpty()
+
+        fun formatWorldbookSection(tag: String, entries: List<EvaluatedWorldbookEntry>): String {
+            if (entries.isEmpty()) return ""
+            val body = entries.joinToString("\n") { e ->
+                "- [${e.category}] ${e.title}：${expandStaticMacros(e.content.trim(), charName, userName)}"
+            }
+            return "<$tag>\n$body\n</$tag>"
+        }
+
+        val sections = buildList {
+            if (staticPresetText.isNotBlank()) add(staticPresetText)
+            formatWorldbookSection("worldbook_before_char", beforeCharConstant).takeIf { it.isNotEmpty() }?.let { add(it) }
+            if (baseStaticSection.isNotBlank()) add(baseStaticSection)
+            if (personaStaticSection.isNotBlank()) add(personaStaticSection)
+            formatWorldbookSection("worldbook_constant", afterCharConstant).takeIf { it.isNotEmpty() }?.let { add(it) }
+            if (chronicleText.isNotBlank()) add("<archived_memory_chronicle>\n$chronicleText\n</archived_memory_chronicle>")
+            if (coreMem.blockText.isNotBlank()) add(expandStaticMacros(coreMem.blockText, charName, userName))
+        }
+
+        val fullSystem = sections.joinToString("\n\n").trim()
+        val loreTok = worldbookResult.constantTokens
+        val chronicleTok = if (chronicleText.isNotBlank()) estimateTextTokens(chronicleText, modelId) else 0
+        val sysTok = if (fullSystem.isNotBlank()) estimateTextTokens(fullSystem, modelId) + 12 else 0
+        val baseSystemTok = max(0, sysTok - coreMem.usedTokens - chronicleTok - loreTok)
+
+        return SystemPrefixResult(
+            systemText = fullSystem,
+            systemTokens = sysTok,
+            memoryTokens = coreMem.usedTokens,
+            summaryTokens = chronicleTok,
+            novelLoreTokens = loreTok,
+            archivalUserMemories = coreMem.archivalMemories,
+            overflowEpisodes = overflowEpisodes,
+            baseSystemTokens = baseSystemTok,
+        )
+    }
+
     private data class ComputedPipeline(
         val active: List<ChatMessage>,
         val allActiveMessages: List<ChatMessage>,
@@ -735,7 +1089,11 @@ object ContextBuilder {
         val effectiveModelId: String?,
         val isNovel: Boolean,
         val isRp: Boolean,
+        val isV4Mode: Boolean,
         val loreMatch: LoreMatchResult,
+        val worldbookResult: WorldbookEvalResult?,
+        val parsedPresetBlocks: List<PromptPresetBlock>,
+        val resolvedAssistantPrefill: String?,
         val prefix: SystemPrefixResult,
         val tailBundle: TailRecallBundle,
         val dynamicOverhead: Int,
@@ -770,6 +1128,23 @@ object ContextBuilder {
                 input.novelLore
                     .filter { !it.alwaysActive && it.enabled && !it.stale }
                     .forEach { add(CjkSearch.novelLoreToSearchCandidate(it)) }
+            }
+            for (book in input.mountedWorldbooks) {
+                for (entry in book.entries) {
+                    if (entry.enabled && !entry.constant && entry.content.isNotBlank()) {
+                        add(
+                            MemorySearchCandidate(
+                                id = entry.id,
+                                title = entry.title,
+                                content = entry.content,
+                                category = entry.category,
+                                keywords = decodeStringList(entry.keysJson),
+                                enabled = true,
+                                estimatedTokens = entry.estimatedTokens.takeIf { it > 0 },
+                            ),
+                        )
+                    }
+                }
             }
             if (isRp) {
                 input.memoryLedger
@@ -809,6 +1184,8 @@ object ContextBuilder {
 
         val isNovel = conv.mode == ConversationMode.novel && conv.novel != null
         val isRp = conv.mode == ConversationMode.rp && conv.rp != null
+        val isV4Mode = isV4AssetMode(input)
+        val parsedPresetBlocks = if (isV4Mode) parsePresetBlocks(input.promptPreset) else emptyList()
 
         // Single-pass semantic scoring: use precomputedSemanticScores if given (including on synchronous
         // waterline preview), otherwise invoke semanticScorer at most ONCE when allowScorer == true.
@@ -818,37 +1195,68 @@ object ContextBuilder {
             else -> null
         }
 
-        val mutedLoreIds = mutedIdsForSource(input.mutedRecallKeys, "novel_lore")
+        val mutedLoreIds = mutedIdsForSource(input.mutedRecallKeys, "novel_lore") +
+            mutedIdsForSource(input.mutedRecallKeys, "worldbook_entry")
         val topKCap = topKRecallCap(input.memoryBudget)
 
-        val loreMatch = when {
-            isNovel -> NovelEngine.matchNovelLore(
-                lore = input.novelLore,
+        val worldbookResult: WorldbookEvalResult?
+        val loreMatch: LoreMatchResult
+        val prefix: SystemPrefixResult
+
+        if (isV4Mode) {
+            val loreBudget = when {
+                isNovel -> conv.novel!!.loreTokenBudget
+                isRp -> conv.rp!!.loreTokenBudget
+                else -> input.mountedWorldbooks.firstOrNull()?.worldbook?.tokenBudget ?: 1600
+            }
+            val defaultScan = input.mountedWorldbooks.firstOrNull()?.worldbook?.scanDepth ?: 4
+            val recursiveScan = input.mountedWorldbooks.all { it.worldbook.recursiveScanning }
+            val extraScans = buildList {
+                if (isNovel && !slice.activeChapter?.outline.isNullOrBlank()) add(slice.activeChapter!!.outline)
+                if (isRp && !conv.rp?.state?.scene.isNullOrBlank()) add(conv.rp!!.state.scene)
+                if (isRp && !conv.rp?.state?.chapterTitle.isNullOrBlank()) add(conv.rp!!.state.chapterTitle)
+            }
+            val evaluated = input.worldbookEvalOverride ?: WorldbookEngine.evaluate(
+                conversationId = conv.id,
+                books = input.mountedWorldbooks,
+                sessionLore = if (isNovel || isRp) input.novelLore else emptyList(),
                 recentMessages = slice.active,
                 draftText = input.draftText,
-                chapterOutline = slice.activeChapter?.outline.orEmpty(),
-                loreTokenBudget = conv.novel!!.loreTokenBudget,
+                extraScanTexts = extraScans,
+                timedStates = input.loreTimedStates,
+                totalBudget = loreBudget,
+                defaultScanDepth = defaultScan,
+                recursiveScanning = recursiveScan,
                 activeTipSeq = slice.effectiveTipSeq,
-                presentEntities = conv.novel.currentStatus?.present.orEmpty(),
-                sceneTitle = conv.novel.currentStatus?.location,
-                semanticScorer = null,
-                semanticScores = resolvedSemanticScores,
-                modelId = effectiveModelId,
                 mutedIds = mutedLoreIds,
-                maxTriggered = topKCap,
+                semanticScores = resolvedSemanticScores,
                 minSemanticCosine = input.minSemanticCosine,
+                modelId = effectiveModelId,
             )
-            isRp -> {
-                val rpCfg = conv.rp!!
-                NovelEngine.matchNovelLore(
+            worldbookResult = evaluated
+            loreMatch = LoreMatchResult(emptyList(), emptyList(), evaluated.constantTokens, evaluated.triggeredTokens)
+            prefix = buildV4Zone0SystemPrefix(
+                input = input,
+                episodes = input.memoryEpisodes,
+                novelChapters = input.novelChapters,
+                worldbookResult = evaluated,
+                presetBlocks = parsedPresetBlocks,
+                effectiveTipSeq = slice.effectiveTipSeq,
+                effectiveLimitTokens = effectiveLimitTokens,
+                modelId = effectiveModelId,
+            )
+        } else {
+            worldbookResult = null
+            loreMatch = when {
+                isNovel -> NovelEngine.matchNovelLore(
                     lore = input.novelLore,
                     recentMessages = slice.active,
                     draftText = input.draftText,
-                    chapterOutline = rpCfg.state.chapterTitle,
-                    loreTokenBudget = rpCfg.loreTokenBudget,
+                    chapterOutline = slice.activeChapter?.outline.orEmpty(),
+                    loreTokenBudget = conv.novel!!.loreTokenBudget,
                     activeTipSeq = slice.effectiveTipSeq,
-                    presentEntities = rpCfg.cast.filter { it.inScene }.map { it.name },
-                    sceneTitle = rpCfg.state.scene,
+                    presentEntities = conv.novel.currentStatus?.present.orEmpty(),
+                    sceneTitle = conv.novel.currentStatus?.location,
                     semanticScorer = null,
                     semanticScores = resolvedSemanticScores,
                     modelId = effectiveModelId,
@@ -856,21 +1264,39 @@ object ContextBuilder {
                     maxTriggered = topKCap,
                     minSemanticCosine = input.minSemanticCosine,
                 )
+                isRp -> {
+                    val rpCfg = conv.rp!!
+                    NovelEngine.matchNovelLore(
+                        lore = input.novelLore,
+                        recentMessages = slice.active,
+                        draftText = input.draftText,
+                        chapterOutline = rpCfg.state.chapterTitle,
+                        loreTokenBudget = rpCfg.loreTokenBudget,
+                        activeTipSeq = slice.effectiveTipSeq,
+                        presentEntities = rpCfg.cast.filter { it.inScene }.map { it.name },
+                        sceneTitle = rpCfg.state.scene,
+                        semanticScorer = null,
+                        semanticScores = resolvedSemanticScores,
+                        modelId = effectiveModelId,
+                        mutedIds = mutedLoreIds,
+                        maxTriggered = topKCap,
+                        minSemanticCosine = input.minSemanticCosine,
+                    )
+                }
+                else -> LoreMatchResult(emptyList(), emptyList(), 0, 0)
             }
-            else -> LoreMatchResult(emptyList(), emptyList(), 0, 0)
+            prefix = buildSystemPrefix(
+                conversation = conv,
+                memories = input.memories,
+                memoryBudget = input.memoryBudget,
+                novelChapters = input.novelChapters,
+                constantLore = loreMatch.constant,
+                episodes = input.memoryEpisodes,
+                effectiveTipSeq = slice.effectiveTipSeq,
+                effectiveLimitTokens = effectiveLimitTokens,
+                modelId = effectiveModelId,
+            )
         }
-
-        val prefix = buildSystemPrefix(
-            conversation = conv,
-            memories = input.memories,
-            memoryBudget = input.memoryBudget,
-            novelChapters = input.novelChapters,
-            constantLore = loreMatch.constant,
-            episodes = input.memoryEpisodes,
-            effectiveTipSeq = slice.effectiveTipSeq,
-            effectiveLimitTokens = effectiveLimitTokens,
-            modelId = effectiveModelId,
-        )
 
         val tailBundle = buildTailRecallBundle(
             conversation = conv,
@@ -891,10 +1317,29 @@ object ContextBuilder {
             minSemanticCosine = input.minSemanticCosine,
         )
 
+        val v4ExtraDynamicTokens = if (isV4Mode) {
+            val wbDynamic = (worldbookResult?.depthTokens ?: 0) + (worldbookResult?.triggeredTokens ?: 0)
+            val presetDepthTok = parsedPresetBlocks
+                .filter { it.enabled && !it.marker && it.content.isNotBlank() && isDepthInjectionPosition(it.injectionPosition) }
+                .sumOf { estimateTextTokens(it.content, effectiveModelId) + 6 }
+            val cardDepthTok = input.characterCard?.depthPromptText?.takeIf { it.isNotBlank() }?.let {
+                estimateTextTokens(it, effectiveModelId) + 6
+            } ?: 0
+            val cardPostTok = input.characterCard?.postHistoryInstructions?.takeIf {
+                it.isNotBlank() && (!isRp || conv.rp?.postHistoryInstructions.isNullOrBlank())
+            }?.let { estimateTextTokens(it, effectiveModelId) + 8 } ?: 0
+            val personaDepthTok = input.persona?.takeIf {
+                it.description.isNotBlank() && isDepthInjectionPosition(it.injectionPosition)
+            }?.let { estimateTextTokens(it.description, effectiveModelId) + 6 } ?: 0
+            wbDynamic + presetDepthTok + cardDepthTok + cardPostTok + personaDepthTok
+        } else {
+            0
+        }
+
         val dynamicOverhead = when {
             isNovel -> {
                 val novelCfg = conv.novel!!
-                loreMatch.triggeredTokens +
+                (if (isV4Mode) v4ExtraDynamicTokens else loreMatch.triggeredTokens) +
                     tailBundle.tailRecallTokens +
                     estimateTextTokens(novelCfg.authorNote, effectiveModelId) +
                     (if (novelCfg.enableStatusHud) 90 else 0) +
@@ -916,12 +1361,34 @@ object ContextBuilder {
                     (if (rpCfg.enableLedger) 65 else 0) +
                     (if (rpCfg.enableChoices) 120 else 0)
                 hudOverhead + suffixOverhead +
-                    loreMatch.triggeredTokens +
+                    (if (isV4Mode) v4ExtraDynamicTokens else loreMatch.triggeredTokens) +
                     estimateTextTokens(rpCfg.authorNote, effectiveModelId) +
                     estimateTextTokens(rpCfg.postHistoryInstructions, effectiveModelId) +
                     tailBundle.tailRecallTokens
             }
-            else -> tailBundle.tailRecallTokens
+            else -> v4ExtraDynamicTokens + tailBundle.tailRecallTokens
+        }
+
+        val resolvedPrefill = run {
+            val presetPrefill = if (isV4Mode) {
+                parsedPresetBlocks
+                    .lastOrNull {
+                        it.enabled && !it.marker &&
+                            it.role.equals("assistant", ignoreCase = true) &&
+                            isDepthInjectionPosition(it.injectionPosition) &&
+                            it.injectionDepth == 0 &&
+                            it.content.isNotBlank()
+                    }
+                    ?.content
+                    ?.trim()
+                    .orEmpty()
+            } else {
+                ""
+            }
+            input.assistantPrefill.trim()
+                .ifBlank { presetPrefill }
+                .takeIf { it.isNotEmpty() }
+                ?.let { expandDynamicV4Macros(it, conv, input.characterCard, input.persona) }
         }
 
         val effectiveDraftImages = if (input.draftAttachments.isNotEmpty()) {
@@ -967,17 +1434,26 @@ object ContextBuilder {
 
         val maxHistoryLimit = conv.params.maxHistoryMessages?.takeIf { it > 0 }
         var running = ((prefix.systemTokens + draftTokens + dynamicOverhead) * calibration).roundToInt()
-        var kept = 0
+        var rawKept = 0
+        for (i in slice.active.indices.reversed()) {
+            if (maxHistoryLimit != null && rawKept >= maxHistoryLimit) break
+            val msgTok = (msgCosts[i] * calibration).roundToInt()
+            if (rawKept > 0 && running + msgTok > effectiveLimitTokens) break
+            running += msgTok
+            rawKept++
+        }
+
+        val kept = computeSlidingWindowKeepCount(
+            activeSize = slice.active.size,
+            rawKeptCount = rawKept,
+            maxHistoryLimit = maxHistoryLimit,
+        )
+        val startIdx = max(0, slice.active.size - kept)
         var keptHistoryRaw = 0
         var keptFileTokensRaw = 0
-        for (i in slice.active.indices.reversed()) {
-            if (maxHistoryLimit != null && kept >= maxHistoryLimit) break
-            val msgTok = (msgCosts[i] * calibration).roundToInt()
-            if (kept > 0 && running + msgTok > effectiveLimitTokens) break
-            running += msgTok
+        for (i in startIdx until slice.active.size) {
             keptHistoryRaw += msgCosts[i]
             keptFileTokensRaw += msgFileCosts[i]
-            kept++
         }
 
         // Dual-Metric accounting:
@@ -1004,47 +1480,59 @@ object ContextBuilder {
         val isSliding = trimmedCount > 0
         val hardOverflow = sentTokens > windowLimit
 
-        val constantLoreInspect = loreMatch.constant.map { entry ->
-            RecalledMemoryInspectItem(
-                id = entry.id,
-                title = entry.title,
-                contentPreview = entry.content.take(80),
-                category = entry.category,
-                source = "novel_lore",
-                score = null,
-                estimatedTokens = NovelEngine.estimateLoreTokens(entry, effectiveModelId),
-                matchedTerms = emptyList(),
-                triggerKind = "constant",
-            )
+        val loreInspect = if (worldbookResult != null) {
+            worldbookResult.inspectItems
+        } else {
+            val constantLoreInspect = loreMatch.constant.map { entry ->
+                RecalledMemoryInspectItem(
+                    id = entry.id,
+                    title = entry.title,
+                    contentPreview = entry.content.take(80),
+                    category = entry.category,
+                    source = "novel_lore",
+                    score = null,
+                    estimatedTokens = NovelEngine.estimateLoreTokens(entry, effectiveModelId),
+                    matchedTerms = emptyList(),
+                    triggerKind = "constant",
+                )
+            }
+            val triggeredLoreInspect = loreMatch.triggered.map { entry ->
+                RecalledMemoryInspectItem(
+                    id = entry.id,
+                    title = entry.title,
+                    contentPreview = entry.content.take(80),
+                    category = entry.category,
+                    source = "novel_lore",
+                    score = loreMatch.triggeredScores[entry.id]?.let { (it * 1000).roundToInt() / 1000.0 },
+                    estimatedTokens = NovelEngine.estimateLoreTokens(entry, effectiveModelId),
+                    matchedTerms = loreMatch.triggeredMatchedTerms[entry.id].orEmpty(),
+                    triggerKind = loreMatch.triggeredKinds[entry.id] ?: "lexical",
+                )
+            }
+            constantLoreInspect + triggeredLoreInspect
         }
-        val triggeredLoreInspect = loreMatch.triggered.map { entry ->
-            RecalledMemoryInspectItem(
-                id = entry.id,
-                title = entry.title,
-                contentPreview = entry.content.take(80),
-                category = entry.category,
-                source = "novel_lore",
-                score = loreMatch.triggeredScores[entry.id]?.let { (it * 1000).roundToInt() / 1000.0 },
-                estimatedTokens = NovelEngine.estimateLoreTokens(entry, effectiveModelId),
-                matchedTerms = loreMatch.triggeredMatchedTerms[entry.id].orEmpty(),
-                triggerKind = loreMatch.triggeredKinds[entry.id] ?: "lexical",
-            )
-        }
-        val allRecalled = constantLoreInspect + triggeredLoreInspect + tailBundle.recalledItems
+        val allRecalled = loreInspect + tailBundle.recalledItems
         val recalledTotalTokens = allRecalled.sumOf { it.estimatedTokens }
 
         val recallBudgetTokens = when {
             isNovel -> conv.novel!!.loreTokenBudget + tailBundle.recallBudgetTokens
             isRp -> conv.rp!!.loreTokenBudget + tailBundle.recallBudgetTokens
+            worldbookResult != null -> (input.mountedWorldbooks.firstOrNull()?.worldbook?.tokenBudget ?: 1600) + tailBundle.recallBudgetTokens
             else -> tailBundle.recallBudgetTokens
         }
-        val retrievalModeUsed = if (loreMatch.retrievalModeUsed == "hybrid" || tailBundle.retrievalModeUsed == "hybrid") {
-            "hybrid"
-        } else {
-            "lexical"
-        }
+        val loreHybrid = worldbookResult?.retrievalModeUsed == "hybrid" || loreMatch.retrievalModeUsed == "hybrid"
+        val retrievalModeUsed = if (loreHybrid || tailBundle.retrievalModeUsed == "hybrid") "hybrid" else "lexical"
 
         fun cal(raw: Int): Int = (raw * calibration).roundToInt()
+
+        val triggeredIds = worldbookResult?.allTriggeredIds ?: loreMatch.triggered.map { it.id }
+        val triggeredTitles = worldbookResult?.allTriggeredTitles ?: loreMatch.triggered.map { it.title }
+        val totalLoreTokensRaw = if (worldbookResult != null) {
+            prefix.novelLoreTokens + worldbookResult.depthTokens + worldbookResult.triggeredTokens
+        } else {
+            prefix.novelLoreTokens + loreMatch.triggeredTokens
+        }
+        val droppedLoreCount = worldbookResult?.droppedCount ?: loreMatch.droppedCount
 
         val waterline = ContextWaterlineSummary(
             usedTokens = sentTokens,
@@ -1060,9 +1548,9 @@ object ContextBuilder {
             fileTokens = cal(keptFileTokensRaw + draftFileTokens),
             memoryTokens = cal(prefix.memoryTokens),
             summaryTokens = cal(prefix.summaryTokens),
-            triggeredLoreIds = loreMatch.triggered.map { it.id },
-            triggeredLoreTitles = loreMatch.triggered.map { it.title },
-            novelLoreTokens = cal(prefix.novelLoreTokens + loreMatch.triggeredTokens),
+            triggeredLoreIds = triggeredIds,
+            triggeredLoreTitles = triggeredTitles,
+            novelLoreTokens = cal(totalLoreTokensRaw),
             retrievedMemoryCount = allRecalled.size,
             recalledMemoryTokens = cal(tailBundle.tailRecallTokens),
             recalledItems = allRecalled,
@@ -1076,7 +1564,7 @@ object ContextBuilder {
             recallBudgetTokens = recallBudgetTokens,
             recalledTotalTokens = recalledTotalTokens,
             retrievalModeUsed = retrievalModeUsed,
-            droppedRecallCount = loreMatch.droppedCount + tailBundle.droppedRecallCount,
+            droppedRecallCount = droppedLoreCount + tailBundle.droppedRecallCount,
         )
 
         return ComputedPipeline(
@@ -1092,7 +1580,11 @@ object ContextBuilder {
             effectiveModelId = effectiveModelId,
             isNovel = isNovel,
             isRp = isRp,
+            isV4Mode = isV4Mode,
             loreMatch = loreMatch,
+            worldbookResult = worldbookResult,
+            parsedPresetBlocks = parsedPresetBlocks,
+            resolvedAssistantPrefill = resolvedPrefill,
             prefix = prefix,
             tailBundle = tailBundle,
             dynamicOverhead = dynamicOverhead,
@@ -1157,7 +1649,10 @@ object ContextBuilder {
     fun computeContextWaterline(input: ContextBuildInput): ContextWaterlineSummary =
         runSharedPipeline(input, allowScorer = false).waterline
 
-    suspend fun buildChatContext(input: ContextBuildInput): BuiltChatContext {
+    suspend fun buildChatContext(input: ContextBuildInput): BuiltChatContext =
+        buildChatContextV4(input).built
+
+    suspend fun buildChatContextV4(input: ContextBuildInput): BuiltChatContextV4 {
         val pipe = runSharedPipeline(input, allowScorer = true)
         val conv = input.conversation
         val active = pipe.active
@@ -1207,12 +1702,10 @@ object ContextBuilder {
             }
         }
 
-        val selected = ArrayList<ChatMessage>()
         var used = ((pipe.prefix.systemTokens + pipe.dynamicOverhead) * pipe.calibration).roundToInt()
-        var selectedRawHistory = 0
-        var selectedRawFiles = 0
+        var rawSelectedCount = 0
         for (i in active.indices.reversed()) {
-            if (maxHistoryLimit != null && selected.size >= maxHistoryLimit) break
+            if (maxHistoryLimit != null && rawSelectedCount >= maxHistoryLimit) break
             val msg = active[i]
             val rawCost = resolveMsgTokenCost(
                 msg = msg,
@@ -1224,21 +1717,116 @@ object ContextBuilder {
                 conversation = conv,
             )
             val msgTok = (rawCost * pipe.calibration).roundToInt()
-            if (selected.isNotEmpty() && used + msgTok > pipe.effectiveLimitTokens) break
+            if (rawSelectedCount > 0 && used + msgTok > pipe.effectiveLimitTokens) break
             used += msgTok
-            selectedRawHistory += rawCost
+            rawSelectedCount++
+        }
+
+        val selectedCount = computeSlidingWindowKeepCount(
+            activeSize = active.size,
+            rawKeptCount = rawSelectedCount,
+            maxHistoryLimit = maxHistoryLimit,
+        )
+        val selected = if (selectedCount > 0) active.takeLast(selectedCount) else emptyList()
+        var selectedRawHistory = 0
+        var selectedRawFiles = 0
+        for (msg in selected) {
+            selectedRawHistory += resolveMsgTokenCost(
+                msg = msg,
+                imageDecayed = msg.id in decayedImages,
+                fileDecayed = msg.id in decayedFiles,
+                attachmentsById = input.attachmentsById,
+                perTurnFileBudget = fileTurnBudget,
+                modelId = pipe.effectiveModelId,
+                conversation = conv,
+            )
             selectedRawFiles += resolveMsgFileTokens(
                 msg = msg,
                 fileDecayed = msg.id in decayedFiles,
                 attachmentsById = input.attachmentsById,
                 perTurnFileBudget = fileTurnBudget,
             )
-            selected.add(0, msg)
         }
 
         val wireMessages = ArrayList<WireChatMessage>()
         if (pipe.prefix.systemText.isNotBlank()) {
             wireMessages.add(WireChatMessage(role = "system", textContent = pipe.prefix.systemText))
+        }
+
+        val wbResult = pipe.worldbookResult
+        val zone3StandardLore: List<NovelLoreEntry> = if (pipe.isV4Mode && wbResult != null) {
+            wbResult.zone3TriggeredEntries
+                .filter { !(it.position == WorldbookEngine.POSITION_AT_DEPTH && it.depth == 0) }
+                .map { entry ->
+                    val expanded = expandDynamicV4Macros(entry.content.trim(), conv, input.characterCard, input.persona)
+                    NovelLoreEntry(
+                        id = entry.id,
+                        conversationId = conv.id,
+                        title = entry.title,
+                        category = entry.category,
+                        content = expanded,
+                        alwaysActive = entry.constant,
+                        createdAt = 0L,
+                        updatedAt = 0L,
+                        estimatedTokens = entry.estimatedTokens,
+                    )
+                }
+        } else {
+            pipe.loreMatch.triggered
+        }
+
+        val zone3TrailingSuffix = if (pipe.isV4Mode) {
+            val parts = ArrayList<String>()
+            val depth0Lore = wbResult?.zone3TriggeredEntries.orEmpty()
+                .filter { it.position == WorldbookEngine.POSITION_AT_DEPTH && it.depth == 0 }
+            if (depth0Lore.isNotEmpty()) {
+                val body = depth0Lore.joinToString("\n") { e ->
+                    val txt = expandDynamicV4Macros(e.content.trim(), conv, input.characterCard, input.persona)
+                    "- [${e.category}] ${e.title}: $txt"
+                }
+                parts.add("<depth_instructions>\n$body\n</depth_instructions>")
+            }
+            val depth0PresetBlocks = pipe.parsedPresetBlocks
+                .filter {
+                    it.enabled && !it.marker &&
+                        isDepthInjectionPosition(it.injectionPosition) &&
+                        it.injectionDepth == 0 &&
+                        !it.role.equals("assistant", ignoreCase = true) &&
+                        it.content.isNotBlank()
+                }
+            for (b in depth0PresetBlocks) {
+                parts.add(expandDynamicV4Macros(b.content.trim(), conv, input.characterCard, input.persona))
+            }
+            val personaDepth0 = input.persona
+                ?.takeIf { it.description.isNotBlank() && isDepthInjectionPosition(it.injectionPosition) && it.injectionDepth == 0 }
+            if (personaDepth0 != null) {
+                val userName = resolveStaticUserName(conv, input.persona)
+                val body = expandDynamicV4Macros(personaDepth0.description.trim(), conv, input.characterCard, input.persona)
+                parts.add("【用户人设 ($userName)】\n$body")
+            }
+            val cardDepth0 = input.characterCard
+                ?.takeIf { it.depthPromptText.isNotBlank() && it.depthPromptDepth == 0 }
+            if (cardDepth0 != null) {
+                parts.add(expandDynamicV4Macros(cardDepth0.depthPromptText.trim(), conv, input.characterCard, input.persona))
+            }
+            val cardPost = input.characterCard?.postHistoryInstructions?.trim().orEmpty()
+            val rpPost = conv.rp?.postHistoryInstructions?.trim().orEmpty()
+            if (cardPost.isNotEmpty() && (!pipe.isRp || rpPost != cardPost)) {
+                val expandedPost = expandDynamicV4Macros(cardPost, conv, input.characterCard, input.persona)
+                parts.add("【后置核心指令 (Post-History Instructions)】\n$expandedPost")
+            }
+            parts.joinToString("\n\n").trim()
+        } else {
+            ""
+        }
+
+        val chatWorldbookTriggeredBlock = if (pipe.isV4Mode && !pipe.isRp && !pipe.isNovel && zone3StandardLore.isNotEmpty()) {
+            val lines = zone3StandardLore.joinToString("\n") { entry ->
+                "- [${entry.category}] ${entry.title}: ${entry.content.trim()}"
+            }
+            "<worldbook_triggered>\n$lines\n</worldbook_triggered>"
+        } else {
+            ""
         }
 
         val lastUserIdx = selected.indexOfLast { it.role == "user" }
@@ -1262,6 +1850,13 @@ object ContextBuilder {
 
         var reRecalledInjectedRawTokens = 0
 
+        fun appendTrailingZone3(baseText: String): String {
+            return buildList {
+                if (baseText.isNotBlank()) add(baseText.trim())
+                if (zone3TrailingSuffix.isNotBlank()) add(zone3TrailingSuffix)
+            }.joinToString("\n\n")
+        }
+
         for (idx in selected.indices) {
             val msg = selected[idx]
             val rawContent = cleanAssistantHistoryText(msg, conv)
@@ -1277,30 +1872,39 @@ object ContextBuilder {
                         inputKind = msg.inputKind ?: input.draftInputKind ?: NovelInputKind.director,
                         novel = conv.novel!!,
                         activeChapter = pipe.activeChapter,
-                        triggeredLore = pipe.loreMatch.triggered,
+                        triggeredLore = zone3StandardLore,
                         existingLoreTitles = existingLoreTitles,
                         archivedEpisodeLines = pipe.tailBundle.novelArchivedEpisodeLines,
                     )
-                    if (pipe.tailBundle.chatTailRecallBlock.isNotBlank()) {
+                    val withRecall = if (pipe.tailBundle.chatTailRecallBlock.isNotBlank()) {
                         "${pipe.tailBundle.chatTailRecallBlock}\n\n$wrapped"
                     } else {
                         wrapped
                     }
+                    appendTrailingZone3(withRecall)
                 }
-                isFinalRpUser -> RpEngine.wrapRpTurnUserMessage(
-                    rawContent = rawContent,
-                    inputKind = msg.rpInputKind ?: input.draftRpInputKind ?: RpInputKind.action,
-                    rp = conv.rp!!,
-                    diceRoll = msg.rpDiceRoll,
-                    activeLedgerLines = pipe.tailBundle.rpActiveLedgerLines,
-                    recalledMemoryLines = pipe.tailBundle.rpRecalledMemoryLines,
-                    archivedEpisodeLines = pipe.tailBundle.rpArchivedEpisodeLines,
-                    triggeredLore = pipe.loreMatch.triggered,
-                    includeAuthorNote = conv.rp.authorNoteDepth <= 0,
-                )
-                isFinalChatUser && pipe.tailBundle.chatTailRecallBlock.isNotBlank() -> {
-                    if (rawContent.isNotBlank()) "${pipe.tailBundle.chatTailRecallBlock}\n\n$rawContent"
-                    else pipe.tailBundle.chatTailRecallBlock
+                isFinalRpUser -> {
+                    val wrappedRp = RpEngine.wrapRpTurnUserMessage(
+                        rawContent = rawContent,
+                        inputKind = msg.rpInputKind ?: input.draftRpInputKind ?: RpInputKind.action,
+                        rp = conv.rp!!,
+                        diceRoll = msg.rpDiceRoll,
+                        activeLedgerLines = pipe.tailBundle.rpActiveLedgerLines,
+                        recalledMemoryLines = pipe.tailBundle.rpRecalledMemoryLines,
+                        archivedEpisodeLines = pipe.tailBundle.rpArchivedEpisodeLines,
+                        triggeredLore = zone3StandardLore,
+                        includeAuthorNote = conv.rp.authorNoteDepth <= 0,
+                    )
+                    appendTrailingZone3(wrappedRp)
+                }
+                isFinalChatUser -> {
+                    val combinedChat = buildList {
+                        if (chatWorldbookTriggeredBlock.isNotBlank()) add(chatWorldbookTriggeredBlock)
+                        if (pipe.tailBundle.chatTailRecallBlock.isNotBlank()) add(pipe.tailBundle.chatTailRecallBlock)
+                        if (rawContent.isNotBlank()) add(rawContent)
+                        if (zone3TrailingSuffix.isNotBlank()) add(zone3TrailingSuffix)
+                    }.joinToString("\n\n")
+                    combinedChat
                 }
                 else -> rawContent
             }
@@ -1419,7 +2023,7 @@ object ContextBuilder {
                         inputKind = NovelInputKind.director,
                         novel = conv.novel!!,
                         activeChapter = pipe.activeChapter,
-                        triggeredLore = pipe.loreMatch.triggered,
+                        triggeredLore = zone3StandardLore,
                         existingLoreTitles = existingLoreTitles,
                         archivedEpisodeLines = pipe.tailBundle.novelArchivedEpisodeLines,
                     )
@@ -1428,7 +2032,7 @@ object ContextBuilder {
                     } else {
                         openingPrompt
                     }
-                    wireMessages.add(WireChatMessage(role = "user", textContent = content))
+                    wireMessages.add(WireChatMessage(role = "user", textContent = appendTrailingZone3(content)))
                 }
                 pipe.isRp -> {
                     val openingRp = RpEngine.wrapRpTurnUserMessage(
@@ -1438,25 +2042,164 @@ object ContextBuilder {
                         activeLedgerLines = pipe.tailBundle.rpActiveLedgerLines,
                         recalledMemoryLines = pipe.tailBundle.rpRecalledMemoryLines,
                         archivedEpisodeLines = pipe.tailBundle.rpArchivedEpisodeLines,
-                        triggeredLore = pipe.loreMatch.triggered,
+                        triggeredLore = zone3StandardLore,
                         includeAuthorNote = conv.rp.authorNoteDepth <= 0,
                     )
-                    wireMessages.add(WireChatMessage(role = "user", textContent = openingRp))
+                    wireMessages.add(WireChatMessage(role = "user", textContent = appendTrailingZone3(openingRp)))
                 }
-                pipe.tailBundle.chatTailRecallBlock.isNotBlank() -> {
-                    wireMessages.add(WireChatMessage(role = "user", textContent = pipe.tailBundle.chatTailRecallBlock))
+                else -> {
+                    val syntheticChat = buildList {
+                        if (chatWorldbookTriggeredBlock.isNotBlank()) add(chatWorldbookTriggeredBlock)
+                        if (pipe.tailBundle.chatTailRecallBlock.isNotBlank()) add(pipe.tailBundle.chatTailRecallBlock)
+                        if (zone3TrailingSuffix.isNotBlank()) add(zone3TrailingSuffix)
+                    }.joinToString("\n\n")
+                    if (syntheticChat.isNotBlank()) {
+                        wireMessages.add(WireChatMessage(role = "user", textContent = syntheticChat))
+                    }
                 }
             }
         }
 
-        // Honor RpConfig.authorNoteDepth >= 1 by injecting OOC Author's Note at depth from end of history
-        if (pipe.isRp && conv.rp != null && conv.rp.authorNote.isNotBlank() && conv.rp.authorNoteDepth >= 1) {
-            val firstNonSystemIdx = wireMessages.indexOfFirst { it.role != "system" }.let {
-                if (it < 0) wireMessages.size else it
+        // Zone 2 (@D >= 1) Shallow Depth Band injection with isDepthInjection = true
+        if (!pipe.isV4Mode) {
+            if (pipe.isRp && conv.rp != null && conv.rp.authorNote.isNotBlank() && conv.rp.authorNoteDepth >= 1) {
+                val firstNonSystemIdx = wireMessages.indexOfFirst { it.role != "system" }.let {
+                    if (it < 0) wireMessages.size else it
+                }
+                val insertIdx = (wireMessages.size - conv.rp.authorNoteDepth).coerceIn(firstNonSystemIdx, wireMessages.size)
+                val noteText = RpEngine.replaceMacros("【OOC 作者备注】\n${conv.rp.authorNote.trim()}", conv.rp)
+                wireMessages.add(insertIdx, WireChatMessage(role = "system", textContent = noteText, isDepthInjection = true))
             }
-            val insertIdx = (wireMessages.size - conv.rp.authorNoteDepth).coerceIn(firstNonSystemIdx, wireMessages.size)
-            val noteText = RpEngine.replaceMacros("【OOC 作者备注】\n${conv.rp.authorNote.trim()}", conv.rp)
-            wireMessages.add(insertIdx, WireChatMessage(role = "system", textContent = noteText))
+        } else {
+            val depthItems = ArrayList<DepthInjectionItem>()
+            wbResult?.zone2DepthEntries.orEmpty().forEachIndexed { idx, entry ->
+                val expanded = expandDynamicV4Macros(entry.content.trim(), conv, input.characterCard, input.persona)
+                if (expanded.isNotBlank()) {
+                    depthItems.add(
+                        DepthInjectionItem(
+                            depth = entry.depth.coerceAtLeast(1),
+                            role = normalizeWireRole(entry.outletRole),
+                            text = "- [${entry.category}] ${entry.title}: $expanded",
+                            sortBucket = 0,
+                            subOrder = idx,
+                        ),
+                    )
+                }
+            }
+            pipe.parsedPresetBlocks
+                .filter { it.enabled && !it.marker && isDepthInjectionPosition(it.injectionPosition) && it.injectionDepth >= 1 && it.content.isNotBlank() }
+                .forEachIndexed { idx, block ->
+                    val expanded = expandDynamicV4Macros(block.content.trim(), conv, input.characterCard, input.persona)
+                    if (expanded.isNotBlank()) {
+                        depthItems.add(
+                            DepthInjectionItem(
+                                depth = block.injectionDepth,
+                                role = normalizeWireRole(block.role),
+                                text = expanded,
+                                sortBucket = 1,
+                                subOrder = idx,
+                            ),
+                        )
+                    }
+                }
+            input.persona
+                ?.takeIf { it.description.isNotBlank() && isDepthInjectionPosition(it.injectionPosition) && it.injectionDepth >= 1 }
+                ?.let { persona ->
+                    val userName = resolveStaticUserName(conv, persona)
+                    val expanded = expandDynamicV4Macros(persona.description.trim(), conv, input.characterCard, input.persona)
+                    depthItems.add(
+                        DepthInjectionItem(
+                            depth = persona.injectionDepth,
+                            role = "system",
+                            text = "【用户人设 ($userName)】\n$expanded",
+                            sortBucket = 2,
+                            subOrder = 0,
+                        ),
+                    )
+                }
+            input.characterCard
+                ?.takeIf {
+                    it.depthPromptText.isNotBlank() &&
+                        it.depthPromptDepth >= 1 &&
+                        (!pipe.isRp || conv.rp == null || it.depthPromptText.trim() != conv.rp.authorNote.trim())
+                }
+                ?.let { card ->
+                    val expanded = expandDynamicV4Macros(card.depthPromptText.trim(), conv, input.characterCard, input.persona)
+                    depthItems.add(
+                        DepthInjectionItem(
+                            depth = card.depthPromptDepth,
+                            role = normalizeWireRole(card.depthPromptRole),
+                            text = expanded,
+                            sortBucket = 3,
+                            subOrder = 0,
+                        ),
+                    )
+                }
+            if (pipe.isRp && conv.rp != null && conv.rp.authorNote.isNotBlank() && conv.rp.authorNoteDepth >= 1) {
+                val noteText = expandDynamicV4Macros("【OOC 作者备注】\n${conv.rp.authorNote.trim()}", conv, input.characterCard, input.persona)
+                depthItems.add(
+                    DepthInjectionItem(
+                        depth = conv.rp.authorNoteDepth,
+                        role = "system",
+                        text = noteText,
+                        sortBucket = 4,
+                        subOrder = 0,
+                    ),
+                )
+            }
+
+            if (depthItems.isNotEmpty()) {
+                val baseMessages = wireMessages.toList()
+                val firstNonSystemIdx = baseMessages.indexOfFirst { it.role != "system" }.let {
+                    if (it < 0) baseMessages.size else it
+                }
+                val buckets = HashMap<Int, ArrayList<DepthInjectionItem>>()
+                for (item in depthItems) {
+                    val anchor = (baseMessages.size - item.depth).coerceIn(firstNonSystemIdx, baseMessages.size)
+                    buckets.getOrPut(anchor) { ArrayList() }.add(item)
+                }
+                wireMessages.clear()
+                for (pos in 0..baseMessages.size) {
+                    val bucket = buckets[pos]
+                    if (!bucket.isNullOrEmpty()) {
+                        val sortedBucket = bucket.sortedWith(
+                            compareByDescending<DepthInjectionItem> { it.depth }
+                                .thenBy { it.sortBucket }
+                                .thenBy { it.subOrder },
+                        )
+                        var currentRole: String? = null
+                        val currentLines = ArrayList<String>()
+                        fun flushRoleGroup() {
+                            val r = currentRole ?: return
+                            if (currentLines.isNotEmpty()) {
+                                wireMessages.add(
+                                    WireChatMessage(
+                                        role = r,
+                                        textContent = currentLines.joinToString("\n\n"),
+                                        isDepthInjection = true,
+                                    ),
+                                )
+                            }
+                            currentLines.clear()
+                            currentRole = null
+                        }
+                        for (item in sortedBucket) {
+                            if (currentRole == null || currentRole == item.role) {
+                                currentRole = item.role
+                                currentLines.add(item.text)
+                            } else {
+                                flushRoleGroup()
+                                currentRole = item.role
+                                currentLines.add(item.text)
+                            }
+                        }
+                        flushRoleGroup()
+                    }
+                    if (pos < baseMessages.size) {
+                        wireMessages.add(baseMessages[pos])
+                    }
+                }
+            }
         }
 
         // C2 fix: recompute sentTokens / sentPercentage / fileTokens / hardOverflow for actual `selected` payload
@@ -1468,7 +2211,7 @@ object ContextBuilder {
         val actualHardOverflow = actualSentTokens > pipe.windowLimit
         val actualIsSliding = actualTrimmedCount > 0
 
-        return BuiltChatContext(
+        val built = BuiltChatContext(
             wireMessages = wireMessages,
             summary = pipe.waterline.copy(
                 usedTokens = actualSentTokens,
@@ -1484,6 +2227,11 @@ object ContextBuilder {
                 hardOverflow = actualHardOverflow,
                 uncompactedOverflowCount = actualTrimmedCount,
             ),
+        )
+        return BuiltChatContextV4(
+            built = built,
+            worldbookResult = pipe.worldbookResult,
+            resolvedAssistantPrefill = pipe.resolvedAssistantPrefill,
         )
     }
 }

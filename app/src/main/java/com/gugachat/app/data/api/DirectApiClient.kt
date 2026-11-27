@@ -78,7 +78,18 @@ class DirectApiClient(
     }
 
     fun listImageModels(provider: ApiProviderConfig): List<OnlineImageModelDto> =
-        DirectProtocolCodec.defaultImageModels(provider.protocol, provider.customModels)
+        DirectProtocolCodec.defaultImageModels(
+            protocol = provider.protocol,
+            customModels = provider.customModels,
+            baseUrl = provider.baseUrl,
+        )
+
+    fun supportsImageGeneration(provider: ApiProviderConfig): Boolean =
+        DirectProtocolCodec.supportsImageGeneration(
+            protocol = provider.protocol,
+            baseUrl = provider.baseUrl,
+            customModels = provider.customModels,
+        )
 
     suspend fun streamChat(
         provider: ApiProviderConfig,

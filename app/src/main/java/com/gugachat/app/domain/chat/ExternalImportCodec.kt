@@ -3,6 +3,7 @@ package com.gugachat.app.domain.chat
 import com.gugachat.app.core.storage.ApiProviderConfig
 import com.gugachat.app.core.storage.ApiProviderImportCodec
 import com.gugachat.app.data.api.AppJson
+import com.gugachat.app.data.local.PromptPresetEntity
 import com.gugachat.app.domain.chat.RpCardCodec.arrOrNull
 import com.gugachat.app.domain.chat.RpCardCodec.boolOrNull
 import com.gugachat.app.domain.chat.RpCardCodec.intOrNull
@@ -51,7 +52,52 @@ data class ExternalImportedItem(
     val memoryLedger: List<MemoryLedgerItem> = emptyList(),
     val memoryEpisodes: List<MemoryEpisode> = emptyList(),
     val hasReasoning: Boolean = false,
-)
+    val avatarBytes: ByteArray? = null,
+    val avatarExt: String = "png",
+    val spriteBytes: ByteArray? = null,
+    val spriteExt: String = "png",
+    val expressionBytes: Map<String, Pair<ByteArray, String>> = emptyMap(),
+    val backgroundBytes: ByteArray? = null,
+    val backgroundExt: String = "png",
+    val worldbookV4: ParsedWorldbookV4? = null,
+    val promptPresetV4: PromptPresetEntity? = null,
+) {
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is ExternalImportedItem) return false
+        return source == other.source &&
+            sourceId == other.sourceId &&
+            conversation == other.conversation &&
+            messages == other.messages &&
+            loreEntries == other.loreEntries &&
+            novelChapters == other.novelChapters &&
+            memoryLedger == other.memoryLedger &&
+            memoryEpisodes == other.memoryEpisodes &&
+            hasReasoning == other.hasReasoning &&
+            avatarExt == other.avatarExt &&
+            spriteExt == other.spriteExt &&
+            backgroundExt == other.backgroundExt &&
+            worldbookV4 == other.worldbookV4 &&
+            promptPresetV4 == other.promptPresetV4 &&
+            (avatarBytes?.contentEquals(other.avatarBytes) ?: (other.avatarBytes == null)) &&
+            (spriteBytes?.contentEquals(other.spriteBytes) ?: (other.spriteBytes == null)) &&
+            (backgroundBytes?.contentEquals(other.backgroundBytes) ?: (other.backgroundBytes == null)) &&
+            expressionBytes.keys == other.expressionBytes.keys
+    }
+
+    override fun hashCode(): Int {
+        var result = source.hashCode()
+        result = 31 * result + sourceId.hashCode()
+        result = 31 * result + conversation.hashCode()
+        result = 31 * result + messages.hashCode()
+        result = 31 * result + loreEntries.hashCode()
+        result = 31 * result + (avatarBytes?.contentHashCode() ?: 0)
+        result = 31 * result + (spriteBytes?.contentHashCode() ?: 0)
+        result = 31 * result + (backgroundBytes?.contentHashCode() ?: 0)
+        result = 31 * result + expressionBytes.keys.hashCode()
+        return result
+    }
+}
 
 data class ExternalImportBundle(
     val source: ExternalImportSource,
@@ -84,7 +130,12 @@ object ExternalImportCodec {
         if (RpCardCodec.isPngBytes(bytes)) {
             val jsonText = RpCardCodec.extractCardJsonFromPng(bytes)
                 ?: throw IllegalArgumentException("PNG 图片中未检测到酒馆角色卡元数据（ccv3 / chara）")
-            return parseSillyTavernCardJson(jsonText, fileName)
+            return parseSillyTavernCardJson(
+                rawJson = jsonText,
+                fileName = fileName,
+                avatarBytes = bytes,
+                avatarExt = "png",
+            )
         }
 
         // 2. ZIP Archive (.zip / .charx / .byaf: DeepSeek, Chatbox v2, Cherry Studio, RikkaHub, SillyTavern, ChatGPT, Claude, Chengguang)
@@ -214,7 +265,17 @@ object ExternalImportCodec {
         if (lowerZipName.endsWith(".charx") || lowerZipName.endsWith(".byaf")) {
             val extracted = RpCardCodec.extractCardFromZipBytes(zipBytes)
                 ?: throw IllegalArgumentException("未在 .charx / .byaf 压缩包中找到有效角色卡（card.json）")
-            return parseSillyTavernCardJson(extracted.cardJson, fileName)
+            return parseSillyTavernCardJson(
+                rawJson = extracted.cardJson,
+                fileName = fileName,
+                avatarBytes = extracted.avatarBytes,
+                avatarExt = extracted.avatarExt,
+                spriteBytes = extracted.spriteBytes,
+                spriteExt = extracted.spriteExt,
+                expressionBytes = extracted.expressionSprites,
+                backgroundBytes = extracted.backgroundBytes,
+                backgroundExt = extracted.backgroundExt,
+            )
         }
 
         val textEntries = LinkedHashMap<String, String>()
@@ -250,6 +311,20 @@ object ExternalImportCodec {
         textEntries.entries.firstOrNull { it.key.substringAfterLast('/').equals("card.json", ignoreCase = true) }?.let { (path, content) ->
             val obj = runCatching { AppJson.parseToJsonElement(content) as? JsonObject }.getOrNull()
             if (obj != null && isSillyTavernCardObject(obj)) {
+                val extracted = RpCardCodec.extractCardFromZipBytes(zipBytes)
+                if (extracted != null) {
+                    return parseSillyTavernCardJson(
+                        rawJson = extracted.cardJson,
+                        fileName = fileName ?: path,
+                        avatarBytes = extracted.avatarBytes,
+                        avatarExt = extracted.avatarExt,
+                        spriteBytes = extracted.spriteBytes,
+                        spriteExt = extracted.spriteExt,
+                        expressionBytes = extracted.expressionSprites,
+                        backgroundBytes = extracted.backgroundBytes,
+                        backgroundExt = extracted.backgroundExt,
+                    )
+                }
                 return parseSillyTavernCardJson(content, fileName ?: path)
             }
         }
@@ -330,7 +405,14 @@ object ExternalImportCodec {
         pngEntries.forEach { (name, pngBytes) ->
             val cardJson = RpCardCodec.extractCardJsonFromPng(pngBytes)
             if (cardJson != null) {
-                runCatching { parseSillyTavernCardJson(cardJson, name) }.getOrNull()?.let { b ->
+                runCatching {
+                    parseSillyTavernCardJson(
+                        rawJson = cardJson,
+                        fileName = name,
+                        avatarBytes = pngBytes,
+                        avatarExt = "png",
+                    )
+                }.getOrNull()?.let { b ->
                     collected.addAll(b.items)
                     if (primarySource == null) primarySource = ExternalImportSource.SILLYTAVERN
                 }
@@ -998,7 +1080,14 @@ object ExternalImportCodec {
         pngEntries.forEach { (path, pngBytes) ->
             val cardJson = RpCardCodec.extractCardJsonFromPng(pngBytes)
             if (cardJson != null) {
-                runCatching { parseSillyTavernCardJson(cardJson, path) }.getOrNull()?.let { b ->
+                runCatching {
+                    parseSillyTavernCardJson(
+                        rawJson = cardJson,
+                        fileName = path,
+                        avatarBytes = pngBytes,
+                        avatarExt = "png",
+                    )
+                }.getOrNull()?.let { b ->
                     collected.addAll(b.items)
                 }
             }
@@ -1108,7 +1197,17 @@ object ExternalImportCodec {
         return hasName && hasPersonaField && !looksLikeOtherFormat
     }
 
-    private fun parseSillyTavernCardJson(rawJson: String, fileName: String?): ExternalImportBundle {
+    private fun parseSillyTavernCardJson(
+        rawJson: String,
+        fileName: String?,
+        avatarBytes: ByteArray? = null,
+        avatarExt: String = "png",
+        spriteBytes: ByteArray? = null,
+        spriteExt: String = "png",
+        expressionBytes: Map<String, Pair<ByteArray, String>> = emptyMap(),
+        backgroundBytes: ByteArray? = null,
+        backgroundExt: String = "png",
+    ): ExternalImportBundle {
         val now = System.currentTimeMillis()
         val baseId = fileName?.substringAfterLast('/')?.substringBeforeLast('.')
             ?.replace(Regex("[^A-Za-z0-9_-]"), "_")
@@ -1118,15 +1217,28 @@ object ExternalImportCodec {
         val convId = "st_card_$baseId"
         val imported = RpCardCodec.parseCardJson(rawJson, conversationId = convId)
         val rp = imported.rpConfig
+        val leadChar = rp.cast.firstOrNull { !it.isPlayer } ?: rp.cast.firstOrNull()
+        val speakerName = leadChar?.name?.takeIf { it.isNotBlank() } ?: rp.title
 
-        val allGreetings = (listOf(rp.greeting) + rp.alternateGreetings).map { it.trim() }.filter { it.isNotEmpty() }
+        val resolvedFirstGreeting = RpEngine.replaceMacros(rp.greeting, rp).trim()
+        val resolvedAltGreetings = rp.alternateGreetings.map { RpEngine.replaceMacros(it, rp).trim() }
+        val resolvedRp = rp.copy(
+            greeting = resolvedFirstGreeting,
+            alternateGreetings = resolvedAltGreetings,
+        )
+
+        val allGreetings = (listOf(resolvedFirstGreeting) + resolvedAltGreetings)
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
         val messages = if (allGreetings.isNotEmpty()) {
             val variants = allGreetings.mapIndexed { idx, g ->
                 MessageVariant(
                     id = "${convId}_greeting_v$idx",
                     content = g,
                     createdAt = now,
-                    rpStateSnapshot = rp.state,
+                    rpStateSnapshot = resolvedRp.state,
+                    rpCastSnapshot = resolvedRp.cast,
+                    rpSpeakerName = speakerName,
                 )
             }
             listOf(
@@ -1147,11 +1259,24 @@ object ExternalImportCodec {
             emptyList()
         }
 
+        val worldbookV4 = runCatching {
+            val rootObj = AppJson.parseToJsonElement(rawJson.removePrefix("\uFEFF").trim()) as? JsonObject
+            val bookObj = rootObj?.objOrNull("data")?.objOrNull("character_book")
+                ?: rootObj?.objOrNull("character_book")
+                ?: rootObj?.objOrNull("character_embdings")
+            bookObj?.let {
+                TavernAssetCodec.parseCharacterBookToWorldbookV4(
+                    charBookObj = it,
+                    fallbackName = "${resolvedRp.title} 世界书",
+                )
+            }
+        }.getOrNull()
+
         val conv = ChatConversation(
             id = convId,
-            title = rp.title,
+            title = resolvedRp.title,
             mode = ConversationMode.rp,
-            rp = rp,
+            rp = resolvedRp,
             createdAt = now,
             updatedAt = now,
         )
@@ -1166,6 +1291,14 @@ object ExternalImportCodec {
                     messages = messages,
                     loreEntries = imported.importedLore,
                     hasReasoning = false,
+                    avatarBytes = avatarBytes,
+                    avatarExt = avatarExt,
+                    spriteBytes = spriteBytes,
+                    spriteExt = spriteExt,
+                    expressionBytes = expressionBytes,
+                    backgroundBytes = backgroundBytes,
+                    backgroundExt = backgroundExt,
+                    worldbookV4 = worldbookV4,
                 ),
             ),
         )
