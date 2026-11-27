@@ -273,13 +273,22 @@ data class WireChatContentPartDto(
 data class WireChatMessageDto(
     val role: String,
     val content: JsonElement,
+    @kotlinx.serialization.Transient val isDepthInjection: Boolean = false,
 ) {
     companion object {
-        fun text(role: String, content: String): WireChatMessageDto =
-            WireChatMessageDto(role = role, content = JsonPrimitive(content))
+        fun text(role: String, content: String, isDepthInjection: Boolean = false): WireChatMessageDto =
+            WireChatMessageDto(role = role, content = JsonPrimitive(content), isDepthInjection = isDepthInjection)
 
-        fun parts(role: String, parts: List<WireChatContentPartDto>): WireChatMessageDto =
-            WireChatMessageDto(role = role, content = AppJson.encodeToJsonElement(parts))
+        fun parts(
+            role: String,
+            parts: List<WireChatContentPartDto>,
+            isDepthInjection: Boolean = false,
+        ): WireChatMessageDto =
+            WireChatMessageDto(
+                role = role,
+                content = AppJson.encodeToJsonElement(parts),
+                isDepthInjection = isDepthInjection,
+            )
     }
 }
 

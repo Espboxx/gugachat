@@ -1,6 +1,11 @@
 package com.gugachat.app.domain.chat
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import com.gugachat.app.core.storage.LocalMediaPathResolver
 import com.gugachat.app.data.api.AppJson
+import com.gugachat.app.data.local.CharacterCardEntity
+import com.gugachat.app.data.local.WorldbookEntryEntity
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonArray
@@ -17,7 +22,10 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.put
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.nio.ByteBuffer
+import java.nio.charset.CharacterCodingException
+import java.nio.charset.CodingErrorAction
 import java.nio.charset.StandardCharsets
 import java.util.Base64
 import java.util.UUID
@@ -75,15 +83,55 @@ data class ImportedRpCard(
     val specVersion: String,
 )
 
+data class ParsedCharacterCardV4(
+    val card: CharacterCardEntity,
+    val worldbook: ParsedWorldbookV4?,
+    val rpConfig: RpConfig,
+    val specVersion: String,
+)
+
 data class ExtractedZipCard(
     val cardJson: String,
     val avatarBytes: ByteArray? = null,
     val avatarExt: String = "png",
-)
+    val spriteBytes: ByteArray? = null,
+    val spriteExt: String = "png",
+    val expressionSprites: Map<String, Pair<ByteArray, String>> = emptyMap(),
+    val backgroundBytes: ByteArray? = null,
+    val backgroundExt: String = "png",
+) {
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is ExtractedZipCard) return false
+        return cardJson == other.cardJson &&
+            avatarExt == other.avatarExt &&
+            spriteExt == other.spriteExt &&
+            backgroundExt == other.backgroundExt &&
+            (avatarBytes?.contentEquals(other.avatarBytes) ?: (other.avatarBytes == null)) &&
+            (spriteBytes?.contentEquals(other.spriteBytes) ?: (other.spriteBytes == null)) &&
+            (backgroundBytes?.contentEquals(other.backgroundBytes) ?: (other.backgroundBytes == null)) &&
+            expressionSprites.keys == other.expressionSprites.keys
+    }
+
+    override fun hashCode(): Int {
+        var result = cardJson.hashCode()
+        result = 31 * result + (avatarBytes?.contentHashCode() ?: 0)
+        result = 31 * result + avatarExt.hashCode()
+        result = 31 * result + (spriteBytes?.contentHashCode() ?: 0)
+        result = 31 * result + spriteExt.hashCode()
+        result = 31 * result + expressionSprites.keys.hashCode()
+        result = 31 * result + (backgroundBytes?.contentHashCode() ?: 0)
+        result = 31 * result + backgroundExt.hashCode()
+        return result
+    }
+}
 
 object RpCardCodec {
     private const val MAX_ZIP_JSON_BYTES = 16 * 1024 * 1024
     private const val MAX_ZIP_IMAGE_BYTES = 12 * 1024 * 1024
+    private const val MAX_ZIP_TOTAL_IMAGE_BYTES = 48 * 1024 * 1024
+
+    private val DATA_URI_IMAGE_RE = Regex("^data:image/([a-zA-Z0-9+.-]+);base64,(.+)$", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
 
     private val PNG_SIG = byteArrayOf(
         0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
@@ -203,14 +251,144 @@ object RpCardCodec {
     }
 
     /**
-     * Extracts SillyTavern `.charx` / `.byaf` ZIP card archive (`card.json` + optional embedded avatar image).
+     * Parses SillyTavern CCv1/CCv2/CCv3 JSON directly into a v0.4 [CharacterCardEntity] + optional
+     * [ParsedWorldbookV4] alongside legacy [RpConfig] projection.
+     */
+    fun parseCardToV4(
+        rawJson: String,
+        cardId: String = UUID.randomUUID().toString(),
+        worldbookId: String = UUID.randomUUID().toString(),
+        avatarPath: String? = null,
+        spritePath: String? = null,
+        expressionSprites: Map<String, String> = emptyMap(),
+    ): ParsedCharacterCardV4 {
+        val cleaned = rawJson.removePrefix("\uFEFF").trim()
+        val root = try {
+            AppJson.parseToJsonElement(cleaned) as? JsonObject
+        } catch (e: Exception) {
+            throw IllegalArgumentException("无效的角色卡 JSON 格式：${e.message}")
+        } ?: throw IllegalArgumentException("角色卡 JSON 根节点必须为对象")
+
+        val imported = parseCardJson(cleaned, conversationId = "preview")
+        val data = root.objOrNull("data")
+        fun pickStr(vararg keys: String): String {
+            for (k in keys) {
+                data?.strOrNull(k)?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+            }
+            for (k in keys) {
+                root.strOrNull(k)?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+            }
+            return ""
+        }
+        fun pickStrList(vararg keys: String): List<String> {
+            for (k in keys) {
+                val fromData = data?.strListOrEmpty(k).orEmpty()
+                if (fromData.isNotEmpty()) return fromData
+            }
+            for (k in keys) {
+                val fromRoot = root.strListOrEmpty(k)
+                if (fromRoot.isNotEmpty()) return fromRoot
+            }
+            return emptyList()
+        }
+
+        val charName = pickStr("name", "char_name").ifEmpty { imported.rpConfig.title }
+        val creator = pickStr("creator")
+        val charVersion = pickStr("character_version")
+        val desc = pickStr("description", "char_persona")
+        val personality = pickStr("personality")
+        val scenario = pickStr("scenario", "world_scenario")
+        val firstMes = pickStr("first_mes", "char_greeting")
+        val groupGreetings = pickStrList("group_only_greetings")
+        val tags = pickStrList("tags")
+
+        val dataExt = data?.objOrNull("extensions")
+        val rootExt = root.objOrNull("extensions")
+        val depthPromptObj = parseDepthPromptObject(dataExt) ?: parseDepthPromptObject(rootExt)
+        val depthPromptRole = depthPromptObj?.strOrNull("role")?.trim()?.lowercase()
+            ?.takeIf { it in setOf("system", "user", "assistant") }
+            ?: "system"
+
+        val charBookObj = data?.objOrNull("character_book")
+            ?: root.objOrNull("character_book")
+            ?: root.objOrNull("character_embdings")
+        val parsedBook = charBookObj?.let { bookObj ->
+            TavernAssetCodec.parseCharacterBookToWorldbookV4(
+                charBookObj = bookObj,
+                fallbackName = bookObj.strOrNull("name")?.trim()?.takeIf { it.isNotEmpty() } ?: "$charName 世界书",
+                worldbookId = worldbookId,
+            )
+        }
+
+        val leadChar = imported.rpConfig.cast.firstOrNull { !it.isPlayer } ?: imported.rpConfig.cast.firstOrNull()
+        val updatedCast = imported.rpConfig.cast.map { ch ->
+            if (leadChar != null && ch.id == leadChar.id) {
+                ch.copy(
+                    avatarPath = avatarPath ?: ch.avatarPath,
+                    spritePath = spritePath ?: ch.spritePath,
+                    expressionSprites = if (expressionSprites.isNotEmpty()) expressionSprites else ch.expressionSprites,
+                )
+            } else {
+                ch
+            }
+        }
+        val now = System.currentTimeMillis()
+        val fingerprint = LegacyAssetHarvester.computeCardFingerprint(
+            title = charName,
+            greeting = firstMes,
+            leadDesc = desc,
+        )
+        val cardEntity = CharacterCardEntity(
+            id = cardId,
+            name = charName,
+            creator = creator,
+            characterVersion = charVersion,
+            avatarPath = avatarPath,
+            spritePath = spritePath,
+            expressionSpritesJson = AppJson.encodeToString(expressionSprites),
+            tagsJson = AppJson.encodeToString(tags),
+            playStyle = imported.rpConfig.playStyle.name,
+            description = desc,
+            personality = personality,
+            scenario = scenario,
+            firstMes = firstMes,
+            alternateGreetingsJson = AppJson.encodeToString(imported.rpConfig.alternateGreetings),
+            groupOnlyGreetingsJson = AppJson.encodeToString(groupGreetings),
+            mesExample = imported.rpConfig.mesExample,
+            systemPrompt = imported.rpConfig.systemRules,
+            postHistoryInstructions = imported.rpConfig.postHistoryInstructions,
+            creatorNotes = imported.rpConfig.narratorStyle,
+            depthPromptText = imported.rpConfig.authorNote,
+            depthPromptDepth = imported.rpConfig.authorNoteDepth,
+            depthPromptRole = depthPromptRole,
+            castJson = AppJson.encodeToString(updatedCast),
+            regexScriptsJson = AppJson.encodeToString(imported.rpConfig.regexScripts),
+            visualThemeJson = AppJson.encodeToString(imported.rpConfig.visualTheme),
+            primaryWorldbookId = parsedBook?.worldbook?.id,
+            sourceSpec = imported.specVersion,
+            contentFingerprint = fingerprint,
+            favorite = false,
+            createdAt = now,
+            updatedAt = now,
+        )
+        return ParsedCharacterCardV4(
+            card = cardEntity,
+            worldbook = parsedBook,
+            rpConfig = imported.rpConfig.copy(cast = updatedCast),
+            specVersion = imported.specVersion,
+        )
+    }
+
+    /**
+     * Extracts SillyTavern `.charx` / `.byaf` ZIP card archive (`card.json` + optional CCv3
+     * `data.assets` icon/sprite/emotion/background images).
      */
     fun extractCardFromZipBytes(zipBytes: ByteArray): ExtractedZipCard? {
         if (!DeepSeekImportCodec.isZipBytes(zipBytes)) return null
         var exactCardJson: String? = null
         var fallbackCardJson: String? = null
-        var preferredAvatar: Pair<ByteArray, String>? = null
-        var fallbackImage: Pair<ByteArray, String>? = null
+        val imageEntries = LinkedHashMap<String, Pair<ByteArray, String>>()
+        var totalImgBytes = 0
 
         runCatching {
             ZipInputStream(ByteArrayInputStream(zipBytes)).use { zis ->
@@ -252,17 +430,13 @@ object RpCardCodec {
                         }
                         lowerName.endsWith(".png") || lowerName.endsWith(".webp") ||
                             lowerName.endsWith(".jpg") || lowerName.endsWith(".jpeg") -> {
-                            val ext = lowerName.substringAfterLast('.')
-                            val isIconPath = lowerPath.contains("assets/icon/") ||
-                                lowerName.startsWith("avatar.") ||
-                                lowerName.startsWith("main.")
-                            if (isIconPath && preferredAvatar == null) {
-                                readZipBounded(zis, MAX_ZIP_IMAGE_BYTES)?.takeIf { it.isNotEmpty() }?.let {
-                                    preferredAvatar = it to ext
-                                }
-                            } else if (fallbackImage == null) {
-                                readZipBounded(zis, MAX_ZIP_IMAGE_BYTES)?.takeIf { it.isNotEmpty() }?.let {
-                                    fallbackImage = it to ext
+                            val ext = lowerName.substringAfterLast('.').let { if (it == "jpeg") "jpg" else it }
+                            if (totalImgBytes < MAX_ZIP_TOTAL_IMAGE_BYTES) {
+                                readZipBounded(zis, MAX_ZIP_IMAGE_BYTES)?.takeIf { it.isNotEmpty() }?.let { bytes ->
+                                    if (totalImgBytes + bytes.size <= MAX_ZIP_TOTAL_IMAGE_BYTES) {
+                                        imageEntries[norm] = bytes to ext
+                                        totalImgBytes += bytes.size
+                                    }
                                 }
                             }
                         }
@@ -273,11 +447,125 @@ object RpCardCodec {
         }
 
         val jsonText = exactCardJson ?: fallbackCardJson ?: return null
-        val chosenImg = preferredAvatar ?: fallbackImage
+
+        val imageByLowerPath = HashMap<String, Pair<ByteArray, String>>(imageEntries.size * 2)
+        for ((p, payload) in imageEntries) {
+            imageByLowerPath[p.lowercase()] = payload
+        }
+
+        fun resolveZipAsset(rawUri: String): Pair<ByteArray, String>? {
+            val uri = rawUri.trim()
+            if (uri.isEmpty()) return null
+            DATA_URI_IMAGE_RE.matchEntire(uri)?.let { m ->
+                val ext = m.groupValues[1].lowercase().let {
+                    when {
+                        it.contains("png") -> "png"
+                        it.contains("webp") -> "webp"
+                        else -> "jpg"
+                    }
+                }
+                val decoded = runCatching { decodeBase64Lenient(m.groupValues[2]) }.getOrNull()
+                if (decoded != null && decoded.isNotEmpty()) return decoded to ext
+            }
+            val cleaned = uri
+                .removePrefix("embeded://")
+                .removePrefix("embedded://")
+                .removePrefix("./")
+                .replace('\\', '/')
+                .trimStart('/')
+                .lowercase()
+            if (cleaned.isEmpty()) return null
+            imageByLowerPath[cleaned]?.let { return it }
+            imageByLowerPath.entries.firstOrNull { (k, _) ->
+                k.endsWith("/$cleaned") || k == cleaned
+            }?.value?.let { return it }
+            val baseName = cleaned.substringAfterLast('/')
+            return imageByLowerPath.entries.firstOrNull { (k, _) ->
+                k.substringAfterLast('/') == baseName
+            }?.value
+        }
+
+        var avatarPayload: Pair<ByteArray, String>? = null
+        var spritePayload: Pair<ByteArray, String>? = null
+        val expressionMap = LinkedHashMap<String, Pair<ByteArray, String>>()
+        var backgroundPayload: Pair<ByteArray, String>? = null
+
+        // 1. Parse CCv3 `data.assets` manifest if present
+        val rootObj = runCatching { AppJson.parseToJsonElement(jsonText) as? JsonObject }.getOrNull()
+        val assetsArr = rootObj?.objOrNull("data")?.arrOrNull("assets") ?: rootObj?.arrOrNull("assets")
+        assetsArr?.forEach { el ->
+            val assetObj = el as? JsonObject ?: return@forEach
+            val type = assetObj.strOrNull("type")?.trim()?.lowercase().orEmpty()
+            val name = assetObj.strOrNull("name")?.trim().orEmpty()
+            val uri = assetObj.strOrNull("uri")?.trim().orEmpty()
+            val resolved = resolveZipAsset(uri) ?: return@forEach
+            val explicitExt = assetObj.strOrNull("ext")?.trim()?.lowercase()?.takeIf { it.isNotEmpty() }
+            val finalPair = if (explicitExt != null && resolved.second.isEmpty()) resolved.first to explicitExt else resolved
+
+            when (type) {
+                "icon" -> {
+                    val lowerName = name.lowercase()
+                    if (lowerName == "sprite" || lowerName == "x_sprite") {
+                        if (spritePayload == null) spritePayload = finalPair
+                    } else if (avatarPayload == null || lowerName == "main") {
+                        avatarPayload = finalPair
+                    }
+                }
+                "sprite", "x_sprite" -> {
+                    if (spritePayload == null) spritePayload = finalPair
+                }
+                "emotion" -> {
+                    val stem = uri.substringAfterLast('/').substringBeforeLast('.')
+                    val key = name.ifBlank { stem }.trim().lowercase()
+                    if (key.isNotEmpty() && key !in expressionMap) {
+                        expressionMap[key] = finalPair
+                    }
+                }
+                "background" -> {
+                    if (backgroundPayload == null) backgroundPayload = finalPair
+                }
+            }
+        }
+
+        // 2. Directory-convention fallback for archives without explicit CCv3 `data.assets`
+        var fallbackIcon: Pair<ByteArray, String>? = null
+        var fallbackAny: Pair<ByteArray, String>? = null
+        for ((norm, payload) in imageEntries) {
+            val lowerPath = norm.lowercase()
+            val lowerName = lowerPath.substringAfterLast('/')
+            val stem = lowerName.substringBeforeLast('.')
+            when {
+                lowerPath.contains("assets/emotion/") || lowerPath.contains("assets/emotions/") || lowerPath.startsWith("emotions/") -> {
+                    if (stem.isNotEmpty() && stem !in expressionMap) {
+                        expressionMap[stem] = payload
+                    }
+                }
+                lowerPath.contains("assets/background/") || lowerPath.contains("assets/bg/") ||
+                    lowerName.startsWith("background.") || lowerName.startsWith("bg.") -> {
+                    if (backgroundPayload == null) backgroundPayload = payload
+                }
+                lowerPath.contains("assets/sprite/") || lowerName.startsWith("sprite.") -> {
+                    if (spritePayload == null) spritePayload = payload
+                }
+                lowerPath.contains("assets/icon/") || lowerName.startsWith("avatar.") || lowerName.startsWith("main.") -> {
+                    if (fallbackIcon == null) fallbackIcon = payload
+                }
+                else -> {
+                    if (fallbackAny == null) fallbackAny = payload
+                }
+            }
+        }
+
+        val chosenAvatar = avatarPayload ?: fallbackIcon ?: fallbackAny
         return ExtractedZipCard(
             cardJson = jsonText,
-            avatarBytes = chosenImg?.first,
-            avatarExt = chosenImg?.second ?: "png",
+            avatarBytes = chosenAvatar?.first,
+            avatarExt = chosenAvatar?.second ?: "png",
+            spriteBytes = spritePayload?.first,
+            spriteExt = spritePayload?.second ?: "png",
+            expressionSprites = expressionMap,
+            backgroundBytes = backgroundPayload?.first,
+            backgroundExt = backgroundPayload?.second ?: "png",
         )
     }
 
@@ -591,6 +879,116 @@ object RpCardCodec {
         return out.toByteArray()
     }
 
+    /**
+     * Pure-JVM lenient Base64 decoder supporting MIME whitespace/newlines, URL-safe `-`/`_` alphabets,
+     * and missing `=` padding without touching `android.util.Base64`.
+     */
+    internal fun decodeBase64Lenient(raw: String): ByteArray {
+        val compact = raw.replace(Regex("\\s+"), "")
+        val mod = compact.length % 4
+        val padded = when (mod) {
+            2 -> "$compact=="
+            3 -> "$compact="
+            else -> compact
+        }
+        return if ('-' in padded || '_' in padded) {
+            Base64.getUrlDecoder().decode(padded)
+        } else {
+            Base64.getMimeDecoder().decode(padded)
+        }
+    }
+
+    /**
+     * Transcodes JPG/WebP/PNG bytes to bounded PNG bytes via Android [BitmapFactory]/[Bitmap.compress].
+     * Returns raw PNG bytes directly if already PNG; returns null on JVM when Android graphics stubs return null.
+     */
+    fun transcodeToPngBytes(rawBytes: ByteArray, maxSide: Int = 1024): ByteArray? {
+        if (rawBytes.isEmpty()) return null
+        if (isPngBytes(rawBytes)) return rawBytes
+        return runCatching {
+            val decoded = BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size) ?: return@runCatching null
+            val bitmap = if (decoded.width > maxSide || decoded.height > maxSide) {
+                val scale = maxSide.toFloat() / maxOf(decoded.width, decoded.height).toFloat()
+                val w = (decoded.width * scale).toInt().coerceAtLeast(1)
+                val h = (decoded.height * scale).toInt().coerceAtLeast(1)
+                Bitmap.createScaledBitmap(decoded, w, h, true).also {
+                    if (it !== decoded) decoded.recycle()
+                }
+            } else {
+                decoded
+            }
+            try {
+                val out = ByteArrayOutputStream()
+                val ok = bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+                if (ok) out.toByteArray().takeIf { isPngBytes(it) } else null
+            } finally {
+                bitmap.recycle()
+            }
+        }.getOrNull()
+    }
+
+    /**
+     * Resolves the first valid PNG base image from [candidateImages], transcoding non-PNG (JPG/WebP)
+     * candidates via [imageTranscoder] before falling back to [createMinimalCardPngBytes].
+     */
+    fun resolveCardBasePngBytes(
+        candidateImages: List<ByteArray>,
+        imageTranscoder: (ByteArray) -> ByteArray? = { transcodeToPngBytes(it) },
+    ): ByteArray {
+        for (raw in candidateImages) {
+            if (raw.isEmpty()) continue
+            if (isPngBytes(raw)) return raw
+            val transcoded = runCatching { imageTranscoder(raw) }.getOrNull()
+            if (transcoded != null && isPngBytes(transcoded)) {
+                return transcoded
+            }
+        }
+        return createMinimalCardPngBytes()
+    }
+
+    fun exportCardToPngBytes(
+        rp: RpConfig,
+        lore: List<NovelLoreEntry> = emptyList(),
+        candidateImages: List<ByteArray> = emptyList(),
+        imageTranscoder: (ByteArray) -> ByteArray? = { transcodeToPngBytes(it) },
+    ): ByteArray {
+        val json = exportToV3Json(rp, lore)
+        val basePng = resolveCardBasePngBytes(candidateImages, imageTranscoder)
+        return embedCardJsonInPng(basePng, json)
+    }
+
+    fun exportCardToPngBytesFromPaths(
+        rp: RpConfig,
+        lore: List<NovelLoreEntry> = emptyList(),
+        filesDirPath: String? = null,
+        extraPaths: List<String?> = emptyList(),
+        imageTranscoder: (ByteArray) -> ByteArray? = { transcodeToPngBytes(it) },
+    ): ByteArray {
+        val leadChar = rp.cast.firstOrNull { !it.isPlayer } ?: rp.cast.firstOrNull()
+        val orderedPaths = buildList {
+            extraPaths.forEach { if (!it.isNullOrBlank()) add(it) }
+            leadChar?.avatarPath?.takeIf { it.isNotBlank() }?.let { add(it) }
+            leadChar?.spritePath?.takeIf { it.isNotBlank() }?.let { add(it) }
+            leadChar?.expressionSprites?.values?.forEach { if (it.isNotBlank()) add(it) }
+            rp.state.sceneImagePath?.takeIf { it.isNotBlank() }?.let { add(it) }
+        }.distinct()
+
+        val candidateBytes = orderedPaths.mapNotNull { rawPath ->
+            val file = if (!filesDirPath.isNullOrBlank()) {
+                LocalMediaPathResolver.resolveFile(filesDirPath, rawPath)
+            } else {
+                File(rawPath)
+            }
+            runCatching { file?.takeIf { it.isFile && it.length() in 1L..(20L * 1024L * 1024L) }?.readBytes() }.getOrNull()
+        }
+        return exportCardToPngBytes(
+            rp = rp,
+            lore = lore,
+            candidateImages = candidateBytes,
+            imageTranscoder = imageTranscoder,
+        )
+    }
+
     fun isPngBytes(bytes: ByteArray): Boolean =
         bytes.size >= PNG_SIG.size && PNG_SIG.indices.all { bytes[it] == PNG_SIG[it] }
 
@@ -622,7 +1020,7 @@ object RpCardCodec {
 
         val encoded = chunks["ccv3"] ?: chunks["chara"] ?: return null
         return try {
-            val decoded = Base64.getDecoder().decode(encoded.trim())
+            val decoded = decodeBase64Lenient(encoded)
             String(decoded, StandardCharsets.UTF_8)
         } catch (_: Exception) {
             if (encoded.trim().startsWith("{")) encoded else null
@@ -763,7 +1161,17 @@ object RpCardCodec {
                 baos.write(tmp, 0, n)
             }
             inflater.end()
-            key to String(baos.toByteArray(), StandardCharsets.ISO_8859_1)
+            val rawBytes = baos.toByteArray()
+            val text = try {
+                StandardCharsets.UTF_8.newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .decode(ByteBuffer.wrap(rawBytes))
+                    .toString()
+            } catch (_: CharacterCodingException) {
+                String(rawBytes, StandardCharsets.ISO_8859_1)
+            }
+            key to text
         } catch (_: Exception) {
             null
         }

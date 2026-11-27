@@ -1,21 +1,33 @@
 package com.gugachat.app.domain.chat
 
 import com.gugachat.app.data.api.AppJson
+import com.gugachat.app.data.local.PromptPresetEntity
+import com.gugachat.app.data.local.WorldbookEntity
+import com.gugachat.app.data.local.WorldbookEntryEntity
 import com.gugachat.app.domain.chat.RpCardCodec.arrOrNull
 import com.gugachat.app.domain.chat.RpCardCodec.boolOrNull
 import com.gugachat.app.domain.chat.RpCardCodec.intOrNull
 import com.gugachat.app.domain.chat.RpCardCodec.objOrNull
 import com.gugachat.app.domain.chat.RpCardCodec.strListOrEmpty
 import com.gugachat.app.domain.chat.RpCardCodec.strOrNull
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.longOrNull
+import kotlinx.serialization.json.put
+import java.security.MessageDigest
 import java.util.UUID
+
+data class ParsedWorldbookV4(
+    val worldbook: WorldbookEntity,
+    val entries: List<WorldbookEntryEntity>,
+)
 
 data class ParsedLorebookAsset(
     val name: String,
@@ -644,4 +656,522 @@ object TavernAssetCodec {
 
     private fun stripExtension(fileName: String?): String =
         fileName?.substringAfterLast('/')?.substringBeforeLast('.')?.trim().orEmpty()
+
+    // ==================== V4 Rich Asset Parsers ====================
+
+    fun parseWorldbookV4(
+        rawJson: String,
+        worldbookId: String = UUID.randomUUID().toString(),
+        fileName: String? = null,
+    ): ParsedWorldbookV4 {
+        val cleaned = rawJson.removePrefix("\uFEFF").trim()
+        val root = try {
+            AppJson.parseToJsonElement(cleaned)
+        } catch (e: Exception) {
+            throw IllegalArgumentException("无效的世界书 JSON 格式：${e.message}")
+        }
+        return parseWorldbookV4(root, worldbookId = worldbookId, fileName = fileName)
+    }
+
+    fun parseWorldbookV4(
+        root: JsonElement,
+        worldbookId: String = UUID.randomUUID().toString(),
+        fileName: String? = null,
+    ): ParsedWorldbookV4 {
+        val now = System.currentTimeMillis()
+        if (root is JsonObject && isRikkaExportEnvelope(root)) {
+            val type = root.strOrNull("type")?.trim()?.lowercase()
+            if (type == "lorebook") {
+                val data = root.objOrNull("data") ?: throw IllegalArgumentException("RikkaHub 世界书 data 为空")
+                val name = data.strOrNull("name")?.trim()?.takeIf { it.isNotEmpty() }
+                    ?: stripExtension(fileName).ifBlank { "RikkaHub 世界书" }
+                val desc = data.strOrNull("description").orEmpty().trim()
+                val rawEntries = data.arrOrNull("entries").orEmpty().mapNotNull { it as? JsonObject }
+                return buildWorldbookV4FromRawEntries(
+                    worldbookId = worldbookId,
+                    name = name,
+                    description = desc,
+                    sourceFormat = "rikkahub_lorebook",
+                    bookObj = data,
+                    rawEntries = rawEntries,
+                    now = now,
+                )
+            }
+        }
+
+        val obj = root as? JsonObject
+        val title = obj?.strOrNull("name")?.trim()?.takeIf { it.isNotEmpty() }
+            ?: stripExtension(fileName).ifBlank { "酒馆世界书" }
+        val desc = obj?.strOrNull("description").orEmpty().trim()
+        val rawEntries: List<JsonObject> = when (root) {
+            is JsonArray -> root.mapNotNull { it as? JsonObject }
+            is JsonObject -> when (val e = root["entries"]) {
+                is JsonObject -> e.values.mapNotNull { it as? JsonObject }
+                is JsonArray -> e.mapNotNull { it as? JsonObject }
+                else -> emptyList()
+            }
+            else -> emptyList()
+        }
+        val isTavernHelper = rawEntries.any { it["strategy"] is JsonObject }
+        return buildWorldbookV4FromRawEntries(
+            worldbookId = worldbookId,
+            name = title,
+            description = desc,
+            sourceFormat = if (isTavernHelper) "sillytavern_worldbook_v2" else "sillytavern_lorebook",
+            bookObj = obj,
+            rawEntries = rawEntries,
+            now = now,
+        )
+    }
+
+    fun parseCharacterBookToWorldbookV4(
+        charBookObj: JsonObject,
+        fallbackName: String = "角色卡世界书",
+        worldbookId: String = UUID.randomUUID().toString(),
+    ): ParsedWorldbookV4? {
+        val rawEntries = when (val e = charBookObj["entries"]) {
+            is JsonObject -> e.values.mapNotNull { it as? JsonObject }
+            is JsonArray -> e.mapNotNull { it as? JsonObject }
+            else -> emptyList()
+        }
+        if (rawEntries.isEmpty()) return null
+        val name = charBookObj.strOrNull("name")?.trim()?.takeIf { it.isNotEmpty() } ?: fallbackName
+        val desc = charBookObj.strOrNull("description").orEmpty().trim()
+        return buildWorldbookV4FromRawEntries(
+            worldbookId = worldbookId,
+            name = name,
+            description = desc,
+            sourceFormat = "sillytavern_character_book",
+            bookObj = charBookObj,
+            rawEntries = rawEntries,
+            now = System.currentTimeMillis(),
+        )
+    }
+
+    private fun buildWorldbookV4FromRawEntries(
+        worldbookId: String,
+        name: String,
+        description: String,
+        sourceFormat: String,
+        bookObj: JsonObject?,
+        rawEntries: List<JsonObject>,
+        now: Long,
+    ): ParsedWorldbookV4 {
+        val scanDepth = (bookObj?.intOrNull("scan_depth") ?: bookObj?.intOrNull("scanDepth") ?: 4).coerceIn(1, 24)
+        val tokenBudget = (bookObj?.intOrNull("token_budget") ?: bookObj?.intOrNull("tokenBudget") ?: 1600).coerceAtLeast(100)
+        val recursiveScanning = bookObj?.boolOrNull("recursive_scanning") ?: bookObj?.boolOrNull("recursiveScanning") ?: true
+
+        val entries = rawEntries.mapIndexedNotNull { idx, entry ->
+            val content = entry.strOrNull("content").orEmpty().trim()
+            if (content.isEmpty()) return@mapIndexedNotNull null
+
+            val strategyObj = entry.objOrNull("strategy")
+            val secondaryObj = strategyObj?.objOrNull("keys_secondary")
+            val posObj = entry.objOrNull("position")
+            val extObj = entry.objOrNull("extensions")
+
+            // CRITICAL: NEVER fall back to entryTitle when keys is empty (comment-only entries stay keys = [])
+            val keys = (
+                entry.strListOrEmpty("keys") +
+                    entry.strListOrEmpty("key") +
+                    entry.strListOrEmpty("keywords") +
+                    strategyObj?.strListOrEmpty("keys").orEmpty()
+                ).distinct()
+
+            // CRITICAL: NEVER stuff secondary_keys into aliases OR-matching
+            val secondaryKeys = (
+                entry.strListOrEmpty("secondary_keys") +
+                    entry.strListOrEmpty("keysecondary") +
+                    entry.strListOrEmpty("secondaryKeys") +
+                    secondaryObj?.strListOrEmpty("keys").orEmpty()
+                ).distinct()
+
+            val uid = entry.intOrNull("uid") ?: entry.intOrNull("id") ?: idx
+            val title = (
+                entry.strOrNull("comment")?.takeIf { it.isNotBlank() }
+                    ?: entry.strOrNull("name")?.takeIf { it.isNotBlank() }
+                    ?: keys.firstOrNull()
+                    ?: "条目 #${idx + 1}"
+                ).trim()
+
+            val selectiveLogic = parseSelectiveLogic(
+                entry["selectiveLogic"] ?: entry["selective_logic"] ?: secondaryObj?.get("logic"),
+            )
+            val constant = entry.boolOrNull("constant")
+                ?: entry.boolOrNull("constantActive")
+                ?: strategyObj?.strOrNull("type")?.equals("constant", ignoreCase = true)
+                ?: false
+            val disabled = entry.boolOrNull("disable") == true
+            val enabled = entry.boolOrNull("enabled") ?: !disabled
+            val caseSensitive = entry.boolOrNull("case_sensitive")
+                ?: entry.boolOrNull("caseSensitive")
+                ?: extObj?.boolOrNull("case_sensitive")
+                ?: false
+            val matchWholeWords = entry.boolOrNull("match_whole_words")
+                ?: entry.boolOrNull("matchWholeWords")
+                ?: extObj?.boolOrNull("match_whole_words")
+                ?: false
+            val useRegexKey = entry.boolOrNull("use_regex")
+                ?: entry.boolOrNull("useRegex")
+                ?: entry.boolOrNull("useRegexKey")
+                ?: false
+            val probability = (entry.intOrNull("probability") ?: extObj?.intOrNull("probability") ?: 100).coerceIn(0, 100)
+            val insertionOrder = entry.intOrNull("insertion_order")
+                ?: entry.intOrNull("order")
+                ?: entry.intOrNull("priority")
+                ?: posObj?.intOrNull("order")
+                ?: extObj?.intOrNull("order")
+                ?: 100
+            val position = parseWorldbookPosition(entry["position"] ?: extObj?.get("position"))
+            val depth = (entry.intOrNull("depth")
+                ?: posObj?.intOrNull("depth")
+                ?: extObj?.intOrNull("depth")
+                ?: 4).coerceAtLeast(0)
+            val outletRole = parseWorldbookRole(
+                entry["role"] ?: posObj?.get("role") ?: extObj?.get("role") ?: entry["outletRole"],
+            )
+            val scanDepthOverride = entry.intOrNull("scanDepth")
+                ?: entry.intOrNull("scan_depth")
+                ?: extObj?.intOrNull("scanDepth")
+            val sticky = (entry.intOrNull("sticky") ?: extObj?.intOrNull("sticky") ?: 0).coerceAtLeast(0)
+            val cooldown = (entry.intOrNull("cooldown") ?: extObj?.intOrNull("cooldown") ?: 0).coerceAtLeast(0)
+            val delay = (entry.intOrNull("delay") ?: extObj?.intOrNull("delay") ?: 0).coerceAtLeast(0)
+            val preventRecursion = entry.boolOrNull("preventRecursion")
+                ?: entry.boolOrNull("prevent_recursion")
+                ?: extObj?.boolOrNull("preventRecursion")
+                ?: false
+            val excludeRecursion = entry.boolOrNull("excludeRecursion")
+                ?: entry.boolOrNull("exclude_recursion")
+                ?: extObj?.boolOrNull("excludeRecursion")
+                ?: false
+            val groupName = (entry.strOrNull("group") ?: entry.strOrNull("groupName") ?: extObj?.strOrNull("group")).orEmpty().trim()
+            val groupWeight = (entry.intOrNull("groupWeight") ?: entry.intOrNull("group_weight") ?: extObj?.intOrNull("groupWeight") ?: 100).coerceAtLeast(1)
+            val estTokens = TokenEstimator.estimateItem(title, content, overhead = 8, minTokens = 8)
+
+            WorldbookEntryEntity(
+                id = UUID.randomUUID().toString(),
+                worldbookId = worldbookId,
+                uid = uid,
+                title = title,
+                content = content,
+                category = entry.strOrNull("category")?.trim()?.takeIf { it.isNotEmpty() } ?: "concept",
+                keysJson = AppJson.encodeToString(keys),
+                secondaryKeysJson = AppJson.encodeToString(secondaryKeys),
+                selectiveLogic = selectiveLogic,
+                constant = constant,
+                enabled = enabled,
+                caseSensitive = caseSensitive,
+                matchWholeWords = matchWholeWords,
+                useRegexKey = useRegexKey,
+                probability = probability,
+                insertionOrder = insertionOrder,
+                position = position,
+                depth = depth,
+                outletRole = outletRole,
+                scanDepthOverride = scanDepthOverride,
+                sticky = sticky,
+                cooldown = cooldown,
+                delay = delay,
+                preventRecursion = preventRecursion,
+                excludeRecursion = excludeRecursion,
+                groupName = groupName,
+                groupWeight = groupWeight,
+                estimatedTokens = estTokens,
+                createdAt = now,
+                updatedAt = now,
+            )
+        }
+
+        if (entries.isEmpty()) {
+            throw IllegalArgumentException("世界书中未解析到有效条目")
+        }
+
+        val totalTokens = entries.sumOf { it.estimatedTokens }
+        val fpInput = buildString {
+            append(name)
+            entries.forEach { e ->
+                append('|').append(e.uid).append(':').append(e.keysJson).append(':').append(e.content)
+            }
+        }
+        val worldbook = WorldbookEntity(
+            id = worldbookId,
+            name = name,
+            description = description,
+            sourceFormat = sourceFormat,
+            globalEnabled = false,
+            scanDepth = scanDepth,
+            tokenBudget = tokenBudget,
+            recursiveScanning = recursiveScanning,
+            entryCount = entries.size,
+            totalEstimatedTokens = totalTokens,
+            contentFingerprint = sha256Hex(fpInput),
+            createdAt = now,
+            updatedAt = now,
+        )
+        return ParsedWorldbookV4(worldbook = worldbook, entries = entries)
+    }
+
+    fun parsePromptPresetV4(
+        rawJson: String,
+        presetId: String = UUID.randomUUID().toString(),
+        fileName: String? = null,
+    ): PromptPresetEntity {
+        val cleaned = rawJson.removePrefix("\uFEFF").trim()
+        val obj = try {
+            AppJson.parseToJsonElement(cleaned) as? JsonObject
+        } catch (e: Exception) {
+            throw IllegalArgumentException("无效的预设 JSON 格式：${e.message}")
+        } ?: throw IllegalArgumentException("预设 JSON 根节点必须为对象")
+        return parsePromptPresetV4(obj, presetId = presetId, fileName = fileName)
+    }
+
+    fun parsePromptPresetV4(
+        obj: JsonObject,
+        presetId: String = UUID.randomUUID().toString(),
+        fileName: String? = null,
+    ): PromptPresetEntity {
+        val now = System.currentTimeMillis()
+        if (isRikkaExportEnvelope(obj) && obj.strOrNull("type").equals("mode_injection", ignoreCase = true)) {
+            val data = obj.objOrNull("data") ?: throw IllegalArgumentException("RikkaHub 模式注入 data 为空")
+            val name = data.strOrNull("name")?.trim()?.takeIf { it.isNotEmpty() }
+                ?: stripExtension(fileName).ifBlank { "RikkaHub 模式注入" }
+            val content = data.strOrNull("content").orEmpty().trim()
+            if (content.isEmpty()) throw IllegalArgumentException("RikkaHub 模式注入内容为空")
+            val enabled = data.boolOrNull("enabled") ?: true
+            val posStr = data.strOrNull("position")?.uppercase().orEmpty()
+            val isBottom = posStr.contains("BOTTOM") || posStr.contains("AFTER_DIALOG")
+            val block = PromptPresetBlock(
+                identifier = "mode_injection",
+                name = name,
+                role = "system",
+                content = content,
+                marker = false,
+                enabled = enabled,
+                injectionPosition = if (isBottom) 1 else 0,
+                injectionDepth = 0,
+            )
+            return PromptPresetEntity(
+                id = presetId,
+                name = name,
+                sourceFormat = "rikkahub_mode_injection",
+                blocksJson = AppJson.encodeToString(listOf(block)),
+                regexScriptsJson = "[]",
+                samplingPatchJson = "{}",
+                isDefaultRp = false,
+                createdAt = now,
+                updatedAt = now,
+            )
+        }
+
+        val presetName = obj.strOrNull("name")?.trim()?.takeIf { it.isNotEmpty() }
+            ?: stripExtension(fileName).ifBlank { "酒馆预设" }
+        val embeddedRegex = RpCardCodec.parseRegexScriptsFromElement(
+            obj.objOrNull("extensions")?.get("regex_scripts"),
+        )
+        val temp = (obj["temperature"] as? JsonPrimitive)?.takeUnless { it is JsonNull }?.doubleOrNull
+            ?: (obj["temp"] as? JsonPrimitive)?.takeUnless { it is JsonNull }?.doubleOrNull
+        val topP = (obj["top_p"] as? JsonPrimitive)?.takeUnless { it is JsonNull }?.doubleOrNull
+        val maxTokens = obj.intOrNull("openai_max_tokens") ?: obj.intOrNull("max_tokens")
+        val topK = obj.intOrNull("top_k")
+        val minP = (obj["min_p"] as? JsonPrimitive)?.takeUnless { it is JsonNull }?.doubleOrNull
+        val freqPen = (obj["frequency_penalty"] as? JsonPrimitive)?.takeUnless { it is JsonNull }?.doubleOrNull
+        val presPen = (obj["presence_penalty"] as? JsonPrimitive)?.takeUnless { it is JsonNull }?.doubleOrNull
+        val repPen = (obj["repetition_penalty"] as? JsonPrimitive)?.takeUnless { it is JsonNull }?.doubleOrNull
+
+        val samplingJson = buildJsonObject {
+            temp?.let { put("temperature", it) }
+            topP?.let { put("top_p", it) }
+            maxTokens?.let { put("max_tokens", it) }
+            topK?.let { put("top_k", it) }
+            minP?.let { put("min_p", it) }
+            freqPen?.let { put("frequency_penalty", it) }
+            presPen?.let { put("presence_penalty", it) }
+            repPen?.let { put("repetition_penalty", it) }
+        }.toString()
+
+        val promptsArr = obj.arrOrNull("prompts")
+        if (promptsArr != null && promptsArr.isNotEmpty()) {
+            val parsedPrompts = promptsArr.mapIndexedNotNull { idx, el ->
+                val p = el as? JsonObject ?: return@mapIndexedNotNull null
+                val id = p.strOrNull("identifier")?.trim().orEmpty().ifBlank { "prompt_$idx" }
+                RawPresetPrompt(
+                    identifier = id,
+                    name = p.strOrNull("name")?.trim().orEmpty().ifBlank { id },
+                    content = p.strOrNull("content").orEmpty().trim(),
+                    marker = p.boolOrNull("marker") ?: false,
+                    enabled = p.boolOrNull("enabled") ?: true,
+                    role = parseWorldbookRole(p["role"]),
+                    injectionPosition = p.intOrNull("injection_position") ?: p.intOrNull("injectionPosition") ?: 0,
+                    injectionDepth = p.intOrNull("injection_depth") ?: p.intOrNull("injectionDepth") ?: 4,
+                )
+            }
+            val byId = parsedPrompts.associateBy { it.identifier }
+            val orderGroups = obj.arrOrNull("prompt_order").orEmpty().mapNotNull { it as? JsonObject }
+            val chosenOrderArr: JsonArray? = orderGroups
+                .firstOrNull { g ->
+                    val cid = (g["character_id"] as? JsonPrimitive)?.takeUnless { it is JsonNull }?.longOrNull
+                        ?: g.strOrNull("character_id")?.toLongOrNull()
+                    cid == 100001L
+                }
+                ?.arrOrNull("order")
+                ?: orderGroups
+                    .maxByOrNull { it.arrOrNull("order")?.size ?: 0 }
+                    ?.arrOrNull("order")
+
+            val blocks = ArrayList<PromptPresetBlock>()
+            val seenIds = LinkedHashSet<String>()
+
+            if (chosenOrderArr != null && chosenOrderArr.isNotEmpty()) {
+                chosenOrderArr.forEach { el ->
+                    val o = el as? JsonObject ?: return@forEach
+                    val id = o.strOrNull("identifier")?.trim() ?: return@forEach
+                    val prompt = byId[id] ?: return@forEach
+                    if (!seenIds.add(id)) return@forEach
+                    val orderEnabled = o.boolOrNull("enabled") ?: true
+                    val effectiveEnabled = orderEnabled && prompt.enabled
+                    blocks.add(
+                        PromptPresetBlock(
+                            identifier = prompt.identifier,
+                            name = prompt.name,
+                            role = prompt.role,
+                            content = prompt.content,
+                            marker = prompt.marker,
+                            enabled = effectiveEnabled,
+                            injectionPosition = prompt.injectionPosition ?: 0,
+                            injectionDepth = prompt.injectionDepth ?: 4,
+                        ),
+                    )
+                }
+            }
+            parsedPrompts.forEach { prompt ->
+                if (prompt.identifier in seenIds) return@forEach
+                blocks.add(
+                    PromptPresetBlock(
+                        identifier = prompt.identifier,
+                        name = prompt.name,
+                        role = prompt.role,
+                        content = prompt.content,
+                        marker = prompt.marker,
+                        enabled = prompt.enabled,
+                        injectionPosition = prompt.injectionPosition ?: 0,
+                        injectionDepth = prompt.injectionDepth ?: 4,
+                    ),
+                )
+            }
+
+            if (blocks.none { !it.marker && it.content.isNotBlank() } && embeddedRegex.isEmpty()) {
+                throw IllegalArgumentException("酒馆预设 JSON 中未解析到有效提示词或正则脚本")
+            }
+
+            return PromptPresetEntity(
+                id = presetId,
+                name = presetName,
+                sourceFormat = "sillytavern_preset_ordered",
+                blocksJson = AppJson.encodeToString(blocks),
+                regexScriptsJson = AppJson.encodeToString(embeddedRegex),
+                samplingPatchJson = samplingJson,
+                isDefaultRp = false,
+                createdAt = now,
+                updatedAt = now,
+            )
+        }
+
+        // Legacy flat preset (`main_prompt` / `nsfw_prompt` / `jailbreak_prompt`)
+        val mainPrompt = obj.strOrNull("main_prompt").orEmpty().trim()
+        val nsfwPrompt = obj.strOrNull("nsfw_prompt").orEmpty().trim()
+        val nsfwToggle = obj.boolOrNull("nsfw_toggle") ?: false
+        val jailbreakPrompt = obj.strOrNull("jailbreak_prompt").orEmpty().trim()
+        val flatBlocks = buildList {
+            if (mainPrompt.isNotBlank()) {
+                add(PromptPresetBlock(identifier = "main", name = "Main Prompt", role = "system", content = mainPrompt, enabled = true, injectionPosition = 0))
+            }
+            if (nsfwPrompt.isNotBlank()) {
+                add(PromptPresetBlock(identifier = "nsfw", name = "NSFW Prompt", role = "system", content = nsfwPrompt, enabled = nsfwToggle, injectionPosition = 0))
+            }
+            if (jailbreakPrompt.isNotBlank()) {
+                add(PromptPresetBlock(identifier = "jailbreak", name = "Post-History", role = "system", content = jailbreakPrompt, enabled = true, injectionPosition = 1, injectionDepth = 0))
+            }
+        }
+        if (flatBlocks.isEmpty() && embeddedRegex.isEmpty()) {
+            throw IllegalArgumentException("旧版酒馆预设 JSON 中未解析到有效提示词")
+        }
+        return PromptPresetEntity(
+            id = presetId,
+            name = presetName,
+            sourceFormat = "sillytavern_preset_flat",
+            blocksJson = AppJson.encodeToString(flatBlocks),
+            regexScriptsJson = AppJson.encodeToString(embeddedRegex),
+            samplingPatchJson = samplingJson,
+            isDefaultRp = false,
+            createdAt = now,
+            updatedAt = now,
+        )
+    }
+
+    private fun parseSelectiveLogic(elem: JsonElement?): Int {
+        val prim = elem as? JsonPrimitive ?: return 0
+        if (prim is JsonNull) return 0
+        prim.contentOrNull?.trim()?.toIntOrNull()?.let { return it.coerceIn(0, 3) }
+        return when (prim.contentOrNull?.trim()?.lowercase()) {
+            "and_any", "0" -> 0
+            "not_all", "1" -> 1
+            "not_any", "2" -> 2
+            "and_all", "3" -> 3
+            else -> 0
+        }
+    }
+
+    private fun parseWorldbookPosition(elem: JsonElement?): Int {
+        if (elem is JsonObject) {
+            return when (elem.strOrNull("type")?.trim()?.lowercase()) {
+                "before_character_definition", "before_char" -> 0
+                "after_character_definition", "after_char" -> 1
+                "before_author_note", "before_an" -> 2
+                "after_author_note", "after_an" -> 3
+                "at_depth" -> 4
+                else -> 0
+            }
+        }
+        val prim = elem as? JsonPrimitive ?: return 0
+        if (prim is JsonNull) return 0
+        prim.contentOrNull?.trim()?.toIntOrNull()?.let { return it.coerceIn(0, 7) }
+        return when (prim.contentOrNull?.trim()?.lowercase()) {
+            "before_char", "before_character_definition", "0" -> 0
+            "after_char", "after_character_definition", "1" -> 1
+            "before_an", "before_author_note", "2" -> 2
+            "after_an", "after_author_note", "3" -> 3
+            "at_depth", "in_chat", "4" -> 4
+            "before_examples", "5" -> 5
+            "after_examples", "6" -> 6
+            "outlet", "7" -> 7
+            else -> 0
+        }
+    }
+
+    private fun parseWorldbookRole(elem: JsonElement?): String {
+        val prim = elem as? JsonPrimitive ?: return "system"
+        if (prim is JsonNull) return "system"
+        prim.contentOrNull?.trim()?.toIntOrNull()?.let { code ->
+            return when (code) {
+                1 -> "user"
+                2 -> "assistant"
+                else -> "system"
+            }
+        }
+        return when (prim.contentOrNull?.trim()?.lowercase()) {
+            "user", "1" -> "user"
+            "assistant", "model", "2" -> "assistant"
+            else -> "system"
+        }
+    }
+
+    private fun sha256Hex(text: String): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8))
+        val sb = StringBuilder(digest.size * 2)
+        for (b in digest) {
+            sb.append(((b.toInt() ushr 4) and 0xF).toString(16))
+            sb.append((b.toInt() and 0xF).toString(16))
+        }
+        return sb.toString()
+    }
 }

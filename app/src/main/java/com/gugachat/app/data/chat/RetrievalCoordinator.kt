@@ -12,6 +12,7 @@ import com.gugachat.app.data.api.RemoteApiEmbeddingEngine
 import com.gugachat.app.data.api.RemoteApiRerankEngine
 import com.gugachat.app.data.local.LocalEmbeddingModelManager
 import com.gugachat.app.data.local.LocalOnnxEmbeddingEngine
+import com.gugachat.app.data.local.WorldbookEntryEntity
 import com.gugachat.app.domain.chat.EmbeddingEngine
 import com.gugachat.app.domain.chat.MemoryEpisode
 import com.gugachat.app.domain.chat.MemoryLedgerItem
@@ -31,7 +32,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Adapts [LocalOnnxEmbeddingEngine] for a specific local model ID into the shared [EmbeddingEngine]
@@ -92,7 +93,7 @@ class RetrievalCoordinator internal constructor(
     private val _indexProgress = MutableStateFlow(VectorIndexProgress())
     val indexProgress: StateFlow<VectorIndexProgress> = _indexProgress.asStateFlow()
 
-    private val activeIndexJobRef = AtomicReference<Job?>(null)
+    private val activeIndexJobs = ConcurrentHashMap<String, Job>()
 
     fun currentRetrievalSettings(): RetrievalSettings = retrievalSettingsProvider()
 
@@ -176,6 +177,7 @@ class RetrievalCoordinator internal constructor(
         queryText: String,
         candidateIds: Set<String>,
         timeoutMs: Long = DEFAULT_SEND_TIMEOUT_MS,
+        mountedWorldbookIds: List<String> = emptyList(),
     ): Pair<Map<String, Double>, Double> {
         val settings = currentRetrievalSettings()
         val engine = resolveActiveEmbeddingEngine(settings)
@@ -184,6 +186,11 @@ class RetrievalCoordinator internal constructor(
             return emptyMap<String, Double>() to fallbackFloor
         }
         val effectiveFloor = (settings.minCosineOverride ?: engine.minCosineFloor).coerceIn(0.0, 1.0)
+        val extraScopes = mountedWorldbookIds
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .distinct()
+            .map { VectorMemoryIndex.worldbookScopeId(it) }
         val scores = try {
             vectorMemoryIndex.scoreCandidates(
                 conversationId = conversationId,
@@ -192,6 +199,7 @@ class RetrievalCoordinator internal constructor(
                 engine = engine,
                 timeoutMs = timeoutMs,
                 minCosineOverride = effectiveFloor,
+                extraScopeIds = extraScopes,
             )
         } catch (ce: CancellationException) {
             throw ce
@@ -228,7 +236,8 @@ class RetrievalCoordinator internal constructor(
 
     /**
      * Schedules background incremental vector indexing on [Dispatchers.Default] for all enabled
-     * lore, ledger, episodes, and global user memories. Cancels any superseded indexing job cleanly.
+     * lore, ledger, episodes, and global user memories. Cancels only a superseded job for the same
+     * [conversationId] scope so concurrent worldbook or global jobs are never cancelled.
      */
     fun scheduleConversationIndexing(
         scope: CoroutineScope,
@@ -239,11 +248,12 @@ class RetrievalCoordinator internal constructor(
         userMemories: List<UserMemory>,
         batchSize: Int = DEFAULT_INDEX_BATCH_SIZE,
     ): Job? {
+        val scopeKey = conversationId.ifBlank { SCOPE_GLOBAL }
         val settings = currentRetrievalSettings()
         val engine = resolveActiveEmbeddingEngine(settings)
         if (engine == null) {
-            activeIndexJobRef.getAndSet(null)?.cancel()
-            if (_indexProgress.value.running) {
+            activeIndexJobs.remove(scopeKey)?.cancel()
+            if (activeIndexJobs.isEmpty() && _indexProgress.value.running) {
                 _indexProgress.value = VectorIndexProgress()
             }
             return null
@@ -256,14 +266,100 @@ class RetrievalCoordinator internal constructor(
             episodes = episodes,
             userMemories = userMemories,
         )
+        return launchScopedIndexing(
+            scope = scope,
+            scopeKey = scopeKey,
+            targets = targets,
+            engine = engine,
+            batchSize = batchSize,
+            pruneStale = true,
+        )
+    }
 
-        val job = scope.launch(Dispatchers.Default) {
+    /**
+     * Indexes a global [worldbookId] ONCE under `conversationId = "wb:$worldbookId"`
+     * (`ownerType = "worldbook_entry"`) so every bound conversation shares the exact same vectors.
+     */
+    fun scheduleWorldbookIndexing(
+        scope: CoroutineScope,
+        worldbookId: String,
+        entries: List<WorldbookEntryEntity>,
+        batchSize: Int = DEFAULT_INDEX_BATCH_SIZE,
+    ): Job? {
+        val cleanWbId = worldbookId.trim()
+        if (cleanWbId.isEmpty()) return null
+        val scopeKey = VectorMemoryIndex.worldbookScopeId(cleanWbId)
+        val settings = currentRetrievalSettings()
+        val engine = resolveActiveEmbeddingEngine(settings)
+        if (engine == null) {
+            activeIndexJobs.remove(scopeKey)?.cancel()
+            if (activeIndexJobs.isEmpty() && _indexProgress.value.running) {
+                _indexProgress.value = VectorIndexProgress()
+            }
+            return null
+        }
+
+        val targets = buildWorldbookIndexTargets(worldbookId = cleanWbId, entries = entries)
+        return launchScopedIndexing(
+            scope = scope,
+            scopeKey = scopeKey,
+            targets = targets,
+            engine = engine,
+            batchSize = batchSize,
+            pruneStale = true,
+        )
+    }
+
+    /**
+     * Schedules background indexing strictly for global [UserMemory] records under [SCOPE_GLOBAL].
+     */
+    fun scheduleGlobalMemoriesIndexing(
+        scope: CoroutineScope,
+        userMemories: List<UserMemory>,
+        batchSize: Int = DEFAULT_INDEX_BATCH_SIZE,
+    ): Job? {
+        val settings = currentRetrievalSettings()
+        val engine = resolveActiveEmbeddingEngine(settings)
+        if (engine == null) {
+            activeIndexJobs.remove(SCOPE_GLOBAL)?.cancel()
+            if (activeIndexJobs.isEmpty() && _indexProgress.value.running) {
+                _indexProgress.value = VectorIndexProgress()
+            }
+            return null
+        }
+        val targets = buildIndexTargets(
+            conversationId = "",
+            lore = emptyList(),
+            ledger = emptyList(),
+            episodes = emptyList(),
+            userMemories = userMemories,
+        )
+        return launchScopedIndexing(
+            scope = scope,
+            scopeKey = SCOPE_GLOBAL,
+            targets = targets,
+            engine = engine,
+            batchSize = batchSize,
+            pruneStale = true,
+        )
+    }
+
+    private fun launchScopedIndexing(
+        scope: CoroutineScope,
+        scopeKey: String,
+        targets: List<VectorIndexTarget>,
+        engine: EmbeddingEngine,
+        batchSize: Int,
+        pruneStale: Boolean,
+    ): Job {
+        lateinit var launched: Job
+        launched = scope.launch(Dispatchers.Default) {
             try {
                 vectorMemoryIndex.ensureIndexed(
                     targets = targets,
                     engine = engine,
                     batchSize = batchSize,
-                    pruneStale = true,
+                    pruneStale = pruneStale,
                     onProgress = { progress -> _indexProgress.value = progress },
                 )
             } catch (ce: CancellationException) {
@@ -273,10 +369,15 @@ class RetrievalCoordinator internal constructor(
                     running = false,
                     lastError = t.message ?: "Vector indexing failed",
                 )
+            } finally {
+                activeIndexJobs.remove(scopeKey, launched)
             }
         }
-        activeIndexJobRef.getAndSet(job)?.cancel()
-        return job
+        val prev = activeIndexJobs.put(scopeKey, launched)
+        if (prev != null && prev !== launched) {
+            prev.cancel()
+        }
+        return launched
     }
 
     suspend fun testRemoteEmbedding(
@@ -345,7 +446,10 @@ class RetrievalCoordinator internal constructor(
     }
 
     suspend fun clearAllVectors() {
-        activeIndexJobRef.getAndSet(null)?.cancel()
+        val keys = activeIndexJobs.keys.toList()
+        for (k in keys) {
+            activeIndexJobs.remove(k)?.cancel()
+        }
         vectorMemoryIndex.clearAll()
         _indexProgress.value = VectorIndexProgress()
     }
@@ -370,10 +474,36 @@ class RetrievalCoordinator internal constructor(
         const val OWNER_RP_LEDGER = "rp_ledger"
         const val OWNER_EPISODE = "episode_archived"
         const val OWNER_USER_MEMORY = "user_memory"
+        const val OWNER_WORLDBOOK_ENTRY = "worldbook_entry"
+
+        const val SCOPE_GLOBAL = "global"
 
         const val DEFAULT_SEND_TIMEOUT_MS = 1500L
         const val DEFAULT_INDEX_BATCH_SIZE = 16
         const val DEFAULT_MIN_COSINE_FLOOR = 0.50
+
+        internal fun buildWorldbookIndexTargets(
+            worldbookId: String,
+            entries: List<WorldbookEntryEntity>,
+        ): List<VectorIndexTarget> {
+            val scopeConvId = VectorMemoryIndex.worldbookScopeId(worldbookId)
+            val targets = ArrayList<VectorIndexTarget>(entries.size)
+            for (entry in entries) {
+                if (!entry.enabled) continue
+                val text = formatCanonicalTargetText(entry.title, entry.content)
+                if (text.isNotEmpty()) {
+                    targets.add(
+                        VectorIndexTarget(
+                            ownerType = OWNER_WORLDBOOK_ENTRY,
+                            ownerId = entry.id,
+                            conversationId = scopeConvId,
+                            canonicalText = text,
+                        ),
+                    )
+                }
+            }
+            return targets
+        }
 
         internal fun formatCanonicalTargetText(title: String?, content: String?): String {
             val t = title?.trim().orEmpty()

@@ -145,8 +145,11 @@ object DirectProtocolCodec {
         val norm = normalizeBaseOrigin(baseUrl)
         if (norm.isEmpty()) return false
         val host = runCatching { URI(norm).host }.getOrNull()?.lowercase() ?: return false
-        return host == "api.openai.com"
+        return host == "api.openai.com" || host == "openai.com"
     }
+
+    private fun isOfficialOpenAiHostOrBlank(baseUrl: String): Boolean =
+        baseUrl.isBlank() || isOfficialOpenAiHost(baseUrl)
 
     fun buildOpenAIChatRequestJson(
         request: OnlineChatCompletionRequestDto,
@@ -202,9 +205,24 @@ object DirectProtocolCodec {
 
         for (msg in request.messages) {
             val role = msg.role.lowercase()
-            if (role == "system" || role == "developer") {
+            if ((role == "system" || role == "developer") && !msg.isDepthInjection) {
                 val txt = extractPlainText(msg.content)
                 if (txt.isNotBlank()) systemTexts += txt
+                continue
+            }
+            if ((role == "system" || role == "developer") && msg.isDepthInjection) {
+                val txt = extractPlainText(msg.content)
+                if (txt.isNotBlank()) {
+                    inputItems += buildJsonObject {
+                        put("role", "user")
+                        putJsonArray("content") {
+                            addJsonObject {
+                                put("type", "input_text")
+                                put("text", "<depth_context>\n$txt\n</depth_context>")
+                            }
+                        }
+                    }
+                }
                 continue
             }
             val mappedRole = if (role == "assistant") "assistant" else "user"
@@ -266,49 +284,66 @@ object DirectProtocolCodec {
     fun buildAnthropicRequestJson(request: OnlineChatCompletionRequestDto, stream: Boolean): String {
         val systemTexts = mutableListOf<String>()
         val rawTurns = mutableListOf<Pair<String, MutableList<JsonObject>>>()
+        var firstDepthIdx: Int? = null
 
         for (msg in request.messages) {
             val role = msg.role.lowercase()
-            if (role == "system" || role == "developer") {
+            if ((role == "system" || role == "developer") && !msg.isDepthInjection) {
                 val txt = extractPlainText(msg.content)
                 if (txt.isNotBlank()) systemTexts += txt
                 continue
             }
-            val mappedRole = if (role == "assistant") "assistant" else "user"
+            val mappedRole: String
             val blocks = mutableListOf<JsonObject>()
-            for (part in extractParts(msg.content)) {
-                if (part.text != null && part.text.isNotEmpty()) {
-                    blocks += buildJsonObject {
-                        put("type", "text")
-                        put("text", part.text)
-                    }
-                } else if (part.imageUrl != null && mappedRole == "user") {
-                    val dataMatch = DATA_URL_RE.find(part.imageUrl)
-                    if (dataMatch != null) {
+            if ((role == "system" || role == "developer") && msg.isDepthInjection) {
+                val txt = extractPlainText(msg.content)
+                if (txt.isBlank()) continue
+                mappedRole = "user"
+                blocks += buildJsonObject {
+                    put("type", "text")
+                    put("text", "<depth_context>\n$txt\n</depth_context>")
+                }
+            } else {
+                mappedRole = if (role == "assistant") "assistant" else "user"
+                for (part in extractParts(msg.content)) {
+                    if (part.text != null && part.text.isNotEmpty()) {
                         blocks += buildJsonObject {
-                            put("type", "image")
-                            putJsonObject("source") {
-                                put("type", "base64")
-                                put("media_type", dataMatch.groupValues[1])
-                                put("data", dataMatch.groupValues[2].trim())
-                            }
+                            put("type", "text")
+                            put("text", part.text)
                         }
-                    } else {
-                        blocks += buildJsonObject {
-                            put("type", "image")
-                            putJsonObject("source") {
-                                put("type", "url")
-                                put("url", part.imageUrl)
+                    } else if (part.imageUrl != null && mappedRole == "user") {
+                        val dataMatch = DATA_URL_RE.find(part.imageUrl)
+                        if (dataMatch != null) {
+                            blocks += buildJsonObject {
+                                put("type", "image")
+                                putJsonObject("source") {
+                                    put("type", "base64")
+                                    put("media_type", dataMatch.groupValues[1])
+                                    put("data", dataMatch.groupValues[2].trim())
+                                }
+                            }
+                        } else {
+                            blocks += buildJsonObject {
+                                put("type", "image")
+                                putJsonObject("source") {
+                                    put("type", "url")
+                                    put("url", part.imageUrl)
+                                }
                             }
                         }
                     }
                 }
             }
             if (blocks.isEmpty()) continue
-            if (rawTurns.isNotEmpty() && rawTurns.last().first == mappedRole) {
+            val turnIdx = if (rawTurns.isNotEmpty() && rawTurns.last().first == mappedRole) {
                 rawTurns.last().second.addAll(blocks)
+                rawTurns.lastIndex
             } else {
                 rawTurns += mappedRole to blocks
+                rawTurns.lastIndex
+            }
+            if (msg.isDepthInjection && firstDepthIdx == null) {
+                firstDepthIdx = turnIdx
             }
         }
 
@@ -320,6 +355,9 @@ object DirectProtocolCodec {
                     put("text", "Hello")
                 }),
             )
+            if (firstDepthIdx != null) {
+                firstDepthIdx = firstDepthIdx + 1
+            }
         }
 
         val thinkingBudget = effortToBudgetTokens(request.reasoning_effort)
@@ -327,16 +365,22 @@ object DirectProtocolCodec {
             if (thinkingBudget != null && reqMax <= thinkingBudget) thinkingBudget + 1024 else reqMax
         }
 
-        // Prompt Caching Breakpoint 2: pin stable conversation history right before the latest turn
+        // Prompt Caching Breakpoint 2: pin stable conversation history strictly before the earliest @D depth splice
         if (request.enablePromptCaching && rawTurns.size >= 3) {
-            val cacheTurnIdx = rawTurns.lastIndex - 1
-            val blocks = rawTurns[cacheTurnIdx].second
-            val textBlockIdx = blocks.indexOfLast { it["type"]?.jsonPrimitive?.content == "text" }
-            if (textBlockIdx >= 0) {
-                val orig = blocks[textBlockIdx]
-                blocks[textBlockIdx] = buildJsonObject {
-                    orig.forEach { (k, v) -> put(k, v) }
-                    putJsonObject("cache_control") { put("type", "ephemeral") }
+            val cacheTurnIdx = if (firstDepthIdx != null) {
+                minOf(rawTurns.lastIndex - 1, firstDepthIdx - 1)
+            } else {
+                rawTurns.lastIndex - 1
+            }
+            if (cacheTurnIdx >= 0) {
+                val blocks = rawTurns[cacheTurnIdx].second
+                val textBlockIdx = blocks.indexOfLast { it["type"]?.jsonPrimitive?.content == "text" }
+                if (textBlockIdx >= 0) {
+                    val orig = blocks[textBlockIdx]
+                    blocks[textBlockIdx] = buildJsonObject {
+                        orig.forEach { (k, v) -> put(k, v) }
+                        putJsonObject("cache_control") { put("type", "ephemeral") }
+                    }
                 }
             }
         }
@@ -401,40 +445,54 @@ object DirectProtocolCodec {
 
     fun buildGeminiRequestJson(request: OnlineChatCompletionRequestDto): String {
         val systemTexts = mutableListOf<String>()
-        val contents = mutableListOf<JsonObject>()
+        val rawTurns = mutableListOf<Pair<String, MutableList<JsonObject>>>()
 
         for (msg in request.messages) {
             val role = msg.role.lowercase()
-            if (role == "system" || role == "developer") {
+            if ((role == "system" || role == "developer") && !msg.isDepthInjection) {
                 val txt = extractPlainText(msg.content)
                 if (txt.isNotBlank()) systemTexts += txt
                 continue
             }
-            val mappedRole = if (role == "assistant") "model" else "user"
-            val parts = buildJsonArray {
+            val mappedRole: String
+            val parts = mutableListOf<JsonObject>()
+            if ((role == "system" || role == "developer") && msg.isDepthInjection) {
+                val txt = extractPlainText(msg.content)
+                if (txt.isBlank()) continue
+                mappedRole = "user"
+                parts += buildJsonObject { put("text", "<depth_context>\n$txt\n</depth_context>") }
+            } else {
+                mappedRole = if (role == "assistant") "model" else "user"
                 for (part in extractParts(msg.content)) {
                     if (part.text != null && part.text.isNotEmpty()) {
-                        addJsonObject { put("text", part.text) }
+                        parts += buildJsonObject { put("text", part.text) }
                     } else if (part.imageUrl != null) {
                         val dataMatch = DATA_URL_RE.find(part.imageUrl)
                         if (dataMatch != null) {
-                            addJsonObject {
+                            parts += buildJsonObject {
                                 putJsonObject("inlineData") {
                                     put("mimeType", dataMatch.groupValues[1])
                                     put("data", dataMatch.groupValues[2].trim())
                                 }
                             }
                         } else {
-                            addJsonObject { put("text", "[Image: ${part.imageUrl}]") }
+                            parts += buildJsonObject { put("text", "[Image: ${part.imageUrl}]") }
                         }
                     }
                 }
             }
-            if (parts.isNotEmpty()) {
-                contents += buildJsonObject {
-                    put("role", mappedRole)
-                    put("parts", parts)
-                }
+            if (parts.isEmpty()) continue
+            if (rawTurns.isNotEmpty() && rawTurns.last().first == mappedRole) {
+                rawTurns.last().second.addAll(parts)
+            } else {
+                rawTurns += mappedRole to parts
+            }
+        }
+
+        val contents = rawTurns.mapTo(mutableListOf()) { (role, parts) ->
+            buildJsonObject {
+                put("role", role)
+                put("parts", JsonArray(parts))
             }
         }
 
@@ -752,14 +810,45 @@ object DirectProtocolCodec {
         return ids.map { inferChatModelMeta(it) }
     }
 
-    fun defaultImageModels(protocol: ApiProtocol, customModels: List<String> = emptyList()): List<OnlineImageModelDto> {
-        val customImageModels = customModels.filter { id ->
+    private fun filterCustomImageModelIds(customModels: List<String>): List<String> =
+        customModels.map { it.trim() }.filter { id ->
+            if (id.isEmpty()) return@filter false
             val lower = id.lowercase()
-            lower.contains("image") || lower.contains("dall-e") || lower.contains("imagen") || lower.contains("flux")
-        }
+            lower.contains("image") ||
+                lower.contains("dall-e") ||
+                lower.contains("imagen") ||
+                lower.contains("flux") ||
+                lower.contains("kolors") ||
+                lower.contains("sdxl") ||
+                lower.contains("seedream")
+        }.distinct()
+
+    fun supportsImageGeneration(
+        protocol: ApiProtocol,
+        baseUrl: String = "",
+        customModels: List<String> = emptyList(),
+    ): Boolean = defaultImageModels(
+        protocol = protocol,
+        customModels = customModels,
+        baseUrl = baseUrl,
+    ).isNotEmpty()
+
+    fun defaultImageModels(
+        protocol: ApiProtocol,
+        customModels: List<String> = emptyList(),
+        baseUrl: String = "",
+    ): List<OnlineImageModelDto> {
+        if (protocol == ApiProtocol.ANTHROPIC) return emptyList()
+        val customImageModels = filterCustomImageModelIds(customModels)
         val baseIds = when (protocol) {
             ApiProtocol.OPENAI_CHAT,
-            ApiProtocol.OPENAI_RESPONSES -> (customImageModels + listOf("gpt-image-1", "dall-e-3")).distinct()
+            ApiProtocol.OPENAI_RESPONSES -> {
+                if (isOfficialOpenAiHostOrBlank(baseUrl)) {
+                    (customImageModels + listOf("gpt-image-1", "dall-e-3")).distinct()
+                } else {
+                    customImageModels
+                }
+            }
             ApiProtocol.GEMINI -> (customImageModels + listOf("gemini-2.5-flash-image", "gemini-2.0-flash-preview-image-generation", "imagen-3.0-generate-002")).distinct()
             ApiProtocol.ANTHROPIC -> return emptyList()
         }
