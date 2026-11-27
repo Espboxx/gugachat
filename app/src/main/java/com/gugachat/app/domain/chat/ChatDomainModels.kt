@@ -441,6 +441,7 @@ data class NovelConfig(
     val activeChapterId: String? = null,
     val currentStatus: NovelStatusHud? = null,
     val pendingChoices: List<String> = emptyList(),
+    val coverImagePath: String? = null,
 )
 
 @Serializable
@@ -473,6 +474,26 @@ data class RpConfig(
     val visualTheme: RpVisualTheme = RpVisualTheme(),
     val regexScripts: List<RpRegexScript> = emptyList(),
     val enableHtmlCards: Boolean = true,
+    val isPromptForked: Boolean = false,
+)
+
+@Serializable
+data class PromptPresetBlock(
+    val identifier: String,
+    val name: String,
+    val role: String = "system",
+    val content: String = "",
+    val marker: Boolean = false,
+    val enabled: Boolean = true,
+    val injectionPosition: Int = 0,
+    val injectionDepth: Int = 4,
+)
+
+@Serializable
+data class LoreTimedEntryState(
+    val lastTriggeredTurn: Int = -1,
+    val stickyUntilTurn: Int = -1,
+    val cooldownUntilTurn: Int = -1,
 )
 
 @Serializable
@@ -506,6 +527,10 @@ data class ChatConversation(
     val createdAt: Long,
     val updatedAt: Long,
     val pinned: Boolean = false,
+    val characterCardId: String? = null,
+    val personaId: String? = null,
+    val presetId: String? = null,
+    val loreTimedStatesJson: String = "{}",
 )
 
 @Serializable
@@ -567,6 +592,7 @@ data class WireChatMessage(
     val role: String,
     val textContent: String? = null,
     val parts: List<WireChatContentPart>? = null,
+    val isDepthInjection: Boolean = false,
 )
 
 data class BuiltChatContext(

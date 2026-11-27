@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <exclude domain="sharedpref" path="gugachat_secure_tokens.xml" />
+    <exclude domain="sharedpref" path="gugachat_tokens_fallback.xml" />
+    <exclude domain="sharedpref" path="gugachat_secure_providers.xml" />
+    <exclude domain="sharedpref" path="gugachat_providers_fallback.xml" />
+    <exclude domain="sharedpref" path="gugachat_secret_vault.xml" />
+    <exclude domain="sharedpref" path="gugachat_secret_vault_fallback.xml" />
+</full-backup-content>
