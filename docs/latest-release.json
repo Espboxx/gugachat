@@ -1,26 +1,26 @@
 {
-  "tag_name": "v0.3.7",
-  "version_name": "0.3.7",
-  "name": "GuGuChat v0.3.7",
-  "published_at": "2026-11-27T09:55:14Z",
-  "html_url": "https://github.com/Espboxx/gugachat/releases/tag/v0.3.7",
+  "tag_name": "v0.4.0",
+  "version_name": "0.4.0",
+  "name": "GuGuChat v0.4.0",
+  "published_at": "2026-11-27T14:18:51Z",
+  "html_url": "https://github.com/Espboxx/gugachat/releases/tag/v0.4.0",
   "cn_download_page": "",
-  "apk_name": "GuGuChat-v0.3.7-arm64-v8a.apk",
-  "apk_size": 25276895,
-  "apk_sha256": "dccaa277c1425072842a847386b59aecfe1885660719f516604c8ea4e69cc597",
-  "apk_url": "https://github.com/Espboxx/gugachat/releases/download/v0.3.7/GuGuChat-v0.3.7-arm64-v8a.apk",
+  "apk_name": "GuGuChat-v0.4.0-arm64-v8a.apk",
+  "apk_size": 25622251,
+  "apk_sha256": "6fad3df54f1f972c51784c37b00ccbcf6c45b6070e8d84701c1a3a4e56c2d69c",
+  "apk_url": "https://github.com/Espboxx/gugachat/releases/download/v0.4.0/GuGuChat-v0.4.0-arm64-v8a.apk",
   "abi_apks": {
     "arm64-v8a": {
-      "apk_name": "GuGuChat-v0.3.7-arm64-v8a.apk",
-      "apk_size": 25276895,
-      "apk_sha256": "dccaa277c1425072842a847386b59aecfe1885660719f516604c8ea4e69cc597",
-      "apk_url": "https://github.com/Espboxx/gugachat/releases/download/v0.3.7/GuGuChat-v0.3.7-arm64-v8a.apk"
+      "apk_name": "GuGuChat-v0.4.0-arm64-v8a.apk",
+      "apk_size": 25622251,
+      "apk_sha256": "6fad3df54f1f972c51784c37b00ccbcf6c45b6070e8d84701c1a3a4e56c2d69c",
+      "apk_url": "https://github.com/Espboxx/gugachat/releases/download/v0.4.0/GuGuChat-v0.4.0-arm64-v8a.apk"
     },
     "x86_64": {
-      "apk_name": "GuGuChat-v0.3.7-x86_64.apk",
-      "apk_size": 27974019,
-      "apk_sha256": "654ec3c97b517511af80e22cac6ad258c6a801f8d76b00b7a75124b71c862701",
-      "apk_url": "https://github.com/Espboxx/gugachat/releases/download/v0.3.7/GuGuChat-v0.3.7-x86_64.apk"
+      "apk_name": "GuGuChat-v0.4.0-x86_64.apk",
+      "apk_size": 28319375,
+      "apk_sha256": "f9615a58bf1fe9c4ecc9694c556cd31fe0f1d03ca8c063267fa2cd18abce740f",
+      "apk_url": "https://github.com/Espboxx/gugachat/releases/download/v0.4.0/GuGuChat-v0.4.0-x86_64.apk"
     }
   },
   "cn_apk_urls": [],
@@ -31,5 +31,5 @@
     "https://gh-proxy.org/",
     "https://ghfast.top/"
   ],
-  "body": "## GuGuChat v0.3.7\n\n### 下载包选择说明\n- **`GuGuChat-v0.3.7-arm64-v8a.apk`（约 24.1 MB，推荐主包）**：适用绝大多数安卓真机，内置应用内自动更新默认匹配此安装包。\n- **`GuGuChat-v0.3.7-x86_64.apk`（约 26.7 MB）**：适用部分电脑安卓模拟器（如 x86_64 架构实例）及 x86 平板设备。\n\n### 重点新特性与全面升级\n\n#### 1. 全站 UI/UX 与沉浸式页面重构\n- **零边框轻层次设计系统**：引入 `canvas -> surface -> surfaceSoft -> surfaceElevated` 四层表面阶梯、6 级字重体系、悬浮滑块 `GuSegmentedControl` 与清晰字母/图形模型徽章 `GuModelAvatar`。\n- **登录配网一屏化与「我的」分组中枢**：直连 API 合并为 `48.dp` 单行顶栏，头部 `[导入配置]` + 渐变羽化预设条与底部 `imePadding` 吸底 `[测通 / 保存]` 免滚屏直达；「我的」收拢为 ~640dp 一屏三大无框分组并支持行内一键明暗切换。\n- **对话流、统一输入坞与无穿帮抽屉**：支持历史消息轻触渐显微操作条、打开左侧抽屉自动隐藏底部全球导航并支持列表原地 `BasicTextField` 重命名（零弹窗）、`ChatParamsSheet` 改为 3-Tab 滑块与 400ms 防抖即改自动保存、`ChatMemorySheet` 采用 2 行高密度高亮召回透视卡。\n- **创作流与双沉浸阅读/剧场引擎**：创作页合并 `48.dp` 单行顶栏并升级原生比例双列瀑布流 + 一键画同款；长篇小说阅读器支持暗色模式自动随动夜读纸面、防撞字渐变页脚与零 `AlertDialog` 手账；RP 文游收拢为 `42.dp` 单行 HUD + 高不透明顶部浮层速控 + Z 轴全屏剧场与零套娃 4 板块手账。\n\n#### 2. R8 压缩与 ABI 分包极限瘦身（63.3 MB -> 24.1 MB，降幅 ~62%）\n- 启用 R8 代码/资源压缩与 `arm64-v8a` / `x86_64` ABI 分包，剔除无用 `org/bouncycastle/pqc/**` 依赖并将重复 Logo 资源合并为轻量 WebP，真机安装包体积直降约 39.2 MB。\n- 移除 Room 破坏性迁移隐患并开启 Schema v3 导出；将 `ChatStrings` / `RpStrings` 改为 `@Immutable class` 彻底解除 255 槽位编译限制。\n\n#### 3. Prompt Caching 全协议省钱闭环\n- 纯化 RP 系统前缀（动态状态移出稳定前缀防缓存击穿），为 Anthropic 协议自动注入 `cache_control` 断点（可开关）并透传 OpenAI `prompt_cache_key`。\n- 归一化解析 DeepSeek `prompt_cache_hit_tokens` 与 OpenAI `cached_tokens`，在消息底栏实时展示缓存命中率与节省提示。\n\n#### 4. 酒馆级采样参数与长文阅读体验升级\n- 新增 `min_p`、`repetition_penalty`、`frequency_penalty`、`presence_penalty`、`Assistant Prefill`、仅发送前正则清洗（`promptOnly`）与作者注插入深度（`authorNoteDepth`）。\n- 修复思考过程真实毫秒计时与正文输出时强折跳屏，新增流式生成防抢滚、多变体左右滑卡切换，以及登录页「先逛逛」体验模式与 DeepSeek / 硅基流动 / 火山方舟 / Ollama 等一键预设。"
+  "body": "## GuGuChat v0.4.0\n\n### 下载包选择说明\n- **`GuGuChat-v0.4.0-arm64-v8a.apk`（25,622,251 字节 / 约 24.4 MB，手机/平板真机推荐）**：适用于绝大多数安卓真机，老版本内置自动更新默认匹配此包。\n- **`GuGuChat-v0.4.0-x86_64.apk`（28,319,375 字节 / 约 27.0 MB，电脑模拟器推荐）**：适用于 MuMu / 雷电 / AVD x86_64 等电脑安卓模拟器及 x86 平板；v0.4.0 起内置更新器会根据 `Build.SUPPORTED_ABIS` 自动匹配对应架构。\n\n### 核心新特性与架构级升级\n\n#### 1. 全局叙事资产库与一级「创作」Tab 三域升级（`角色 · 设定 · 画室`）\n- **Room v4 全局资产中枢**：新增 6 张全局叙事资产表并支持从旧会话无缝迁入，彻底打通角色卡、世界书、玩家自设（Persona）与提示词预设的跨会话复用。\n- **一卡多开周目与多世界书共享**：角色详情支持“开新周目”一键开启独立对话/小说/RP；支持多世界书自由挂载，并按全局 `wb:<worldbookId>` 单次向量索引共享，告别重复建库耗费额度。\n- **Persona、预设开关与完整卡包兼容**：支持玩家自设（Persona）库切换与开场白 `{{user}}` 实时预览；新增酒馆提示词预设块独立开关与重排；完整支持 PNG / `.charx` 多表情差分导入并修复角色卡 PNG 导出。\n\n#### 2. 世界书 V2 引擎与四区护缓存上下文拼装\n- **世界书 V2 逻辑与时序**：支持 `AND ALL` / `AND ANY` / `NOT ALL` / `NOT ANY` 次级关键词逻辑，以及 `sticky` / `cooldown` / `delay` 回合时序状态持久化。\n- **四区护缓存与 `@D` 深度注入**：修复跨协议 `@D` 深度注入误提至顶层 `system` 与滑窗逐轮击穿缓存的问题（步进 `SLIDE_STRIDE = 4`），并为 Anthropic Claude 在深度注入前新增第 2 个 `cache_control` 断点，长程 RP 更省费用。\n\n#### 3. 切后台不断流守护（`ChatStreamManager` + Android 14 `dataSync` 保活）\n- **应用级并发流式引擎**：流式生成上浮至应用级单例，切换微信、锁屏、旋转屏幕或切换深浅主题均零丢字不断流，完整落库文本、思考过程与 `<rp_state>` 状态。\n- **前台服务与状态反馈**：接入 Android 14 `dataSync` 前台保活通知与 10 分钟超时唤醒锁，并在左侧会话抽屉为正在生成中的对话显示实时呼吸点。\n\n#### 4. 流式 `.gugubackup` 备份与零依赖端到端加密 WebDAV 云同步\n- **低内存流式归档**：全量本地备份升级为 `.gugubackup` ZIP+NDJSON 15 表分页流式打包与相对路径内容寻址媒体块（同时兼容导入旧 `.json`），告别大图 OOM 与换机裂图。\n- **端到端加密 WebDAV 云同步**：零额外依赖直连坚果云 / Nextcloud / Alist，使用 `PBKDF2 (150k)` + `64KB AES-256-GCM` 分块加密保护隐私，支持整会话原子增量合并与敏感凭据 `SecretVaultStore` 安全保管。\n\n#### 5. 小说 EPUB 3 精装导出、公式保护与体验打磨\n- **EPUB 3 成书导出**：小说支持导出包含封面插图与完整章节目录的标准 `.epub` 电子书。\n- **公式与生图守卫**：`MarkdownMessage` 新增 LaTeX 公式防斜体吞字与美元货币安全守卫；拦截纯文本模型渠道误触发画图指令，升级双 ABI 自动更新器，并恢复登录页顶栏 `\"GuGuGa 账号\"` 标识。"
 }
