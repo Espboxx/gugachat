@@ -1,6 +1,5 @@
 package com.gugachat.app.ui.profile
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -25,6 +24,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Autorenew
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Memory
+import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.RadioButtonChecked
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Refresh
@@ -77,10 +78,13 @@ import com.gugachat.app.core.theme.GuCard
 import com.gugachat.app.core.theme.GuConfirmDialog
 import com.gugachat.app.core.theme.GuGroupedCard
 import com.gugachat.app.core.theme.GuIconTile
+import com.gugachat.app.core.theme.GuInlineStepper
+import com.gugachat.app.core.theme.GuMetaText
 import com.gugachat.app.core.theme.GuModalDragHandle
 import com.gugachat.app.core.theme.GuPill
 import com.gugachat.app.core.theme.GuSectionHeader
 import com.gugachat.app.core.theme.GuSegmentedControl
+import com.gugachat.app.core.theme.GuSettingsRow
 import com.gugachat.app.core.theme.GuSheetHeader
 import com.gugachat.app.core.theme.GuSwitchRow
 import com.gugachat.app.core.theme.GuTextField
@@ -125,6 +129,10 @@ fun RetrievalSettingsSheet(
     onFetchRemoteRetrievalModels: (String, String, String, ApiProtocol) -> Unit,
     onClearVectorCache: () -> Unit,
     onDismiss: () -> Unit,
+    memoryBudget: String = "4K",
+    onSetMemoryBudget: ((String) -> Unit)? = null,
+    sseAutoRetryCount: Int = 3,
+    onSetSseAutoRetryCount: ((Int) -> Unit)? = null,
 ) {
     val strings = LocalAppStrings.current
     val ctxUi = strings.contextUi
@@ -275,7 +283,7 @@ fun RetrievalSettingsSheet(
                                         text = ctxUi.lexicalCardTitle,
                                         color = c.ink,
                                         fontSize = 14.sp,
-                                        fontWeight = FontWeight.ExtraBold,
+                                        fontWeight = FontWeight.Bold,
                                     )
                                     Text(
                                         text = ctxUi.lexicalCardDesc,
@@ -295,14 +303,14 @@ fun RetrievalSettingsSheet(
                             Surface(
                                 shape = RoundedCornerShape(10.dp),
                                 color = c.successBg,
-                                border = BorderStroke(theme.borderWidth, c.success.copy(alpha = 0.35f)),
+                                border = null,
                                 modifier = Modifier.fillMaxWidth(),
                             ) {
                                 Text(
                                     text = ctxUi.lexicalStatsFooter,
                                     color = c.success,
                                     fontSize = 11.5.sp,
-                                    fontWeight = FontWeight.Bold,
+                                    fontWeight = FontWeight.SemiBold,
                                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
                                 )
                             }
@@ -310,7 +318,7 @@ fun RetrievalSettingsSheet(
                     }
 
                     RetrievalMode.LOCAL_SMALL_MODEL -> {
-                        // 3. Local Tiny Model Section
+                        // 3. Local Tiny Model Section (slimmer cards, unified runtime hint at bottom)
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             GuSectionHeader(
                                 title = ctxUi.localModelsSectionTitle,
@@ -346,7 +354,7 @@ fun RetrievalSettingsSheet(
                                             text = spec.displayName,
                                             color = c.ink,
                                             fontSize = 13.5.sp,
-                                            fontWeight = FontWeight.ExtraBold,
+                                            fontWeight = FontWeight.Bold,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis,
                                             modifier = Modifier.weight(1f),
@@ -357,14 +365,14 @@ fun RetrievalSettingsSheet(
                                         GuBadge(text = "~${spec.approxSizeMb} MB", variant = GuBadgeVariant.NEUTRAL)
                                     }
 
-                                    Spacer(Modifier.height(6.dp))
+                                    Spacer(Modifier.height(5.dp))
                                     Text(
                                         text = if (isZh) spec.descriptionZh else spec.descriptionEn,
                                         color = c.muted,
                                         fontSize = 12.sp,
-                                        lineHeight = 17.sp,
+                                        lineHeight = 16.5.sp,
                                     )
-                                    Spacer(Modifier.height(5.dp))
+                                    Spacer(Modifier.height(6.dp))
                                     Row(
                                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                                         verticalAlignment = Alignment.CenterVertically,
@@ -386,15 +394,8 @@ fun RetrievalSettingsSheet(
                                             is LocalModelDownloadState.Downloading -> Unit
                                         }
                                     }
-                                    Spacer(Modifier.height(6.dp))
-                                    Text(
-                                        text = ctxUi.localHighlightsLine,
-                                        color = c.primarySoftInk,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Medium,
-                                    )
 
-                                    Spacer(Modifier.height(10.dp))
+                                    Spacer(Modifier.height(8.dp))
 
                                     when (dlState) {
                                         is LocalModelDownloadState.Downloading -> {
@@ -449,7 +450,7 @@ fun RetrievalSettingsSheet(
                                                     ) {
                                                         Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(14.dp))
                                                         Spacer(Modifier.width(4.dp))
-                                                        Text(ctxUi.localCancelBtn, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                                                        Text(ctxUi.localCancelBtn, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
                                                     }
                                                 }
                                             }
@@ -476,7 +477,7 @@ fun RetrievalSettingsSheet(
                                                         text = ctxUi.localDeleteBtn,
                                                         color = c.danger,
                                                         fontSize = 11.5.sp,
-                                                        fontWeight = FontWeight.Bold,
+                                                        fontWeight = FontWeight.SemiBold,
                                                     )
                                                 }
                                             }
@@ -501,7 +502,7 @@ fun RetrievalSettingsSheet(
                                                     ) {
                                                         Icon(Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(14.dp))
                                                         Spacer(Modifier.width(5.dp))
-                                                        Text(ctxUi.localRetryBtn, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                                                        Text(ctxUi.localRetryBtn, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
                                                     }
                                                 }
                                             }
@@ -519,7 +520,7 @@ fun RetrievalSettingsSheet(
                                                 ) {
                                                     Icon(Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(14.dp))
                                                     Spacer(Modifier.width(5.dp))
-                                                    Text(ctxUi.localDownloadBtn, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                                                    Text(ctxUi.localDownloadBtn, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
                                                 }
                                             }
                                         }
@@ -527,7 +528,7 @@ fun RetrievalSettingsSheet(
                                 }
                             }
 
-                            // Live RAM Status Card
+                            // Live RAM Status Card + unified runtime highlights line
                             GuCard(modifier = Modifier.fillMaxWidth()) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -559,7 +560,7 @@ fun RetrievalSettingsSheet(
                                                 text = ctxUi.localRamTitle,
                                                 color = c.ink,
                                                 fontSize = 13.sp,
-                                                fontWeight = FontWeight.Bold,
+                                                fontWeight = FontWeight.SemiBold,
                                             )
                                         }
                                         Text(
@@ -575,10 +576,16 @@ fun RetrievalSettingsSheet(
                                             compact = true,
                                             variant = GuButtonVariant.SECONDARY,
                                         ) {
-                                            Text(ctxUi.localUnloadNowBtn, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                            Text(ctxUi.localUnloadNowBtn, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                                         }
                                     }
                                 }
+                                Spacer(Modifier.height(8.dp))
+                                GuMetaText(
+                                    text = ctxUi.localHighlightsLine,
+                                    color = c.primarySoftInk,
+                                    maxLines = 2,
+                                )
                             }
                         }
                     }
@@ -592,12 +599,11 @@ fun RetrievalSettingsSheet(
                             )
 
                             GuCard(modifier = Modifier.fillMaxWidth()) {
-                                // Provider selector pills
                                 Text(
                                     text = ctxUi.remoteProviderLabel,
                                     color = c.ink,
                                     fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
+                                    fontWeight = FontWeight.SemiBold,
                                 )
                                 Spacer(Modifier.height(6.dp))
                                 FlowRow(
@@ -633,7 +639,7 @@ fun RetrievalSettingsSheet(
                                         text = ctxUi.remoteProtocolLabel,
                                         color = c.ink,
                                         fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold,
+                                        fontWeight = FontWeight.SemiBold,
                                     )
                                     Spacer(Modifier.height(6.dp))
                                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -736,19 +742,18 @@ fun RetrievalSettingsSheet(
                                                 ctxUi.remoteFetchModelsBtn
                                             },
                                             fontSize = 11.5.sp,
-                                            fontWeight = FontWeight.Bold,
+                                            fontWeight = FontWeight.SemiBold,
                                         )
                                     }
                                 }
 
-                                // Discovered embedding models
                                 if (discoveredEmbedModels.isNotEmpty()) {
                                     Spacer(Modifier.height(10.dp))
                                     Text(
                                         text = ctxUi.remoteDiscoveredLabel,
                                         color = c.muted,
                                         fontSize = 11.5.sp,
-                                        fontWeight = FontWeight.Bold,
+                                        fontWeight = FontWeight.SemiBold,
                                     )
                                     Spacer(Modifier.height(6.dp))
                                     FlowRow(
@@ -769,13 +774,12 @@ fun RetrievalSettingsSheet(
                                     }
                                 }
 
-                                // 1-tap Presets
                                 Spacer(Modifier.height(12.dp))
                                 Text(
                                     text = ctxUi.remotePresetsLabel,
                                     color = c.muted,
                                     fontSize = 11.5.sp,
-                                    fontWeight = FontWeight.Bold,
+                                    fontWeight = FontWeight.SemiBold,
                                 )
                                 Spacer(Modifier.height(6.dp))
                                 LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -807,13 +811,12 @@ fun RetrievalSettingsSheet(
                                     }
                                 }
 
-                                // Optional Dimension pills
                                 Spacer(Modifier.height(12.dp))
                                 Text(
                                     text = ctxUi.remoteDimensionsLabel,
                                     color = c.ink,
                                     fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
+                                    fontWeight = FontWeight.SemiBold,
                                 )
                                 Spacer(Modifier.height(6.dp))
                                 val dimOptions = remember { listOf(null, 512, 768, 1024) }
@@ -829,7 +832,6 @@ fun RetrievalSettingsSheet(
                                     }
                                 }
 
-                                // Test & Detect Dimension CTA + Result Banner
                                 Spacer(Modifier.height(14.dp))
                                 GuButton(
                                     onClick = onTestRemoteEmbedding,
@@ -840,7 +842,7 @@ fun RetrievalSettingsSheet(
                                     Text(
                                         text = if (isTestingEmbedding) ctxUi.remoteTestingEmbedBtn else ctxUi.remoteTestEmbedBtn,
                                         fontSize = 13.sp,
-                                        fontWeight = FontWeight.Bold,
+                                        fontWeight = FontWeight.SemiBold,
                                     )
                                 }
 
@@ -851,10 +853,7 @@ fun RetrievalSettingsSheet(
                                     Surface(
                                         shape = RoundedCornerShape(10.dp),
                                         color = if (isErr) c.dangerBg else c.successBg,
-                                        border = BorderStroke(
-                                            theme.borderWidth,
-                                            (if (isErr) c.danger else c.success).copy(alpha = 0.42f),
-                                        ),
+                                        border = null,
                                         modifier = Modifier.fillMaxWidth(),
                                     ) {
                                         Row(
@@ -901,8 +900,8 @@ fun RetrievalSettingsSheet(
                                 if (rerankCfg.enabled) {
                                     HorizontalDivider(
                                         modifier = Modifier.padding(horizontal = 14.dp),
-                                        thickness = theme.borderWidth,
-                                        color = c.border.copy(alpha = 0.78f),
+                                        thickness = 0.5.dp,
+                                        color = c.border.copy(alpha = 0.65f),
                                     )
                                     Column(
                                         modifier = Modifier
@@ -914,7 +913,7 @@ fun RetrievalSettingsSheet(
                                             text = ctxUi.remoteProviderLabel,
                                             color = c.ink,
                                             fontSize = 12.sp,
-                                            fontWeight = FontWeight.Bold,
+                                            fontWeight = FontWeight.SemiBold,
                                         )
                                         FlowRow(
                                             horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -1011,7 +1010,7 @@ fun RetrievalSettingsSheet(
                                             text = ctxUi.remotePresetsLabel,
                                             color = c.muted,
                                             fontSize = 11.5.sp,
-                                            fontWeight = FontWeight.Bold,
+                                            fontWeight = FontWeight.SemiBold,
                                         )
                                         LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                             items(REMOTE_RERANK_PRESETS, key = { it.id }) { preset ->
@@ -1040,8 +1039,8 @@ fun RetrievalSettingsSheet(
                                         }
 
                                         HorizontalDivider(
-                                            thickness = theme.borderWidth,
-                                            color = c.border.copy(alpha = 0.78f),
+                                            thickness = 0.5.dp,
+                                            color = c.border.copy(alpha = 0.65f),
                                         )
                                         GuSwitchRow(
                                             label = ctxUi.remoteRerankTeiLabel,
@@ -1058,7 +1057,131 @@ fun RetrievalSettingsSheet(
                     }
                 }
 
-                // 5. Shared Vector Cache Card (bottom)
+                // 5. Memory Budget & Stream Auto-Retry Group (consolidated from ProfileScreen)
+                if (onSetMemoryBudget != null || onSetSseAutoRetryCount != null) {
+                    val memoryIndex = when (memoryBudget.trim().lowercase()) {
+                        "2k", "low" -> 0
+                        "8k", "high" -> 2
+                        else -> 1
+                    }
+                    val memoryBadge = when (memoryIndex) {
+                        0 -> "2K"
+                        2 -> "8K"
+                        else -> "4K"
+                    }
+                    val retryPresets = remember { listOf(0, 1, 3, 5) }
+                    val retrySegIndex = retryPresets.indexOf(sseAutoRetryCount)
+
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        GuSectionHeader(
+                            title = if (isZh) "记忆预算与流式容错" else "Memory Budget & Stream Resilience",
+                        )
+                        GuGroupedCard(modifier = Modifier.fillMaxWidth()) {
+                            if (onSetMemoryBudget != null) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(bottom = 12.dp),
+                                ) {
+                                    GuSettingsRow(
+                                        title = strings.chat.memoryBudgetLabel,
+                                        icon = Icons.Default.Psychology,
+                                        iconTint = c.success,
+                                        iconBg = c.successBg,
+                                        showDivider = false,
+                                        trailing = {
+                                            GuBadge(
+                                                text = memoryBadge,
+                                                variant = GuBadgeVariant.EMERALD,
+                                            )
+                                        },
+                                    )
+                                    GuSegmentedControl(
+                                        items = listOf(
+                                            if (isZh) "低 2K" else "Low 2K",
+                                            if (isZh) "标准 4K" else "Std 4K",
+                                            if (isZh) "高 8K" else "High 8K",
+                                        ),
+                                        selectedIndex = memoryIndex,
+                                        onSelect = { idx ->
+                                            onSetMemoryBudget(
+                                                when (idx) {
+                                                    0 -> "2K"
+                                                    2 -> "8K"
+                                                    else -> "4K"
+                                                },
+                                            )
+                                        },
+                                        compact = true,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(start = 56.dp, end = 14.dp),
+                                    )
+                                }
+                            }
+
+                            if (onSetMemoryBudget != null && onSetSseAutoRetryCount != null) {
+                                HorizontalDivider(
+                                    modifier = Modifier.padding(start = 56.dp),
+                                    thickness = 0.5.dp,
+                                    color = c.border.copy(alpha = 0.65f),
+                                )
+                            }
+
+                            if (onSetSseAutoRetryCount != null) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(bottom = 12.dp),
+                                ) {
+                                    GuSettingsRow(
+                                        title = strings.profile.sseRetryLabel,
+                                        subtitle = strings.profile.sseRetrySubtitle,
+                                        icon = Icons.Default.Autorenew,
+                                        iconTint = c.accent,
+                                        iconBg = c.accentSoft,
+                                        showDivider = false,
+                                        trailing = {
+                                            GuInlineStepper(
+                                                valueText = if (sseAutoRetryCount == 0) {
+                                                    strings.profile.sseRetryOff
+                                                } else {
+                                                    strings.profile.sseRetryTimes.fmt("count" to sseAutoRetryCount)
+                                                },
+                                                onDecrement = {
+                                                    onSetSseAutoRetryCount((sseAutoRetryCount - 1).coerceAtLeast(0))
+                                                },
+                                                onIncrement = {
+                                                    onSetSseAutoRetryCount((sseAutoRetryCount + 1).coerceAtMost(10))
+                                                },
+                                                canDecrement = sseAutoRetryCount > 0,
+                                                canIncrement = sseAutoRetryCount < 10,
+                                            )
+                                        },
+                                    )
+                                    GuSegmentedControl(
+                                        items = listOf(
+                                            strings.profile.sseRetryOff,
+                                            strings.profile.sseRetryTimes.fmt("count" to 1),
+                                            strings.profile.sseRetryTimes.fmt("count" to 3),
+                                            strings.profile.sseRetryTimes.fmt("count" to 5),
+                                        ),
+                                        selectedIndex = retrySegIndex,
+                                        onSelect = { idx ->
+                                            retryPresets.getOrNull(idx)?.let(onSetSseAutoRetryCount)
+                                        },
+                                        compact = true,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(start = 56.dp, end = 14.dp),
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 6. Shared Vector Cache Card (bottom)
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     GuSectionHeader(
                         title = ctxUi.vectorCacheTitle,
@@ -1122,7 +1245,7 @@ fun RetrievalSettingsSheet(
                                     text = ctxUi.vectorCacheClearBtn,
                                     color = if (indexedVectorCount > 0) c.danger else c.muted,
                                     fontSize = 11.5.sp,
-                                    fontWeight = FontWeight.Bold,
+                                    fontWeight = FontWeight.SemiBold,
                                 )
                             }
                         }
