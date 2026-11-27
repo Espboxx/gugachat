@@ -3,16 +3,298 @@ package com.gugachat.app.ui.chat
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 import com.gugachat.app.core.theme.AppThemeSpec
 import com.gugachat.app.core.theme.LocalAppTheme
 import com.gugachat.app.core.theme.resolveAppTheme
+
+@Immutable
+internal data class NovelPaperPresetSpec(
+    val valueToStore: String,
+    val matchIds: Set<String>,
+    val swatchColor: Color,
+    val labelZh: String,
+    val labelEn: String,
+)
+
+internal val NOVEL_PAPER_PRESETS = listOf(
+    NovelPaperPresetSpec(
+        valueToStore = "cream",
+        matchIds = setOf("cream", "auto", ""),
+        swatchColor = Color(0xFFFDFBF6),
+        labelZh = "自动跟随",
+        labelEn = "Auto",
+    ),
+    NovelPaperPresetSpec(
+        valueToStore = "parchment",
+        matchIds = setOf("parchment"),
+        swatchColor = Color(0xFFF3E6C8),
+        labelZh = "羊皮",
+        labelEn = "Warm",
+    ),
+    NovelPaperPresetSpec(
+        valueToStore = "sage",
+        matchIds = setOf("sage"),
+        swatchColor = Color(0xFFE7F0E6),
+        labelZh = "护眼绿",
+        labelEn = "Sage",
+    ),
+    NovelPaperPresetSpec(
+        valueToStore = "night",
+        matchIds = setOf("night"),
+        swatchColor = Color(0xFF141824),
+        labelZh = "暗夜",
+        labelEn = "Night",
+    ),
+    NovelPaperPresetSpec(
+        valueToStore = "cream_light",
+        matchIds = setOf("cream_light", "cream_force"),
+        swatchColor = Color(0xFFFFFFFF),
+        labelZh = "日间白",
+        labelEn = "Day",
+    ),
+)
+
+@Composable
+internal fun NovelPaperSwatchPill(
+    label: String,
+    swatchColor: Color,
+    selected: Boolean,
+    palette: NovelPaperTheme,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(999.dp),
+        color = if (selected) {
+            palette.accent.copy(alpha = if (palette.isNight) 0.24f else 0.16f)
+        } else {
+            palette.surface
+        },
+        border = if (selected) BorderStroke(1.dp, palette.accent.copy(alpha = 0.72f)) else null,
+        modifier = modifier
+            .heightIn(min = 30.dp)
+            .semantics {
+                contentDescription = label
+                this.selected = selected
+            },
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterHorizontally),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(12.dp)
+                    .clip(CircleShape)
+                    .background(swatchColor)
+                    .border(
+                        width = if (selected) 1.2.dp else 0.6.dp,
+                        color = if (selected) palette.accent else palette.border,
+                        shape = CircleShape,
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (selected) {
+                    Icon(
+                        imageVector = Icons.Default.Check,
+                        contentDescription = null,
+                        tint = if (swatchColor == Color(0xFF141824)) Color.White else palette.accent,
+                        modifier = Modifier.size(8.dp),
+                    )
+                }
+            }
+            Text(
+                text = label,
+                color = if (selected) palette.accent else palette.ink,
+                fontSize = 11.sp,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+internal fun rememberScrollHideBottomBarConnection(
+    enabled: Boolean,
+    isHidden: Boolean,
+    onHiddenChange: (Boolean) -> Unit,
+    hideThresholdPx: Float = 24f,
+    revealThresholdPx: Float = 220f,
+    topRevealAvailablePx: Float = 6f,
+    usePreScroll: Boolean = false,
+): NestedScrollConnection {
+    var accumPx by remember(enabled) { mutableFloatStateOf(0f) }
+
+    LaunchedEffect(enabled) {
+        if (!enabled) {
+            accumPx = 0f
+            if (isHidden) onHiddenChange(false)
+        }
+    }
+
+    fun processDelta(dy: Float) {
+        if (dy < -2f) {
+            if (accumPx > 0f) accumPx = 0f
+            accumPx += dy
+            if (accumPx <= -hideThresholdPx && !isHidden) {
+                onHiddenChange(true)
+                accumPx = 0f
+            }
+        } else if (dy > 2f) {
+            if (accumPx < 0f) accumPx = 0f
+            accumPx += dy
+            if (accumPx >= revealThresholdPx && isHidden) {
+                onHiddenChange(false)
+                accumPx = 0f
+            }
+        }
+    }
+
+    return remember(enabled, isHidden, hideThresholdPx, revealThresholdPx, topRevealAvailablePx, usePreScroll) {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (usePreScroll && enabled) {
+                    processDelta(available.y)
+                }
+                return Offset.Zero
+            }
+
+            override fun onPostScroll(
+                consumed: Offset,
+                available: Offset,
+                source: NestedScrollSource,
+            ): Offset {
+                if (!enabled) return Offset.Zero
+                if (usePreScroll) {
+                    if (consumed.y == 0f && available.y > topRevealAvailablePx && isHidden) {
+                        onHiddenChange(false)
+                        accumPx = 0f
+                    }
+                    return Offset.Zero
+                }
+                if (source != NestedScrollSource.UserInput) return Offset.Zero
+                if (consumed.y == 0f && available.y > topRevealAvailablePx) {
+                    accumPx = 0f
+                    if (isHidden) onHiddenChange(false)
+                    return Offset.Zero
+                }
+                processDelta(consumed.y)
+                return Offset.Zero
+            }
+        }
+    }
+}
+
+@Composable
+internal fun ObserveListScrollHideBottomBar(
+    listState: LazyListState,
+    hasMessages: Boolean,
+    onScrollHideBottomBarChanged: (Boolean) -> Unit,
+    onCanScrollBackwardChanged: (Boolean) -> Unit,
+) {
+    LaunchedEffect(hasMessages) {
+        if (!hasMessages) {
+            onScrollHideBottomBarChanged(false)
+            onCanScrollBackwardChanged(false)
+        }
+    }
+    LaunchedEffect(listState, hasMessages) {
+        if (!hasMessages) {
+            onScrollHideBottomBarChanged(false)
+            return@LaunchedEffect
+        }
+        var prevIndex = listState.firstVisibleItemIndex
+        var prevOffset = listState.firstVisibleItemScrollOffset
+        var accumDelta = 0
+        snapshotFlow {
+            Triple(
+                listState.isScrollInProgress,
+                listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset,
+                listState.canScrollBackward to listState.canScrollForward,
+            )
+        }.collect { (scrolling, pos, edges) ->
+            val (idx, offset) = pos
+            val (canBack, canForward) = edges
+            val rawDelta = when {
+                idx > prevIndex -> 120
+                idx < prevIndex -> -120
+                else -> offset - prevOffset
+            }
+            prevIndex = idx
+            prevOffset = offset
+
+            if (!canBack || !canForward) {
+                accumDelta = 0
+                onScrollHideBottomBarChanged(false)
+            } else if (scrolling && rawDelta != 0) {
+                if ((accumDelta > 0 && rawDelta < 0) || (accumDelta < 0 && rawDelta > 0)) {
+                    accumDelta = 0
+                }
+                accumDelta += rawDelta
+                if (accumDelta > 28) {
+                    onScrollHideBottomBarChanged(true)
+                    accumDelta = 0
+                } else if (accumDelta < -18) {
+                    onScrollHideBottomBarChanged(false)
+                    accumDelta = 0
+                }
+            }
+        }
+    }
+    DisposableEffect(Unit) {
+        onDispose {
+            onScrollHideBottomBarChanged(false)
+            onCanScrollBackwardChanged(false)
+        }
+    }
+}
 
 @Immutable
 data class NovelPaperTheme(

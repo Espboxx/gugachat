@@ -138,7 +138,7 @@ fun RpWorkspaceScreen(
     moreMenuContent: @Composable () -> Unit,
     onToggleTheaterMode: () -> Unit,
     onSetTheaterMode: (Boolean) -> Unit,
-    onOpenStudio: () -> Unit,
+    onOpenStudio: (Int) -> Unit,
     onQuickSave: () -> Unit,
     onUpdateAuthorNote: (String) -> Unit,
     onStarterPrompt: (String) -> Unit,
@@ -193,7 +193,6 @@ fun RpWorkspaceScreen(
     var showTheaterComposer by remember(rp.theaterMode) { mutableStateOf(false) }
     var showGreetingPicker by remember { mutableStateOf(false) }
     var streamScrollHide by remember(rp.title) { mutableStateOf(false) }
-    var scrollAccum by remember { mutableFloatStateOf(0f) }
 
     val chatVm = LocalChatViewModel.current
     val chatState = chatVm?.ui?.collectAsStateWithLifecycle()?.value
@@ -236,12 +235,6 @@ fun RpWorkspaceScreen(
     WorkspaceSystemBarsEffect(isDarkBackdrop = true)
 
     // Sync global bottom bar visibility with reading scroll / theater / overlay states
-    LaunchedEffect(messages.isEmpty()) {
-        if (messages.isEmpty()) {
-            streamScrollHide = false
-            scrollAccum = 0f
-        }
-    }
     LaunchedEffect(
         rp.theaterMode,
         isImmersiveHidden,
@@ -265,41 +258,15 @@ fun RpWorkspaceScreen(
         }
     }
 
-    val streamNestedScroll = remember(messages.isEmpty()) {
-        object : NestedScrollConnection {
-            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
-                if (messages.isEmpty()) return Offset.Zero
-                val dy = available.y
-                if (dy < -2f) {
-                    scrollAccum = (scrollAccum + dy).coerceAtMost(0f)
-                    if (scrollAccum <= -36f && !streamScrollHide) {
-                        streamScrollHide = true
-                        scrollAccum = 0f
-                    }
-                } else if (dy > 2f) {
-                    scrollAccum = (scrollAccum + dy).coerceAtLeast(0f)
-                    if (scrollAccum >= 36f && streamScrollHide) {
-                        streamScrollHide = false
-                        scrollAccum = 0f
-                    }
-                }
-                return Offset.Zero
-            }
-
-            override fun onPostScroll(
-                consumed: Offset,
-                available: Offset,
-                source: NestedScrollSource,
-            ): Offset {
-                // Pulling down at top reveals bottom bar promptly
-                if (consumed.y == 0f && available.y > 16f && streamScrollHide) {
-                    streamScrollHide = false
-                    scrollAccum = 0f
-                }
-                return Offset.Zero
-            }
-        }
-    }
+    val streamNestedScroll = rememberScrollHideBottomBarConnection(
+        enabled = messages.isNotEmpty(),
+        isHidden = streamScrollHide,
+        onHiddenChange = { streamScrollHide = it },
+        hideThresholdPx = 36f,
+        revealThresholdPx = 36f,
+        topRevealAvailablePx = 16f,
+        usePreScroll = true,
+    )
 
     BackHandler(enabled = showQuickPopover || showCustomStatusPopover || showTheaterComposer || isImmersiveHidden) {
         when {
@@ -379,8 +346,7 @@ fun RpWorkspaceScreen(
                         },
                         onOpenStudio = {
                             showQuickPopover = false
-                            RpStudioNavBridge.oneShotInitialTab = null
-                            onOpenStudio()
+                            onOpenStudio(0)
                         },
                         onOpenMoreMenu = {
                             showQuickPopover = false
@@ -406,10 +372,7 @@ fun RpWorkspaceScreen(
                                 isGeneratingArt = isGeneratingArt,
                                 artStatusLabel = artStatusLabel,
                                 onOpenModelSheet = onOpenModelSheet,
-                                onOpenStudio = {
-                                    RpStudioNavBridge.oneShotInitialTab = null
-                                    onOpenStudio()
-                                },
+                                onOpenStudio = { onOpenStudio(0) },
                                 onQuickSave = onQuickSave,
                                 onStarterPrompt = onStarterPrompt,
                                 onSelectChoice = onSelectChoice,
@@ -807,9 +770,8 @@ fun RpWorkspaceScreen(
                         triggeredLoreCount = waterline.triggeredLoreIds.size,
                         onAdjustAffinity = onFrontendAdjustAffinity,
                         onJumpToStateTab = {
-                            RpStudioNavBridge.oneShotInitialTab = 1
                             showQuickPopover = false
-                            onOpenStudio()
+                            onOpenStudio(1)
                             onToast(
                                 if (isZh) "已在手账「状态」中打开数值微调" else "Opened State panel to adjust vitals",
                             )
@@ -835,9 +797,8 @@ fun RpWorkspaceScreen(
                             hideUi = true
                         },
                         onOpenFullStudio = {
-                            RpStudioNavBridge.oneShotInitialTab = null
                             showQuickPopover = false
-                            onOpenStudio()
+                            onOpenStudio(0)
                         },
                         onDismiss = { showQuickPopover = false },
                     )

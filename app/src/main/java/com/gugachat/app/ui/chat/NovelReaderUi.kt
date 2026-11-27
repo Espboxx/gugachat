@@ -90,22 +90,6 @@ import kotlinx.coroutines.launch
 import java.util.Locale
 import kotlin.math.abs
 
-private data class ReaderPaperOption(
-    val valueToStore: String,
-    val matchIds: Set<String>,
-    val swatchColor: Color,
-    val labelZh: String,
-    val labelEn: String,
-)
-
-private val READER_PAPER_OPTIONS = listOf(
-    ReaderPaperOption("cream", setOf("cream", "auto", ""), Color(0xFFFDFBF6), "自动跟随", "Auto"),
-    ReaderPaperOption("parchment", setOf("parchment"), Color(0xFFF3E6C8), "羊皮", "Warm"),
-    ReaderPaperOption("sage", setOf("sage"), Color(0xFFE7F0E6), "护眼绿", "Sage"),
-    ReaderPaperOption("night", setOf("night"), Color(0xFF141824), "暗夜", "Night"),
-    ReaderPaperOption("cream_light", setOf("cream_light", "cream_force"), Color(0xFFFFFFFF), "日间白", "Day"),
-)
-
 private val READER_FONT_TIERS = listOf(
     15 to ("小" to "S"),
     17 to ("适中" to "M"),
@@ -717,9 +701,9 @@ fun PureReadingOverlay(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        READER_PAPER_OPTIONS.forEach { opt ->
+                        NOVEL_PAPER_PRESETS.forEach { opt ->
                             val isSelected = cleanPaper in opt.matchIds
-                            ReaderPaperSwatchPill(
+                            NovelPaperSwatchPill(
                                 label = if (isZh) opt.labelZh else opt.labelEn,
                                 swatchColor = opt.swatchColor,
                                 selected = isSelected,
@@ -1136,60 +1120,6 @@ private fun ReaderActionPill(
                 fontSize = 12.5.sp,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
-            )
-        }
-    }
-}
-
-@Composable
-private fun ReaderPaperSwatchPill(
-    label: String,
-    swatchColor: Color,
-    selected: Boolean,
-    palette: NovelPaperTheme,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Surface(
-        onClick = onClick,
-        shape = RoundedCornerShape(999.dp),
-        color = if (selected) palette.accent.copy(alpha = 0.16f) else palette.surface,
-        border = if (selected) BorderStroke(1.dp, palette.accent.copy(alpha = 0.72f)) else null,
-        modifier = modifier.heightIn(min = 30.dp),
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterHorizontally),
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(12.dp)
-                    .clip(CircleShape)
-                    .background(swatchColor)
-                    .border(
-                        width = if (selected) 1.2.dp else 0.6.dp,
-                        color = if (selected) palette.accent else palette.border,
-                        shape = CircleShape,
-                    ),
-                contentAlignment = Alignment.Center,
-            ) {
-                if (selected) {
-                    Icon(
-                        imageVector = Icons.Default.Check,
-                        contentDescription = null,
-                        tint = if (swatchColor == Color(0xFF141824)) Color.White else palette.accent,
-                        modifier = Modifier.size(8.dp),
-                    )
-                }
-            }
-            Text(
-                text = label,
-                color = if (selected) palette.accent else palette.ink,
-                fontSize = 11.sp,
-                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
             )
         }
     }

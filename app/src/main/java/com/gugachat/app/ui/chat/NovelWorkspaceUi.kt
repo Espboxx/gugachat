@@ -103,52 +103,6 @@ import com.gugachat.app.domain.chat.RpInputKind
 import java.io.File
 import java.util.Locale
 
-private data class NovelPaperPresetSpec(
-    val valueToStore: String,
-    val matchIds: Set<String>,
-    val swatchColor: Color,
-    val labelZh: String,
-    val labelEn: String,
-)
-
-private val NOVEL_PAPER_PRESETS = listOf(
-    NovelPaperPresetSpec(
-        valueToStore = "cream",
-        matchIds = setOf("cream", "auto", ""),
-        swatchColor = Color(0xFFFDFBF6),
-        labelZh = "自动跟随",
-        labelEn = "Auto",
-    ),
-    NovelPaperPresetSpec(
-        valueToStore = "parchment",
-        matchIds = setOf("parchment"),
-        swatchColor = Color(0xFFF3E6C8),
-        labelZh = "羊皮",
-        labelEn = "Warm",
-    ),
-    NovelPaperPresetSpec(
-        valueToStore = "sage",
-        matchIds = setOf("sage"),
-        swatchColor = Color(0xFFE7F0E6),
-        labelZh = "护眼绿",
-        labelEn = "Sage",
-    ),
-    NovelPaperPresetSpec(
-        valueToStore = "night",
-        matchIds = setOf("night"),
-        swatchColor = Color(0xFF141824),
-        labelZh = "暗夜",
-        labelEn = "Night",
-    ),
-    NovelPaperPresetSpec(
-        valueToStore = "cream_light",
-        matchIds = setOf("cream_light", "cream_force"),
-        swatchColor = Color(0xFFFFFFFF),
-        labelZh = "日间白",
-        labelEn = "Day",
-    ),
-)
-
 @Composable
 fun NovelWorkspaceScreen(
     novel: NovelConfig,
@@ -237,57 +191,25 @@ fun NovelWorkspaceScreen(
     // Restore bottom navigation when leaving novel workspace or when prose is empty
     val hasMessages = messages.isNotEmpty()
     var isBottomBarHidden by remember { mutableStateOf(false) }
-    var scrollAccumPx by remember { mutableFloatStateOf(0f) }
 
     DisposableEffect(shellController) {
         onDispose {
             shellController.setScrollHideBottomBar(false)
         }
     }
-    LaunchedEffect(hasMessages) {
-        if (!hasMessages) {
-            isBottomBarHidden = false
-            scrollAccumPx = 0f
-            shellController.setScrollHideBottomBar(false)
-        }
+    LaunchedEffect(isBottomBarHidden) {
+        shellController.setScrollHideBottomBar(isBottomBarHidden)
     }
 
-    val nestedScrollConnection = remember(hasMessages, shellController) {
-        object : NestedScrollConnection {
-            override fun onPostScroll(
-                consumed: Offset,
-                available: Offset,
-                source: NestedScrollSource,
-            ): Offset {
-                if (!hasMessages || source != NestedScrollSource.UserInput) return Offset.Zero
-                // Reached top boundary: immediately restore global bottom bar
-                if (consumed.y == 0f && available.y > 6f) {
-                    scrollAccumPx = 0f
-                    if (isBottomBarHidden) {
-                        isBottomBarHidden = false
-                        shellController.setScrollHideBottomBar(false)
-                    }
-                    return Offset.Zero
-                }
-                if (consumed.y < -2f) {
-                    if (scrollAccumPx > 0f) scrollAccumPx = 0f
-                    scrollAccumPx += consumed.y
-                    if (scrollAccumPx <= -24f && !isBottomBarHidden) {
-                        isBottomBarHidden = true
-                        shellController.setScrollHideBottomBar(true)
-                    }
-                } else if (consumed.y > 2f) {
-                    if (scrollAccumPx < 0f) scrollAccumPx = 0f
-                    scrollAccumPx += consumed.y
-                    if (scrollAccumPx >= 220f && isBottomBarHidden) {
-                        isBottomBarHidden = false
-                        shellController.setScrollHideBottomBar(false)
-                    }
-                }
-                return Offset.Zero
-            }
-        }
-    }
+    val nestedScrollConnection = rememberScrollHideBottomBarConnection(
+        enabled = hasMessages,
+        isHidden = isBottomBarHidden,
+        onHiddenChange = { isBottomBarHidden = it },
+        hideThresholdPx = 24f,
+        revealThresholdPx = 220f,
+        topRevealAvailablePx = 6f,
+        usePreScroll = false,
+    )
 
     val canvasWarmthBrush = remember(paperTheme) {
         Brush.verticalGradient(
@@ -865,53 +787,13 @@ private fun NovelBookmarkFloatingOverlay(
                     NOVEL_PAPER_PRESETS.forEach { preset ->
                         val isSelected = cleanPaper in preset.matchIds
                         val label = if (isZh) preset.labelZh else preset.labelEn
-                        Surface(
+                        NovelPaperSwatchPill(
+                            label = label,
+                            swatchColor = preset.swatchColor,
+                            selected = isSelected,
+                            palette = paperTheme,
                             onClick = { onSelectPaper(preset.valueToStore) },
-                            shape = RoundedCornerShape(999.dp),
-                            color = if (isSelected) {
-                                paperTheme.accent.copy(alpha = if (paperTheme.isNight) 0.24f else 0.14f)
-                            } else {
-                                paperTheme.surface
-                            },
-                            border = if (isSelected) BorderStroke(1.dp, paperTheme.accent.copy(alpha = 0.7f)) else null,
-                            modifier = Modifier
-                                .height(30.dp)
-                                .semantics {
-                                    contentDescription = label
-                                    selected = isSelected
-                                },
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 9.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(5.dp),
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(12.dp)
-                                        .clip(CircleShape)
-                                        .background(preset.swatchColor)
-                                        .border(0.6.dp, paperTheme.border, CircleShape),
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    if (isSelected) {
-                                        Icon(
-                                            imageVector = Icons.Default.Check,
-                                            contentDescription = null,
-                                            tint = if (preset.valueToStore == "night") Color.White else paperTheme.accent,
-                                            modifier = Modifier.size(8.dp),
-                                        )
-                                    }
-                                }
-                                Text(
-                                    text = label,
-                                    color = if (isSelected) paperTheme.accent else paperTheme.ink,
-                                    fontSize = 11.sp,
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                    maxLines = 1,
-                                )
-                            }
-                        }
+                        )
                     }
                 }
             }

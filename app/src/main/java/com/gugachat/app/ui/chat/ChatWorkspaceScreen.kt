@@ -876,8 +876,8 @@ fun ChatWorkspaceScreen(
                     moreMenuContent = moreMenu,
                     onToggleTheaterMode = viewModel::toggleRpTheaterMode,
                     onSetTheaterMode = viewModel::setRpTheaterMode,
-                    onOpenStudio = {
-                        rpStudioInitialTab = 0
+                    onOpenStudio = { tabIdx ->
+                        rpStudioInitialTab = tabIdx
                         showRpStudio = true
                     },
                     onQuickSave = { viewModel.createRpSaveSlot(strings.rp.quickSaveBtn) },
