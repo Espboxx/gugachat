@@ -202,11 +202,7 @@ fun LoginScreen(
                     contentAlignment = Alignment.Center,
                 ) {
                     GuSegmentedControl(
-                        items = if (isZh) {
-                            listOf("直连 API", "聚合账号")
-                        } else {
-                            listOf("Direct API", "GuGuGa")
-                        },
+                        items = listOf(strings.providers.entryDirectApi, strings.providers.entrySub2api),
                         selectedIndex = if (state.entryMode == LoginEntryMode.DIRECT_API) 0 else 1,
                         onSelect = { idx ->
                             viewModel.chooseEntryMode(
@@ -214,7 +210,7 @@ fun LoginScreen(
                             )
                         },
                         modifier = Modifier
-                            .widthIn(max = 228.dp)
+                            .widthIn(max = 264.dp)
                             .fillMaxWidth(),
                     )
                 }

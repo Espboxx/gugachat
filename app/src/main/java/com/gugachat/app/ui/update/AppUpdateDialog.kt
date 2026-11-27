@@ -77,7 +77,7 @@ fun AppUpdateDialog(
         Surface(
             shape = RoundedCornerShape(22.dp),
             color = c.surfaceElevated,
-            border = BorderStroke(theme.borderWidth, c.outline.copy(alpha = 0.85f)),
+            border = if (theme.isDark) BorderStroke(0.5.dp, c.border.copy(alpha = 0.55f)) else null,
             shadowElevation = if (theme.isDark) 12.dp else 8.dp,
             modifier = Modifier
                 .fillMaxWidth()
@@ -142,7 +142,7 @@ fun AppUpdateDialog(
                 Surface(
                     shape = RoundedCornerShape(14.dp),
                     color = c.surfaceSoft,
-                    border = BorderStroke(theme.borderWidth, c.border),
+                    border = if (theme.isDark) BorderStroke(0.5.dp, c.border.copy(alpha = 0.55f)) else null,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Column(
@@ -160,7 +160,7 @@ fun AppUpdateDialog(
                         )
                         HorizontalDivider(
                             thickness = theme.borderWidth,
-                            color = c.border.copy(alpha = 0.72f),
+                            color = c.border.copy(alpha = if (theme.isDark) 0.55f else 0.45f),
                         )
                         Box(
                             modifier = Modifier
@@ -299,10 +299,7 @@ fun AppUpdateDialog(
                         Surface(
                             shape = RoundedCornerShape(12.dp),
                             color = if (downloadState.needsInstallPermission) c.warningBg else c.successBg,
-                            border = BorderStroke(
-                                theme.borderWidth,
-                                (if (downloadState.needsInstallPermission) c.warning else c.success).copy(alpha = 0.42f),
-                            ),
+                            border = null,
                             modifier = Modifier.fillMaxWidth(),
                         ) {
                             Text(
@@ -323,7 +320,7 @@ fun AppUpdateDialog(
                         Surface(
                             shape = RoundedCornerShape(12.dp),
                             color = c.dangerBg,
-                            border = BorderStroke(theme.borderWidth, c.danger.copy(alpha = 0.42f)),
+                            border = null,
                             modifier = Modifier.fillMaxWidth(),
                         ) {
                             Text(

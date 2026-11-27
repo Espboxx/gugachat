@@ -9,6 +9,20 @@
   "apk_size": 25276895,
   "apk_sha256": "dccaa277c1425072842a847386b59aecfe1885660719f516604c8ea4e69cc597",
   "apk_url": "https://github.com/Espboxx/gugachat/releases/download/v0.3.7/GuGuChat-v0.3.7-arm64-v8a.apk",
+  "abi_apks": {
+    "arm64-v8a": {
+      "apk_name": "GuGuChat-v0.3.7-arm64-v8a.apk",
+      "apk_size": 25276895,
+      "apk_sha256": "dccaa277c1425072842a847386b59aecfe1885660719f516604c8ea4e69cc597",
+      "apk_url": "https://github.com/Espboxx/gugachat/releases/download/v0.3.7/GuGuChat-v0.3.7-arm64-v8a.apk"
+    },
+    "x86_64": {
+      "apk_name": "GuGuChat-v0.3.7-x86_64.apk",
+      "apk_size": 27974019,
+      "apk_sha256": "654ec3c97b517511af80e22cac6ad258c6a801f8d76b00b7a75124b71c862701",
+      "apk_url": "https://github.com/Espboxx/gugachat/releases/download/v0.3.7/GuGuChat-v0.3.7-x86_64.apk"
+    }
+  },
   "cn_apk_urls": [],
   "cn_proxies": [
     "https://gh-proxy.com/",

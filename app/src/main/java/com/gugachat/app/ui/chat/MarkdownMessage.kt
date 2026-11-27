@@ -83,10 +83,11 @@ data class MarkdownPalette(
     val tableHeaderBg: Color,
 )
 
-private sealed interface MdBlock {
+internal sealed interface MdBlock {
     data class Paragraph(val text: String) : MdBlock
     data class Heading(val level: Int, val text: String) : MdBlock
     data class CodeFence(val lang: String, val code: String) : MdBlock
+    data class MathBlock(val rawLatex: String) : MdBlock
     data class Blockquote(val text: String) : MdBlock
     data class BulletItem(val bullet: String, val text: String) : MdBlock
     data class TableBlock(val headers: List<String>, val rows: List<List<String>>) : MdBlock
@@ -359,6 +360,28 @@ fun MarkdownMessageText(
                                 onCopyToast?.invoke(strings.common.copied)
                             },
                         )
+                    }
+                    is MdBlock.MathBlock -> {
+                        val formattedMath = remember(block.rawLatex) {
+                            LatexUnicodeFormatter.formatToDisplay(block.rawLatex)
+                        }
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(p.inlineCodeBg.copy(alpha = 0.72f))
+                                .horizontalScroll(rememberScrollState())
+                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                        ) {
+                            Text(
+                                text = formattedMath,
+                                color = p.text,
+                                fontSize = fontSize,
+                                lineHeight = lineHeight,
+                                fontFamily = FontFamily.Serif,
+                                softWrap = false,
+                            )
+                        }
                     }
                     is MdBlock.TableBlock -> {
                         Row(
@@ -642,7 +665,7 @@ private fun InlineRichText(
     )
 }
 
-private fun parseMarkdownBlocks(raw: String): List<MdBlock> {
+internal fun parseMarkdownBlocks(raw: String): List<MdBlock> {
     if (raw.isEmpty()) return emptyList()
     val lines = raw.replace("\r\n", "\n").split('\n')
     val out = ArrayList<MdBlock>()
@@ -655,6 +678,50 @@ private fun parseMarkdownBlocks(raw: String): List<MdBlock> {
             if (txt.isNotEmpty()) out.add(MdBlock.Paragraph(txt))
             paraBuf.clear()
         }
+    }
+
+    fun tryConsumeDelimitedMathBlock(openDelim: String, closeDelim: String): Boolean {
+        val line = lines[i]
+        val trimmed = line.trim()
+        if (!trimmed.startsWith(openDelim)) return false
+        val afterOpen = trimmed.indexOf(closeDelim, openDelim.length)
+        if (afterOpen >= openDelim.length && afterOpen == trimmed.length - closeDelim.length) {
+            flushPara()
+            val inner = trimmed.substring(openDelim.length, afterOpen).trim()
+            if (inner.isNotEmpty()) out.add(MdBlock.MathBlock(inner))
+            i++
+            return true
+        }
+        if (afterOpen < 0) {
+            var closeLine = -1
+            var closeCol = -1
+            for (j in (i + 1) until lines.size) {
+                val idx = lines[j].indexOf(closeDelim)
+                if (idx >= 0) {
+                    closeLine = j
+                    closeCol = idx
+                    break
+                }
+            }
+            if (closeLine > i) {
+                flushPara()
+                val mathLines = ArrayList<String>()
+                val firstTail = trimmed.removePrefix(openDelim).trim()
+                if (firstTail.isNotEmpty()) mathLines.add(firstTail)
+                for (k in (i + 1) until closeLine) {
+                    mathLines.add(lines[k])
+                }
+                val lastHead = lines[closeLine].substring(0, closeCol).trimEnd()
+                if (lastHead.isNotEmpty()) mathLines.add(lastHead)
+                val expr = mathLines.joinToString("\n").trim()
+                if (expr.isNotEmpty()) out.add(MdBlock.MathBlock(expr))
+                val trailing = lines[closeLine].substring(closeCol + closeDelim.length).trim()
+                if (trailing.isNotEmpty()) paraBuf.add(trailing)
+                i = closeLine + 1
+                return true
+            }
+        }
+        return false
     }
 
     while (i < lines.size) {
@@ -680,6 +747,9 @@ private fun parseMarkdownBlocks(raw: String): List<MdBlock> {
             i++
             continue
         }
+
+        if (tryConsumeDelimitedMathBlock("$$", "$$")) continue
+        if (tryConsumeDelimitedMathBlock("\\[", "\\]")) continue
 
         if (trimmed == "---" || trimmed == "***" || trimmed == "___") {
             flushPara()
@@ -739,77 +809,744 @@ private fun parseMarkdownBlocks(raw: String): List<MdBlock> {
 private fun splitTableRow(line: String): List<String> =
     line.trim().trim('|').split('|').map { it.trim() }
 
+object LatexUnicodeFormatter {
+    private val GREEK_AND_SYMBOLS: Map<String, String> = mapOf(
+        // Lowercase Greek
+        "alpha" to "α",
+        "beta" to "β",
+        "gamma" to "γ",
+        "delta" to "δ",
+        "epsilon" to "ε",
+        "varepsilon" to "ε",
+        "zeta" to "ζ",
+        "eta" to "η",
+        "theta" to "θ",
+        "vartheta" to "ϑ",
+        "iota" to "ι",
+        "kappa" to "κ",
+        "lambda" to "λ",
+        "mu" to "μ",
+        "nu" to "ν",
+        "xi" to "ξ",
+        "omicron" to "ο",
+        "pi" to "π",
+        "varpi" to "ϖ",
+        "rho" to "ρ",
+        "varrho" to "ϱ",
+        "sigma" to "σ",
+        "varsigma" to "ς",
+        "tau" to "τ",
+        "upsilon" to "υ",
+        "phi" to "φ",
+        "varphi" to "φ",
+        "chi" to "χ",
+        "psi" to "ψ",
+        "omega" to "ω",
+        // Uppercase Greek
+        "Gamma" to "Γ",
+        "Delta" to "Δ",
+        "Theta" to "Θ",
+        "Lambda" to "Λ",
+        "Xi" to "Ξ",
+        "Pi" to "Π",
+        "Sigma" to "Σ",
+        "Upsilon" to "Υ",
+        "Phi" to "Φ",
+        "Psi" to "Ψ",
+        "Omega" to "Ω",
+        // Operators, relations & arrows
+        "times" to "×",
+        "cdot" to "·",
+        "div" to "÷",
+        "pm" to "±",
+        "mp" to "∓",
+        "leq" to "≤",
+        "le" to "≤",
+        "geq" to "≥",
+        "ge" to "≥",
+        "neq" to "≠",
+        "ne" to "≠",
+        "approx" to "≈",
+        "equiv" to "≡",
+        "sim" to "∼",
+        "simeq" to "≃",
+        "propto" to "∝",
+        "rightarrow" to "→",
+        "to" to "→",
+        "leftarrow" to "←",
+        "gets" to "←",
+        "leftrightarrow" to "↔",
+        "Rightarrow" to "⇒",
+        "implies" to "⇒",
+        "Leftarrow" to "⇐",
+        "Leftrightarrow" to "⇔",
+        "iff" to "⇔",
+        "mapsto" to "↦",
+        "infty" to "∞",
+        "sum" to "∑",
+        "prod" to "∏",
+        "int" to "∫",
+        "iint" to "∬",
+        "oint" to "∮",
+        "partial" to "∂",
+        "nabla" to "∇",
+        "forall" to "∀",
+        "exists" to "∃",
+        "in" to "∈",
+        "notin" to "∉",
+        "subset" to "⊂",
+        "subseteq" to "⊆",
+        "supset" to "⊃",
+        "supseteq" to "⊇",
+        "cup" to "∪",
+        "cap" to "∩",
+        "emptyset" to "∅",
+        "varnothing" to "∅",
+        "land" to "∧",
+        "wedge" to "∧",
+        "lor" to "∨",
+        "vee" to "∨",
+        "neg" to "¬",
+        "lnot" to "¬",
+        "therefore" to "∴",
+        "because" to "∵",
+        "dots" to "…",
+        "ldots" to "…",
+        "cdots" to "⋯",
+        "circ" to "°",
+        "degree" to "°",
+        "prime" to "′",
+        "quad" to "  ",
+        "qquad" to "    ",
+    )
+
+    private val BLACKBOARD_BOLD: Map<Char, String> = mapOf(
+        'R' to "ℝ",
+        'N' to "ℕ",
+        'Z' to "ℤ",
+        'Q' to "ℚ",
+        'C' to "ℂ",
+    )
+
+    private val SUPERSCRIPTS: Map<Char, Char> = mapOf(
+        '0' to '⁰', '1' to '¹', '2' to '²', '3' to '³', '4' to '⁴',
+        '5' to '⁵', '6' to '⁶', '7' to '⁷', '8' to '⁸', '9' to '⁹',
+        '+' to '⁺', '-' to '⁻', '=' to '⁼', '(' to '⁽', ')' to '⁾',
+        'a' to 'ᵃ', 'b' to 'ᵇ', 'c' to 'ᶜ', 'd' to 'ᵈ', 'e' to 'ᵉ',
+        'f' to 'ᶠ', 'g' to 'ᵍ', 'h' to 'ʰ', 'i' to 'ⁱ', 'j' to 'ʲ',
+        'k' to 'ᵏ', 'l' to 'ˡ', 'm' to 'ᵐ', 'n' to 'ⁿ', 'o' to 'ᵒ',
+        'p' to 'ᵖ', 'r' to 'ʳ', 's' to 'ˢ', 't' to 'ᵗ', 'u' to 'ᵘ',
+        'v' to 'ᵛ', 'w' to 'ʷ', 'x' to 'ˣ', 'y' to 'ʸ', 'z' to 'ᶻ',
+    )
+
+    private val SUBSCRIPTS: Map<Char, Char> = mapOf(
+        '0' to '₀', '1' to '₁', '2' to '₂', '3' to '₃', '4' to '₄',
+        '5' to '₅', '6' to '₆', '7' to '₇', '8' to '₈', '9' to '₉',
+        '+' to '₊', '-' to '₋', '=' to '₌', '(' to '₍', ')' to '₎',
+        'a' to 'ₐ', 'e' to 'ₑ', 'h' to 'ₕ', 'i' to 'ᵢ', 'j' to 'ⱼ',
+        'k' to 'ₖ', 'l' to 'ₗ', 'm' to 'ₘ', 'n' to 'ₙ', 'o' to 'ₒ',
+        'p' to 'ₚ', 'r' to 'ᵣ', 's' to 'ₛ', 't' to 'ₜ', 'u' to 'ᵤ',
+        'v' to 'ᵥ', 'x' to 'ₓ',
+    )
+
+    private val UNWRAP_TEXT_CMDS = setOf("text", "mathrm", "mathbf", "mathit", "mathsf", "operatorname")
+
+    fun formatToDisplay(expr: String): String =
+        formatInternal(expr.trim(), depth = 0).trim()
+
+    private fun formatInternal(input: String, depth: Int): String {
+        if (input.isEmpty() || depth > 8) return input
+        val sb = StringBuilder(input.length)
+        var i = 0
+        while (i < input.length) {
+            val ch = input[i]
+            when {
+                ch == '\\' && i + 1 < input.length -> {
+                    val next = input[i + 1]
+                    if (!next.isLetter()) {
+                        when (next) {
+                            '\\' -> sb.append('\n')
+                            ',', ';', ':' -> sb.append(' ')
+                            '!' -> Unit
+                            '{', '}', '$', '%', '&', '#', '_' -> sb.append(next)
+                            else -> sb.append(next)
+                        }
+                        i += 2
+                        continue
+                    }
+                    var cmdEnd = i + 1
+                    while (cmdEnd < input.length && input[cmdEnd].isLetter()) cmdEnd++
+                    val cmd = input.substring(i + 1, cmdEnd)
+                    when (cmd) {
+                        "frac", "dfrac", "tfrac" -> {
+                            val num = readBraceArg(input, cmdEnd)
+                            val den = num?.let { readBraceArg(input, it.second) }
+                            if (num != null && den != null) {
+                                val fNum = formatInternal(num.first, depth + 1).trim()
+                                val fDen = formatInternal(den.first, depth + 1).trim()
+                                sb.append("($fNum)/($fDen)")
+                                i = den.second
+                            } else {
+                                sb.append('/').also { i = cmdEnd }
+                            }
+                        }
+                        "sqrt" -> {
+                            var cursor = skipSpaces(input, cmdEnd)
+                            var degree: String? = null
+                            if (cursor < input.length && input[cursor] == '[') {
+                                val closeBracket = input.indexOf(']', cursor + 1)
+                                if (closeBracket > cursor) {
+                                    degree = formatInternal(input.substring(cursor + 1, closeBracket), depth + 1).trim()
+                                    cursor = closeBracket + 1
+                                }
+                            }
+                            val arg = readGroupOrSingleToken(input, cursor)
+                            if (arg != null) {
+                                val inner = formatInternal(arg.first, depth + 1).trim()
+                                if (degree != null) {
+                                    val supDeg = toUnicodeScript(degree, SUPERSCRIPTS)
+                                    if (supDeg != null) sb.append(supDeg) else sb.append(degree)
+                                }
+                                if (inner.length == 1 && inner[0].isLetterOrDigit()) {
+                                    sb.append('√').append(inner)
+                                } else {
+                                    sb.append("√(").append(inner).append(')')
+                                }
+                                i = arg.second
+                            } else {
+                                sb.append('√')
+                                i = cmdEnd
+                            }
+                        }
+                        "mathbb" -> {
+                            val arg = readBraceArg(input, cmdEnd)
+                            if (arg != null) {
+                                val key = arg.first.trim()
+                                val mapped = if (key.length == 1) BLACKBOARD_BOLD[key[0]] else null
+                                sb.append(mapped ?: key)
+                                i = arg.second
+                            } else {
+                                i = cmdEnd
+                            }
+                        }
+                        in UNWRAP_TEXT_CMDS -> {
+                            val arg = readBraceArg(input, cmdEnd)
+                            if (arg != null) {
+                                sb.append(arg.first)
+                                i = arg.second
+                            } else {
+                                i = cmdEnd
+                            }
+                        }
+                        "left", "right" -> {
+                            i = skipSpaces(input, cmdEnd)
+                            if (i < input.length && input[i] == '.') i++
+                        }
+                        else -> {
+                            val sym = GREEK_AND_SYMBOLS[cmd]
+                            if (sym != null) {
+                                sb.append(sym)
+                            } else {
+                                sb.append('\\').append(cmd)
+                            }
+                            i = cmdEnd
+                        }
+                    }
+                }
+                ch == '^' || ch == '_' -> {
+                    val isSuper = ch == '^'
+                    val arg = readGroupOrSingleToken(input, i + 1)
+                    if (arg != null) {
+                        val rawArg = arg.first.trim()
+                        if (isSuper && (rawArg == "\\circ" || rawArg == "\\degree")) {
+                            sb.append('°')
+                        } else {
+                            val formattedArg = formatInternal(rawArg, depth + 1).trim()
+                            val table = if (isSuper) SUPERSCRIPTS else SUBSCRIPTS
+                            val converted = toUnicodeScript(formattedArg, table)
+                            if (converted != null) {
+                                sb.append(converted)
+                            } else if (formattedArg.length == 1) {
+                                sb.append(ch).append(formattedArg)
+                            } else {
+                                sb.append(ch).append('(').append(formattedArg).append(')')
+                            }
+                        }
+                        i = arg.second
+                    } else {
+                        sb.append(ch)
+                        i++
+                    }
+                }
+                ch == '{' -> {
+                    val group = readBraceArg(input, i)
+                    if (group != null) {
+                        sb.append(formatInternal(group.first, depth + 1))
+                        i = group.second
+                    } else {
+                        sb.append(ch)
+                        i++
+                    }
+                }
+                else -> {
+                    sb.append(ch)
+                    i++
+                }
+            }
+        }
+        return sb.toString()
+    }
+
+    private fun skipSpaces(s: String, start: Int): Int {
+        var idx = start
+        while (idx < s.length && s[idx] == ' ') idx++
+        return idx
+    }
+
+    private fun readBraceArg(s: String, start: Int): Pair<String, Int>? {
+        val openIdx = skipSpaces(s, start)
+        if (openIdx >= s.length || s[openIdx] != '{') return null
+        var depth = 0
+        var idx = openIdx
+        while (idx < s.length) {
+            when (s[idx]) {
+                '\\' -> idx += 2
+                '{' -> {
+                    depth++
+                    idx++
+                }
+                '}' -> {
+                    depth--
+                    if (depth == 0) {
+                        return s.substring(openIdx + 1, idx) to (idx + 1)
+                    }
+                    idx++
+                }
+                else -> idx++
+            }
+        }
+        return null
+    }
+
+    private fun readGroupOrSingleToken(s: String, start: Int): Pair<String, Int>? {
+        readBraceArg(s, start)?.let { return it }
+        val idx = skipSpaces(s, start)
+        if (idx >= s.length) return null
+        if (s[idx] == '\\') {
+            var end = idx + 1
+            while (end < s.length && s[end].isLetter()) end++
+            if (end > idx + 1) return s.substring(idx, end) to end
+            if (idx + 1 < s.length) return s.substring(idx, idx + 2) to (idx + 2)
+        }
+        return s.substring(idx, idx + 1) to (idx + 1)
+    }
+
+    private fun toUnicodeScript(text: String, table: Map<Char, Char>): String? {
+        if (text.isEmpty()) return null
+        val out = StringBuilder(text.length)
+        var hasMapped = false
+        for (ch in text) {
+            if (ch == ' ') {
+                out.append(' ')
+                continue
+            }
+            val mapped = table[ch] ?: return null
+            out.append(mapped)
+            hasMapped = true
+        }
+        return if (hasMapped) out.toString() else null
+    }
+}
+
+object MarkdownMathGuard {
+    sealed interface MathSegment {
+        data class Text(val text: String) : MathSegment
+        data class InlineMath(val rawLatex: String, val displayText: String) : MathSegment
+        data class DisplayMath(val rawLatex: String, val displayText: String) : MathSegment
+    }
+
+    sealed interface InlineToken {
+        data class Plain(val text: String) : InlineToken
+        data class Bold(val children: List<InlineToken>) : InlineToken
+        data class Italic(val children: List<InlineToken>) : InlineToken
+        data class BoldItalic(val children: List<InlineToken>) : InlineToken
+        data class Strike(val children: List<InlineToken>) : InlineToken
+        data class Code(val code: String) : InlineToken
+        data class Link(val label: String, val url: String) : InlineToken
+        data class InlineMath(val rawLatex: String, val displayText: String) : InlineToken
+        data class DisplayMath(val rawLatex: String, val displayText: String) : InlineToken
+    }
+
+    private data class MathMatch(
+        val isDisplay: Boolean,
+        val rawLatex: String,
+        val endExclusive: Int,
+    )
+
+    private fun isEscaped(s: String, idx: Int): Boolean {
+        var backslashes = 0
+        var j = idx - 1
+        while (j >= 0 && s[j] == '\\') {
+            backslashes++
+            j--
+        }
+        return (backslashes % 2) == 1
+    }
+
+    private fun hasBlankLineBetween(s: String, startInclusive: Int, endExclusive: Int): Boolean {
+        var idx = startInclusive
+        while (idx < endExclusive) {
+            if (s[idx] == '\n') {
+                var k = idx + 1
+                while (k < endExclusive && (s[k] == ' ' || s[k] == '\t' || s[k] == '\r')) k++
+                if (k < endExclusive && s[k] == '\n') return true
+            }
+            idx++
+        }
+        return false
+    }
+
+    fun isValidInlineDollarSpan(raw: String, openDollarIdx: Int): Int {
+        if (openDollarIdx !in raw.indices || raw[openDollarIdx] != '$') return -1
+        if (isEscaped(raw, openDollarIdx)) return -1
+        if (openDollarIdx + 1 >= raw.length) return -1
+        if (raw[openDollarIdx + 1] == '$') return -1
+        if (openDollarIdx > 0 && raw[openDollarIdx - 1] == '$' && !isEscaped(raw, openDollarIdx - 1)) return -1
+        // Pandoc rule: opening '$' must NOT be immediately followed by whitespace.
+        if (raw[openDollarIdx + 1].isWhitespace()) return -1
+
+        var j = openDollarIdx + 1
+        while (j < raw.length) {
+            if (raw[j] == '\n') {
+                var k = j + 1
+                while (k < raw.length && (raw[k] == ' ' || raw[k] == '\t' || raw[k] == '\r')) k++
+                if (k < raw.length && raw[k] == '\n') return -1
+            }
+            if (raw[j] == '$' && !isEscaped(raw, j)) {
+                val nextCh = raw.getOrNull(j + 1)
+                if (nextCh == '$') return -1
+                val validClosing = j >= openDollarIdx + 2 &&
+                    !raw[j - 1].isWhitespace() &&
+                    (nextCh == null || nextCh !in '0'..'9')
+                return if (validClosing) j else -1
+            }
+            j++
+        }
+        return -1
+    }
+
+    private fun findClosingDoubleDelim(raw: String, contentStart: Int, closeDelim: String, allowBlankLines: Boolean = false): Int {
+        var j = contentStart
+        while (j <= raw.length - closeDelim.length) {
+            if (raw.startsWith(closeDelim, j) && !isEscaped(raw, j)) {
+                if (!allowBlankLines && hasBlankLineBetween(raw, contentStart, j)) return -1
+                return j
+            }
+            j++
+        }
+        return -1
+    }
+
+    private fun matchMathAt(raw: String, i: Int): MathMatch? {
+        if (raw.startsWith("$$", i) && !isEscaped(raw, i)) {
+            val end = findClosingDoubleDelim(raw, i + 2, "$$", allowBlankLines = false)
+            if (end > i + 2) {
+                val expr = raw.substring(i + 2, end).trim()
+                if (expr.isNotEmpty()) return MathMatch(isDisplay = true, rawLatex = expr, endExclusive = end + 2)
+            }
+        }
+        if (raw.startsWith("\\[", i) && !isEscaped(raw, i)) {
+            val end = findClosingDoubleDelim(raw, i + 2, "\\]", allowBlankLines = false)
+            if (end > i + 2) {
+                val expr = raw.substring(i + 2, end).trim()
+                if (expr.isNotEmpty()) return MathMatch(isDisplay = true, rawLatex = expr, endExclusive = end + 2)
+            }
+        }
+        if (raw.startsWith("\\(", i) && !isEscaped(raw, i)) {
+            val end = findClosingDoubleDelim(raw, i + 2, "\\)", allowBlankLines = false)
+            if (end > i + 2) {
+                val expr = raw.substring(i + 2, end).trim()
+                if (expr.isNotEmpty()) return MathMatch(isDisplay = false, rawLatex = expr, endExclusive = end + 2)
+            }
+        }
+        if (raw[i] == '$') {
+            val closeIdx = isValidInlineDollarSpan(raw, i)
+            if (closeIdx > i + 1) {
+                val expr = raw.substring(i + 1, closeIdx)
+                return MathMatch(isDisplay = false, rawLatex = expr, endExclusive = closeIdx + 1)
+            }
+        }
+        return null
+    }
+
+    fun splitMathSegments(raw: String): List<MathSegment> {
+        if (raw.isEmpty()) return emptyList()
+        val out = ArrayList<MathSegment>()
+        val textBuf = StringBuilder()
+
+        fun flushText() {
+            if (textBuf.isNotEmpty()) {
+                out.add(MathSegment.Text(textBuf.toString()))
+                textBuf.setLength(0)
+            }
+        }
+
+        var i = 0
+        while (i < raw.length) {
+            if (raw[i] == '`') {
+                val closeCode = raw.indexOf('`', i + 1)
+                if (closeCode > i + 1 && !hasBlankLineBetween(raw, i + 1, closeCode)) {
+                    textBuf.append(raw, i, closeCode + 1)
+                    i = closeCode + 1
+                    continue
+                }
+            }
+            val math = matchMathAt(raw, i)
+            if (math != null) {
+                flushText()
+                val formatted = LatexUnicodeFormatter.formatToDisplay(math.rawLatex)
+                if (math.isDisplay) {
+                    out.add(MathSegment.DisplayMath(math.rawLatex, formatted))
+                } else {
+                    out.add(MathSegment.InlineMath(math.rawLatex, formatted))
+                }
+                i = math.endExclusive
+                continue
+            }
+            textBuf.append(raw[i])
+            i++
+        }
+        flushText()
+        return out
+    }
+
+    private fun findClosingMarkerSkippingProtected(
+        raw: String,
+        contentStart: Int,
+        marker: String,
+        isUnderscore: Boolean = false,
+    ): Int {
+        var j = contentStart
+        while (j <= raw.length - marker.length) {
+            if (raw[j] == '`') {
+                val codeEnd = raw.indexOf('`', j + 1)
+                if (codeEnd > j + 1) {
+                    j = codeEnd + 1
+                    continue
+                }
+            }
+            val math = matchMathAt(raw, j)
+            if (math != null) {
+                j = math.endExclusive
+                continue
+            }
+            if (raw.startsWith(marker, j) && !isEscaped(raw, j)) {
+                if (isUnderscore) {
+                    val prevOk = j > contentStart && !raw[j - 1].isWhitespace()
+                    val nextCh = raw.getOrNull(j + 1)
+                    val nextOk = nextCh == null || !nextCh.isLetterOrDigit()
+                    val notDouble = nextCh != '_' && raw.getOrNull(j - 1) != '_'
+                    if (prevOk && nextOk && notDouble) return j
+                } else if (marker == "*") {
+                    if (raw.startsWith("**", j)) {
+                        j += 2
+                        continue
+                    }
+                    if (j > contentStart) return j
+                } else if (j > contentStart) {
+                    return j
+                }
+            }
+            j++
+        }
+        return -1
+    }
+
+    fun tokenizeInline(raw: String, depth: Int = 0): List<InlineToken> {
+        if (raw.isEmpty()) return emptyList()
+        val out = ArrayList<InlineToken>()
+        val plainBuf = StringBuilder()
+
+        fun flushPlain() {
+            if (plainBuf.isNotEmpty()) {
+                out.add(InlineToken.Plain(plainBuf.toString()))
+                plainBuf.setLength(0)
+            }
+        }
+
+        fun tokenizeChildren(inner: String): List<InlineToken> =
+            if (depth >= 4) listOf(InlineToken.Plain(inner)) else tokenizeInline(inner, depth + 1)
+
+        var i = 0
+        while (i < raw.length) {
+            if (raw[i] == '`') {
+                val end = raw.indexOf('`', i + 1)
+                if (end > i + 1) {
+                    flushPlain()
+                    out.add(InlineToken.Code(raw.substring(i + 1, end)))
+                    i = end + 1
+                    continue
+                }
+            }
+
+            val math = matchMathAt(raw, i)
+            if (math != null) {
+                flushPlain()
+                val formatted = LatexUnicodeFormatter.formatToDisplay(math.rawLatex)
+                if (math.isDisplay) {
+                    out.add(InlineToken.DisplayMath(math.rawLatex, formatted))
+                } else {
+                    out.add(InlineToken.InlineMath(math.rawLatex, formatted))
+                }
+                i = math.endExclusive
+                continue
+            }
+
+            when {
+                raw.startsWith("***", i) && !isEscaped(raw, i) -> {
+                    val end = findClosingMarkerSkippingProtected(raw, i + 3, "***")
+                    if (end > i + 3) {
+                        flushPlain()
+                        out.add(InlineToken.BoldItalic(tokenizeChildren(raw.substring(i + 3, end))))
+                        i = end + 3
+                    } else {
+                        plainBuf.append("***")
+                        i += 3
+                    }
+                }
+                raw.startsWith("**", i) && !isEscaped(raw, i) -> {
+                    val end = findClosingMarkerSkippingProtected(raw, i + 2, "**")
+                    if (end > i + 2) {
+                        flushPlain()
+                        out.add(InlineToken.Bold(tokenizeChildren(raw.substring(i + 2, end))))
+                        i = end + 2
+                    } else {
+                        plainBuf.append("**")
+                        i += 2
+                    }
+                }
+                raw.startsWith("~~", i) && !isEscaped(raw, i) -> {
+                    val end = findClosingMarkerSkippingProtected(raw, i + 2, "~~")
+                    if (end > i + 2) {
+                        flushPlain()
+                        out.add(InlineToken.Strike(tokenizeChildren(raw.substring(i + 2, end))))
+                        i = end + 2
+                    } else {
+                        plainBuf.append("~~")
+                        i += 2
+                    }
+                }
+                raw[i] == '*' && !raw.startsWith("**", i) && !isEscaped(raw, i) -> {
+                    val end = findClosingMarkerSkippingProtected(raw, i + 1, "*")
+                    if (end > i + 1) {
+                        flushPlain()
+                        out.add(InlineToken.Italic(tokenizeChildren(raw.substring(i + 1, end))))
+                        i = end + 1
+                    } else {
+                        plainBuf.append('*')
+                        i++
+                    }
+                }
+                raw[i] == '_' && !raw.startsWith("__", i) && !isEscaped(raw, i) &&
+                    (i == 0 || (!raw[i - 1].isLetterOrDigit() && raw[i - 1] != '_')) &&
+                    i + 1 < raw.length && !raw[i + 1].isWhitespace() -> {
+                    val end = findClosingMarkerSkippingProtected(raw, i + 1, "_", isUnderscore = true)
+                    if (end > i + 1) {
+                        flushPlain()
+                        out.add(InlineToken.Italic(tokenizeChildren(raw.substring(i + 1, end))))
+                        i = end + 1
+                    } else {
+                        plainBuf.append('_')
+                        i++
+                    }
+                }
+                raw[i] == '[' -> {
+                    val closeBracket = raw.indexOf(']', i + 1)
+                    val openParen = if (closeBracket > i && closeBracket + 1 < raw.length && raw[closeBracket + 1] == '(') closeBracket + 1 else -1
+                    val closeParen = if (openParen > 0) raw.indexOf(')', openParen + 1) else -1
+                    if (closeBracket > i && openParen > 0 && closeParen > openParen) {
+                        flushPlain()
+                        val label = raw.substring(i + 1, closeBracket)
+                        val url = raw.substring(openParen + 1, closeParen).trim()
+                        out.add(InlineToken.Link(label, url))
+                        i = closeParen + 1
+                    } else {
+                        plainBuf.append('[')
+                        i++
+                    }
+                }
+                else -> {
+                    plainBuf.append(raw[i])
+                    i++
+                }
+            }
+        }
+        flushPlain()
+        return out
+    }
+}
+
 private fun parseInlineAnnotated(
     raw: String,
     linkColor: Color,
     codeBg: Color,
     codeInk: Color,
 ): AnnotatedString = buildAnnotatedString {
-    var i = 0
-    while (i < raw.length) {
-        when {
-            raw.startsWith("***", i) -> {
-                val end = raw.indexOf("***", i + 3)
-                if (end > i + 3) {
-                    pushStyle(SpanStyle(fontWeight = FontWeight.ExtraBold, fontStyle = FontStyle.Italic))
-                    append(raw.substring(i + 3, end))
-                    pop()
-                    i = end + 3
-                } else {
-                    append("***"); i += 3
-                }
-            }
-            raw.startsWith("**", i) -> {
-                val end = raw.indexOf("**", i + 2)
-                if (end > i + 2) {
+    val tokens = MarkdownMathGuard.tokenizeInline(raw)
+
+    fun appendTokens(list: List<MarkdownMathGuard.InlineToken>) {
+        list.forEach { tok ->
+            when (tok) {
+                is MarkdownMathGuard.InlineToken.Plain -> append(tok.text)
+                is MarkdownMathGuard.InlineToken.Bold -> {
                     pushStyle(SpanStyle(fontWeight = FontWeight.ExtraBold))
-                    append(raw.substring(i + 2, end))
+                    appendTokens(tok.children)
                     pop()
-                    i = end + 2
-                } else {
-                    append("**"); i += 2
                 }
-            }
-            raw.startsWith("~~", i) -> {
-                val end = raw.indexOf("~~", i + 2)
-                if (end > i + 2) {
-                    pushStyle(SpanStyle(textDecoration = TextDecoration.LineThrough))
-                    append(raw.substring(i + 2, end))
-                    pop()
-                    i = end + 2
-                } else {
-                    append("~~"); i += 2
-                }
-            }
-            raw[i] == '`' -> {
-                val end = raw.indexOf('`', i + 1)
-                if (end > i + 1) {
-                    pushStyle(SpanStyle(fontFamily = FontFamily.Monospace, background = codeBg, color = codeInk))
-                    append(" ${raw.substring(i + 1, end)} ")
-                    pop()
-                    i = end + 1
-                } else {
-                    append('`'); i++
-                }
-            }
-            raw[i] == '*' && !raw.startsWith("**", i) -> {
-                val end = raw.indexOf('*', i + 1)
-                if (end > i + 1) {
+                is MarkdownMathGuard.InlineToken.Italic -> {
                     pushStyle(SpanStyle(fontStyle = FontStyle.Italic))
-                    append(raw.substring(i + 1, end))
+                    appendTokens(tok.children)
                     pop()
-                    i = end + 1
-                } else {
-                    append('*'); i++
                 }
-            }
-            raw[i] == '[' -> {
-                val closeBracket = raw.indexOf(']', i + 1)
-                val openParen = if (closeBracket > i && closeBracket + 1 < raw.length && raw[closeBracket + 1] == '(') closeBracket + 1 else -1
-                val closeParen = if (openParen > 0) raw.indexOf(')', openParen + 1) else -1
-                if (closeBracket > i && openParen > 0 && closeParen > openParen) {
-                    val label = raw.substring(i + 1, closeBracket)
-                    val url = raw.substring(openParen + 1, closeParen).trim()
+                is MarkdownMathGuard.InlineToken.BoldItalic -> {
+                    pushStyle(SpanStyle(fontWeight = FontWeight.ExtraBold, fontStyle = FontStyle.Italic))
+                    appendTokens(tok.children)
+                    pop()
+                }
+                is MarkdownMathGuard.InlineToken.Strike -> {
+                    pushStyle(SpanStyle(textDecoration = TextDecoration.LineThrough))
+                    appendTokens(tok.children)
+                    pop()
+                }
+                is MarkdownMathGuard.InlineToken.Code -> {
+                    pushStyle(SpanStyle(fontFamily = FontFamily.Monospace, background = codeBg, color = codeInk))
+                    append(" ${tok.code} ")
+                    pop()
+                }
+                is MarkdownMathGuard.InlineToken.InlineMath -> {
+                    pushStyle(
+                        SpanStyle(
+                            fontFamily = FontFamily.Serif,
+                            background = codeBg.copy(alpha = 0.55f),
+                            color = codeInk,
+                        ),
+                    )
+                    append(tok.displayText)
+                    pop()
+                }
+                is MarkdownMathGuard.InlineToken.DisplayMath -> {
+                    pushStyle(
+                        SpanStyle(
+                            fontFamily = FontFamily.Serif,
+                            background = codeBg.copy(alpha = 0.65f),
+                            color = codeInk,
+                        ),
+                    )
+                    append(tok.displayText)
+                    pop()
+                }
+                is MarkdownMathGuard.InlineToken.Link -> {
+                    val url = tok.url
                     if (url.startsWith("http://", ignoreCase = true) || url.startsWith("https://", ignoreCase = true)) {
                         withLink(
                             LinkAnnotation.Url(
@@ -823,22 +1560,17 @@ private fun parseInlineAnnotated(
                                 ),
                             ),
                         ) {
-                            append(label)
+                            append(tok.label)
                         }
                     } else {
                         pushStyle(SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline, fontWeight = FontWeight.SemiBold))
-                        append(label)
+                        append(tok.label)
                         pop()
                     }
-                    i = closeParen + 1
-                } else {
-                    append('['); i++
                 }
-            }
-            else -> {
-                append(raw[i])
-                i++
             }
         }
     }
+
+    appendTokens(tokens)
 }
