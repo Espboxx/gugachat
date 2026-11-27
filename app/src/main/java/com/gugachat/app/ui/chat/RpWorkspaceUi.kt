@@ -85,6 +85,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.i18n.LocalAppStrings
 import com.gugachat.app.core.theme.GuInlineStepper
@@ -103,6 +104,7 @@ import com.gugachat.app.domain.chat.RpConfig
 import com.gugachat.app.domain.chat.RpDiceRoll
 import com.gugachat.app.domain.chat.RpEngine
 import com.gugachat.app.domain.chat.RpInputKind
+import com.gugachat.app.domain.chat.TimelineReconciler
 import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -190,8 +192,43 @@ fun RpWorkspaceScreen(
     var showQuickPopover by remember { mutableStateOf(false) }
     var showCustomStatusPopover by remember { mutableStateOf(false) }
     var showTheaterComposer by remember(rp.theaterMode) { mutableStateOf(false) }
+    var showGreetingPicker by remember { mutableStateOf(false) }
     var streamScrollHide by remember(rp.title) { mutableStateOf(false) }
     var scrollAccum by remember { mutableFloatStateOf(0f) }
+
+    val chatVm = LocalChatViewModel.current
+    val chatState = chatVm?.ui?.collectAsStateWithLifecycle()?.value
+    val activeMsgs = remember(messages) { TimelineReconciler.activeMessages(messages) }
+    val activeUserTurnCount = remember(activeMsgs) { activeMsgs.count { it.role == "user" } }
+    val seq1GreetingMsg = remember(activeMsgs) {
+        activeMsgs.firstOrNull { it.role == "assistant" && it.seq == 1 }
+    }
+    val greetingPreviews = remember(seq1GreetingMsg?.variants, chatState?.activeGreetingVariants) {
+        val fromMsg = seq1GreetingMsg?.variants.orEmpty().map { it.content }.filter { it.isNotBlank() }
+        if (fromMsg.size > 1) fromMsg else chatState?.activeGreetingVariants.orEmpty()
+    }
+    val activeGreetingIdx = (seq1GreetingMsg?.activeVariantIndex ?: 0)
+        .coerceIn(0, (greetingPreviews.size - 1).coerceAtLeast(0))
+    val showStreamGreetingPill = !rp.theaterMode &&
+        activeUserTurnCount == 0 &&
+        greetingPreviews.size > 1 &&
+        !isStreaming
+
+    if (showGreetingPicker && greetingPreviews.size > 1) {
+        RpGreetingPickerSheet(
+            greetings = greetingPreviews,
+            activeIndex = activeGreetingIdx,
+            onSelect = { idx ->
+                showGreetingPicker = false
+                if (chatVm != null) {
+                    chatVm.selectGreetingVariant(idx)
+                } else if (seq1GreetingMsg != null) {
+                    onSwitchVariant(seq1GreetingMsg.id, idx)
+                }
+            },
+            onDismiss = { showGreetingPicker = false },
+        )
+    }
 
     val isImmersiveHidden = hideUi && rp.theaterMode
     val hasCustomStatusWidget = rp.visualTheme.showCustomStatusWidget && rp.visualTheme.customStatusHtml.isNotBlank()
@@ -477,6 +514,30 @@ fun RpWorkspaceScreen(
                                         overflow = TextOverflow.Ellipsis,
                                     )
                                 }
+                            }
+                        }
+
+                        if (showStreamGreetingPill) {
+                            Surface(
+                                onClick = { showGreetingPicker = true },
+                                color = Color(0xD8101624),
+                                border = BorderStroke(0.6.dp, stageAccent.copy(alpha = 0.55f)),
+                                shape = RoundedCornerShape(999.dp),
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .padding(top = 8.dp, end = 12.dp),
+                            ) {
+                                Text(
+                                    text = if (isZh) {
+                                        "🎭 换开场 ${activeGreetingIdx + 1}/${greetingPreviews.size} ▾"
+                                    } else {
+                                        "🎭 Greeting ${activeGreetingIdx + 1}/${greetingPreviews.size} ▾"
+                                    },
+                                    color = Color(0xFFFFF4DC),
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.padding(horizontal = 11.dp, vertical = 5.dp),
+                                )
                             }
                         }
 

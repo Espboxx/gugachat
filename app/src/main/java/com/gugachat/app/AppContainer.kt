@@ -3,8 +3,11 @@ package com.gugachat.app
 import android.content.Context
 import coil.ImageLoader
 import com.gugachat.app.core.i18n.AppLanguage
+import com.gugachat.app.core.runtime.AppForegroundTracker
+import com.gugachat.app.core.runtime.RuntimeKeepAliveController
 import com.gugachat.app.core.storage.ApiProviderStore
 import com.gugachat.app.core.storage.AppSettings
+import com.gugachat.app.core.storage.SecretVaultStore
 import com.gugachat.app.core.storage.SecureTokenStore
 import com.gugachat.app.core.storage.SettingsStore
 import com.gugachat.app.core.theme.ColorMode
@@ -21,13 +24,20 @@ import com.gugachat.app.data.api.OnlineImagesApi
 import com.gugachat.app.data.api.PublicSettingsDto
 import com.gugachat.app.data.api.UpdateChannel
 import com.gugachat.app.data.api.UserDto
+import com.gugachat.app.data.chat.AssetImportCoordinator
+import com.gugachat.app.data.chat.ChatContextAssembler
+import com.gugachat.app.data.chat.ChatStreamManager
 import com.gugachat.app.data.chat.RetrievalCoordinator
+import com.gugachat.app.data.chat.StudioImageGenerationUseCase
 import com.gugachat.app.data.chat.VectorMemoryIndex
 import com.gugachat.app.data.local.AppDatabase
 import com.gugachat.app.data.local.AttachmentFileStore
 import com.gugachat.app.data.local.DirectImageStore
 import com.gugachat.app.data.local.LocalEmbeddingModelManager
 import com.gugachat.app.data.local.LocalOnnxEmbeddingEngine
+import com.gugachat.app.data.sync.BackupVaultAdapter
+import com.gugachat.app.data.sync.WebDavClient
+import com.gugachat.app.data.sync.WebDavSyncManager
 import com.gugachat.app.domain.chat.AndroidIcuCjkSegmenter
 import com.gugachat.app.domain.chat.CjkSearch
 import kotlinx.coroutines.CoroutineScope
@@ -53,6 +63,10 @@ class AppContainer(context: Context) {
     val appContext: Context = context.applicationContext
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    val secretVaultStore = SecretVaultStore(appContext)
+    val foregroundTracker = (appContext as? GuGuChatApp)?.foregroundTracker ?: AppForegroundTracker()
+    val keepAliveController = RuntimeKeepAliveController(appContext, foregroundTracker)
+
     val settingsStore = SettingsStore(appContext)
     val tokenStore = SecureTokenStore(appContext)
     val apiProviderStore = ApiProviderStore(appContext)
@@ -60,6 +74,7 @@ class AppContainer(context: Context) {
     val attachmentStore = AttachmentFileStore(appContext, database.attachmentDao())
     val directImageStore = DirectImageStore(appContext)
     val toastController = ToastController()
+    val backupVaultAdapter = BackupVaultAdapter.fromStores(apiProviderStore, secretVaultStore, settingsStore)
 
     val settingsState: StateFlow<AppSettings> = settingsStore.settingsFlow.stateIn(
         scope = scope,
@@ -131,12 +146,63 @@ class AppContainer(context: Context) {
         localOnnxEngine = localOnnxEmbeddingEngine,
         vectorMemoryIndex = vectorMemoryIndex,
     )
+    val webDavClient = WebDavClient(apiClient.standardClient)
+    val webDavSyncManager = WebDavSyncManager(webDavClient, database, appContext.filesDir, backupVaultAdapter)
+    val chatContextAssembler = ChatContextAssembler(
+        database = database,
+        settingsStore = settingsStore,
+        apiProviderStore = apiProviderStore,
+        attachmentStore = attachmentStore,
+        retrievalCoordinator = retrievalCoordinator,
+    )
+    val assetImportCoordinator = AssetImportCoordinator(
+        appContext = appContext,
+        database = database,
+        retrievalCoordinator = retrievalCoordinator,
+        scope = scope,
+    )
+    val studioImageGenerationUseCase = StudioImageGenerationUseCase(
+        appContext = appContext,
+        authSession = authSession,
+        apiProviderStore = apiProviderStore,
+        directApiClient = directApiClient,
+        onlineImagesApi = onlineImagesApi,
+        settingsStore = settingsStore,
+    )
+    val chatStreamManager = ChatStreamManager(
+        appContext = appContext,
+        scope = scope,
+        database = database,
+        settingsStore = settingsStore,
+        settingsState = settingsState,
+        apiProviderStore = apiProviderStore,
+        onlineChatApi = onlineChatApi,
+        contextAssembler = chatContextAssembler,
+        retrievalCoordinator = retrievalCoordinator,
+        foregroundTracker = foregroundTracker,
+        keepAliveController = keepAliveController,
+        toastController = toastController,
+    )
 
     init {
         CjkSearch.segmenter = AndroidIcuCjkSegmenter()
         scope.launch {
+            settingsStore.migratePlaintextRetrievalKeysIfNeeded(secretVaultStore)
+            chatStreamManager.recoverOrphanStreams()
             restoreSession()
         }
+    }
+
+    fun authSessionIdentityKey(
+        session: AuthSessionState = authSession.value,
+        serverUrl: String = settingsState.value.serverUrl,
+    ): String = when (session) {
+        is AuthSessionState.LoggedIn -> if (session.isDirectApiOnly) {
+            "direct"
+        } else {
+            "sub2api:${session.user.id}:${serverUrl.trim().trimEnd('/')}"
+        }
+        AuthSessionState.Checking, AuthSessionState.LoggedOut -> "logged_out"
     }
 
     suspend fun restoreSession() {

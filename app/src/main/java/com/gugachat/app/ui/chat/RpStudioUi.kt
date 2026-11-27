@@ -120,7 +120,10 @@ import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.gugachat.app.core.storage.LocalMediaPathResolver
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -159,6 +162,9 @@ import com.gugachat.app.core.theme.GuSheetHeader
 import com.gugachat.app.core.theme.GuSwitchRow
 import com.gugachat.app.core.theme.GuTextField
 import com.gugachat.app.core.theme.LocalAppTheme
+import com.gugachat.app.data.local.CharacterCardEntity
+import com.gugachat.app.data.local.PersonaEntity
+import com.gugachat.app.data.local.WorldbookEntity
 import com.gugachat.app.domain.chat.NovelLoreEntry
 import com.gugachat.app.domain.chat.RpCgRecord
 import com.gugachat.app.domain.chat.RpCharacter
@@ -172,8 +178,8 @@ import com.gugachat.app.domain.chat.RpRegexEngine
 import com.gugachat.app.domain.chat.RpRegexScript
 import com.gugachat.app.domain.chat.RpSaveSlot
 import com.gugachat.app.domain.chat.RpVisualTheme
+import com.gugachat.app.domain.chat.WorldbookEngine
 import kotlinx.coroutines.delay
-import java.io.File
 import java.util.Locale
 import java.util.UUID
 import kotlin.math.roundToInt
@@ -806,14 +812,22 @@ fun RpWizardDialog(
     val strings = LocalAppStrings.current
     val theme = LocalAppTheme.current
     val c = theme.colors
+    val ctx = LocalContext.current
     val isZh = strings.language == AppLanguage.ZH
+    val chatVm = LocalChatViewModel.current
+    val chatState = chatVm?.ui?.collectAsStateWithLifecycle()?.value
+    val globalCards = chatState?.characterCards.orEmpty()
+    val defaultPersona = chatState?.personas?.firstOrNull { it.isDefault }
 
     val firstPreset = RpPresets.ALL.first()
     var selectedPreset by remember { mutableStateOf(firstPreset.id) }
+    var selectedGlobalCardId by remember { mutableStateOf<String?>(null) }
     var selectedStyle by remember { mutableStateOf(firstPreset.config.playStyle) }
+    var showCustomPlayerFields by remember { mutableStateOf(false) }
     var worldTitle by remember { mutableStateOf("") }
     var playerName by remember { mutableStateOf("") }
     var playerPersona by remember { mutableStateOf("") }
+    val selectedGlobalCard = selectedGlobalCardId?.let { id -> globalCards.firstOrNull { it.id == id } }
 
     val cardLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -901,6 +915,85 @@ fun RpWizardDialog(
                     )
                 }
 
+                if (globalCards.isNotEmpty()) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        GuSectionHeader(
+                            title = if (isZh) "我的角色卡" else "My Character Cards",
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                            trailing = {
+                                GuBadge("${globalCards.size}", variant = GuBadgeVariant.EMERALD)
+                            },
+                        )
+                        LazyRow(
+                            contentPadding = PaddingValues(horizontal = 16.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            items(globalCards, key = { it.id }) { card ->
+                                val cardSelected = selectedGlobalCardId == card.id
+                                val avatarFile = remember(card.avatarPath, card.spritePath) {
+                                    LocalMediaPathResolver.resolveFile(
+                                        ctx.applicationContext.filesDir.absolutePath,
+                                        card.avatarPath ?: card.spritePath,
+                                    )?.takeIf { it.isFile }
+                                }
+                                Surface(
+                                    onClick = {
+                                        selectedGlobalCardId = if (cardSelected) null else card.id
+                                    },
+                                    shape = RoundedCornerShape(14.dp),
+                                    color = if (cardSelected) c.primarySoft else c.surface,
+                                    border = if (cardSelected) BorderStroke(1.5.dp, c.primary) else null,
+                                    shadowElevation = if (!theme.isDark && !cardSelected) 0.8.dp else 0.dp,
+                                    modifier = Modifier.width(136.dp),
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 9.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(30.dp)
+                                                .clip(CircleShape)
+                                                .background(c.surfaceSoft),
+                                            contentAlignment = Alignment.Center,
+                                        ) {
+                                            if (avatarFile != null) {
+                                                Image(
+                                                    painter = rememberAsyncImagePainter(avatarFile),
+                                                    contentDescription = card.name,
+                                                    contentScale = ContentScale.Crop,
+                                                    alignment = Alignment.TopCenter,
+                                                    modifier = Modifier.fillMaxSize(),
+                                                )
+                                            } else {
+                                                Text(
+                                                    text = card.name.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "✦",
+                                                    color = c.primarySoftInk,
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                )
+                                            }
+                                        }
+                                        Text(
+                                            text = card.name,
+                                            color = if (cardSelected) c.primarySoftInk else c.ink,
+                                            fontSize = 12.5.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f),
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 Column(
                     modifier = Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -917,7 +1010,7 @@ fun RpWizardDialog(
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
                         items(RpPresets.ALL, key = { it.id }) { preset ->
-                            val isSelected = selectedPreset == preset.id
+                            val isSelected = selectedGlobalCard == null && selectedPreset == preset.id
                             val visual = remember(preset.id) { resolveRpPresetCoverVisual(preset.id) }
                             val presetLabel = strings.rp.presets[preset.id] ?: preset.name
                             val presetGreetings = (if (preset.config.greeting.isNotBlank()) 1 else 0) +
@@ -930,6 +1023,7 @@ fun RpWizardDialog(
 
                             Surface(
                                 onClick = {
+                                    selectedGlobalCardId = null
                                     selectedPreset = preset.id
                                     selectedStyle = preset.config.playStyle
                                 },
@@ -1107,35 +1201,118 @@ fun RpWizardDialog(
                         .padding(horizontal = 16.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    GuSectionHeader(title = strings.rp.personaSectionTitle)
-                    GuGroupedCard(modifier = Modifier.fillMaxWidth()) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(14.dp),
-                            verticalArrangement = Arrangement.spacedBy(11.dp),
-                        ) {
-                            GuTextField(
-                                value = worldTitle,
-                                onValueChange = { worldTitle = it },
-                                label = strings.rp.worldTitleLabel,
-                                placeholder = active.config.title,
-                            )
-                            GuTextField(
-                                value = playerName,
-                                onValueChange = { playerName = it },
-                                label = strings.rp.wizardPlayerNameLabel,
-                                placeholder = active.config.playerName,
-                            )
-                            GuTextField(
-                                value = playerPersona,
-                                onValueChange = { playerPersona = it },
-                                label = strings.rp.wizardPlayerPersonaLabel,
-                                placeholder = active.config.playerPersona.ifBlank { strings.rp.playerPersonaLabel },
-                                singleLine = false,
-                                minLines = 2,
-                                maxLines = 4,
-                            )
+                    if (selectedGlobalCard != null) {
+                        GuGroupedCard(modifier = Modifier.fillMaxWidth()) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(14.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                ) {
+                                    Text(
+                                        text = selectedGlobalCard.name,
+                                        color = c.ink,
+                                        fontSize = 14.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                    )
+                                    GuBadge(
+                                        text = if (isZh) "角色卡直启" else "Card Ready",
+                                        variant = GuBadgeVariant.EMERALD,
+                                    )
+                                }
+                                if (selectedGlobalCard.creatorNotes.isNotBlank() || selectedGlobalCard.scenario.isNotBlank()) {
+                                    Text(
+                                        text = selectedGlobalCard.scenario.ifBlank { selectedGlobalCard.creatorNotes },
+                                        color = c.muted,
+                                        fontSize = 12.sp,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                                if (defaultPersona != null) {
+                                    GuMetaText(
+                                        text = if (isZh) "使用当前默认身份：${defaultPersona.name}" else "Active persona: ${defaultPersona.name}",
+                                        color = c.primarySoftInk,
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        GuSectionHeader(
+                            title = strings.rp.personaSectionTitle,
+                            trailing = {
+                                TextButton(
+                                    onClick = { showCustomPlayerFields = !showCustomPlayerFields },
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                ) {
+                                    Text(
+                                        text = if (showCustomPlayerFields) {
+                                            if (isZh) "收起自定义" else "Collapse"
+                                        } else {
+                                            if (isZh) "自定义名称/人设" else "Customize"
+                                        },
+                                        fontSize = 12.sp,
+                                        color = c.primary,
+                                    )
+                                }
+                            },
+                        )
+                        if (defaultPersona != null && !showCustomPlayerFields) {
+                            GuGroupedCard(modifier = Modifier.fillMaxWidth()) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 14.dp, vertical = 11.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                ) {
+                                    Text(
+                                        text = if (isZh) "默认身份：${defaultPersona.name}" else "Persona: ${defaultPersona.name}",
+                                        color = c.ink,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                    )
+                                    GuBadge(if (isZh) "已绑定" else "Bound", variant = GuBadgeVariant.BLUE)
+                                }
+                            }
+                        }
+                        AnimatedVisibility(visible = showCustomPlayerFields) {
+                            GuGroupedCard(modifier = Modifier.fillMaxWidth()) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(14.dp),
+                                    verticalArrangement = Arrangement.spacedBy(11.dp),
+                                ) {
+                                    GuTextField(
+                                        value = worldTitle,
+                                        onValueChange = { worldTitle = it },
+                                        label = strings.rp.worldTitleLabel,
+                                        placeholder = active.config.title,
+                                    )
+                                    GuTextField(
+                                        value = playerName,
+                                        onValueChange = { playerName = it },
+                                        label = strings.rp.wizardPlayerNameLabel,
+                                        placeholder = defaultPersona?.name ?: active.config.playerName,
+                                    )
+                                    GuTextField(
+                                        value = playerPersona,
+                                        onValueChange = { playerPersona = it },
+                                        label = strings.rp.wizardPlayerPersonaLabel,
+                                        placeholder = defaultPersona?.description?.ifBlank { null }
+                                            ?: active.config.playerPersona.ifBlank { strings.rp.playerPersonaLabel },
+                                        singleLine = false,
+                                        minLines = 2,
+                                        maxLines = 4,
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -1155,13 +1332,17 @@ fun RpWizardDialog(
                 }
                 GuButton(
                     onClick = {
-                        onCreateFromPreset(
-                            selectedPreset,
-                            worldTitle.trim(),
-                            selectedStyle,
-                            playerName.trim(),
-                            playerPersona.trim(),
-                        )
+                        if (selectedGlobalCard != null && chatVm != null) {
+                            chatVm.createRpSessionFromCharacterCard(selectedGlobalCard.id)
+                        } else {
+                            onCreateFromPreset(
+                                selectedPreset,
+                                worldTitle.trim(),
+                                selectedStyle,
+                                playerName.trim(),
+                                playerPersona.trim(),
+                            )
+                        }
                         onDismiss()
                     },
                     modifier = Modifier.weight(1f),
@@ -1994,7 +2175,13 @@ private fun RpCastSection(
     val strings = LocalAppStrings.current
     val theme = LocalAppTheme.current
     val c = theme.colors
+    val ctx = LocalContext.current
     val isZh = strings.language == AppLanguage.ZH
+    val chatVm = LocalChatViewModel.current
+    val chatState = chatVm?.ui?.collectAsStateWithLifecycle()?.value
+    val boundCard = chatState?.boundCharacterCard
+    val personas = chatState?.personas.orEmpty()
+    val boundPersonaId = chatState?.activeConversation?.personaId
 
     var playerExpanded by remember { mutableStateOf(false) }
     var pNameDraft by remember(rp.playerName) { mutableStateOf(rp.playerName) }
@@ -2109,6 +2296,58 @@ private fun RpCastSection(
             }
         }
 
+        if (personas.isNotEmpty() && chatVm != null) {
+            item(key = "__persona_switcher__") {
+                GuGroupedCard(modifier = Modifier.fillMaxWidth()) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            text = if (isZh) "扮演身份（Persona）" else "Player Persona",
+                            color = c.ink,
+                            fontSize = 12.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            item(key = "__persona_default__") {
+                                GuPill(
+                                    label = if (isZh) "会话自设" else "Session Default",
+                                    selected = boundPersonaId == null,
+                                    onClick = { chatVm.selectConversationPersona(null) },
+                                )
+                            }
+                            items(personas, key = { it.id }) { p ->
+                                GuPill(
+                                    label = p.name.ifBlank { if (isZh) "身份" else "Persona" },
+                                    selected = boundPersonaId == p.id,
+                                    onClick = { chatVm.selectConversationPersona(p.id) },
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (boundCard != null) {
+            item(key = "__sync_bound_card__") {
+                GuGroupedCard(modifier = Modifier.fillMaxWidth()) {
+                    GuSettingsRow(
+                        title = if (isZh) "🔄 同步原卡最新设定" else "🔄 Sync Latest Card Fields",
+                        subtitle = if (isZh) "从「${boundCard.name}」同步世界观、立绘与开场白" else "Pull updates from \"${boundCard.name}\"",
+                        icon = Icons.Default.Refresh,
+                        iconTint = c.primarySoftInk,
+                        iconBg = c.primarySoft,
+                        showChevron = true,
+                        onClick = { chatVm.syncBoundCharacterCardFields() },
+                    )
+                }
+            }
+        }
+
         // Cast Header + Add CTA
         item(key = "__cast_header__") {
             Row(
@@ -2157,7 +2396,8 @@ private fun RpCastSection(
                     RpEngine.resolveCharacterSpritePath(npc)
                 }
                 val portraitFile = remember(resolvedPath) {
-                    resolvedPath?.takeIf { it.isNotBlank() }?.let(::File)?.takeIf { it.isFile }
+                    LocalMediaPathResolver.resolveFile(ctx.applicationContext.filesDir.absolutePath, resolvedPath)
+                        ?.takeIf { it.isFile }
                 }
                 val boundExprCount = remember(npc.expressionSprites, npc.spritePath) {
                     val exprHits = RpEngine.STANDARD_EXPRESSIONS.count { key ->
@@ -2381,6 +2621,7 @@ private fun RpCharacterUnifiedSubpage(
     val strings = LocalAppStrings.current
     val theme = LocalAppTheme.current
     val c = theme.colors
+    val ctx = LocalContext.current
     val isZh = strings.language == AppLanguage.ZH
 
     var name by remember(npc.id) { mutableStateOf(npc.name) }
@@ -2419,10 +2660,12 @@ private fun RpCharacterUnifiedSubpage(
         RpEngine.resolveCharacterSpritePath(previewChar)
     }
     val previewFile = remember(previewPath) {
-        previewPath?.takeIf { it.isNotBlank() }?.let(::File)?.takeIf { it.isFile }
+        LocalMediaPathResolver.resolveFile(ctx.applicationContext.filesDir.absolutePath, previewPath)
+            ?.takeIf { it.isFile }
     }
     val avatarFile = remember(npc.avatarPath) {
-        npc.avatarPath?.takeIf { it.isNotBlank() }?.let(::File)?.takeIf { it.isFile }
+        LocalMediaPathResolver.resolveFile(ctx.applicationContext.filesDir.absolutePath, npc.avatarPath)
+            ?.takeIf { it.isFile }
     }
     val boundCount = remember(npc.expressionSprites) {
         RpEngine.STANDARD_EXPRESSIONS.count { key ->
@@ -2762,7 +3005,8 @@ private fun RpCharacterUnifiedSubpage(
                         ?.trim()
                         ?.takeIf { it.isNotEmpty() }
                     val exprFile = remember(boundPath) {
-                        boundPath?.let(::File)?.takeIf { it.isFile }
+                        LocalMediaPathResolver.resolveFile(ctx.applicationContext.filesDir.absolutePath, boundPath)
+                            ?.takeIf { it.isFile }
                     }
                     val exprLabel = strings.rp.expressionLabels[exprKey] ?: exprKey
 
@@ -2907,6 +3151,7 @@ private fun RpStateAndArchiveSection(
     val strings = LocalAppStrings.current
     val theme = LocalAppTheme.current
     val c = theme.colors
+    val ctx = LocalContext.current
     val isZh = strings.language == AppLanguage.ZH
 
     // Inline Scene & Act editor state (replaces RpVitalsEditorDialog)
@@ -3708,7 +3953,8 @@ private fun RpStateAndArchiveSection(
                             pair.forEach { cg ->
                                 val isActive = cg.id == rp.state.activeCgId
                                 val cgFile = remember(cg.imagePath) {
-                                    cg.imagePath.takeIf { it.isNotBlank() }?.let(::File)?.takeIf { it.isFile }
+                                    LocalMediaPathResolver.resolveFile(ctx.applicationContext.filesDir.absolutePath, cg.imagePath)
+                                        ?.takeIf { it.isFile }
                                 }
                                 Surface(
                                     onClick = { onOpenCgDetail(cg) },
@@ -3819,11 +4065,13 @@ private fun RpCgViewerSubpage(
 ) {
     val strings = LocalAppStrings.current
     val c = LocalAppTheme.current.colors
+    val ctx = LocalContext.current
     val isZh = strings.language == AppLanguage.ZH
     var confirmDelete by remember { mutableStateOf(false) }
 
     val cgFile = remember(cg.imagePath) {
-        cg.imagePath.takeIf { it.isNotBlank() }?.let(::File)?.takeIf { it.isFile }
+        LocalMediaPathResolver.resolveFile(ctx.applicationContext.filesDir.absolutePath, cg.imagePath)
+            ?.takeIf { it.isFile }
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -3941,13 +4189,28 @@ private fun RpWorldAndLoreSection(
     val strings = LocalAppStrings.current
     val theme = LocalAppTheme.current
     val c = theme.colors
+    val ctx = LocalContext.current
     val isZh = strings.language == AppLanguage.ZH
+    val chatVm = LocalChatViewModel.current
+    val chatState = chatVm?.ui?.collectAsStateWithLifecycle()?.value
 
     var searchQuery by remember { mutableStateOf("") }
     var selectedCat by remember { mutableStateOf("all") }
     var expandedLoreId by remember { mutableStateOf<String?>(null) }
     var confirmDeleteLoreId by remember { mutableStateOf<String?>(null) }
     var worldSectionExpanded by remember { mutableStateOf(false) }
+    var showWorldbookPicker by remember { mutableStateOf(false) }
+
+    val allWorldbooks = chatState?.worldbooks.orEmpty()
+    val mountedRefs = chatState?.mountedWorldbookRefs.orEmpty()
+    val mountedWorldbooks = remember(allWorldbooks, mountedRefs) {
+        val byId = allWorldbooks.associateBy { it.id }
+        mountedRefs.sortedBy { it.sortOrder }.mapNotNull { ref -> byId[ref.worldbookId]?.let { ref to it } }
+    }
+    val globalWorldbooks = remember(allWorldbooks, mountedRefs) {
+        val mountedIds = mountedRefs.map { it.worldbookId }.toSet()
+        allWorldbooks.filter { it.globalEnabled && it.id !in mountedIds }
+    }
 
     val playStyles = remember { listOf(RpPlayStyle.chengguang, RpPlayStyle.tavern, RpPlayStyle.trpg) }
     val playStyleLabels = remember(strings) { playStyles.map { rpPlayStyleLabel(it, strings.rp) } }
@@ -3966,7 +4229,8 @@ private fun RpWorldAndLoreSection(
         mesExample != rp.mesExample
 
     val sceneFile = remember(rp.state.sceneImagePath) {
-        rp.state.sceneImagePath?.takeIf { it.isNotBlank() }?.let(::File)?.takeIf { it.isFile }
+        LocalMediaPathResolver.resolveFile(ctx.applicationContext.filesDir.absolutePath, rp.state.sceneImagePath)
+            ?.takeIf { it.isFile }
     }
 
     val filteredLore = remember(lore, searchQuery, selectedCat) {
@@ -3986,6 +4250,108 @@ private fun RpWorldAndLoreSection(
         contentPadding = PaddingValues(top = 6.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
+        // 0. Multi-Worldbook Mount Card (Global & Session Worldbooks)
+        if (chatVm != null && (allWorldbooks.isNotEmpty() || mountedWorldbooks.isNotEmpty())) {
+            item(key = "__mounted_worldbooks__") {
+                GuGroupedCard(modifier = Modifier.fillMaxWidth()) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = if (isZh) "挂载世界书" else "Mounted Worldbooks",
+                                    color = c.ink,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                                GuMetaText(
+                                    if (isZh) "点击切换启用状态，× 卸载" else "Tap to toggle enabled state, × to unmount",
+                                )
+                            }
+                            GuButton(
+                                onClick = { showWorldbookPicker = true },
+                                compact = true,
+                                variant = GuButtonVariant.SUBTLE,
+                                modifier = Modifier.heightIn(min = 30.dp),
+                            ) {
+                                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(13.dp))
+                                Spacer(Modifier.width(3.dp))
+                                Text(
+                                    text = if (isZh) "挂载世界书" else "Mount Book",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                            }
+                        }
+                        if (mountedWorldbooks.isEmpty() && globalWorldbooks.isEmpty()) {
+                            GuMetaText(
+                                if (isZh) "当前会话尚未挂载全局世界书，点击右上角选择挂载" else "No mounted worldbooks yet; tap Mount Book to attach",
+                            )
+                        } else {
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                mountedWorldbooks.forEach { (ref, book) ->
+                                    Surface(
+                                        onClick = { chatVm.toggleMountedWorldbookEnabled(book.id) },
+                                        shape = RoundedCornerShape(999.dp),
+                                        color = if (ref.enabled) c.primarySoft else c.surfaceSoft,
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(start = 10.dp, end = 6.dp, top = 5.dp, bottom = 5.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(5.dp),
+                                        ) {
+                                            Text(
+                                                text = "${book.name} (${book.entryCount})",
+                                                color = if (ref.enabled) c.primarySoftInk else c.muted,
+                                                fontSize = 11.5.sp,
+                                                fontWeight = if (ref.enabled) FontWeight.SemiBold else FontWeight.Medium,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                            Icon(
+                                                imageVector = Icons.Default.Close,
+                                                contentDescription = if (isZh) "卸载世界书" else "Unmount",
+                                                tint = c.muted,
+                                                modifier = Modifier
+                                                    .size(14.dp)
+                                                    .clip(CircleShape)
+                                                    .clickable { chatVm.unmountWorldbook(book.id) },
+                                            )
+                                        }
+                                    }
+                                }
+                                globalWorldbooks.forEach { book ->
+                                    Surface(
+                                        shape = RoundedCornerShape(999.dp),
+                                        color = c.surfaceSoft,
+                                    ) {
+                                        Text(
+                                            text = "${book.name} · ${if (isZh) "全局" else "Global"}",
+                                            color = c.muted,
+                                            fontSize = 11.5.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // 1. Worldbook Header + Search + Category Filter (Top Focus)
         item(key = "__wb_controls__") {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -4447,6 +4813,106 @@ private fun RpWorldAndLoreSection(
             }
         }
     }
+
+    if (showWorldbookPicker && chatVm != null) {
+        RpWorldbookMountPickerSheet(
+            worldbooks = allWorldbooks,
+            mountedIds = mountedRefs.map { it.worldbookId }.toSet(),
+            isZh = isZh,
+            onMount = { wbId ->
+                chatVm.mountWorldbook(wbId)
+                showWorldbookPicker = false
+            },
+            onUnmount = { wbId -> chatVm.unmountWorldbook(wbId) },
+            onDismiss = { showWorldbookPicker = false },
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun RpWorldbookMountPickerSheet(
+    worldbooks: List<WorldbookEntity>,
+    mountedIds: Set<String>,
+    isZh: Boolean,
+    onMount: (String) -> Unit,
+    onUnmount: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val c = LocalAppTheme.current.colors
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = c.surface,
+        dragHandle = { GuModalDragHandle() },
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(horizontal = 16.dp, vertical = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            GuSheetHeader(
+                title = if (isZh) "选择要挂载的世界书" else "Mount Worldbook",
+                onClose = onDismiss,
+            )
+            if (worldbooks.isEmpty()) {
+                GuEmptyState(
+                    title = if (isZh) "暂无全局世界书" else "No worldbooks available",
+                    subtitle = if (isZh) "先在创作工坊或外部导入中添加世界书" else "Import or create a worldbook first",
+                    icon = Icons.Default.Public,
+                )
+            } else {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 360.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    worldbooks.forEach { wb ->
+                        val isMounted = wb.id in mountedIds
+                        GuGroupedCard(modifier = Modifier.fillMaxWidth()) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        if (isMounted) onUnmount(wb.id) else onMount(wb.id)
+                                    }
+                                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    Text(
+                                        text = wb.name,
+                                        color = c.ink,
+                                        fontSize = 13.5.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    GuMetaText(
+                                        buildString {
+                                            append("${wb.entryCount} ${if (isZh) "条" else "entries"} · ${wb.totalEstimatedTokens}t")
+                                            if (wb.globalEnabled) append(if (isZh) " · 全局启用" else " · Global")
+                                        },
+                                    )
+                                }
+                                GuBadge(
+                                    text = if (isMounted) (if (isZh) "已挂载" else "Mounted") else (if (isZh) "挂载" else "Mount"),
+                                    variant = if (isMounted) GuBadgeVariant.EMERALD else GuBadgeVariant.BLUE,
+                                )
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                }
+            }
+        }
+    }
 }
 
 // ==================== Push/Pop Subpage 3: Lore Entry Editor ====================
@@ -4460,7 +4926,10 @@ private fun RpLoreEditorSubpage(
     onSaveExisting: (NovelLoreEntry) -> Unit,
 ) {
     val strings = LocalAppStrings.current
+    val theme = LocalAppTheme.current
+    val c = theme.colors
     val isZh = strings.language == AppLanguage.ZH
+    val chatVm = LocalChatViewModel.current
 
     var category by remember(initial?.id) { mutableStateOf(initial?.category ?: "character") }
     var title by remember(initial?.id) { mutableStateOf(initial?.title.orEmpty()) }
@@ -4468,9 +4937,42 @@ private fun RpLoreEditorSubpage(
     var content by remember(initial?.id) { mutableStateOf(initial?.content.orEmpty()) }
     var alwaysActive by remember(initial?.id) { mutableStateOf(initial?.alwaysActive ?: false) }
 
+    var advancedExpanded by remember(initial?.id) { mutableStateOf(false) }
+    var secondaryKeysRaw by remember(initial?.id) { mutableStateOf("") }
+    var selectiveLogic by remember(initial?.id) { mutableIntStateOf(WorldbookEngine.LOGIC_AND_ANY) }
+    var useDepthInjection by remember(initial?.id) { mutableStateOf(false) }
+    var depth by remember(initial?.id) { mutableIntStateOf(4) }
+    var sticky by remember(initial?.id) { mutableIntStateOf(0) }
+    var cooldown by remember(initial?.id) { mutableIntStateOf(0) }
+    var delayTurns by remember(initial?.id) { mutableIntStateOf(0) }
+
     val canSave = title.isNotBlank() && content.isNotBlank()
+    val hasV2Triggers = useDepthInjection ||
+        secondaryKeysRaw.trim().isNotEmpty() ||
+        sticky > 0 ||
+        cooldown > 0 ||
+        delayTurns > 0
 
     fun submit() {
+        if (hasV2Triggers && chatVm != null) {
+            chatVm.saveV2LoreEntryForActiveConversation(
+                existingLegacyId = initial?.id,
+                category = category,
+                title = title,
+                keywordsRaw = keywords,
+                secondaryKeysRaw = secondaryKeysRaw,
+                selectiveLogic = selectiveLogic,
+                useDepthInjection = useDepthInjection,
+                depth = depth,
+                sticky = sticky,
+                cooldown = cooldown,
+                delay = delayTurns,
+                content = content,
+                alwaysActive = alwaysActive,
+            )
+            onBack()
+            return
+        }
         if (initial == null) {
             onSaveNew(category, title.trim(), keywords.trim(), content.trim(), alwaysActive)
         } else {
@@ -4554,6 +5056,122 @@ private fun RpLoreEditorSubpage(
                 checked = alwaysActive,
                 onCheckedChange = { alwaysActive = it },
             )
+            GuGroupedCard(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { advancedExpanded = !advancedExpanded }
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(
+                                text = if (isZh) "高级触发器设定 (V2)" else "Advanced Triggers (V2)",
+                                color = c.ink,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            GuMetaText(
+                                if (isZh) "次级逻辑词、@D 深度注入、粘滞/冷却回合" else "Secondary logic keys, @D depth, sticky/cooldown",
+                            )
+                        }
+                        if (hasV2Triggers) {
+                            GuBadge(text = "V2", variant = GuBadgeVariant.BLUE)
+                            Spacer(Modifier.width(6.dp))
+                        }
+                        Icon(
+                            imageVector = if (advancedExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                            contentDescription = null,
+                            tint = c.muted,
+                        )
+                    }
+                    AnimatedVisibility(visible = advancedExpanded) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 14.dp, end = 14.dp, bottom = 14.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            HorizontalDivider(thickness = theme.borderWidth, color = c.border.copy(alpha = 0.6f))
+                            GuTextField(
+                                value = secondaryKeysRaw,
+                                onValueChange = { secondaryKeysRaw = it },
+                                label = if (isZh) "AND/NOT 次级词（逗号分隔）" else "Secondary Keys (comma-separated)",
+                                placeholder = if (isZh) "例如: 雨夜, 酒馆" else "e.g. rainy night, tavern",
+                            )
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                GuMetaText(if (isZh) "次级词逻辑" else "Selective Logic")
+                                FlowRow(
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                                ) {
+                                    listOf(
+                                        WorldbookEngine.LOGIC_AND_ANY to "AND_ANY",
+                                        WorldbookEngine.LOGIC_AND_ALL to "AND_ALL",
+                                        WorldbookEngine.LOGIC_NOT_ALL to "NOT_ALL",
+                                        WorldbookEngine.LOGIC_NOT_ANY to "NOT_ANY",
+                                    ).forEach { (logicVal, label) ->
+                                        GuPill(
+                                            label = label,
+                                            selected = selectiveLogic == logicVal,
+                                            onClick = { selectiveLogic = logicVal },
+                                            modifier = Modifier.heightIn(min = 32.dp),
+                                        )
+                                    }
+                                }
+                            }
+                            GuSwitchRow(
+                                label = if (isZh) "@D 深度注入" else "@D Depth Injection",
+                                checked = useDepthInjection,
+                                onCheckedChange = { useDepthInjection = it },
+                            )
+                            if (useDepthInjection) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                ) {
+                                    Text(
+                                        text = if (isZh) "注入深度 (Depth)" else "Injection Depth",
+                                        color = c.ink,
+                                        fontSize = 12.5.sp,
+                                        fontWeight = FontWeight.Medium,
+                                    )
+                                    GuInlineStepper(
+                                        valueText = "@D$depth",
+                                        canDecrement = depth > 0,
+                                        canIncrement = depth < 16,
+                                        onDecrement = { depth = (depth - 1).coerceAtLeast(0) },
+                                        onIncrement = { depth = (depth + 1).coerceAtMost(16) },
+                                    )
+                                }
+                            }
+                            listOf(
+                                Triple(if (isZh) "粘滞回合 (Sticky)" else "Sticky Turns", sticky) { v: Int -> sticky = v },
+                                Triple(if (isZh) "冷却回合 (Cooldown)" else "Cooldown Turns", cooldown) { v: Int -> cooldown = v },
+                                Triple(if (isZh) "延迟回合 (Delay)" else "Delay Turns", delayTurns) { v: Int -> delayTurns = v },
+                            ).forEach { (label, curVal, setter) ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                ) {
+                                    Text(text = label, color = c.ink, fontSize = 12.5.sp, fontWeight = FontWeight.Medium)
+                                    GuInlineStepper(
+                                        valueText = curVal.toString(),
+                                        canDecrement = curVal > 0,
+                                        canIncrement = curVal < 20,
+                                        onDecrement = { setter((curVal - 1).coerceAtLeast(0)) },
+                                        onIncrement = { setter((curVal + 1).coerceAtMost(20)) },
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

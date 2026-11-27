@@ -98,6 +98,10 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.gugachat.app.core.storage.LocalMediaPathResolver
+import com.gugachat.app.core.theme.GuModalDragHandle
+import com.gugachat.app.core.theme.GuSheetHeader
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -199,6 +203,7 @@ fun RpNpcPortraitAvatar(
     borderColor: Color? = null,
 ) {
     val c = LocalAppTheme.current.colors
+    val ctx = LocalContext.current
     val displayName = character?.name?.takeIf { it.isNotBlank() } ?: fallbackName
     val shape = if (cornerRadius != null) RoundedCornerShape(cornerRadius) else CircleShape
     val effectiveBorder = borderColor ?: c.accent.copy(alpha = 0.45f)
@@ -211,7 +216,8 @@ fun RpNpcPortraitAvatar(
         character?.let { RpEngine.resolveCharacterSpritePath(it) }
     }
     val avatarFile = remember(resolvedPath) {
-        resolvedPath?.takeIf { it.isNotBlank() }?.let(::File)?.takeIf { it.isFile }
+        LocalMediaPathResolver.resolveFile(ctx.applicationContext.filesDir.absolutePath, resolvedPath)
+            ?.takeIf { it.isFile }
     }
 
     if (avatarFile != null) {
@@ -1229,6 +1235,36 @@ fun RpTheaterStageView(
     val activeMessages = remember(messages) { TimelineReconciler.activeMessages(messages) }
     val latestAssistant = remember(activeMessages) { activeMessages.lastOrNull { it.role == "assistant" } }
     val latestVariant = latestAssistant?.activeVariant()
+    val chatVm = LocalChatViewModel.current
+    val chatState = chatVm?.ui?.collectAsStateWithLifecycle()?.value
+    val activeUserTurnCount = remember(activeMessages) { activeMessages.count { it.role == "user" } }
+    val seq1GreetingMsg = remember(activeMessages) {
+        activeMessages.firstOrNull { it.role == "assistant" && it.seq == 1 }
+    }
+    val greetingPreviews = remember(seq1GreetingMsg?.variants, chatState?.activeGreetingVariants) {
+        val fromMsg = seq1GreetingMsg?.variants.orEmpty().map { it.content }.filter { it.isNotBlank() }
+        if (fromMsg.size > 1) fromMsg else chatState?.activeGreetingVariants.orEmpty()
+    }
+    val activeGreetingIdx = (seq1GreetingMsg?.activeVariantIndex ?: 0)
+        .coerceIn(0, (greetingPreviews.size - 1).coerceAtLeast(0))
+    val showGreetingSwitcher = activeUserTurnCount == 0 && greetingPreviews.size > 1 && !isStreaming
+    var showGreetingPickerSheet by remember { mutableStateOf(false) }
+
+    if (showGreetingPickerSheet && greetingPreviews.size > 1) {
+        RpGreetingPickerSheet(
+            greetings = greetingPreviews,
+            activeIndex = activeGreetingIdx,
+            onSelect = { idx ->
+                showGreetingPickerSheet = false
+                if (chatVm != null) {
+                    chatVm.selectGreetingVariant(idx)
+                } else if (seq1GreetingMsg != null) {
+                    onSwitchVariant(seq1GreetingMsg.id, idx)
+                }
+            },
+            onDismiss = { showGreetingPickerSheet = false },
+        )
+    }
 
     var internalHideUi by remember { mutableStateOf(false) }
     val hideUi = externalHideUi ?: internalHideUi
@@ -1416,7 +1452,8 @@ fun RpTheaterStageView(
                                     val spritesWithFiles = remember(stageCharacters) {
                                         stageCharacters.filter { (_, ch) ->
                                             val path = RpEngine.resolveCharacterSpritePath(ch)
-                                            !path.isNullOrBlank() && File(path).isFile
+                                            LocalMediaPathResolver.resolveFile(ctx.applicationContext.filesDir.absolutePath, path)
+                                                ?.isFile == true
                                         }
                                     }
                                     if (spritesWithFiles.isNotEmpty()) {
@@ -1561,7 +1598,8 @@ fun RpTheaterStageView(
 
                             val hasSprites = stageCharacters.any { (_, ch) ->
                                 val path = RpEngine.resolveCharacterSpritePath(ch)
-                                !path.isNullOrBlank() && File(path).isFile
+                                LocalMediaPathResolver.resolveFile(ctx.applicationContext.filesDir.absolutePath, path)
+                                    ?.isFile == true
                             }
                             if (hasSprites && nonPlayerCast.size > 1 && spriteLayout == "stage") {
                                 StageCastMiniStrip(
@@ -1637,6 +1675,10 @@ fun RpTheaterStageView(
                             onFrontendFillInput = onFrontendFillInput,
                             onFrontendSetFlag = onFrontendSetFlag,
                             onFrontendAdjustAffinity = onFrontendAdjustAffinity,
+                            showGreetingSwitcher = showGreetingSwitcher,
+                            greetingIndex = activeGreetingIdx,
+                            greetingsCount = greetingPreviews.size,
+                            onOpenGreetingPicker = { showGreetingPickerSheet = true },
                             isComposerExpanded = isComposerExpanded,
                             onToggleComposer = onToggleComposer,
                             modifier = Modifier
@@ -1683,6 +1725,7 @@ private fun FeatherHalfBodySprite(
     onTap: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val ctx = LocalContext.current
     val resolvedPath = remember(
         character.mood,
         character.expressionSprites,
@@ -1692,7 +1735,8 @@ private fun FeatherHalfBodySprite(
         RpEngine.resolveCharacterSpritePath(character)
     }
     val spriteFile = remember(resolvedPath) {
-        resolvedPath?.takeIf { it.isNotBlank() }?.let(::File)?.takeIf { it.isFile }
+        LocalMediaPathResolver.resolveFile(ctx.applicationContext.filesDir.absolutePath, resolvedPath)
+            ?.takeIf { it.isFile }
     } ?: return
 
     Box(
@@ -1863,6 +1907,10 @@ private fun TheaterDialogueStageFrame(
     onFrontendFillInput: (String) -> Unit,
     onFrontendSetFlag: (String, String) -> Unit,
     onFrontendAdjustAffinity: (String, Int) -> Unit,
+    showGreetingSwitcher: Boolean = false,
+    greetingIndex: Int = 0,
+    greetingsCount: Int = 0,
+    onOpenGreetingPicker: () -> Unit = {},
     isComposerExpanded: Boolean,
     onToggleComposer: (() -> Unit)?,
     modifier: Modifier = Modifier,
@@ -1942,7 +1990,26 @@ private fun TheaterDialogueStageFrame(
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                 modifier = Modifier.padding(bottom = 2.dp),
             ) {
-                if (variantAssistant != null) {
+                if (showGreetingSwitcher) {
+                    Surface(
+                        onClick = onOpenGreetingPicker,
+                        shape = RoundedCornerShape(999.dp),
+                        color = Color(0xD9161D2E),
+                        border = BorderStroke(0.6.dp, stageAccent.copy(alpha = 0.65f)),
+                    ) {
+                        Text(
+                            text = if (isZh) {
+                                "🎭 换开场 ${greetingIndex + 1}/$greetingsCount ▾"
+                            } else {
+                                "🎭 Greeting ${greetingIndex + 1}/$greetingsCount ▾"
+                            },
+                            color = Color(0xFFFFF4DC),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+                        )
+                    }
+                } else if (variantAssistant != null) {
                     StageVariantSwipePill(
                         index = variantAssistant.activeVariantIndex,
                         total = variantAssistant.variants.size,
@@ -2613,8 +2680,10 @@ internal fun TheaterStageBackdrop(
     dimForReading: Boolean,
     modifier: Modifier = Modifier,
 ) {
+    val ctx = LocalContext.current
     val sceneFile = remember(rp.state.sceneImagePath) {
-        rp.state.sceneImagePath?.takeIf { it.isNotBlank() }?.let(::File)?.takeIf { it.isFile }
+        LocalMediaPathResolver.resolveFile(ctx.applicationContext.filesDir.absolutePath, rp.state.sceneImagePath)
+            ?.takeIf { it.isFile }
     }
     val effectiveDim = backdropDim.coerceIn(0f, 0.78f)
     val spotlightXRatio = when (activeSlot) {
@@ -3468,6 +3537,103 @@ private fun TheaterHistoryLogSheet(
                                 msg.activeVariant()?.rpEndingUnlocked?.let { ending ->
                                     RpEndingCard(ending = ending)
                                 }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun RpGreetingPickerSheet(
+    greetings: List<String>,
+    activeIndex: Int,
+    onSelect: (Int) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val strings = LocalAppStrings.current
+    val c = LocalAppTheme.current.colors
+    val isZh = strings.language == AppLanguage.ZH
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = c.page,
+        dragHandle = { GuModalDragHandle() },
+        modifier = Modifier.statusBarsPadding(),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(bottom = 16.dp),
+        ) {
+            GuSheetHeader(
+                title = if (isZh) "选择开场白" else "Choose Opening Greeting",
+                subtitle = if (isZh) "共 ${greetings.size} 个开场分支，发送首条消息前可随时切换" else "${greetings.size} opening greetings available before turn 1",
+                onClose = onDismiss,
+                closeContentDescription = strings.common.close,
+            )
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 420.dp),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                items(greetings.size, key = { it }) { idx ->
+                    val raw = greetings[idx]
+                    val preview = raw.trim().replace(Regex("\\s+"), " ")
+                    val selected = idx == activeIndex
+                    Surface(
+                        onClick = { onSelect(idx) },
+                        shape = RoundedCornerShape(14.dp),
+                        color = if (selected) c.primarySoft else c.surface,
+                        shadowElevation = if (selected) 0.dp else 0.8.dp,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.Top,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            Column(
+                                modifier = Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                Text(
+                                    text = when {
+                                        idx == 0 && isZh -> "主开场 #1"
+                                        idx == 0 -> "Main Greeting #1"
+                                        isZh -> "备用开场 #${idx + 1}"
+                                        else -> "Alternate Greeting #${idx + 1}"
+                                    },
+                                    color = if (selected) c.primarySoftInk else c.ink,
+                                    fontSize = 13.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                                Text(
+                                    text = preview,
+                                    color = c.muted,
+                                    fontSize = 12.sp,
+                                    lineHeight = 17.5.sp,
+                                    maxLines = 3,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            if (selected) {
+                                Icon(
+                                    imageVector = Icons.Default.Check,
+                                    contentDescription = null,
+                                    tint = c.primary,
+                                    modifier = Modifier.size(18.dp),
+                                )
                             }
                         }
                     }

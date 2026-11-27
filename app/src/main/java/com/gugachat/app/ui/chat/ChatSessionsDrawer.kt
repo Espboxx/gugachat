@@ -1,6 +1,11 @@
 package com.gugachat.app.ui.chat
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -55,6 +60,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -69,6 +75,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.gugachat.app.R
 import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.i18n.LocalAppStrings
@@ -102,11 +109,27 @@ fun ChatSessionsDrawerContent(
     onDeleteConversation: (String) -> Unit,
     onCloseDrawer: () -> Unit,
     onSwitchMainTab: (Int) -> Unit = {},
+    streamingConversationIds: Set<String> = emptySet(),
 ) {
     val strings = LocalAppStrings.current
     val theme = LocalAppTheme.current
     val c = theme.colors
     val isZh = strings.language == AppLanguage.ZH
+    val chatVm = LocalChatViewModel.current
+    val vmStreamingIds = chatVm?.ui?.collectAsStateWithLifecycle()?.value?.streamingConversationIds
+    val activeStreamingIds = remember(streamingConversationIds, vmStreamingIds) {
+        streamingConversationIds + vmStreamingIds.orEmpty()
+    }
+    val streamPulseTransition = rememberInfiniteTransition(label = "drawer_stream_pulse")
+    val streamPulseAlpha by streamPulseTransition.animateFloat(
+        initialValue = 0.35f,
+        targetValue = 1.0f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 850),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "drawer_stream_pulse_alpha",
+    )
 
     var search by remember { mutableStateOf("") }
     var filterIndex by remember { mutableIntStateOf(0) }
@@ -435,6 +458,23 @@ fun ChatSessionsDrawerContent(
                                         overflow = TextOverflow.Ellipsis,
                                         modifier = Modifier.weight(1f),
                                     )
+                                    if (conv.id in activeStreamingIds) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(14.dp)
+                                                .clip(CircleShape)
+                                                .background(c.primary.copy(alpha = 0.18f * streamPulseAlpha)),
+                                            contentAlignment = Alignment.Center,
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(7.dp)
+                                                    .alpha(streamPulseAlpha)
+                                                    .clip(CircleShape)
+                                                    .background(c.primary),
+                                            )
+                                        }
+                                    }
                                     if (conv.pinned) {
                                         Icon(
                                             Icons.Default.PushPin,

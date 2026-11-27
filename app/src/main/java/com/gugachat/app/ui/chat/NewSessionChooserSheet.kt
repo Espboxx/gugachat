@@ -1,7 +1,11 @@
 package com.gugachat.app.ui.chat
 
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -10,6 +14,11 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.AutoStories
@@ -18,24 +27,36 @@ import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil.compose.rememberAsyncImagePainter
 import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.i18n.LocalAppStrings
+import com.gugachat.app.core.storage.LocalMediaPathResolver
 import com.gugachat.app.core.theme.GuCard
 import com.gugachat.app.core.theme.GuIconTile
 import com.gugachat.app.core.theme.GuMetaText
 import com.gugachat.app.core.theme.GuModalDragHandle
 import com.gugachat.app.core.theme.GuSheetHeader
 import com.gugachat.app.core.theme.LocalAppTheme
+import com.gugachat.app.data.local.CharacterCardEntity
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -44,11 +65,19 @@ fun NewSessionChooserSheet(
     onSelectRp: () -> Unit,
     onSelectNovel: () -> Unit,
     onDismiss: () -> Unit,
+    recentCards: List<CharacterCardEntity> = emptyList(),
+    onSelectCard: (String) -> Unit = {},
 ) {
     val strings = LocalAppStrings.current
     val c = LocalAppTheme.current.colors
+    val ctx = LocalContext.current
     val isZh = strings.language == AppLanguage.ZH
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val chatVm = LocalChatViewModel.current
+    val vmCards = chatVm?.ui?.collectAsStateWithLifecycle()?.value?.characterCards
+    val effectiveRecentCards = remember(recentCards, vmCards) {
+        (if (recentCards.isNotEmpty()) recentCards else vmCards.orEmpty()).take(4)
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -102,6 +131,92 @@ fun NewSessionChooserSheet(
                     },
                     onClick = onSelectRp,
                 )
+
+                if (effectiveRecentCards.isNotEmpty()) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        GuMetaText(
+                            text = if (isZh) "最近角色卡 · 一键开演" else "Recent Cards · 1-Tap Launch",
+                            color = c.muted,
+                            modifier = Modifier.padding(horizontal = 4.dp),
+                        )
+                        LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            contentPadding = PaddingValues(horizontal = 2.dp),
+                        ) {
+                            items(effectiveRecentCards, key = { it.id }) { card ->
+                                val avatarFile = remember(card.avatarPath, card.spritePath) {
+                                    LocalMediaPathResolver.resolveFile(
+                                        ctx.applicationContext.filesDir.absolutePath,
+                                        card.avatarPath ?: card.spritePath,
+                                    )?.takeIf { it.isFile }
+                                }
+                                Surface(
+                                    onClick = {
+                                        if (chatVm != null) {
+                                            chatVm.createRpSessionFromCharacterCard(card.id)
+                                            onDismiss()
+                                        } else {
+                                            onSelectCard(card.id)
+                                        }
+                                    },
+                                    shape = RoundedCornerShape(999.dp),
+                                    color = c.surface,
+                                    shadowElevation = 0.8.dp,
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .widthIn(max = 160.dp)
+                                            .padding(start = 6.dp, end = 10.dp, top = 5.dp, bottom = 5.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    ) {
+                                        if (avatarFile != null) {
+                                            Image(
+                                                painter = rememberAsyncImagePainter(avatarFile),
+                                                contentDescription = card.name,
+                                                contentScale = ContentScale.Crop,
+                                                alignment = Alignment.TopCenter,
+                                                modifier = Modifier
+                                                    .size(22.dp)
+                                                    .clip(CircleShape),
+                                            )
+                                        } else {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(22.dp)
+                                                    .clip(CircleShape)
+                                                    .background(
+                                                        Brush.linearGradient(
+                                                            listOf(c.primary, c.accent),
+                                                        ),
+                                                    ),
+                                                contentAlignment = Alignment.Center,
+                                            ) {
+                                                Text(
+                                                    text = card.name.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "✦",
+                                                    color = Color.White,
+                                                    fontSize = 10.5.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                )
+                                            }
+                                        }
+                                        Text(
+                                            text = card.name.ifBlank { if (isZh) "角色卡" else "Card" },
+                                            color = c.ink,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
 
                 SessionModeOptionCard(
                     icon = Icons.Default.AutoStories,

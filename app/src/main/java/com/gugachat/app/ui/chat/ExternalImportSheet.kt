@@ -93,6 +93,8 @@ import com.gugachat.app.domain.chat.ConversationMode
 import com.gugachat.app.domain.chat.ExternalImportBundle
 import com.gugachat.app.domain.chat.ExternalImportCodec
 import com.gugachat.app.domain.chat.ExternalImportSource
+import com.gugachat.app.domain.chat.RpCardCodec
+import com.gugachat.app.domain.chat.TavernAssetCodec
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -161,6 +163,8 @@ fun ExternalImportSheet(
         ImportPlatformTab.OTHER -> ExternalImportSource.GENERIC
     }
 
+    val chatVm = LocalChatViewModel.current
+
     val filePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument(),
     ) { uri ->
@@ -176,6 +180,22 @@ fun ExternalImportSheet(
                     val data = ctx.contentResolver.openInputStream(uri)?.use { it.readBytes() }
                         ?: error("Cannot read selected file")
                     data to queryDisplayName(ctx, uri)
+                }
+                val isBinaryTavernCard = RpCardCodec.isPngBytes(bytes) || RpCardCodec.extractCardFromZipBytes(bytes) != null
+                val rawText = if (!isBinaryTavernCard) {
+                    bytes.toString(Charsets.UTF_8).removePrefix("\uFEFF").trim()
+                } else {
+                    ""
+                }
+                val isStandaloneWorldbookOrPreset = !isBinaryTavernCard &&
+                    (activeTab == ImportPlatformTab.TAVERN || activeTab == ImportPlatformTab.OTHER) &&
+                    TavernAssetCodec.parseJsonText(rawText, conversationId = "preview", fileName = displayName) != null
+
+                if (chatVm != null && (isBinaryTavernCard || isStandaloneWorldbookOrPreset)) {
+                    if (chatVm.importTavernAssetFromBytes(bytes, displayName)) {
+                        onDismiss()
+                        return@launch
+                    }
                 }
                 val bundle = withContext(Dispatchers.Default) {
                     ExternalImportCodec.parseBytes(bytes, fileName = displayName, hintSource = hint)
@@ -247,7 +267,12 @@ fun ExternalImportSheet(
                                 },
                                 shape = RoundedCornerShape(999.dp),
                                 color = if (selected) c.primary else c.surface,
-                                border = BorderStroke(theme.borderWidth, if (selected) c.primary else c.border),
+                                border = if (theme.isDark) {
+                                    BorderStroke(theme.borderWidth, if (selected) c.primary else c.border)
+                                } else {
+                                    null
+                                },
+                                shadowElevation = if (!theme.isDark && !selected) 0.8.dp else 0.dp,
                                 modifier = Modifier.heightIn(min = 36.dp),
                             ) {
                                 Row(
@@ -611,7 +636,7 @@ fun ExternalImportSheet(
                                     Surface(
                                         shape = RoundedCornerShape(12.dp),
                                         color = c.dangerBg,
-                                        border = BorderStroke(theme.borderWidth, c.danger.copy(alpha = 0.42f)),
+                                        border = if (theme.isDark) BorderStroke(theme.borderWidth, c.danger.copy(alpha = 0.42f)) else null,
                                         modifier = Modifier.fillMaxWidth(),
                                     ) {
                                         Column(
@@ -703,10 +728,14 @@ fun ExternalImportSheet(
                             onClick = { importSyncedProviders = !importSyncedProviders },
                             shape = RoundedCornerShape(12.dp),
                             color = if (importSyncedProviders) c.successBg else c.surfaceSoft,
-                            border = BorderStroke(
-                                theme.borderWidth,
-                                if (importSyncedProviders) c.success.copy(alpha = 0.45f) else c.border,
-                            ),
+                            border = if (theme.isDark) {
+                                BorderStroke(
+                                    theme.borderWidth,
+                                    if (importSyncedProviders) c.success.copy(alpha = 0.45f) else c.border,
+                                )
+                            } else {
+                                null
+                            },
                             modifier = Modifier.fillMaxWidth(),
                         ) {
                             Row(
