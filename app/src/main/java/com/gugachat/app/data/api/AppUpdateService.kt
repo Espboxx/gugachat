@@ -75,6 +75,25 @@ data class AppUpdateInfo(
     val cnProxies: List<String> = emptyList(),
     val cnDownloadPage: String? = null,
     val resolvedSourceLabel: String = "",
+    val resolvedAbi: String? = null,
+)
+
+internal data class ApkAssetSpec(
+    val abi: String,
+    val downloadUrl: String,
+    val fileName: String?,
+    val sizeBytes: Long,
+    val sha256: String?,
+    val cnApkUrls: List<String> = emptyList(),
+)
+
+internal data class SelectedApkResult(
+    val apkDownloadUrl: String?,
+    val apkFileName: String?,
+    val apkSizeBytes: Long,
+    val apkSha256: String?,
+    val resolvedAbi: String?,
+    val cnApkUrls: List<String> = emptyList(),
 )
 
 sealed interface UpdateCheckResult {
@@ -322,10 +341,118 @@ object AppUpdateService {
             ?: RELEASES_PAGE_URL
     }
 
+    private val UNIVERSAL_ABI_TOKEN_RE = Regex("(^|[^a-z0-9])universal([^a-z0-9]|$)")
+    private val X86_ABI_TOKEN_RE = Regex("(^|[^a-z0-9])x86([^a-z0-9_]|$)")
+
+    fun defaultSupportedAbis(): List<String> {
+        val rawAbis: Array<String>? = Build.SUPPORTED_ABIS
+        return rawAbis
+            ?.map { it.trim() }
+            ?.filter { it.isNotEmpty() }
+            ?.takeIf { it.isNotEmpty() }
+            ?: listOf("arm64-v8a")
+    }
+
+    internal fun classifyApkAbi(fileNameOrUrl: String): String {
+        val candidate = fileNameOrUrl.trim()
+            .substringBefore('?')
+            .substringBefore('#')
+            .substringAfterLast('/')
+            .lowercase(Locale.ROOT)
+        if (candidate.isEmpty()) return "universal"
+        if (UNIVERSAL_ABI_TOKEN_RE.containsMatchIn(candidate)) return "universal"
+        if (candidate.contains("arm64-v8a") || candidate.contains("arm64_v8a")) return "arm64-v8a"
+        if (candidate.contains("armeabi-v7a") || candidate.contains("armeabi_v7a")) return "armeabi-v7a"
+        if (candidate.contains("x86_64")) return "x86_64"
+        if (X86_ABI_TOKEN_RE.containsMatchIn(candidate)) return "x86"
+        return "universal"
+    }
+
+    internal fun selectApkForDeviceAbis(
+        supportedAbis: List<String>,
+        abiApks: Map<String, ApkAssetSpec>,
+        assets: List<ApkAssetSpec>,
+        topLevelFallback: ApkAssetSpec? = null,
+        topLevelCnApkUrls: List<String> = emptyList(),
+    ): SelectedApkResult {
+        val normalizedDeviceAbis = supportedAbis
+            .map { it.trim().lowercase(Locale.ROOT) }
+            .filter { it.isNotEmpty() }
+            .ifEmpty { listOf("arm64-v8a") }
+        val normalizedAbiMap = abiApks.entries.associate { (k, v) ->
+            k.trim().lowercase(Locale.ROOT) to v
+        }
+
+        fun findForAbi(abi: String): ApkAssetSpec? =
+            normalizedAbiMap[abi]
+                ?: assets.firstOrNull { it.abi == abi }
+                ?: topLevelFallback?.takeIf { it.abi == abi }
+
+        fun resolveCnUrls(selected: ApkAssetSpec, resolvedAbi: String): List<String> {
+            if (selected.cnApkUrls.isNotEmpty()) return selected.cnApkUrls
+            if (topLevelCnApkUrls.isEmpty()) return emptyList()
+            val topAbi = topLevelFallback?.abi
+            return topLevelCnApkUrls.filter { url ->
+                val urlAbi = classifyApkAbi(url)
+                urlAbi == resolvedAbi || (
+                    urlAbi == "universal" && (
+                        resolvedAbi == "universal" ||
+                            topAbi == null ||
+                            topAbi == resolvedAbi ||
+                            topAbi == "universal"
+                        )
+                    )
+            }
+        }
+
+        for (abi in normalizedDeviceAbis) {
+            val match = findForAbi(abi)
+            if (match != null) {
+                return SelectedApkResult(
+                    apkDownloadUrl = match.downloadUrl,
+                    apkFileName = match.fileName,
+                    apkSizeBytes = match.sizeBytes,
+                    apkSha256 = match.sha256,
+                    resolvedAbi = abi,
+                    cnApkUrls = resolveCnUrls(match, abi),
+                )
+            }
+        }
+
+        val universalMatch = findForAbi("universal")
+        if (universalMatch != null) {
+            return SelectedApkResult(
+                apkDownloadUrl = universalMatch.downloadUrl,
+                apkFileName = universalMatch.fileName,
+                apkSizeBytes = universalMatch.sizeBytes,
+                apkSha256 = universalMatch.sha256,
+                resolvedAbi = "universal",
+                cnApkUrls = resolveCnUrls(universalMatch, "universal"),
+            )
+        }
+
+        return SelectedApkResult(
+            apkDownloadUrl = null,
+            apkFileName = null,
+            apkSizeBytes = 0L,
+            apkSha256 = null,
+            resolvedAbi = null,
+            cnApkUrls = emptyList(),
+        )
+    }
+
+    private fun urlFileName(url: String): String? =
+        url.substringBefore('?')
+            .substringBefore('#')
+            .substringAfterLast('/')
+            .trim()
+            .takeIf { it.isNotEmpty() }
+
     internal fun parseReleasePayload(
         bodyText: String,
         currentVersion: String,
         sourceLabel: String = "",
+        supportedAbis: List<String> = defaultSupportedAbis(),
     ): UpdateCheckResult {
         val obj = runCatching { AppJson.parseToJsonElement(bodyText) as? JsonObject }.getOrNull()
             ?: return UpdateCheckResult.Error("Invalid release payload")
@@ -357,27 +484,89 @@ object AppUpdateService {
         val notes = obj.str("body").orEmpty().trim()
         val publishedAt = obj.str("published_at")
 
-        // Support BOTH GitHub Release API (`assets[]`) AND static `docs/latest-release.json` (`apk_url`, `cn_*`)
-        val assets = obj["assets"] as? JsonArray
-        val apkAsset = assets?.mapNotNull { it as? JsonObject }?.firstOrNull { asset ->
-            val name = asset.str("name").orEmpty().lowercase(Locale.ROOT)
-            val dl = asset.str("browser_download_url").orEmpty()
-            name.endsWith(".apk") && dl.startsWith("http")
+        val topApkUrl = obj.str("apk_url")?.takeIf { it.startsWith("http") }
+        val topApkName = obj.str("apk_name")?.takeIf { it.isNotBlank() }
+        val topApkSize = (obj["apk_size"] as? JsonPrimitive)?.longOrNull ?: 0L
+        val topApkSha = normalizeSha256(obj.str("apk_sha256"))
+        val topCnApkUrls = obj.strList("cn_apk_urls")
+            .filter { it.startsWith("http://") || it.startsWith("https://") }
+
+        val abiMap = LinkedHashMap<String, ApkAssetSpec>()
+        val abiObj = obj["abi_apks"] as? JsonObject
+        abiObj?.forEach { (abiKey, el) ->
+            val entry = el as? JsonObject ?: return@forEach
+            val url = (entry.str("apk_url") ?: entry.str("url") ?: entry.str("browser_download_url"))
+                ?.takeIf { it.startsWith("http") }
+                ?: return@forEach
+            val name = (entry.str("apk_name") ?: entry.str("name"))
+                ?.takeIf { it.isNotBlank() }
+                ?: urlFileName(url)
+            val size = (entry["apk_size"] as? JsonPrimitive)?.longOrNull
+                ?: (entry["size"] as? JsonPrimitive)?.longOrNull
+                ?: 0L
+            val sha = normalizeSha256(entry.str("apk_sha256") ?: entry.str("sha256") ?: entry.str("digest"))
+            val entryCnUrls = entry.strList("cn_apk_urls")
+                .filter { it.startsWith("http://") || it.startsWith("https://") }
+            val normAbi = abiKey.trim().lowercase(Locale.ROOT)
+            if (normAbi.isNotEmpty()) {
+                abiMap[normAbi] = ApkAssetSpec(
+                    abi = normAbi,
+                    downloadUrl = url,
+                    fileName = name,
+                    sizeBytes = size,
+                    sha256 = sha,
+                    cnApkUrls = entryCnUrls,
+                )
+            }
         }
 
-        val apkUrl = apkAsset?.str("browser_download_url")
-            ?: obj.str("apk_url")?.takeIf { it.startsWith("http") }
-        val apkFileName = apkAsset?.str("name")
-            ?: obj.str("apk_name")?.takeIf { it.isNotBlank() }
-        val apkSizeBytes = (apkAsset?.get("size") as? JsonPrimitive)?.longOrNull
-            ?: (obj["apk_size"] as? JsonPrimitive)?.longOrNull
-            ?: 0L
-        val rawSha = obj.str("apk_sha256")
-            ?: apkAsset?.str("digest")
-        val normalizedSha = normalizeSha256(rawSha)
+        // Support BOTH GitHub Release API (`assets[]`) AND static `docs/latest-release.json` (`abi_apks`, `apk_url`, `cn_*`)
+        val rawAssets = (obj["assets"] as? JsonArray)
+            ?.mapNotNull { it as? JsonObject }
+            ?.mapNotNull { asset ->
+                val name = asset.str("name")?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                val dl = asset.str("browser_download_url")?.takeIf { it.startsWith("http") } ?: return@mapNotNull null
+                if (!name.lowercase(Locale.ROOT).endsWith(".apk")) return@mapNotNull null
+                val size = (asset["size"] as? JsonPrimitive)?.longOrNull ?: 0L
+                val digest = normalizeSha256(asset.str("digest"))
+                val matchesTop = (topApkUrl != null && dl == topApkUrl) || (topApkName != null && name == topApkName)
+                val sha = digest ?: if (matchesTop) topApkSha else null
+                ApkAssetSpec(
+                    abi = classifyApkAbi(name),
+                    downloadUrl = dl,
+                    fileName = name,
+                    sizeBytes = size,
+                    sha256 = sha,
+                )
+            }
+            ?: emptyList()
+        val assets = if (rawAssets.size == 1 && topApkUrl == null && abiMap.isEmpty() && rawAssets[0].sha256 == null && topApkSha != null) {
+            listOf(rawAssets[0].copy(sha256 = topApkSha))
+        } else {
+            rawAssets
+        }
 
-        val cnApkUrls = obj.strList("cn_apk_urls")
-            .filter { it.startsWith("http://") || it.startsWith("https://") }
+        val topLevelFallback = if (topApkUrl != null) {
+            val topName = topApkName ?: urlFileName(topApkUrl)
+            ApkAssetSpec(
+                abi = classifyApkAbi(topName.orEmpty()),
+                downloadUrl = topApkUrl,
+                fileName = topName,
+                sizeBytes = topApkSize,
+                sha256 = topApkSha,
+            )
+        } else {
+            null
+        }
+
+        val selectedApk = selectApkForDeviceAbis(
+            supportedAbis = supportedAbis,
+            abiApks = abiMap,
+            assets = assets,
+            topLevelFallback = topLevelFallback,
+            topLevelCnApkUrls = topCnApkUrls,
+        )
+
         val cnProxies = obj.strList("cn_proxies")
             .mapNotNull(::normalizeProxyPrefix)
         val cnDownloadPage = obj.str("cn_download_page")
@@ -391,15 +580,16 @@ object AppUpdateService {
                 releaseTitle = title,
                 releaseNotes = notes,
                 htmlUrl = htmlUrl,
-                apkDownloadUrl = apkUrl,
-                apkFileName = apkFileName,
-                apkSizeBytes = apkSizeBytes,
+                apkDownloadUrl = selectedApk.apkDownloadUrl,
+                apkFileName = selectedApk.apkFileName,
+                apkSizeBytes = selectedApk.apkSizeBytes,
                 publishedAt = publishedAt,
-                apkSha256 = normalizedSha,
-                cnApkUrls = cnApkUrls,
+                apkSha256 = selectedApk.apkSha256,
+                cnApkUrls = selectedApk.cnApkUrls,
                 cnProxies = cnProxies,
                 cnDownloadPage = cnDownloadPage,
                 resolvedSourceLabel = sourceLabel,
+                resolvedAbi = selectedApk.resolvedAbi,
             ),
         )
     }
@@ -408,6 +598,7 @@ object AppUpdateService {
         httpClient: OkHttpClient,
         currentVersion: String = BuildConfig.VERSION_NAME,
         endpointUrl: String = LATEST_RELEASE_API,
+        supportedAbis: List<String> = defaultSupportedAbis(),
     ): UpdateCheckResult {
         val endpoint = UpdateMetadataEndpoint(
             label = if (endpointUrl.contains("api.github.com")) "GitHub API" else hostLabelOf(endpointUrl),
@@ -421,6 +612,7 @@ object AppUpdateService {
             connectTimeoutSec = 15,
             readTimeoutSec = 20,
             treat404AsUpToDate = true,
+            supportedAbis = supportedAbis,
         )
     }
 
@@ -430,6 +622,7 @@ object AppUpdateService {
         channel: UpdateChannel = UpdateChannel.AUTO,
         preferCn: Boolean = true,
         endpointsOverride: List<UpdateMetadataEndpoint>? = null,
+        supportedAbis: List<String> = defaultSupportedAbis(),
     ): UpdateCheckResult {
         val endpoints = endpointsOverride ?: buildMetadataEndpoints(channel, preferCn)
         if (endpoints.isEmpty()) return UpdateCheckResult.Error("No update endpoints configured")
@@ -447,6 +640,7 @@ object AppUpdateService {
                 connectTimeoutSec = 7,
                 readTimeoutSec = 10,
                 treat404AsUpToDate = ep.isGitHubApi,
+                supportedAbis = supportedAbis,
             )
             when (res) {
                 is UpdateCheckResult.UpdateAvailable -> return res
@@ -480,6 +674,7 @@ object AppUpdateService {
         connectTimeoutSec: Long,
         readTimeoutSec: Long,
         treat404AsUpToDate: Boolean,
+        supportedAbis: List<String> = defaultSupportedAbis(),
     ): UpdateCheckResult {
         val checkClient = httpClient.newBuilder()
             .followRedirects(true)
@@ -532,6 +727,7 @@ object AppUpdateService {
                 bodyText = bodyText,
                 currentVersion = currentVersion,
                 sourceLabel = endpoint.label,
+                supportedAbis = supportedAbis,
             )
         } catch (ce: CancellationException) {
             throw ce
@@ -857,6 +1053,7 @@ class AppUpdateController(
                     val info = res.info
                     val cached = cachedApkFile(info)
                     val cachedValid = withContext(Dispatchers.IO) {
+                        if (info.apkDownloadUrl == null) return@withContext false
                         if (!cached.exists() || cached.length() <= 0L) return@withContext false
                         if (info.apkSizeBytes > 0L && cached.length() != info.apkSizeBytes) return@withContext false
                         val expectedSha = info.apkSha256
@@ -1024,7 +1221,8 @@ class AppUpdateController(
     private fun cachedApkFile(info: AppUpdateInfo): File {
         val updatesDir = File(appContext.cacheDir, "updates")
         val safeTag = info.versionName.replace(Regex("[^A-Za-z0-9._-]"), "_")
-        return File(updatesDir, "gugachat-v$safeTag.apk")
+        val safeAbi = (info.resolvedAbi ?: "universal").replace(Regex("[^A-Za-z0-9._-]"), "_")
+        return File(updatesDir, "gugachat-v$safeTag-$safeAbi.apk")
     }
 
     private fun cleanOldUpdateApks(keepFileName: String) {
