@@ -33,6 +33,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -41,8 +42,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.EmojiEvents
@@ -58,7 +61,6 @@ import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -73,6 +75,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -82,15 +85,19 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -99,7 +106,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.DialogWindowProvider
 import androidx.compose.ui.zIndex
+import androidx.core.view.WindowCompat
 import coil.compose.rememberAsyncImagePainter
 import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.i18n.LocalAppStrings
@@ -108,7 +117,8 @@ import com.gugachat.app.core.theme.GuBadge
 import com.gugachat.app.core.theme.GuBadgeVariant
 import com.gugachat.app.core.theme.GuButton
 import com.gugachat.app.core.theme.GuButtonVariant
-import com.gugachat.app.core.theme.GuConfirmDialog
+import com.gugachat.app.core.theme.GuMetaText
+import com.gugachat.app.core.theme.GuModalDragHandle
 import com.gugachat.app.core.theme.GuSheetHeader
 import com.gugachat.app.core.theme.GuTextField
 import com.gugachat.app.core.theme.LocalAppTheme
@@ -129,7 +139,7 @@ import com.gugachat.app.domain.chat.activeVariant
 import java.io.File
 import kotlin.math.abs
 
-// ==================== Shared RP 3.0 Visual Components ====================
+// ==================== Shared RP Visual Components ====================
 
 private val PORTRAIT_GRADIENTS = listOf(
     Color(0xFF8B3A62) to Color(0xFF34162E),
@@ -191,7 +201,7 @@ fun RpNpcPortraitAvatar(
     val c = LocalAppTheme.current.colors
     val displayName = character?.name?.takeIf { it.isNotBlank() } ?: fallbackName
     val shape = if (cornerRadius != null) RoundedCornerShape(cornerRadius) else CircleShape
-    val effectiveBorder = borderColor ?: c.accent.copy(alpha = 0.55f)
+    val effectiveBorder = borderColor ?: c.accent.copy(alpha = 0.45f)
     val resolvedPath = remember(
         character?.mood,
         character?.expressionSprites,
@@ -213,7 +223,7 @@ fun RpNpcPortraitAvatar(
             modifier = modifier
                 .size(size)
                 .clip(shape)
-                .border(1.2.dp, effectiveBorder, shape),
+                .border(0.8.dp, effectiveBorder, shape),
         )
     } else {
         val pair = PORTRAIT_GRADIENTS[abs(displayName.hashCode()) % PORTRAIT_GRADIENTS.size]
@@ -224,14 +234,14 @@ fun RpNpcPortraitAvatar(
                 .size(size)
                 .clip(shape)
                 .background(Brush.linearGradient(listOf(pair.first, pair.second)))
-                .border(1.2.dp, effectiveBorder, shape),
+                .border(0.8.dp, effectiveBorder, shape),
             contentAlignment = Alignment.Center,
         ) {
             Text(
                 text = initial,
                 color = Color(0xFFFFF5E1),
                 fontSize = fontSize,
-                fontWeight = FontWeight.ExtraBold,
+                fontWeight = FontWeight.Bold,
             )
         }
     }
@@ -261,13 +271,13 @@ fun RpTurnDeltaStrip(
                 Surface(
                     shape = RoundedCornerShape(999.dp),
                     color = bg,
-                    border = BorderStroke(0.8.dp, border),
+                    border = BorderStroke(0.6.dp, border),
                 ) {
                     Text(
                         text = displayText,
                         color = fg,
                         fontSize = 10.5.sp,
-                        fontWeight = FontWeight.Bold,
+                        fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.5.dp),
@@ -287,13 +297,13 @@ fun RpTurnDeltaStrip(
                 Surface(
                     shape = RoundedCornerShape(999.dp),
                     color = bg,
-                    border = BorderStroke(0.8.dp, border),
+                    border = BorderStroke(0.6.dp, border),
                 ) {
                     Text(
                         text = displayText,
                         color = fg,
                         fontSize = 10.5.sp,
-                        fontWeight = FontWeight.Bold,
+                        fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
@@ -326,66 +336,66 @@ private fun resolveDeltaColors(
         val baseBg = Color(0xCC121726)
         return when (delta.kind.lowercase()) {
             "affinity" -> if (delta.positive) {
-                Triple(Color(0xCC3B1D2C), Color(0xFFFFB4CE), Color(0x99F472B6))
+                Triple(Color(0xCC3B1D2C), Color(0xFFFFB4CE), Color(0x70F472B6))
             } else {
-                Triple(Color(0xCC3B151B), Color(0xFFFCA5A5), Color(0x99F87171))
+                Triple(Color(0xCC3B151B), Color(0xFFFCA5A5), Color(0x70F87171))
             }
             "hp" -> if (delta.positive) {
-                Triple(Color(0xCC122F22), Color(0xFF86EFAC), Color(0x994ADE80))
+                Triple(Color(0xCC122F22), Color(0xFF86EFAC), Color(0x704ADE80))
             } else {
-                Triple(Color(0xCC3B151B), Color(0xFFFCA5A5), Color(0x99F87171))
+                Triple(Color(0xCC3B151B), Color(0xFFFCA5A5), Color(0x70F87171))
             }
             "mp" -> if (delta.positive) {
-                Triple(Color(0xCC172544), Color(0xFFA5C4FF), Color(0x9960A5FA))
+                Triple(Color(0xCC172544), Color(0xFFA5C4FF), Color(0x7060A5FA))
             } else {
-                Triple(Color(0xCC362510), Color(0xFFFDE68A), Color(0x99FBBF24))
+                Triple(Color(0xCC362510), Color(0xFFFDE68A), Color(0x70FBBF24))
             }
-            "gold", "chapter" -> Triple(Color(0xCC382812), Color(0xFFFDE68A), Color(0x99F59E0B))
+            "gold", "chapter" -> Triple(Color(0xCC382812), Color(0xFFFDE68A), Color(0x70F59E0B))
             "ending" -> if (delta.positive) {
-                Triple(Color(0xCC3E2B10), Color(0xFFFDE047), Color(0xCCF59E0B))
-            } else {
-                Triple(Color(0xCC3B151B), Color(0xFFFCA5A5), Color(0xCCF87171))
-            }
-            "item_add", "quest" -> Triple(Color(0xCC132E27), Color(0xFF7DD3FC), Color(0x9938BDF8))
-            "item_remove" -> Triple(Color(0xCC332414), Color(0xFFFCD34D), Color(0x88F59E0B))
-            "flag" -> Triple(baseBg, Color(0xFFCBD5E1), Color(0x6694A3B8))
-            else -> if (delta.positive) {
-                Triple(Color(0xCC172642), Color(0xFF93C5FD), Color(0x8860A5FA))
+                Triple(Color(0xCC3E2B10), Color(0xFFFDE047), Color(0x99F59E0B))
             } else {
                 Triple(Color(0xCC3B151B), Color(0xFFFCA5A5), Color(0x99F87171))
+            }
+            "item_add", "quest" -> Triple(Color(0xCC132E27), Color(0xFF7DD3FC), Color(0x7038BDF8))
+            "item_remove" -> Triple(Color(0xCC332414), Color(0xFFFCD34D), Color(0x66F59E0B))
+            "flag" -> Triple(baseBg, Color(0xFFCBD5E1), Color(0x4494A3B8))
+            else -> if (delta.positive) {
+                Triple(Color(0xCC172642), Color(0xFF93C5FD), Color(0x6660A5FA))
+            } else {
+                Triple(Color(0xCC3B151B), Color(0xFFFCA5A5), Color(0x70F87171))
             }
         }
     }
     return when (delta.kind.lowercase()) {
         "affinity" -> if (delta.positive) {
-            Triple(c.tag, c.tagInk, c.accent.copy(alpha = 0.55f))
+            Triple(c.tag, c.tagInk, c.accent.copy(alpha = 0.4f))
         } else {
-            Triple(c.dangerBg, c.danger, c.danger.copy(alpha = 0.45f))
+            Triple(c.dangerBg, c.danger, c.danger.copy(alpha = 0.35f))
         }
         "hp" -> if (delta.positive) {
-            Triple(c.successBg, c.success, c.success.copy(alpha = 0.45f))
+            Triple(c.successBg, c.success, c.success.copy(alpha = 0.35f))
         } else {
-            Triple(c.dangerBg, c.danger, c.danger.copy(alpha = 0.45f))
+            Triple(c.dangerBg, c.danger, c.danger.copy(alpha = 0.35f))
         }
         "mp" -> if (delta.positive) {
-            Triple(c.primarySoft, c.primarySoftInk, c.primary.copy(alpha = 0.45f))
+            Triple(c.primarySoft, c.primarySoftInk, c.primary.copy(alpha = 0.35f))
         } else {
-            Triple(c.warningBg, c.warning, c.warning.copy(alpha = 0.45f))
+            Triple(c.warningBg, c.warning, c.warning.copy(alpha = 0.35f))
         }
-        "gold", "chapter" -> Triple(c.tag, c.tagInk, c.accent.copy(alpha = 0.5f))
+        "gold", "chapter" -> Triple(c.tag, c.tagInk, c.accent.copy(alpha = 0.4f))
         "ending" -> if (delta.positive) {
-            Triple(c.tag, c.tagInk, c.accent.copy(alpha = 0.7f))
-        } else {
-            Triple(c.dangerBg, c.danger, c.danger.copy(alpha = 0.6f))
-        }
-        "item_add" -> Triple(c.successBg, c.success, c.success.copy(alpha = 0.45f))
-        "item_remove" -> Triple(c.warningBg, c.warning, c.warning.copy(alpha = 0.45f))
-        "quest" -> Triple(c.primarySoft, c.primarySoftInk, c.primary.copy(alpha = 0.4f))
-        "flag" -> Triple(c.surfaceSoft, c.muted, c.border)
-        else -> if (delta.positive) {
-            Triple(c.primarySoft, c.primarySoftInk, c.primary.copy(alpha = 0.42f))
+            Triple(c.tag, c.tagInk, c.accent.copy(alpha = 0.5f))
         } else {
             Triple(c.dangerBg, c.danger, c.danger.copy(alpha = 0.45f))
+        }
+        "item_add" -> Triple(c.successBg, c.success, c.success.copy(alpha = 0.35f))
+        "item_remove" -> Triple(c.warningBg, c.warning, c.warning.copy(alpha = 0.35f))
+        "quest" -> Triple(c.primarySoft, c.primarySoftInk, c.primary.copy(alpha = 0.32f))
+        "flag" -> Triple(c.surfaceSoft, c.muted, c.border)
+        else -> if (delta.positive) {
+            Triple(c.primarySoft, c.primarySoftInk, c.primary.copy(alpha = 0.35f))
+        } else {
+            Triple(c.dangerBg, c.danger, c.danger.copy(alpha = 0.35f))
         }
     }
 }
@@ -426,7 +436,7 @@ fun RpEndingCard(
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
         color = Color.Transparent,
-        border = BorderStroke(1.dp, accentColor.copy(alpha = 0.72f)),
+        border = BorderStroke(0.8.dp, accentColor.copy(alpha = 0.65f)),
         shadowElevation = 4.dp,
     ) {
         Row(
@@ -439,17 +449,17 @@ fun RpEndingCard(
         ) {
             Box(
                 modifier = Modifier
-                    .size(44.dp)
+                    .size(42.dp)
                     .clip(CircleShape)
                     .background(accentColor.copy(alpha = 0.18f))
-                    .border(1.dp, accentColor.copy(alpha = 0.65f), CircleShape),
+                    .border(0.8.dp, accentColor.copy(alpha = 0.55f), CircleShape),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     imageVector = Icons.Default.EmojiEvents,
                     contentDescription = null,
                     tint = accentColor,
-                    modifier = Modifier.size(24.dp),
+                    modifier = Modifier.size(22.dp),
                 )
             }
             Column(
@@ -465,14 +475,14 @@ fun RpEndingCard(
                         text = strings.rp.endingUnlockedBanner,
                         color = accentColor,
                         fontSize = 11.5.sp,
-                        fontWeight = FontWeight.ExtraBold,
+                        fontWeight = FontWeight.Bold,
                     )
                 }
                 Text(
                     text = ending.title,
                     color = Color(0xFFFDF8EE),
-                    fontSize = 15.5.sp,
-                    fontWeight = FontWeight.ExtraBold,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -508,24 +518,65 @@ fun RpChoiceDeck(
     val stageHighlight = accentColor ?: Color(0xFFE8B95B)
     var forceConfirmTarget by remember { mutableStateOf<Pair<RpChoice, String>?>(null) }
 
-    forceConfirmTarget?.let { (choice, reason) ->
-        GuConfirmDialog(
-            title = strings.rp.choiceForceConfirmTitle,
-            message = strings.rp.choiceForceConfirmMsg.fmt("reason" to reason),
-            confirmText = strings.rp.choiceForceProceed,
-            cancelText = strings.common.cancel,
-            onConfirm = {
-                forceConfirmTarget = null
-                onSelectChoice(choice, true)
-            },
-            onDismiss = { forceConfirmTarget = null },
-        )
-    }
-
     Column(
         modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(if (onDarkStage) 5.dp else 7.dp),
+        verticalArrangement = Arrangement.spacedBy(if (onDarkStage) 5.dp else 6.dp),
     ) {
+        // Inline non-modal lock bypass confirm bar (no AlertDialog)
+        forceConfirmTarget?.let { (choice, reason) ->
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = if (onDarkStage) Color(0xE826161C) else c.dangerBg,
+                border = BorderStroke(0.6.dp, if (onDarkStage) Color(0x99F87171) else c.danger.copy(alpha = 0.45f)),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp, vertical = 7.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        text = strings.rp.choiceForceConfirmMsg.fmt("reason" to reason),
+                        color = if (onDarkStage) Color(0xFFFECACA) else c.danger,
+                        fontSize = 11.5.sp,
+                        lineHeight = 15.5.sp,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(
+                        onClick = { forceConfirmTarget = null },
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                    ) {
+                        Text(
+                            text = strings.common.cancel,
+                            color = if (onDarkStage) Color(0xFFCBD5E1) else c.muted,
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.Medium,
+                        )
+                    }
+                    Surface(
+                        onClick = {
+                            forceConfirmTarget = null
+                            onSelectChoice(choice, true)
+                        },
+                        shape = RoundedCornerShape(999.dp),
+                        color = if (onDarkStage) Color(0xFFDC2626) else c.danger,
+                    ) {
+                        Text(
+                            text = strings.rp.choiceForceProceed,
+                            color = Color.White,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+                        )
+                    }
+                }
+            }
+        }
+
         choices.forEachIndexed { idx, choice ->
             val eval = remember(choice, rp) {
                 if (rp != null) RpEngine.evaluateChoiceCondition(choice, rp) else RpChoiceEval(unlocked = true)
@@ -560,11 +611,6 @@ fun RpChoiceDeck(
                     listOf(c.surface, c.surfaceSoft.copy(alpha = 0.65f)),
                 )
             }
-            val cardBorderColor = when {
-                !eval.unlocked -> if (onDarkStage) Color(0x5294A3B8) else c.outline.copy(alpha = 0.65f)
-                onDarkStage -> toneAccent.copy(alpha = 0.52f)
-                else -> toneAccent.copy(alpha = 0.36f)
-            }
             val titleColor = when {
                 onDarkStage && !eval.unlocked -> Color(0xFFB3BDCE)
                 onDarkStage -> Color(0xFFF6F8FD)
@@ -586,12 +632,19 @@ fun RpChoiceDeck(
                     }
                 },
                 enabled = enabled,
-                shape = RoundedCornerShape(14.dp),
+                shape = RoundedCornerShape(12.dp),
                 color = Color.Transparent,
-                border = BorderStroke(0.8.dp, cardBorderColor),
+                border = BorderStroke(
+                    width = 0.5.dp,
+                    color = when {
+                        !eval.unlocked -> if (onDarkStage) Color(0x4094A3B8) else c.outline.copy(alpha = 0.45f)
+                        onDarkStage -> toneAccent.copy(alpha = 0.42f)
+                        else -> toneAccent.copy(alpha = 0.28f)
+                    },
+                ),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .alpha(if (eval.unlocked) 1f else 0.84f),
+                    .alpha(if (eval.unlocked) 1f else 0.85f),
             ) {
                 Row(
                     modifier = Modifier
@@ -604,34 +657,19 @@ fun RpChoiceDeck(
                                 topLeft = Offset.Zero,
                                 size = Size(stripW, size.height),
                             )
-                            if (eval.unlocked) {
-                                drawRect(
-                                    brush = Brush.horizontalGradient(
-                                        colors = listOf(
-                                            toneAccent.copy(alpha = if (onDarkStage) 0.14f else 0.08f),
-                                            Color.Transparent,
-                                        ),
-                                        startX = stripW,
-                                        endX = stripW + 52.dp.toPx(),
-                                    ),
-                                    topLeft = Offset(stripW, 0f),
-                                    size = Size(52.dp.toPx(), size.height),
-                                )
-                            }
                         }
                         .padding(
-                            start = if (onDarkStage) 10.dp else 13.dp,
-                            end = if (onDarkStage) 10.dp else 12.dp,
-                            top = if (onDarkStage) 7.dp else 9.dp,
-                            bottom = if (onDarkStage) 7.dp else 9.dp,
+                            start = if (onDarkStage) 10.dp else 12.dp,
+                            end = if (onDarkStage) 10.dp else 11.dp,
+                            top = if (onDarkStage) 6.dp else 7.5.dp,
+                            bottom = if (onDarkStage) 6.dp else 7.5.dp,
                         ),
-                    verticalAlignment = Alignment.Top,
-                    horizontalArrangement = Arrangement.spacedBy(if (onDarkStage) 8.dp else 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(if (onDarkStage) 8.dp else 9.dp),
                 ) {
                     Box(
                         modifier = Modifier
-                            .padding(top = 1.dp)
-                            .size(if (onDarkStage) 21.dp else 24.dp)
+                            .size(if (onDarkStage) 20.dp else 22.dp)
                             .clip(CircleShape)
                             .background(
                                 if (!eval.unlocked) {
@@ -647,14 +685,14 @@ fun RpChoiceDeck(
                                 imageVector = Icons.Default.Lock,
                                 contentDescription = strings.rp.choiceLockedLabel,
                                 tint = Color.White,
-                                modifier = Modifier.size(if (onDarkStage) 11.5.dp else 13.dp),
+                                modifier = Modifier.size(11.dp),
                             )
                         } else {
                             Text(
                                 text = "${idx + 1}",
                                 color = Color.White,
-                                fontSize = if (onDarkStage) 10.5.sp else 11.5.sp,
-                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 10.5.sp,
+                                fontWeight = FontWeight.Bold,
                             )
                         }
                     }
@@ -666,7 +704,7 @@ fun RpChoiceDeck(
 
                     Column(
                         modifier = Modifier.weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(if (onDarkStage) 3.dp else 5.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
                     ) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -677,50 +715,48 @@ fun RpChoiceDeck(
                                 text = choice.label,
                                 color = titleColor,
                                 fontSize = if (onDarkStage) 13.sp else 13.5.sp,
-                                lineHeight = if (onDarkStage) 17.5.sp else 19.sp,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = if (onDarkStage) 2 else Int.MAX_VALUE,
+                                lineHeight = 17.5.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = if (onDarkStage) 1 else 2,
                                 overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f, fill = false),
+                                modifier = Modifier.weight(1f),
                             )
-                            if (onDarkStage && toneMeta != null) {
+                            if (hasSkill) {
+                                val dcSuffix = choice.difficulty?.let { " DC$it" }.orEmpty()
+                                ChoiceMetaChip(
+                                    text = "🎲${choice.skillCheck}$dcSuffix",
+                                    variant = GuBadgeVariant.HONEY,
+                                    onDarkStage = onDarkStage,
+                                )
+                            } else if (toneMeta != null) {
                                 ChoiceMetaChip(
                                     text = toneMeta.first,
                                     variant = toneMeta.second,
-                                    onDarkStage = true,
+                                    onDarkStage = onDarkStage,
                                 )
                             }
                         }
 
-                        if (!choice.consequenceHint.isNullOrBlank()) {
-                            Text(
-                                text = choice.consequenceHint,
-                                color = subtitleColor,
-                                fontSize = if (onDarkStage) 11.sp else 11.5.sp,
-                                lineHeight = if (onDarkStage) 14.5.sp else 16.sp,
-                                fontStyle = FontStyle.Italic,
-                                maxLines = if (onDarkStage) 1 else 2,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-
-                        if ((!onDarkStage && toneMeta != null) || hasSkill || hasCost || showConditionPill) {
+                        if (!choice.consequenceHint.isNullOrBlank() || hasCost || showConditionPill || (hasSkill && toneMeta != null)) {
                             FlowRow(
                                 horizontalArrangement = Arrangement.spacedBy(5.dp),
-                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                                verticalArrangement = Arrangement.spacedBy(3.dp),
                             ) {
-                                if (!onDarkStage && toneMeta != null) {
+                                if (!choice.consequenceHint.isNullOrBlank()) {
+                                    Text(
+                                        text = choice.consequenceHint,
+                                        color = subtitleColor,
+                                        fontSize = 11.sp,
+                                        lineHeight = 14.sp,
+                                        fontStyle = FontStyle.Italic,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                                if (hasSkill && toneMeta != null) {
                                     ChoiceMetaChip(
                                         text = toneMeta.first,
                                         variant = toneMeta.second,
-                                        onDarkStage = false,
-                                    )
-                                }
-                                if (hasSkill) {
-                                    val dcSuffix = choice.difficulty?.let { " DC$it" }.orEmpty()
-                                    ChoiceMetaChip(
-                                        text = "🎲 ${choice.skillCheck}$dcSuffix",
-                                        variant = GuBadgeVariant.HONEY,
                                         onDarkStage = onDarkStage,
                                     )
                                 }
@@ -759,7 +795,7 @@ fun RpChoiceDeck(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             val ghostBg = if (onDarkStage) Color(0x99101522) else Color.Transparent
-            val ghostBorder = if (onDarkStage) Color(0x52B8C7E0) else c.border
+            val ghostBorder = if (onDarkStage) Color(0x40B8C7E0) else c.border
             val ghostFg = if (onDarkStage) Color(0xFFDCE4F5) else c.muted
 
             Surface(
@@ -767,10 +803,10 @@ fun RpChoiceDeck(
                 enabled = enabled && !isRefreshing,
                 shape = RoundedCornerShape(999.dp),
                 color = ghostBg,
-                border = BorderStroke(0.8.dp, ghostBorder),
+                border = BorderStroke(0.6.dp, ghostBorder),
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 11.dp, vertical = 5.dp),
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(5.dp),
                 ) {
@@ -785,14 +821,14 @@ fun RpChoiceDeck(
                             imageVector = Icons.Default.Refresh,
                             contentDescription = null,
                             tint = ghostFg,
-                            modifier = Modifier.size(14.dp),
+                            modifier = Modifier.size(13.dp),
                         )
                     }
                     Text(
                         text = if (isRefreshing) strings.rp.refreshingChoices else strings.rp.refreshChoicesBtn,
                         color = ghostFg,
-                        fontSize = 11.5.sp,
-                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
                     )
                 }
             }
@@ -855,33 +891,33 @@ private fun ChoiceMetaChip(
         return
     }
     val (bg, fg, border) = when (variant) {
-        GuBadgeVariant.HONEY -> Triple(Color(0xCC3B2613), Color(0xFFFDE68A), Color(0x88F59E0B))
-        GuBadgeVariant.AMBER -> Triple(Color(0xCC3A2711), Color(0xFFFCD34D), Color(0x88F59E0B))
-        GuBadgeVariant.BLUE -> Triple(Color(0xCC18264A), Color(0xFF93C5FD), Color(0x8860A5FA))
-        GuBadgeVariant.EMERALD -> Triple(Color(0xCC123023), Color(0xFF86EFAC), Color(0x884ADE80))
-        GuBadgeVariant.DANGER -> Triple(Color(0xCC3C161D), Color(0xFFFCA5A5), Color(0x88F87171))
-        GuBadgeVariant.NEUTRAL -> Triple(Color(0xAA1F273B), Color(0xFFCBD5E1), Color(0x6694A3B8))
+        GuBadgeVariant.HONEY -> Triple(Color(0xCC3B2613), Color(0xFFFDE68A), Color(0x66F59E0B))
+        GuBadgeVariant.AMBER -> Triple(Color(0xCC3A2711), Color(0xFFFCD34D), Color(0x66F59E0B))
+        GuBadgeVariant.BLUE -> Triple(Color(0xCC18264A), Color(0xFF93C5FD), Color(0x6660A5FA))
+        GuBadgeVariant.EMERALD -> Triple(Color(0xCC123023), Color(0xFF86EFAC), Color(0x664ADE80))
+        GuBadgeVariant.DANGER -> Triple(Color(0xCC3C161D), Color(0xFFFCA5A5), Color(0x66F87171))
+        GuBadgeVariant.NEUTRAL -> Triple(Color(0xAA1F273B), Color(0xFFCBD5E1), Color(0x4494A3B8))
     }
     Surface(
-        shape = RoundedCornerShape(999.dp),
+        shape = RoundedCornerShape(6.dp),
         color = bg,
-        border = BorderStroke(0.8.dp, border),
+        border = BorderStroke(0.5.dp, border),
     ) {
         Text(
             text = text,
             color = fg,
-            fontSize = 10.5.sp,
-            fontWeight = FontWeight.Bold,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.SemiBold,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.5.dp),
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
         )
     }
 }
 
 // ==================== Dialog Box Skins ====================
 
-private data class DialogSkinSpec(
+internal data class DialogSkinSpec(
     val boxBg: Color,
     val boxBorder: BorderStroke?,
     val boxShape: RoundedCornerShape,
@@ -904,7 +940,7 @@ private data class DialogSkinSpec(
     val isDarkSurface: Boolean,
 )
 
-private fun resolveDialogSkin(
+internal fun resolveDialogSkin(
     theme: RpVisualTheme,
     stageAccent: Color,
     customAccent: Color?,
@@ -935,19 +971,19 @@ private fun resolveDialogSkin(
             val gold = customAccent ?: Color(0xFFE0B954)
             DialogSkinSpec(
                 boxBg = Color(0xFF18101C).copy(alpha = opacity),
-                boxBorder = BorderStroke(1.2.dp, gold.copy(alpha = 0.85f)),
+                boxBorder = BorderStroke(1.dp, gold.copy(alpha = 0.80f)),
                 boxShape = RoundedCornerShape(
-                    topStart = if (hasTopLeftTab) 2.dp else 14.dp,
-                    topEnd = 14.dp,
-                    bottomStart = 14.dp,
-                    bottomEnd = 14.dp,
+                    topStart = if (hasTopLeftTab) 4.dp else 16.dp,
+                    topEnd = 16.dp,
+                    bottomStart = 16.dp,
+                    bottomEnd = 16.dp,
                 ),
                 topStripColor = gold.copy(alpha = 0.72f),
                 topStripHeight = 2.dp,
                 innerTopHighlight = gold.copy(alpha = 0.16f),
-                nameplateShape = RoundedCornerShape(topStart = 10.dp, topEnd = 14.dp, bottomStart = 0.dp, bottomEnd = 2.dp),
+                nameplateShape = RoundedCornerShape(topStart = 10.dp, topEnd = 14.dp, bottomStart = 2.dp, bottomEnd = 6.dp),
                 nameplateBg = Color(0xFF2B1724).copy(alpha = (opacity + 0.10f).coerceAtMost(0.98f)),
-                nameplateBorder = gold.copy(alpha = 0.92f),
+                nameplateBorder = gold.copy(alpha = 0.85f),
                 nameplateText = Color(0xFFFFF5DC),
                 nameplateMoodText = Color(0xFFE5CCA0),
                 nameplateDotColor = gold,
@@ -956,7 +992,7 @@ private fun resolveDialogSkin(
                 nameplateFontFamily = FontFamily.Serif,
                 bodyText = Color(0xFFFBF5E8),
                 mutedText = Color(0xFFD3C5AF),
-                dividerColor = gold.copy(alpha = 0.28f),
+                dividerColor = gold.copy(alpha = 0.25f),
                 markdownPalette = darkMarkdownPalette(accent = gold, text = Color(0xFFFBF5E8)),
                 isDarkSurface = true,
             )
@@ -982,7 +1018,7 @@ private fun resolveDialogSkin(
                 nameplateFontFamily = FontFamily.Default,
                 bodyText = Color(0xFFF4F7FD),
                 mutedText = Color(0xFFB5C2D9),
-                dividerColor = Color(0x24FFFFFF),
+                dividerColor = Color(0x20FFFFFF),
                 markdownPalette = darkMarkdownPalette(accent = stageAccent),
                 isDarkSurface = true,
             )
@@ -992,7 +1028,7 @@ private fun resolveDialogSkin(
             val neon = customAccent ?: Color(0xFF22D3EE)
             DialogSkinSpec(
                 boxBg = Color(0xFF07101B).copy(alpha = opacity),
-                boxBorder = BorderStroke(1.2.dp, neon.copy(alpha = 0.88f)),
+                boxBorder = BorderStroke(1.dp, neon.copy(alpha = 0.80f)),
                 boxShape = RoundedCornerShape(
                     topStart = 2.dp,
                     topEnd = 12.dp,
@@ -1004,7 +1040,7 @@ private fun resolveDialogSkin(
                 innerTopHighlight = neon.copy(alpha = 0.16f),
                 nameplateShape = RoundedCornerShape(topStart = 2.dp, topEnd = 10.dp, bottomStart = 0.dp, bottomEnd = 2.dp),
                 nameplateBg = Color(0xFF0A1D2E).copy(alpha = (opacity + 0.08f).coerceAtMost(0.98f)),
-                nameplateBorder = neon.copy(alpha = 0.95f),
+                nameplateBorder = neon.copy(alpha = 0.88f),
                 nameplateText = Color(0xFFE4FBFF),
                 nameplateMoodText = Color(0xFF7DD3FC),
                 nameplateDotColor = neon,
@@ -1013,7 +1049,7 @@ private fun resolveDialogSkin(
                 nameplateFontFamily = FontFamily.Monospace,
                 bodyText = Color(0xFFE5F6FC),
                 mutedText = Color(0xFF99C8DC),
-                dividerColor = neon.copy(alpha = 0.30f),
+                dividerColor = neon.copy(alpha = 0.28f),
                 markdownPalette = darkMarkdownPalette(accent = neon, text = Color(0xFFE5F6FC)),
                 isDarkSurface = true,
             )
@@ -1024,19 +1060,19 @@ private fun resolveDialogSkin(
                 val sepiaAccent = customAccent ?: Color(0xFFCFA76E)
                 DialogSkinSpec(
                     boxBg = Color(0xFF241B14).copy(alpha = opacity),
-                    boxBorder = BorderStroke(1.dp, sepiaAccent.copy(alpha = 0.65f)),
+                    boxBorder = BorderStroke(0.8.dp, sepiaAccent.copy(alpha = 0.60f)),
                     boxShape = RoundedCornerShape(
-                        topStart = if (hasTopLeftTab) 3.dp else 14.dp,
-                        topEnd = 14.dp,
-                        bottomStart = 14.dp,
-                        bottomEnd = 14.dp,
+                        topStart = if (hasTopLeftTab) 4.dp else 16.dp,
+                        topEnd = 16.dp,
+                        bottomStart = 16.dp,
+                        bottomEnd = 16.dp,
                     ),
                     topStripColor = sepiaAccent.copy(alpha = 0.42f),
                     topStripHeight = 1.5.dp,
                     innerTopHighlight = sepiaAccent.copy(alpha = 0.12f),
                     nameplateShape = defaultTabShape,
                     nameplateBg = Color(0xFF33261B).copy(alpha = (opacity + 0.08f).coerceAtMost(0.98f)),
-                    nameplateBorder = sepiaAccent.copy(alpha = 0.78f),
+                    nameplateBorder = sepiaAccent.copy(alpha = 0.72f),
                     nameplateText = Color(0xFFFCEBC9),
                     nameplateMoodText = Color(0xFFD6BE9A),
                     nameplateDotColor = sepiaAccent,
@@ -1045,7 +1081,7 @@ private fun resolveDialogSkin(
                     nameplateFontFamily = FontFamily.Serif,
                     bodyText = Color(0xFFF6ECDA),
                     mutedText = Color(0xFFCBBBA0),
-                    dividerColor = sepiaAccent.copy(alpha = 0.26f),
+                    dividerColor = sepiaAccent.copy(alpha = 0.24f),
                     markdownPalette = darkMarkdownPalette(accent = sepiaAccent, text = Color(0xFFF6ECDA)),
                     isDarkSurface = true,
                 )
@@ -1055,19 +1091,19 @@ private fun resolveDialogSkin(
                 val paperMuted = Color(0xFF6B5946)
                 DialogSkinSpec(
                     boxBg = Color(0xFFF7F0E2).copy(alpha = opacity),
-                    boxBorder = BorderStroke(1.dp, sepiaAccent.copy(alpha = 0.62f)),
+                    boxBorder = BorderStroke(0.8.dp, sepiaAccent.copy(alpha = 0.56f)),
                     boxShape = RoundedCornerShape(
-                        topStart = if (hasTopLeftTab) 3.dp else 14.dp,
-                        topEnd = 14.dp,
-                        bottomStart = 14.dp,
-                        bottomEnd = 14.dp,
+                        topStart = if (hasTopLeftTab) 4.dp else 16.dp,
+                        topEnd = 16.dp,
+                        bottomStart = 16.dp,
+                        bottomEnd = 16.dp,
                     ),
                     topStripColor = sepiaAccent.copy(alpha = 0.38f),
                     topStripHeight = 1.5.dp,
                     innerTopHighlight = Color.White.copy(alpha = 0.35f),
                     nameplateShape = defaultTabShape,
                     nameplateBg = Color(0xFFEDE0C8).copy(alpha = (opacity + 0.08f).coerceAtMost(0.98f)),
-                    nameplateBorder = sepiaAccent.copy(alpha = 0.75f),
+                    nameplateBorder = sepiaAccent.copy(alpha = 0.68f),
                     nameplateText = Color(0xFF3A2613),
                     nameplateMoodText = Color(0xFF7B6347),
                     nameplateDotColor = sepiaAccent,
@@ -1076,7 +1112,7 @@ private fun resolveDialogSkin(
                     nameplateFontFamily = FontFamily.Serif,
                     bodyText = paperInk,
                     mutedText = paperMuted,
-                    dividerColor = sepiaAccent.copy(alpha = 0.26f),
+                    dividerColor = sepiaAccent.copy(alpha = 0.24f),
                     markdownPalette = MarkdownPalette(
                         text = paperInk,
                         muted = paperMuted,
@@ -1100,19 +1136,19 @@ private fun resolveDialogSkin(
             // Default: "glass"
             DialogSkinSpec(
                 boxBg = Color(0xFF0E1320).copy(alpha = opacity),
-                boxBorder = BorderStroke(0.8.dp, stageAccent.copy(alpha = 0.56f)),
+                boxBorder = BorderStroke(0.6.dp, stageAccent.copy(alpha = 0.45f)),
                 boxShape = RoundedCornerShape(
-                    topStart = if (hasTopLeftTab) 3.dp else 16.dp,
-                    topEnd = 16.dp,
-                    bottomStart = 16.dp,
-                    bottomEnd = 16.dp,
+                    topStart = if (hasTopLeftTab) 4.dp else 18.dp,
+                    topEnd = 18.dp,
+                    bottomStart = 18.dp,
+                    bottomEnd = 18.dp,
                 ),
                 topStripColor = null,
                 topStripHeight = 1.dp,
                 innerTopHighlight = Color.White.copy(alpha = 0.14f),
                 nameplateShape = defaultTabShape,
                 nameplateBg = Color(0xFF1A1D2F).copy(alpha = (opacity + 0.08f).coerceAtMost(0.98f)),
-                nameplateBorder = stageAccent.copy(alpha = 0.72f),
+                nameplateBorder = stageAccent.copy(alpha = 0.62f),
                 nameplateText = Color(0xFFFFF4DA),
                 nameplateMoodText = Color(0xFFD6C29B),
                 nameplateDotColor = stageAccent,
@@ -1121,7 +1157,7 @@ private fun resolveDialogSkin(
                 nameplateFontFamily = FontFamily.Default,
                 bodyText = Color(0xFFF2F5FC),
                 mutedText = Color(0xFF96A3BD),
-                dividerColor = Color(0x2ECBD5E1),
+                dividerColor = Color(0x26CBD5E1),
                 markdownPalette = darkMarkdownPalette(accent = stageAccent),
                 isDarkSurface = true,
             )
@@ -1129,9 +1165,9 @@ private fun resolveDialogSkin(
     }
 }
 
-// ==================== Chengguang Interactive Visual Novel Stage View ====================
+// ==================== True Z-Axis Chengguang Interactive Visual Novel Stage View ====================
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RpTheaterStageView(
     rp: RpConfig,
@@ -1166,6 +1202,9 @@ fun RpTheaterStageView(
     externalShowHistory: Boolean? = null,
     onExternalShowHistoryChange: ((Boolean) -> Unit)? = null,
     modifier: Modifier = Modifier,
+    isComposerExpanded: Boolean = false,
+    onToggleComposer: (() -> Unit)? = null,
+    onOpenQuickControl: (() -> Unit)? = null,
 ) {
     val strings = LocalAppStrings.current
     val appTheme = LocalAppTheme.current
@@ -1204,8 +1243,10 @@ fun RpTheaterStageView(
         internalShowHistory = next
         onExternalShowHistoryChange?.invoke(next)
     }
-    var editBuffer by remember { mutableStateOf("") }
-    var showEditDialog by remember { mutableStateOf(false) }
+
+    var isEditingReply by remember(latestAssistant?.id) { mutableStateOf(false) }
+    var editBuffer by remember(latestAssistant?.id) { mutableStateOf("") }
+    var choicesPeekHidden by remember(latestAssistant?.id) { mutableStateOf(false) }
 
     val (resolvedSpeakerName, resolvedSpeakerNpc) = remember(
         latestAssistant?.id,
@@ -1257,40 +1298,6 @@ fun RpTheaterStageView(
         }
     }
 
-    if (showEditDialog && latestAssistant != null) {
-        AlertDialog(
-            onDismissRequest = { showEditDialog = false },
-            containerColor = c.surfaceElevated.copy(alpha = 1f),
-            title = { Text(strings.rp.editReplyTitle, color = c.ink, fontWeight = FontWeight.ExtraBold) },
-            text = {
-                GuTextField(
-                    value = editBuffer,
-                    onValueChange = { editBuffer = it },
-                    singleLine = false,
-                    minLines = 4,
-                    maxLines = 10,
-                )
-            },
-            confirmButton = {
-                GuButton(
-                    onClick = {
-                        onEditAssistantMessage(latestAssistant.id, editBuffer)
-                        showEditDialog = false
-                    },
-                    enabled = editBuffer.isNotBlank(),
-                    compact = true,
-                ) {
-                    Text(strings.common.save, fontWeight = FontWeight.Bold)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showEditDialog = false }) {
-                    Text(strings.common.cancel, color = c.muted)
-                }
-            },
-        )
-    }
-
     if (showHistorySheet) {
         TheaterHistoryLogSheet(
             rp = rp,
@@ -1304,7 +1311,7 @@ fun RpTheaterStageView(
             .fillMaxSize()
             .clickable(enabled = hideUi && showInternalTopBar) { setHideUi(false) },
     ) {
-        // 1. 3-Layer Scene Backdrop (Custom CG or Curated Atmosphere + Active Speaker Radial Spotlight + Reading Vignette)
+        // Layer 0: Fullscreen Scene CG + Atmospheric Depth Vignette
         if (drawOwnBackdrop) {
             TheaterStageBackdrop(
                 rp = rp,
@@ -1316,7 +1323,7 @@ fun RpTheaterStageView(
             )
         }
 
-        // 2. Immersive CG Appreciation Mode: Show UI Floating Pill Only (when stage owns its chrome)
+        // Pure CG Appreciation Show-UI Floating Pill (when standalone)
         if (showInternalTopBar) {
             AnimatedVisibility(
                 visible = hideUi,
@@ -1336,458 +1343,159 @@ fun RpTheaterStageView(
             }
         }
 
-        // 3. Full Interactive Chengguang Stage Chrome (avoid AnimatedVisibility graphicsLayer wrapper so transparent WebView paints immediately on cold start)
         if (!hideUi) {
-            val hasCustomStatusWidget = theme.showCustomStatusWidget && theme.customStatusHtml.isNotBlank()
             CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
-            Column(modifier = Modifier.fillMaxSize()) {
-                // Top Stage Bar (skipped when RpWorkspaceScreen renders unified full-bleed HUD)
-                if (showInternalTopBar) {
-                    TheaterTopStageBar(
-                        rp = rp,
-                        isZh = isZh,
-                        stageAccent = stageAccent,
-                        hideSecondaryEnvRow = hasCustomStatusWidget,
-                        onExitTheater = onExitTheater,
-                        onOpenHistory = { setShowHistorySheet(true) },
-                        onOpenFrontendEditor = onOpenFrontendEditor,
-                        onHideUi = { setHideUi(true) },
-                        onOpenStudio = onOpenStudio,
-                    )
-                }
+                BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                    val stageMaxH = maxHeight
+                    val dialogueHeight = (stageMaxH * 0.32f).coerceIn(194.dp, 268.dp)
 
-                // Floating AI Art Generation Status Chip
-                AnimatedVisibility(
-                    visible = isGeneratingArt,
-                    enter = fadeIn(),
-                    exit = fadeOut(),
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 2.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Surface(
-                            shape = RoundedCornerShape(999.dp),
-                            color = Color(0xD9101522),
-                            border = BorderStroke(1.dp, stageAccent.copy(alpha = 0.72f)),
-                            shadowElevation = 4.dp,
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(7.dp),
-                            ) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(12.dp),
-                                    strokeWidth = 1.8.dp,
-                                    color = stageAccent,
-                                )
-                                Text(
-                                    text = "✨ ${artStatusLabel.ifBlank { strings.rp.aiGeneratingArt }}",
-                                    color = Color(0xFFFFF4DC),
-                                    fontSize = 11.5.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
+                    if (activeMessages.isEmpty()) {
+                        Column(modifier = Modifier.fillMaxSize()) {
+                            if (showInternalTopBar) {
+                                TheaterTopStageBar(
+                                    rp = rp,
+                                    isZh = isZh,
+                                    stageAccent = stageAccent,
+                                    hideSecondaryEnvRow = true,
+                                    onExitTheater = onExitTheater,
+                                    onOpenHistory = { setShowHistorySheet(true) },
+                                    onOpenFrontendEditor = onOpenFrontendEditor,
+                                    onHideUi = { setHideUi(true) },
+                                    onOpenStudio = onOpenStudio,
                                 )
                             }
-                        }
-                    }
-                }
-
-                if (activeMessages.isEmpty()) {
-                    // Optional Custom HTML/CSS Frontend Status Widget even before first turn
-                    if (hasCustomStatusWidget) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 12.dp, vertical = 4.dp),
-                        ) {
-                            RpHtmlCardSandboxInternal(
-                                htmlFragment = theme.customStatusHtml,
+                            TheaterOpeningCurtain(
                                 rp = rp,
-                                customCss = theme.customCss,
-                                minHeightDp = 52,
-                                maxHeightDp = 200,
-                                forceDark = true,
-                                onFrontendAction = onFrontendAction,
-                                onFrontendSetFlag = onFrontendSetFlag,
-                                onFrontendAdjustAffinity = onFrontendAdjustAffinity,
-                            )
-                        }
-                    }
-                    // Opening Curtain Card
-                    TheaterOpeningCurtain(
-                        rp = rp,
-                        hasModelSelected = hasModelSelected,
-                        isZh = isZh,
-                        stageAccent = stageAccent,
-                        onOpenModelSheet = onOpenModelSheet,
-                        onStarterPrompt = onStarterPrompt,
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxWidth(),
-                    )
-                } else {
-                    // Viewport-Filling Stage Layout: Stage/Character Bar + Single-Row Deltas + Flexible Dialogue Frame + Compact Choice Deck
-                    val spriteLayout = theme.spriteLayout.trim().lowercase()
-                    val bodyFontSizeSp = theme.fontSizeSp.coerceIn(12f, 22f)
-
-                    Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxWidth()
-                            .padding(horizontal = 10.dp, vertical = 2.dp),
-                        verticalArrangement = Arrangement.spacedBy(5.dp),
-                    ) {
-                        // Optional Custom HTML/CSS Frontend Status Widget right below Top Stage Bar
-                        if (hasCustomStatusWidget) {
-                            RpHtmlCardSandboxInternal(
-                                htmlFragment = theme.customStatusHtml,
-                                rp = rp,
-                                customCss = theme.customCss,
-                                minHeightDp = 44,
-                                maxHeightDp = 150,
-                                forceDark = true,
-                                onFrontendAction = onFrontendAction,
-                                onFrontendSetFlag = onFrontendSetFlag,
-                                onFrontendAdjustAffinity = onFrontendAdjustAffinity,
-                            )
-                        }
-
-                        // Multi-Character Big-Sprite Stage / Auto-Compact No-Sprite Bar / Portrait Card / Hidden
-                        when (spriteLayout) {
-                            "hidden" -> Unit
-                            "portrait_card" -> {
-                                if (displayedNpc != null) {
-                                    TheaterCastPortraitShowcase(
-                                        focusedNpc = displayedNpc,
-                                        allNpcs = nonPlayerCast,
-                                        stageAccent = stageAccent,
-                                        onSelectNpc = { npc -> focusedNpcId = npc.id },
-                                        onOpenStudio = onOpenStudio,
-                                    )
-                                }
-                            }
-                            else -> {
-                                if (stageCharacters.isNotEmpty() || displayedNpc != null) {
-                                    TheaterChengguangSpriteStage(
-                                        stageCharacters = stageCharacters,
-                                        activeHighlightId = activeHighlightId,
-                                        focusedNpc = displayedNpc,
-                                        allNpcs = nonPlayerCast,
-                                        spriteHeightRatio = theme.spriteHeightRatio,
-                                        hasCustomStatusWidget = hasCustomStatusWidget,
-                                        stageAccent = stageAccent,
-                                        onSelectNpc = { npc -> focusedNpcId = npc.id },
-                                        onOpenStudio = onOpenStudio,
-                                    )
-                                }
-                            }
-                        }
-
-                        // Floating Turn Deltas (single-row horizontal strip) & Ending Card
-                        val deltas = latestVariant?.rpDeltas.orEmpty()
-                        if (theme.showTurnDeltas && deltas.isNotEmpty() && !isStreaming) {
-                            RpTurnDeltaStrip(
-                                deltas = deltas,
-                                onDarkStage = true,
-                            )
-                        }
-                        latestVariant?.rpEndingUnlocked?.let { ending ->
-                            RpEndingCard(ending = ending)
-                        }
-
-                        // Chengguang Dialogue Frame (5 Live-Editable Skins) — expands to fill remaining viewport
-                        Column(
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxWidth(),
-                            verticalArrangement = Arrangement.spacedBy(0.dp),
-                        ) {
-                            // Anchored Nameplate + Variant Swipe Row
-                            val variantAssistant = latestAssistant?.takeIf { it.variants.size > 1 }
-                            if (theme.showNameplate || variantAssistant != null) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 4.dp),
-                                    verticalAlignment = Alignment.Bottom,
-                                    horizontalArrangement = if (theme.showNameplate) {
-                                        Arrangement.SpaceBetween
-                                    } else {
-                                        Arrangement.End
-                                    },
-                                ) {
-                                    if (theme.showNameplate) {
-                                        Surface(
-                                            shape = skin.nameplateShape,
-                                            color = skin.nameplateBg,
-                                            border = BorderStroke(0.8.dp, skin.nameplateBorder),
-                                        ) {
-                                            Row(
-                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp),
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(5.dp),
-                                            ) {
-                                                if (skin.nameplateDecorPrefix.isEmpty()) {
-                                                    Box(
-                                                        modifier = Modifier
-                                                            .size(5.5.dp)
-                                                            .clip(CircleShape)
-                                                            .background(skin.nameplateDotColor),
-                                                    )
-                                                }
-                                                Text(
-                                                    text = "${skin.nameplateDecorPrefix}$resolvedSpeakerName${skin.nameplateDecorSuffix}",
-                                                    color = skin.nameplateText,
-                                                    fontSize = 12.sp,
-                                                    fontWeight = FontWeight.ExtraBold,
-                                                    fontFamily = skin.nameplateFontFamily,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis,
-                                                )
-                                                resolvedSpeakerNpc?.mood?.takeIf { it.isNotBlank() }?.let { mood ->
-                                                    Text(
-                                                        text = "· $mood",
-                                                        color = skin.nameplateMoodText,
-                                                        fontSize = 10.5.sp,
-                                                        fontWeight = FontWeight.Medium,
-                                                        maxLines = 1,
-                                                    )
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    if (variantAssistant != null) {
-                                        StageVariantSwipePill(
-                                            index = variantAssistant.activeVariantIndex,
-                                            total = variantAssistant.variants.size,
-                                            accentColor = stageAccent,
-                                            onSwitch = { idx -> onSwitchVariant(variantAssistant.id, idx) },
-                                        )
-                                    }
-                                }
-                            }
-
-                            // Dialogue Box Surface (fills all remaining vertical space)
-                            Surface(
-                                shape = skin.boxShape,
-                                color = skin.boxBg,
-                                border = skin.boxBorder,
-                                shadowElevation = if (skin.boxBorder != null) 5.dp else 0.dp,
+                                hasModelSelected = hasModelSelected,
+                                isZh = isZh,
+                                stageAccent = stageAccent,
+                                onOpenModelSheet = onOpenModelSheet,
+                                onStarterPrompt = onStarterPrompt,
                                 modifier = Modifier
                                     .weight(1f)
                                     .fillMaxWidth(),
-                            ) {
-                                Column(
-                                    modifier = Modifier.fillMaxSize(),
-                                ) {
-                                    // Art-directed top ornament strip or subtle glass inner specular highlight
-                                    val topAccent = skin.topStripColor ?: skin.innerTopHighlight
-                                    val topAccentHeight = if (skin.topStripColor != null) skin.topStripHeight else 1.dp
-                                    topAccent?.let { stripCol ->
+                            )
+                        }
+                    } else {
+                        val spriteLayout = theme.spriteLayout.trim().lowercase()
+                        val bodyFontSizeSp = theme.fontSizeSp.coerceIn(12f, 22f)
+                        val stageChoices = remember(latestAssistant?.rpChoices, rp.pendingChoices) {
+                            latestAssistant?.rpChoices?.takeIf { it.isNotEmpty() } ?: rp.pendingChoices
+                        }
+                        val hasChoicesOverlay = !isStreaming &&
+                            !isEditingReply &&
+                            !isComposerExpanded &&
+                            (stageChoices.isNotEmpty() || isRefreshingChoices || (rp.enableChoices && latestAssistant != null))
+
+                        // Layer 1: Z-Axis Half-Body Sprite Stage (Zero 178dp rounded-box confinement!)
+                        if (spriteLayout != "hidden") {
+                            when (spriteLayout) {
+                                "portrait_card" -> {
+                                    if (displayedNpc != null) {
                                         Box(
                                             modifier = Modifier
+                                                .align(Alignment.TopCenter)
                                                 .fillMaxWidth()
-                                                .height(topAccentHeight)
-                                                .background(
-                                                    Brush.horizontalGradient(
-                                                        listOf(
-                                                            stripCol.copy(alpha = 0.16f),
-                                                            stripCol,
-                                                            stripCol.copy(alpha = 0.16f),
-                                                        ),
-                                                    ),
+                                                .padding(
+                                                    top = if (showInternalTopBar) 54.dp else 12.dp,
+                                                    start = 14.dp,
+                                                    end = 14.dp,
                                                 ),
-                                        )
-                                    }
-
-                                    // Scrollable Narrative Viewport — automatically occupies all available space above quick-action bar
-                                    Column(
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .fillMaxWidth()
-                                            .verticalScroll(dialogueScrollState)
-                                            .padding(horizontal = 12.dp, vertical = 9.dp),
-                                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                                    ) {
-                                        if (parsedReasoning.isNotBlank()) {
-                                            ReasoningCard(
-                                                reasoning = parsedReasoning,
-                                                isStreaming = latestAssistant?.status == "streaming" && cleanBody.isEmpty(),
-                                            )
-                                        }
-
-                                        if (cleanBody.isNotBlank()) {
-                                            RpRichMessageContentThemed(
-                                                rawMarkdown = cleanBody,
-                                                rp = rp,
-                                                fontSize = bodyFontSizeSp.sp,
-                                                lineHeight = (bodyFontSizeSp * 1.6f).sp,
-                                                useSerif = theme.useSerif,
-                                                textColor = skin.bodyText,
-                                                palette = skin.markdownPalette,
-                                                forceDarkSandbox = skin.isDarkSurface,
-                                                onCopyToast = onToast,
-                                                onFrontendAction = onFrontendAction,
-                                                onFrontendFillInput = onFrontendFillInput,
-                                                onFrontendSetFlag = onFrontendSetFlag,
-                                                onFrontendAdjustAffinity = onFrontendAdjustAffinity,
-                                            )
-                                        } else if (isStreaming || latestAssistant?.status == "streaming") {
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                            ) {
-                                                CircularProgressIndicator(
-                                                    modifier = Modifier.size(14.dp),
-                                                    strokeWidth = 2.dp,
-                                                    color = if (!streamingStatusHint.isNullOrBlank()) c.warning else stageAccent,
-                                                )
-                                                Text(
-                                                    text = streamingStatusHint ?: strings.chat.streamingWriting,
-                                                    color = if (!streamingStatusHint.isNullOrBlank()) c.warning else skin.mutedText,
-                                                    fontSize = 13.sp,
-                                                    fontWeight = if (!streamingStatusHint.isNullOrBlank()) FontWeight.SemiBold else FontWeight.Normal,
-                                                )
-                                            }
-                                        } else {
-                                            val lastUser = activeMessages.lastOrNull { it.role == "user" }
-                                            Text(
-                                                text = lastUser?.content?.takeIf { it.isNotBlank() } ?: strings.chat.streamingWriting,
-                                                color = skin.mutedText,
-                                                fontSize = 13.5.sp,
-                                                lineHeight = 20.sp,
-                                            )
-                                        }
-
-                                        if ((isStreaming || latestAssistant?.status == "streaming") &&
-                                            cleanBody.isNotBlank() &&
-                                            !streamingStatusHint.isNullOrBlank()
                                         ) {
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                            ) {
-                                                CircularProgressIndicator(
-                                                    modifier = Modifier.size(13.dp),
-                                                    strokeWidth = 2.dp,
-                                                    color = c.warning,
-                                                )
-                                                Text(
-                                                    text = streamingStatusHint,
-                                                    color = c.warning,
-                                                    fontSize = 12.sp,
-                                                    fontWeight = FontWeight.SemiBold,
-                                                )
-                                            }
-                                        }
-
-                                        val failedMsg = latestAssistant
-                                        val errText = failedMsg?.error
-                                        if (failedMsg != null && !errText.isNullOrBlank()) {
-                                            Surface(
-                                                shape = RoundedCornerShape(10.dp),
-                                                color = if (skin.isDarkSurface) Color(0xCC3C161D) else c.dangerBg,
-                                                border = BorderStroke(1.dp, Color(0x99F87171)),
-                                                modifier = Modifier.fillMaxWidth(),
-                                            ) {
-                                                Row(
-                                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                                ) {
-                                                    Icon(
-                                                        Icons.Default.ErrorOutline,
-                                                        contentDescription = null,
-                                                        tint = if (skin.isDarkSurface) Color(0xFFFCA5A5) else c.danger,
-                                                        modifier = Modifier.size(16.dp),
-                                                    )
-                                                    Text(
-                                                        text = errText,
-                                                        color = if (skin.isDarkSurface) Color(0xFFFECACA) else c.danger,
-                                                        fontSize = 12.sp,
-                                                        modifier = Modifier.weight(1f),
-                                                    )
-                                                    if (!isStreaming) {
-                                                        TextButton(onClick = { onRegenerate(failedMsg.id) }) {
-                                                            Text(
-                                                                strings.common.retry,
-                                                                color = if (skin.isDarkSurface) Color(0xFFFCA5A5) else c.danger,
-                                                                fontSize = 12.sp,
-                                                                fontWeight = FontWeight.Bold,
-                                                            )
-                                                        }
-                                                    }
-                                                }
-                                            }
+                                            TheaterCastPortraitShowcase(
+                                                focusedNpc = displayedNpc,
+                                                allNpcs = nonPlayerCast,
+                                                stageAccent = stageAccent,
+                                                onSelectNpc = { npc -> focusedNpcId = npc.id },
+                                                onOpenStudio = onOpenStudio,
+                                            )
                                         }
                                     }
-
-                                    // Compact Quick-Action Bar pinned inside Dialogue Frame
-                                    HorizontalDivider(thickness = 0.8.dp, color = skin.dividerColor)
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .horizontalScroll(rememberScrollState())
-                                            .padding(horizontal = 8.dp, vertical = 4.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(5.dp),
-                                    ) {
-                                        StageInlineActionChip(
-                                            label = strings.rp.continueBtn,
-                                            icon = Icons.Default.PlayArrow,
-                                            enabled = !isStreaming && latestAssistant != null,
-                                            highlight = true,
-                                            onDarkSurface = skin.isDarkSurface,
-                                            accentColor = stageAccent,
-                                            onClick = onContinue,
-                                        )
-                                        StageInlineActionChip(
-                                            label = strings.rp.reroll,
-                                            icon = Icons.Default.Refresh,
-                                            enabled = !isStreaming && latestAssistant != null,
-                                            onDarkSurface = skin.isDarkSurface,
-                                            accentColor = stageAccent,
-                                            onClick = { latestAssistant?.let { onRegenerate(it.id) } },
-                                        )
-                                        StageInlineActionChip(
-                                            label = strings.common.edit,
-                                            icon = Icons.Default.Edit,
-                                            enabled = !isStreaming && latestAssistant != null,
-                                            onDarkSurface = skin.isDarkSurface,
-                                            accentColor = stageAccent,
-                                            onClick = {
-                                                if (latestAssistant != null) {
-                                                    editBuffer = cleanBody.ifBlank { latestAssistant.content }
-                                                    showEditDialog = true
+                                }
+                                else -> {
+                                    val spritesWithFiles = remember(stageCharacters) {
+                                        stageCharacters.filter { (_, ch) ->
+                                            val path = RpEngine.resolveCharacterSpritePath(ch)
+                                            !path.isNullOrBlank() && File(path).isFile
+                                        }
+                                    }
+                                    if (spritesWithFiles.isNotEmpty()) {
+                                        // Full-height proportion (~0.62f by default, feather-faded behind Layer 2!)
+                                        val spriteHeightFraction = (theme.spriteHeightRatio + 0.18f).coerceIn(0.52f, 0.72f)
+                                        val stageActors = remember(spritesWithFiles) {
+                                            if (spritesWithFiles.size <= 2) spritesWithFiles
+                                            else {
+                                                // Prioritize active speaker + 1 companion for clean 1~2 half-body composition
+                                                val speaker = spritesWithFiles.firstOrNull { it.second.id == activeHighlightId }
+                                                val other = spritesWithFiles.firstOrNull { it.second.id != activeHighlightId }
+                                                listOfNotNull(speaker, other).distinctBy { it.second.id }
+                                            }
+                                        }
+                                        Box(
+                                            modifier = Modifier
+                                                .align(Alignment.BottomCenter)
+                                                .fillMaxWidth()
+                                                .padding(bottom = dialogueHeight * 0.42f)
+                                                .fillMaxHeight(spriteHeightFraction),
+                                        ) {
+                                            stageActors.forEachIndexed { idx, (slot, char) ->
+                                                val isActive = char.id == activeHighlightId
+                                                val actorAlign = when {
+                                                    stageActors.size == 1 -> Alignment.BottomCenter
+                                                    slot == "left" || idx == 0 -> Alignment.BottomStart
+                                                    else -> Alignment.BottomEnd
                                                 }
-                                            },
-                                        )
-                                        StageInlineActionChip(
-                                            label = strings.rp.quickSaveBtn,
-                                            icon = Icons.Default.Save,
-                                            enabled = true,
-                                            onDarkSurface = skin.isDarkSurface,
-                                            accentColor = stageAccent,
-                                            onClick = onQuickSave,
-                                        )
-                                        if (cleanBody.isNotBlank()) {
-                                            StageInlineActionChip(
-                                                label = strings.common.copy,
-                                                icon = Icons.Default.ContentCopy,
-                                                enabled = true,
-                                                onDarkSurface = skin.isDarkSurface,
-                                                accentColor = stageAccent,
-                                                onClick = {
-                                                    val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                                    cm.setPrimaryClip(ClipData.newPlainText("reply", cleanBody))
-                                                    onToast(strings.common.copied)
-                                                },
+                                                val widthFraction = if (stageActors.size == 1) 0.78f else 0.58f
+                                                val zOrder = if (isActive) 2f else 1f
+                                                val targetScale = (if (isActive) 1.03f else 0.94f) * char.spriteScale.coerceIn(0.7f, 1.4f)
+                                                val animatedScale by animateFloatAsState(
+                                                    targetValue = targetScale,
+                                                    animationSpec = tween(durationMillis = 260),
+                                                    label = "zSpriteScale_${char.id}",
+                                                )
+                                                val animatedAlpha by animateFloatAsState(
+                                                    targetValue = if (isActive) 1.0f else 0.72f,
+                                                    animationSpec = tween(durationMillis = 260),
+                                                    label = "zSpriteAlpha_${char.id}",
+                                                )
+
+                                                FeatherHalfBodySprite(
+                                                    character = char,
+                                                    onTap = { focusedNpcId = char.id },
+                                                    modifier = Modifier
+                                                        .align(actorAlign)
+                                                        .zIndex(zOrder)
+                                                        .fillMaxWidth(widthFraction)
+                                                        .fillMaxHeight()
+                                                        .graphicsLayer {
+                                                            scaleX = animatedScale
+                                                            scaleY = animatedScale
+                                                            alpha = animatedAlpha
+                                                            translationY = char.spriteOffsetY.dp.toPx()
+                                                            transformOrigin = TransformOrigin(0.5f, 1.0f)
+                                                        },
+                                                )
+                                            }
+                                        }
+                                    } else {
+                                        // Refined character nameplate badge only when no sprite image is bound
+                                        val activeChar = stageCharacters.firstOrNull { it.second.id == activeHighlightId }?.second
+                                            ?: displayedNpc
+                                        if (activeChar != null) {
+                                            TheaterCastBadgeCluster(
+                                                focusedNpc = activeChar,
+                                                allNpcs = nonPlayerCast,
+                                                stageAccent = stageAccent,
+                                                isZh = isZh,
+                                                onSelectNpc = { focusedNpcId = it.id },
+                                                onOpenStudio = onOpenStudio,
+                                                modifier = Modifier
+                                                    .align(Alignment.TopCenter)
+                                                    .padding(
+                                                        top = if (showInternalTopBar) 56.dp else 12.dp,
+                                                        start = 14.dp,
+                                                        end = 14.dp,
+                                                    ),
                                             )
                                         }
                                     }
@@ -1795,333 +1503,186 @@ fun RpTheaterStageView(
                             }
                         }
 
-                        // Dramatic Choice Deck right below dialogue frame (capped height with internal scroll so narrative never collapses)
-                        val stageChoices = remember(latestAssistant?.rpChoices, rp.pendingChoices) {
-                            latestAssistant?.rpChoices?.takeIf { it.isNotEmpty() } ?: rp.pendingChoices
-                        }
-                        if (!isStreaming && (stageChoices.isNotEmpty() || isRefreshingChoices || (rp.enableChoices && latestAssistant != null))) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .heightIn(max = 128.dp)
-                                    .verticalScroll(rememberScrollState()),
-                            ) {
-                                RpChoiceDeck(
-                                    choices = stageChoices,
+                        // Top-bar (when standalone) + Floating Cast Switcher + Turn Deltas + Endings
+                        Column(
+                            modifier = Modifier
+                                .align(Alignment.TopCenter)
+                                .fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(5.dp),
+                        ) {
+                            if (showInternalTopBar) {
+                                TheaterTopStageBar(
                                     rp = rp,
-                                    isRefreshing = isRefreshingChoices,
-                                    onSelectChoice = onSelectChoice,
-                                    onRefreshChoices = onRefreshChoices,
+                                    isZh = isZh,
+                                    stageAccent = stageAccent,
+                                    hideSecondaryEnvRow = true,
+                                    onExitTheater = onExitTheater,
+                                    onOpenHistory = { setShowHistorySheet(true) },
+                                    onOpenFrontendEditor = onOpenFrontendEditor,
+                                    onHideUi = { setHideUi(true) },
+                                    onOpenStudio = onOpenStudio,
+                                )
+                            }
+
+                            if (isGeneratingArt) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 2.dp),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Surface(
+                                        shape = RoundedCornerShape(999.dp),
+                                        color = Color(0xD9101522),
+                                        border = BorderStroke(0.6.dp, stageAccent.copy(alpha = 0.6f)),
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 11.dp, vertical = 4.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        ) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(11.dp),
+                                                strokeWidth = 1.6.dp,
+                                                color = stageAccent,
+                                            )
+                                            Text(
+                                                text = "✨ ${artStatusLabel.ifBlank { strings.rp.aiGeneratingArt }}",
+                                                color = Color(0xFFFFF4DC),
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            val hasSprites = stageCharacters.any { (_, ch) ->
+                                val path = RpEngine.resolveCharacterSpritePath(ch)
+                                !path.isNullOrBlank() && File(path).isFile
+                            }
+                            if (hasSprites && nonPlayerCast.size > 1 && spriteLayout == "stage") {
+                                StageCastMiniStrip(
+                                    allNpcs = nonPlayerCast,
+                                    focusedNpcId = displayedNpc?.id,
+                                    stageAccent = stageAccent,
+                                    onSelectNpc = { focusedNpcId = it.id },
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp),
+                                )
+                            }
+
+                            val deltas = latestVariant?.rpDeltas.orEmpty()
+                            if (theme.showTurnDeltas && deltas.isNotEmpty() && !isStreaming) {
+                                RpTurnDeltaStrip(
+                                    deltas = deltas,
                                     onDarkStage = true,
-                                    enabled = !isStreaming,
-                                    accentColor = stageAccent,
+                                    modifier = Modifier.padding(horizontal = 12.dp),
+                                )
+                            }
+                            latestVariant?.rpEndingUnlocked?.let { ending ->
+                                RpEndingCard(
+                                    ending = ending,
+                                    modifier = Modifier.padding(horizontal = 12.dp),
                                 )
                             }
                         }
-                    }
-                }
-            }
-            }
-        }
-    }
-}
 
-// ==================== True Chengguang Multi-Character Big-Sprite Stage ====================
-
-@Composable
-private fun TheaterChengguangSpriteStage(
-    stageCharacters: List<Pair<String, RpCharacter>>,
-    activeHighlightId: String?,
-    focusedNpc: RpCharacter?,
-    allNpcs: List<RpCharacter>,
-    spriteHeightRatio: Float,
-    hasCustomStatusWidget: Boolean,
-    stageAccent: Color,
-    onSelectNpc: (RpCharacter) -> Unit,
-    onOpenStudio: () -> Unit,
-) {
-    val strings = LocalAppStrings.current
-    val isZh = strings.language == AppLanguage.ZH
-
-    // Auto-detect whether any cast member on stage has an uploaded/generated sprite file
-    val hasAnyRealSprite = remember(stageCharacters) {
-        stageCharacters.any { (_, ch) ->
-            val path = RpEngine.resolveCharacterSpritePath(ch)
-            !path.isNullOrBlank() && File(path).isFile
-        }
-    }
-
-    if (!hasAnyRealSprite) {
-        val activeChar = stageCharacters.firstOrNull { it.second.id == activeHighlightId }?.second
-            ?: focusedNpc
-            ?: stageCharacters.firstOrNull()?.second
-        Column(
-            modifier = Modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            if (activeChar != null) {
-                TheaterCompactNoSpriteBar(
-                    character = activeChar,
-                    stageAccent = stageAccent,
-                    isZh = isZh,
-                    onTap = { onSelectNpc(activeChar) },
-                    onOpenStudio = onOpenStudio,
-                )
-            }
-            if (allNpcs.size > 1) {
-                StageCastMiniStrip(
-                    allNpcs = allNpcs,
-                    focusedNpcId = focusedNpc?.id,
-                    stageAccent = stageAccent,
-                    onSelectNpc = onSelectNpc,
-                )
-            }
-        }
-        return
-    }
-
-    // Map spriteHeightRatio (0.25..0.62, default 0.44) -> 132dp..232dp (~178dp default; ~154dp when custom HUD is shown)
-    val clampedRatio = spriteHeightRatio.coerceIn(0.25f, 0.62f)
-    val baseStageHeight = 132f + ((clampedRatio - 0.25f) / 0.37f) * 100f
-    val stageHeight: Dp = (baseStageHeight - if (hasCustomStatusWidget) 24f else 0f)
-        .coerceAtLeast(128f)
-        .dp
-    val compactHeight = stageHeight < 188.dp
-
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        if (stageCharacters.isNotEmpty()) {
-            BoxWithConstraints(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(stageHeight),
-            ) {
-                val count = stageCharacters.size
-                val slotMaxWidth = when (count) {
-                    1 -> (maxWidth * 0.58f).coerceAtMost(220.dp)
-                    2 -> (maxWidth * 0.475f).coerceAtMost(192.dp)
-                    else -> (maxWidth * 0.365f).coerceAtMost(160.dp)
-                }
-                val centerWidth = if (count >= 3) (maxWidth * 0.405f).coerceAtMost(176.dp) else slotMaxWidth
-
-                stageCharacters.forEach { (slot, char) ->
-                    val isActive = char.id == activeHighlightId
-                    val alignment = when (slot) {
-                        "left" -> Alignment.BottomStart
-                        "right" -> Alignment.BottomEnd
-                        else -> Alignment.BottomCenter
-                    }
-                    val cardWidth = if (slot == "center") centerWidth else slotMaxWidth
-                    val zOrder = when {
-                        isActive -> 2f
-                        slot == "center" -> 1f
-                        else -> 0f
-                    }
-                    val targetScale = (if (isActive) 1.04f else 0.92f) * char.spriteScale.coerceIn(0.7f, 1.4f)
-                    val animatedScale by animateFloatAsState(
-                        targetValue = targetScale,
-                        animationSpec = tween(durationMillis = 260),
-                        label = "stageSpriteScale",
-                    )
-                    val animatedAlpha by animateFloatAsState(
-                        targetValue = if (isActive) 1.0f else 0.68f,
-                        animationSpec = tween(durationMillis = 260),
-                        label = "stageSpriteAlpha",
-                    )
-
-                    ChengguangSpriteActorCard(
-                        character = char,
-                        isActive = isActive,
-                        compactMode = count >= 3,
-                        compactHeight = compactHeight,
-                        stageAccent = stageAccent,
-                        isZh = isZh,
-                        onTap = { onSelectNpc(char) },
-                        onOpenStudio = onOpenStudio,
-                        modifier = Modifier
-                            .align(alignment)
-                            .zIndex(zOrder)
-                            .width(cardWidth)
-                            .fillMaxHeight(0.96f)
-                            .graphicsLayer {
-                                scaleX = animatedScale
-                                scaleY = animatedScale
-                                alpha = animatedAlpha
-                                translationY = char.spriteOffsetY.dp.toPx()
-                                transformOrigin = TransformOrigin(0.5f, 1.0f)
+                        // Layer 2: Bottom Frosted Glass Dialogue Box (~30%-34% screen height)
+                        TheaterDialogueStageFrame(
+                            rp = rp,
+                            skin = skin,
+                            stageAccent = stageAccent,
+                            speakerName = resolvedSpeakerName,
+                            speakerNpc = resolvedSpeakerNpc,
+                            latestAssistant = latestAssistant,
+                            parsedReasoning = parsedReasoning,
+                            cleanBody = cleanBody,
+                            bodyFontSizeSp = bodyFontSizeSp,
+                            isStreaming = isStreaming,
+                            streamingStatusHint = streamingStatusHint,
+                            fallbackUserText = activeMessages.lastOrNull { it.role == "user" }?.content,
+                            dialogueScrollState = dialogueScrollState,
+                            isEditingReply = isEditingReply,
+                            editBuffer = editBuffer,
+                            onEditBufferChange = { editBuffer = it },
+                            onStartEdit = {
+                                if (latestAssistant != null) {
+                                    editBuffer = cleanBody.ifBlank { latestAssistant.content }
+                                    isEditingReply = true
+                                }
                             },
-                    )
-                }
-            }
-        }
-
-        // Clickable horizontal mini-strip for inspecting & switching all cast members
-        if (allNpcs.size > 1) {
-            StageCastMiniStrip(
-                allNpcs = allNpcs,
-                focusedNpcId = focusedNpc?.id,
-                stageAccent = stageAccent,
-                onSelectNpc = onSelectNpc,
-            )
-        }
-    }
-}
-
-@Composable
-private fun TheaterCompactNoSpriteBar(
-    character: RpCharacter,
-    stageAccent: Color,
-    isZh: Boolean,
-    onTap: () -> Unit,
-    onOpenStudio: () -> Unit,
-) {
-    val strings = LocalAppStrings.current
-    val pair = PORTRAIT_GRADIENTS[abs(character.name.hashCode()) % PORTRAIT_GRADIENTS.size]
-    val initial = character.name.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "✦"
-    val roleLabel = formatRpRoleLabel(character.role, isZh)
-    val exprKey = remember(character.mood) { RpEngine.resolveExpressionKey(character.mood) }
-    val exprLabel = strings.rp.expressionLabels[exprKey] ?: exprKey
-    val moodBadgeText = character.mood.trim().takeIf { it.isNotEmpty() } ?: exprLabel
-    val tier = remember(character.affinity) { RpEngine.affinityTier(character.affinity) }
-    val tierLabel = strings.rp.affinityTiers[tier.code]
-        ?: if (isZh) tier.zhLabel else tier.enLabel
-
-    Surface(
-        onClick = onTap,
-        shape = RoundedCornerShape(14.dp),
-        color = Color.Transparent,
-        border = BorderStroke(0.9.dp, stageAccent.copy(alpha = 0.56f)),
-        shadowElevation = 3.dp,
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(
-                    Brush.horizontalGradient(
-                        listOf(
-                            pair.first.copy(alpha = 0.88f),
-                            pair.second.copy(alpha = 0.90f),
-                            Color(0xE00C111E),
-                        ),
-                    ),
-                )
-                .padding(horizontal = 10.dp, vertical = 7.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(9.dp),
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(34.dp)
-                    .clip(CircleShape)
-                    .background(
-                        Brush.radialGradient(
-                            listOf(stageAccent.copy(alpha = 0.32f), Color(0x660B0F1A)),
-                        ),
-                    )
-                    .border(1.dp, stageAccent.copy(alpha = 0.78f), CircleShape),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = initial,
-                    color = Color(0xFFFFF6E3),
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    fontFamily = FontFamily.Serif,
-                )
-            }
-
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    Text(
-                        text = character.name,
-                        color = Color(0xFFFFF8EA),
-                        fontSize = 13.5.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        fontFamily = FontFamily.Serif,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false),
-                    )
-                    Surface(
-                        shape = RoundedCornerShape(999.dp),
-                        color = Color(0x88101522),
-                        border = BorderStroke(0.7.dp, stageAccent.copy(alpha = 0.52f)),
-                    ) {
-                        Text(
-                            text = "${expressionEmoji(exprKey)} $moodBadgeText",
-                            color = Color(0xFFFFF4DC),
-                            fontSize = 9.5.sp,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.5.dp),
+                            onCancelEdit = { isEditingReply = false },
+                            onSaveEdit = {
+                                if (latestAssistant != null && editBuffer.isNotBlank()) {
+                                    onEditAssistantMessage(latestAssistant.id, editBuffer)
+                                    isEditingReply = false
+                                }
+                            },
+                            onSwitchVariant = { idx -> latestAssistant?.let { onSwitchVariant(it.id, idx) } },
+                            onRegenerate = { latestAssistant?.let { onRegenerate(it.id) } },
+                            onQuickSave = onQuickSave,
+                            onContinue = onContinue,
+                            onOpenHistory = { setShowHistorySheet(true) },
+                            onCopyBody = {
+                                if (cleanBody.isNotBlank()) {
+                                    val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    cm.setPrimaryClip(ClipData.newPlainText("reply", cleanBody))
+                                    onToast(strings.common.copied)
+                                }
+                            },
+                            onToast = onToast,
+                            onFrontendAction = onFrontendAction,
+                            onFrontendFillInput = onFrontendFillInput,
+                            onFrontendSetFlag = onFrontendSetFlag,
+                            onFrontendAdjustAffinity = onFrontendAdjustAffinity,
+                            isComposerExpanded = isComposerExpanded,
+                            onToggleComposer = onToggleComposer,
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .zIndex(3f)
+                                .fillMaxWidth()
+                                .padding(horizontal = 10.dp, vertical = 10.dp)
+                                .height(dialogueHeight),
                         )
+
+                        // Layer 3: Center-Bottom Floating Action Choice Deck (Zero 128dp nested scroll box!)
+                        if (hasChoicesOverlay) {
+                            TheaterFloatingChoiceDeck(
+                                choices = stageChoices,
+                                rp = rp,
+                                isRefreshing = isRefreshingChoices,
+                                peekHidden = choicesPeekHidden,
+                                stageAccent = stageAccent,
+                                isZh = isZh,
+                                onTogglePeek = { choicesPeekHidden = !choicesPeekHidden },
+                                onSelectChoice = onSelectChoice,
+                                onRefreshChoices = onRefreshChoices,
+                                modifier = Modifier
+                                    .align(Alignment.BottomCenter)
+                                    .zIndex(4f)
+                                    .fillMaxWidth()
+                                    .padding(
+                                        start = 14.dp,
+                                        end = 14.dp,
+                                        bottom = dialogueHeight + 18.dp,
+                                    ),
+                            )
+                        }
                     }
                 }
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    if (roleLabel.isNotBlank()) {
-                        Text(
-                            text = "❖ $roleLabel",
-                            color = Color(0xFFD6C7AE),
-                            fontSize = 10.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f, fill = false),
-                        )
-                    }
-                    Text(
-                        text = "♥ ${character.affinity} · $tierLabel",
-                        color = if (character.affinity < 0) Color(0xFFFCA5A5) else Color(0xFFFFB4CE),
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                    )
-                }
-            }
-
-            Surface(
-                onClick = onOpenStudio,
-                shape = RoundedCornerShape(999.dp),
-                color = Color(0x880B0F1A),
-                border = BorderStroke(0.8.dp, stageAccent.copy(alpha = 0.45f)),
-            ) {
-                Text(
-                    text = if (isZh) "✨ 立绘" else "✨ Art",
-                    color = Color(0xFFE6D8BC),
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.5.dp),
-                )
             }
         }
     }
 }
 
 @Composable
-private fun ChengguangSpriteActorCard(
+private fun FeatherHalfBodySprite(
     character: RpCharacter,
-    isActive: Boolean,
-    compactMode: Boolean,
-    compactHeight: Boolean,
-    stageAccent: Color,
-    isZh: Boolean,
     onTap: () -> Unit,
-    onOpenStudio: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val strings = LocalAppStrings.current
     val resolvedPath = remember(
         character.mood,
         character.expressionSprites,
@@ -2132,284 +1693,848 @@ private fun ChengguangSpriteActorCard(
     }
     val spriteFile = remember(resolvedPath) {
         resolvedPath?.takeIf { it.isNotBlank() }?.let(::File)?.takeIf { it.isFile }
-    }
-    val exprKey = remember(character.mood) { RpEngine.resolveExpressionKey(character.mood) }
-    val exprLabel = strings.rp.expressionLabels[exprKey] ?: exprKey
-    val moodBadgeText = character.mood.trim().takeIf { it.isNotEmpty() } ?: exprLabel
-    val tier = remember(character.affinity) { RpEngine.affinityTier(character.affinity) }
-    val tierLabel = strings.rp.affinityTiers[tier.code]
-        ?: if (isZh) tier.zhLabel else tier.enLabel
-    val cardShape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp, bottomStart = 10.dp, bottomEnd = 10.dp)
-    val cardBorder = when {
-        isActive -> BorderStroke(1.2.dp, stageAccent.copy(alpha = 0.86f))
-        spriteFile != null -> null
-        else -> BorderStroke(0.8.dp, Color(0x28FFFFFF))
-    }
+    } ?: return
 
-    Surface(
-        onClick = onTap,
-        shape = cardShape,
-        color = Color.Transparent,
-        border = cardBorder,
-        shadowElevation = if (isActive) 8.dp else 0.dp,
-        modifier = modifier,
+    Box(
+        modifier = modifier.clickable(onClick = onTap),
+        contentAlignment = Alignment.BottomCenter,
     ) {
-        if (spriteFile != null) {
-            // Real half-body VN Sprite Image with top-anchored crop and seamless edge/bottom fade
-            Box(modifier = Modifier.fillMaxSize()) {
-                Image(
-                    painter = rememberAsyncImagePainter(spriteFile),
-                    contentDescription = character.name,
-                    contentScale = ContentScale.Crop,
-                    alignment = Alignment.TopCenter,
-                    modifier = Modifier.fillMaxSize(),
-                )
-                // Soft side edge softening so sprite blends seamlessly into stage backdrop
+        Image(
+            painter = rememberAsyncImagePainter(spriteFile),
+            contentDescription = character.name,
+            contentScale = ContentScale.Crop,
+            alignment = Alignment.TopCenter,
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                .drawWithContent {
+                    drawContent()
+                    drawRect(
+                        brush = Brush.horizontalGradient(
+                            0.0f to Color.Transparent,
+                            0.14f to Color.Black,
+                            0.86f to Color.Black,
+                            1.0f to Color.Transparent,
+                        ),
+                        blendMode = BlendMode.DstIn,
+                    )
+                    drawRect(
+                        brush = Brush.verticalGradient(
+                            0.0f to Color.Transparent,
+                            0.06f to Color.Black,
+                            0.64f to Color.Black,
+                            0.98f to Color.Transparent,
+                        ),
+                        blendMode = BlendMode.DstIn,
+                    )
+                },
+        )
+    }
+}
+
+@Composable
+private fun TheaterCastBadgeCluster(
+    focusedNpc: RpCharacter,
+    allNpcs: List<RpCharacter>,
+    stageAccent: Color,
+    isZh: Boolean,
+    onSelectNpc: (RpCharacter) -> Unit,
+    onOpenStudio: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val strings = LocalAppStrings.current
+    val exprKey = remember(focusedNpc.mood) { RpEngine.resolveExpressionKey(focusedNpc.mood) }
+    val exprLabel = strings.rp.expressionLabels[exprKey] ?: exprKey
+    val moodBadgeText = focusedNpc.mood.trim().takeIf { it.isNotEmpty() } ?: exprLabel
+    val roleLabel = formatRpRoleLabel(focusedNpc.role, isZh)
+    val pair = PORTRAIT_GRADIENTS[abs(focusedNpc.name.hashCode()) % PORTRAIT_GRADIENTS.size]
+    val initial = focusedNpc.name.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "✦"
+
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Surface(
+            onClick = onOpenStudio,
+            shape = RoundedCornerShape(999.dp),
+            color = Color(0xC9101624),
+            border = BorderStroke(0.6.dp, stageAccent.copy(alpha = 0.45f)),
+            shadowElevation = 4.dp,
+        ) {
+            Row(
+                modifier = Modifier.padding(start = 6.dp, end = 12.dp, top = 5.dp, bottom = 5.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 Box(
                     modifier = Modifier
-                        .fillMaxSize()
-                        .background(
-                            Brush.horizontalGradient(
-                                0.0f to Color(0x52080B14),
-                                0.14f to Color.Transparent,
-                                0.86f to Color.Transparent,
-                                1.0f to Color(0x52080B14),
-                            ),
-                        ),
-                )
-                // Soft bottom fade blending into the dialogue frame
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(
-                            Brush.verticalGradient(
-                                0.0f to Color.Transparent,
-                                0.54f to Color.Transparent,
-                                0.80f to Color(0x940A0E1A),
-                                1.0f to Color(0xE8080C16),
-                            ),
-                        ),
-                )
-                // Active speaker subtle luminous inner rim halo
-                if (isActive) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .drawBehind {
-                                drawRect(
-                                    brush = Brush.radialGradient(
-                                        colors = listOf(stageAccent.copy(alpha = 0.14f), Color.Transparent),
-                                        center = Offset(size.width * 0.5f, size.height * 0.22f),
-                                        radius = size.maxDimension * 0.65f,
-                                    ),
-                                )
-                            },
+                        .size(30.dp)
+                        .clip(CircleShape)
+                        .background(Brush.linearGradient(listOf(pair.first, pair.second)))
+                        .border(0.8.dp, stageAccent.copy(alpha = 0.72f), CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = initial,
+                        color = Color(0xFFFFF6E3),
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
                     )
                 }
-                // Expression chip
+                Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp),
+                    ) {
+                        Text(
+                            text = focusedNpc.name,
+                            color = Color(0xFFFFF8EA),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                        )
+                        if (roleLabel.isNotBlank()) {
+                            GuMetaText(
+                                text = "· $roleLabel",
+                                color = Color(0xFFD6C7AE),
+                            )
+                        }
+                    }
+                    GuMetaText(
+                        text = "${expressionEmoji(exprKey)} $moodBadgeText · ♥${focusedNpc.affinity}",
+                        color = if (focusedNpc.affinity < 0) Color(0xFFFCA5A5) else Color(0xFFFFB4CE),
+                    )
+                }
                 Surface(
                     shape = RoundedCornerShape(999.dp),
-                    color = Color(0xBA0C111E),
-                    border = BorderStroke(0.8.dp, if (isActive) stageAccent.copy(alpha = 0.72f) else Color(0x3DFFFFFF)),
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(6.dp),
+                    color = stageAccent.copy(alpha = 0.16f),
                 ) {
                     Text(
-                        text = if (compactMode) expressionEmoji(exprKey) else "${expressionEmoji(exprKey)} $moodBadgeText",
-                        color = Color(0xFFFDF6E7),
-                        fontSize = 9.5.sp,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                    )
-                }
-                // Compact name & affinity footer overlay
-                Column(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .padding(horizontal = 8.dp, vertical = 6.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(1.dp),
-                ) {
-                    Text(
-                        text = character.name,
-                        color = Color(0xFFFFF8EA),
-                        fontSize = if (compactMode) 11.5.sp else 13.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        text = if (compactMode) "♥ ${character.affinity}" else "♥ ${character.affinity} · $tierLabel",
-                        color = if (character.affinity < 0) Color(0xFFFCA5A5) else Color(0xFFFFB4CE),
+                        text = if (isZh) "✨ 设立绘" else "✨ Sprite",
+                        color = stageAccent,
                         fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.5.dp),
                     )
                 }
             }
-        } else {
-            // Artistic Chengguang Character Standee Card (clean & balanced at both compact and tall stage heights)
-            val pair = PORTRAIT_GRADIENTS[abs(character.name.hashCode()) % PORTRAIT_GRADIENTS.size]
-            val initial = character.name.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "✦"
-            val roleLabel = formatRpRoleLabel(character.role, isZh)
-            val tight = compactMode || compactHeight
+        }
+        if (allNpcs.size > 1) {
+            StageCastMiniStrip(
+                allNpcs = allNpcs,
+                focusedNpcId = focusedNpc.id,
+                stageAccent = stageAccent,
+                onSelectNpc = onSelectNpc,
+            )
+        }
+    }
+}
 
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(
-                        Brush.verticalGradient(
-                            listOf(
-                                pair.first.copy(alpha = if (isActive) 0.90f else 0.78f),
-                                pair.second.copy(alpha = if (isActive) 0.94f else 0.84f),
-                                Color(0xEC0A0E18),
-                            ),
-                        ),
-                    )
-                    .drawBehind {
-                        if (isActive) {
-                            drawRect(
-                                brush = Brush.radialGradient(
-                                    colors = listOf(stageAccent.copy(alpha = 0.26f), Color.Transparent),
-                                    center = Offset(size.width * 0.5f, size.height * 0.30f),
-                                    radius = size.maxDimension * 0.65f,
-                                ),
+@Composable
+private fun TheaterDialogueStageFrame(
+    rp: RpConfig,
+    skin: DialogSkinSpec,
+    stageAccent: Color,
+    speakerName: String,
+    speakerNpc: RpCharacter?,
+    latestAssistant: ChatMessage?,
+    parsedReasoning: String,
+    cleanBody: String,
+    bodyFontSizeSp: Float,
+    isStreaming: Boolean,
+    streamingStatusHint: String?,
+    fallbackUserText: String?,
+    dialogueScrollState: androidx.compose.foundation.ScrollState,
+    isEditingReply: Boolean,
+    editBuffer: String,
+    onEditBufferChange: (String) -> Unit,
+    onStartEdit: () -> Unit,
+    onCancelEdit: () -> Unit,
+    onSaveEdit: () -> Unit,
+    onSwitchVariant: (Int) -> Unit,
+    onRegenerate: () -> Unit,
+    onQuickSave: () -> Unit,
+    onContinue: () -> Unit,
+    onOpenHistory: () -> Unit,
+    onCopyBody: () -> Unit,
+    onToast: (String) -> Unit,
+    onFrontendAction: (String) -> Unit,
+    onFrontendFillInput: (String) -> Unit,
+    onFrontendSetFlag: (String, String) -> Unit,
+    onFrontendAdjustAffinity: (String, Int) -> Unit,
+    isComposerExpanded: Boolean,
+    onToggleComposer: (() -> Unit)?,
+    modifier: Modifier = Modifier,
+) {
+    val strings = LocalAppStrings.current
+    val c = LocalAppTheme.current.colors
+    val isZh = strings.language == AppLanguage.ZH
+    val theme = rp.visualTheme
+
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(0.dp),
+    ) {
+        // Top Nameplate (left) + Minimal Top-Right Controls ([‹ 1/2 ›] [↻] [✎] [💾])
+        val variantAssistant = latestAssistant?.takeIf { it.variants.size > 1 }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 4.dp),
+            verticalAlignment = Alignment.Bottom,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            if (theme.showNameplate) {
+                Surface(
+                    shape = skin.nameplateShape,
+                    color = skin.nameplateBg,
+                    border = BorderStroke(0.6.dp, skin.nameplateBorder),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp),
+                    ) {
+                        if (skin.nameplateDecorPrefix.isEmpty()) {
+                            Box(
+                                modifier = Modifier
+                                    .size(5.dp)
+                                    .clip(CircleShape)
+                                    .background(skin.nameplateDotColor),
                             )
                         }
-                    },
-            ) {
-                // Inner gilded hairline frame (shown prominently on active speaker, delicate whisper when inactive)
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(5.dp)
-                        .border(
-                            width = 0.8.dp,
-                            color = if (isActive) stageAccent.copy(alpha = 0.45f) else Color(0x1EFFFFFF),
-                            shape = RoundedCornerShape(topStart = 15.dp, topEnd = 15.dp, bottomStart = 7.dp, bottomEnd = 7.dp),
-                        ),
-                )
-
-                // Top-left subtle "Set Sprite" shortcut pill (never squeezes center stack)
-                if (!compactMode) {
-                    Surface(
-                        onClick = onOpenStudio,
-                        shape = RoundedCornerShape(999.dp),
-                        color = Color(0x780B0F1A),
-                        border = BorderStroke(0.8.dp, stageAccent.copy(alpha = 0.38f)),
-                        modifier = Modifier
-                            .align(Alignment.TopStart)
-                            .padding(start = 8.dp, top = 8.dp),
-                    ) {
                         Text(
-                            text = if (isZh) "✨ 立绘" else "✨ Art",
-                            color = Color(0xFFE6D8BC),
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                        )
-                    }
-                }
-
-                // Top-right expression / mood badge
-                Surface(
-                    shape = RoundedCornerShape(999.dp),
-                    color = Color(0x99101522),
-                    border = BorderStroke(0.8.dp, if (isActive) stageAccent.copy(alpha = 0.65f) else Color(0x38FFFFFF)),
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(end = 8.dp, top = 8.dp),
-                ) {
-                    Text(
-                        text = if (compactMode) expressionEmoji(exprKey) else "${expressionEmoji(exprKey)} $moodBadgeText",
-                        color = Color(0xFFFFF4DC),
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                    )
-                }
-
-                // Center Standee Emblem + Character Info
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(start = 8.dp, end = 8.dp, top = 28.dp, bottom = 8.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(if (tight) 4.dp else 7.dp, Alignment.CenterVertically),
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(if (tight) 44.dp else 56.dp)
-                            .clip(CircleShape)
-                            .background(
-                                Brush.radialGradient(
-                                    listOf(
-                                        stageAccent.copy(alpha = if (isActive) 0.34f else 0.14f),
-                                        Color(0x660B0F1A),
-                                    ),
-                                ),
-                            )
-                            .border(
-                                width = if (isActive) 1.2.dp else 0.8.dp,
-                                color = if (isActive) stageAccent.copy(alpha = 0.85f) else Color(0x44FFFFFF),
-                                shape = CircleShape,
-                            ),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            text = initial,
-                            color = Color(0xFFFFF6E3),
-                            fontSize = if (tight) 19.sp else 24.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            fontFamily = FontFamily.Serif,
-                        )
-                    }
-
-                    Text(
-                        text = character.name,
-                        color = Color(0xFFFFF8EA),
-                        fontSize = if (compactMode) 12.sp else if (tight) 13.5.sp else 15.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        fontFamily = FontFamily.Serif,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        textAlign = TextAlign.Center,
-                    )
-
-                    if (roleLabel.isNotBlank() && !compactMode) {
-                        Text(
-                            text = "❖ $roleLabel",
-                            color = Color(0xFFD6C7AE),
-                            fontSize = 10.sp,
+                            text = "${skin.nameplateDecorPrefix}$speakerName${skin.nameplateDecorSuffix}",
+                            color = skin.nameplateText,
+                            fontSize = 12.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = skin.nameplateFontFamily,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
+                        if (speakerNpc != null) {
+                            val exprKey = RpEngine.resolveExpressionKey(speakerNpc.mood)
+                            val moodText = speakerNpc.mood.trim().takeIf { it.isNotEmpty() }
+                            val metaLabel = buildString {
+                                if (moodText != null) {
+                                    append(expressionEmoji(exprKey))
+                                    append(' ')
+                                    append(moodText)
+                                    append(" · ")
+                                }
+                                append("♥")
+                                append(speakerNpc.affinity)
+                            }
+                            GuMetaText(
+                                text = metaLabel,
+                                color = skin.nameplateMoodText,
+                            )
+                        }
+                    }
+                }
+            } else {
+                Spacer(Modifier.width(4.dp))
+            }
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier.padding(bottom = 2.dp),
+            ) {
+                if (variantAssistant != null) {
+                    StageVariantSwipePill(
+                        index = variantAssistant.activeVariantIndex,
+                        total = variantAssistant.variants.size,
+                        accentColor = stageAccent,
+                        onSwitch = onSwitchVariant,
+                    )
+                }
+                StageBoxMiniIconBtn(
+                    icon = Icons.Default.Refresh,
+                    contentDescription = strings.rp.reroll,
+                    enabled = !isStreaming && latestAssistant != null,
+                    onClick = onRegenerate,
+                )
+                StageBoxMiniIconBtn(
+                    icon = Icons.Default.Edit,
+                    contentDescription = strings.common.edit,
+                    enabled = !isStreaming && latestAssistant != null,
+                    active = isEditingReply,
+                    accentColor = stageAccent,
+                    onClick = { if (isEditingReply) onCancelEdit() else onStartEdit() },
+                )
+                StageBoxMiniIconBtn(
+                    icon = Icons.Default.Save,
+                    contentDescription = strings.rp.quickSaveBtn,
+                    enabled = true,
+                    onClick = onQuickSave,
+                )
+            }
+        }
+
+        // Main Dialogue Box Surface
+        Surface(
+            shape = skin.boxShape,
+            color = skin.boxBg,
+            border = skin.boxBorder,
+            shadowElevation = if (skin.boxBorder != null) 4.dp else 0.dp,
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth(),
+        ) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                val topAccent = skin.topStripColor ?: skin.innerTopHighlight
+                val topAccentHeight = if (skin.topStripColor != null) skin.topStripHeight else 0.8.dp
+                topAccent?.let { stripCol ->
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(topAccentHeight)
+                            .background(
+                                Brush.horizontalGradient(
+                                    listOf(
+                                        stripCol.copy(alpha = 0.14f),
+                                        stripCol,
+                                        stripCol.copy(alpha = 0.14f),
+                                    ),
+                                ),
+                            ),
+                    )
+                }
+
+                if (isEditingReply) {
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        GuTextField(
+                            value = editBuffer,
+                            onValueChange = onEditBufferChange,
+                            singleLine = false,
+                            minLines = 2,
+                            maxLines = 6,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                        ) {
+                            TextButton(onClick = onCancelEdit) {
+                                Text(strings.common.cancel, color = skin.mutedText, fontSize = 12.sp)
+                            }
+                            GuButton(
+                                onClick = onSaveEdit,
+                                enabled = editBuffer.isNotBlank(),
+                                compact = true,
+                                modifier = Modifier.heightIn(min = 32.dp),
+                            ) {
+                                Text(strings.common.save, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                    }
+                } else {
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .verticalScroll(dialogueScrollState)
+                            .padding(horizontal = 13.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        if (parsedReasoning.isNotBlank()) {
+                            ReasoningCard(
+                                reasoning = parsedReasoning,
+                                isStreaming = latestAssistant?.status == "streaming" && cleanBody.isEmpty(),
+                            )
+                        }
+
+                        if (cleanBody.isNotBlank()) {
+                            RpRichMessageContentThemed(
+                                rawMarkdown = cleanBody,
+                                rp = rp,
+                                fontSize = bodyFontSizeSp.sp,
+                                lineHeight = (bodyFontSizeSp * 1.6f).sp,
+                                useSerif = theme.useSerif,
+                                textColor = skin.bodyText,
+                                palette = skin.markdownPalette,
+                                forceDarkSandbox = skin.isDarkSurface,
+                                onCopyToast = onToast,
+                                onFrontendAction = onFrontendAction,
+                                onFrontendFillInput = onFrontendFillInput,
+                                onFrontendSetFlag = onFrontendSetFlag,
+                                onFrontendAdjustAffinity = onFrontendAdjustAffinity,
+                            )
+                        } else if (isStreaming || latestAssistant?.status == "streaming") {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(14.dp),
+                                    strokeWidth = 2.dp,
+                                    color = if (!streamingStatusHint.isNullOrBlank()) c.warning else stageAccent,
+                                )
+                                Text(
+                                    text = streamingStatusHint ?: strings.chat.streamingWriting,
+                                    color = if (!streamingStatusHint.isNullOrBlank()) c.warning else skin.mutedText,
+                                    fontSize = 13.sp,
+                                    fontWeight = if (!streamingStatusHint.isNullOrBlank()) FontWeight.SemiBold else FontWeight.Normal,
+                                )
+                            }
+                        } else {
+                            Text(
+                                text = fallbackUserText?.takeIf { it.isNotBlank() } ?: strings.chat.streamingWriting,
+                                color = skin.mutedText,
+                                fontSize = 13.5.sp,
+                                lineHeight = 20.sp,
+                            )
+                        }
+
+                        if ((isStreaming || latestAssistant?.status == "streaming") &&
+                            cleanBody.isNotBlank() &&
+                            !streamingStatusHint.isNullOrBlank()
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(13.dp),
+                                    strokeWidth = 2.dp,
+                                    color = c.warning,
+                                )
+                                Text(
+                                    text = streamingStatusHint,
+                                    color = c.warning,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                            }
+                        }
+
+                        val errText = latestAssistant?.error
+                        if (latestAssistant != null && !errText.isNullOrBlank()) {
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = if (skin.isDarkSurface) Color(0xCC3C161D) else c.dangerBg,
+                                border = BorderStroke(0.6.dp, Color(0x88F87171)),
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    Icon(
+                                        Icons.Default.ErrorOutline,
+                                        contentDescription = null,
+                                        tint = if (skin.isDarkSurface) Color(0xFFFCA5A5) else c.danger,
+                                        modifier = Modifier.size(16.dp),
+                                    )
+                                    Text(
+                                        text = errText,
+                                        color = if (skin.isDarkSurface) Color(0xFFFECACA) else c.danger,
+                                        fontSize = 12.sp,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    if (!isStreaming) {
+                                        TextButton(onClick = onRegenerate) {
+                                            Text(
+                                                strings.common.retry,
+                                                color = if (skin.isDarkSurface) Color(0xFFFCA5A5) else c.danger,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
 
-                    // Affinity heart pill
-                    Surface(
-                        shape = RoundedCornerShape(999.dp),
-                        color = Color(0x88141826),
-                        border = BorderStroke(
-                            0.8.dp,
-                            if (character.affinity < 0) Color(0x88F87171) else Color(0x88F472B6),
-                        ),
+                    // Bottom Micro-Action Footer + Layer 4 On-Demand Composer Capsule
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            StageInlineActionChip(
+                                label = strings.rp.continueBtn,
+                                icon = Icons.Default.PlayArrow,
+                                enabled = !isStreaming && latestAssistant != null,
+                                highlight = true,
+                                onDarkSurface = skin.isDarkSurface,
+                                accentColor = stageAccent,
+                                onClick = onContinue,
+                            )
+                            StageInlineActionChip(
+                                label = strings.rp.theaterLogBtn,
+                                icon = Icons.Default.History,
+                                enabled = true,
+                                onDarkSurface = skin.isDarkSurface,
+                                accentColor = stageAccent,
+                                onClick = onOpenHistory,
+                            )
+                            if (cleanBody.isNotBlank()) {
+                                StageBoxMiniIconBtn(
+                                    icon = Icons.Default.ContentCopy,
+                                    contentDescription = strings.common.copy,
+                                    enabled = true,
+                                    onClick = onCopyBody,
+                                )
+                            }
+                        }
+
+                        if (onToggleComposer != null) {
+                            Surface(
+                                onClick = onToggleComposer,
+                                shape = RoundedCornerShape(999.dp),
+                                color = if (isComposerExpanded) stageAccent.copy(alpha = 0.24f) else Color(0xD91A1510),
+                                border = BorderStroke(
+                                    0.7.dp,
+                                    stageAccent.copy(alpha = if (isComposerExpanded) 0.90f else 0.68f),
+                                ),
+                            ) {
+                                Text(
+                                    text = if (isComposerExpanded) {
+                                        if (isZh) "▾ 收起输入" else "▾ Collapse"
+                                    } else {
+                                        if (isZh) "🎲 自由扮演 ✍️" else "🎲 Free Play ✍️"
+                                    },
+                                    color = Color(0xFFFFF4DC),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.5.dp),
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StageBoxMiniIconBtn(
+    icon: ImageVector,
+    contentDescription: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    active: Boolean = false,
+    accentColor: Color = Color(0xFFF5C563),
+) {
+    Surface(
+        onClick = onClick,
+        enabled = enabled,
+        shape = CircleShape,
+        color = if (active) accentColor.copy(alpha = 0.24f) else Color(0xBA0E1320),
+        border = BorderStroke(
+            0.5.dp,
+            if (active) accentColor.copy(alpha = 0.72f) else Color(0x40CBD5E1),
+        ),
+        modifier = Modifier.size(26.dp),
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(
+                imageVector = icon,
+                contentDescription = contentDescription,
+                tint = when {
+                    !enabled -> Color(0x5594A3B8)
+                    active -> accentColor
+                    else -> Color(0xFFE2E8F0)
+                },
+                modifier = Modifier.size(13.dp),
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun TheaterFloatingChoiceDeck(
+    choices: List<RpChoice>,
+    rp: RpConfig,
+    isRefreshing: Boolean,
+    peekHidden: Boolean,
+    stageAccent: Color,
+    isZh: Boolean,
+    onTogglePeek: () -> Unit,
+    onSelectChoice: (RpChoice, Boolean) -> Unit,
+    onRefreshChoices: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val strings = LocalAppStrings.current
+    var forceConfirmTarget by remember { mutableStateOf<Pair<RpChoice, String>?>(null) }
+
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
+        // Deck top utility bar: [↻ Refresh] (left) + [👁 赏立绘 / 隐牌] (top-right)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Surface(
+                onClick = onRefreshChoices,
+                enabled = !isRefreshing,
+                shape = RoundedCornerShape(999.dp),
+                color = Color(0xBD0E1320),
+                border = BorderStroke(0.5.dp, Color(0x44CBD5E1)),
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    if (isRefreshing) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(11.dp),
+                            strokeWidth = 1.6.dp,
+                            color = stageAccent,
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = null,
+                            tint = Color(0xFFDCE4F5),
+                            modifier = Modifier.size(12.dp),
+                        )
+                    }
+                    Text(
+                        text = if (isRefreshing) strings.rp.refreshingChoices else strings.rp.refreshChoicesBtn,
+                        color = Color(0xFFDCE4F5),
+                        fontSize = 10.5.sp,
+                        fontWeight = FontWeight.Medium,
+                    )
+                }
+            }
+
+            Surface(
+                onClick = onTogglePeek,
+                shape = RoundedCornerShape(999.dp),
+                color = if (peekHidden) Color(0xCC281F12) else Color(0xBD0E1320),
+                border = BorderStroke(
+                    0.5.dp,
+                    if (peekHidden) stageAccent.copy(alpha = 0.72f) else Color(0x48CBD5E1),
+                ),
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Icon(
+                        imageVector = if (peekHidden) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                        contentDescription = null,
+                        tint = if (peekHidden) stageAccent else Color(0xFFE2E8F0),
+                        modifier = Modifier.size(12.5.dp),
+                    )
+                    Text(
+                        text = if (peekHidden) {
+                            if (isZh) "展开选项 (${choices.size})" else "Show (${choices.size})"
+                        } else {
+                            if (isZh) "赏立绘/隐牌" else "Hide Cards"
+                        },
+                        color = if (peekHidden) Color(0xFFFFF4DC) else Color(0xFFE2E8F0),
+                        fontSize = 10.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            }
+        }
+
+        if (!peekHidden) {
+            forceConfirmTarget?.let { (choice, reason) ->
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color(0xEB26161C),
+                    border = BorderStroke(0.6.dp, Color(0x99F87171)),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         Text(
-                            text = if (compactMode) "♥ ${character.affinity}" else "♥ ${character.affinity} · $tierLabel",
-                            color = if (character.affinity < 0) Color(0xFFFCA5A5) else Color(0xFFFFB4CE),
-                            fontSize = 9.5.sp,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+                            text = strings.rp.choiceForceConfirmMsg.fmt("reason" to reason),
+                            color = Color(0xFFFECACA),
+                            fontSize = 11.sp,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
                         )
+                        TextButton(
+                            onClick = { forceConfirmTarget = null },
+                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                        ) {
+                            Text(strings.common.cancel, color = Color(0xFFCBD5E1), fontSize = 11.sp)
+                        }
+                        Surface(
+                            onClick = {
+                                forceConfirmTarget = null
+                                onSelectChoice(choice, true)
+                            },
+                            shape = RoundedCornerShape(999.dp),
+                            color = Color(0xFFDC2626),
+                        ) {
+                            Text(
+                                text = strings.rp.choiceForceProceed,
+                                color = Color.White,
+                                fontSize = 10.5.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.5.dp),
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Compact Floating Single-Line Left-Strip Cards (No 128dp nested scroll box!)
+            choices.forEachIndexed { idx, choice ->
+                val eval = remember(choice, rp) { RpEngine.evaluateChoiceCondition(choice, rp) }
+                val reasonText = (if (isZh) eval.reasonZh else eval.reasonEn)
+                    ?.takeIf { it.isNotBlank() }
+                    ?: choice.conditionText?.takeIf { it.isNotBlank() }
+                    ?: strings.rp.choiceLockedLabel
+                val toneAccent = resolveChoiceToneAccent(
+                    tone = choice.tone,
+                    unlocked = eval.unlocked,
+                    onDarkStage = true,
+                    fallback = stageAccent,
+                )
+                val toneMeta = resolveChoiceTone(choice.tone, isZh)
+                val hasSkill = !choice.skillCheck.isNullOrBlank()
+                val affinityChipText = if (!choice.requiresAffinityNpc.isNullOrBlank() && choice.requiresAffinityMin != null) {
+                    "♥≥${choice.requiresAffinityMin}"
+                } else {
+                    null
+                }
+
+                Surface(
+                    onClick = {
+                        if (eval.unlocked) {
+                            onSelectChoice(choice, false)
+                        } else {
+                            forceConfirmTarget = choice to reasonText
+                        }
+                    },
+                    shape = RoundedCornerShape(11.dp),
+                    color = Color.Transparent,
+                    border = BorderStroke(
+                        0.6.dp,
+                        if (eval.unlocked) toneAccent.copy(alpha = 0.48f) else Color(0x4494A3B8),
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .alpha(if (eval.unlocked) 1f else 0.84f),
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(
+                                Brush.horizontalGradient(
+                                    if (eval.unlocked) {
+                                        listOf(Color(0xDE1B1824), Color(0xCF101524))
+                                    } else {
+                                        listOf(Color(0xC4131722), Color(0xB80E121B))
+                                    },
+                                ),
+                            )
+                            .drawBehind {
+                                val stripW = 3.dp.toPx()
+                                drawRect(
+                                    color = toneAccent.copy(alpha = if (eval.unlocked) 0.95f else 0.55f),
+                                    topLeft = Offset.Zero,
+                                    size = Size(stripW, size.height),
+                                )
+                            }
+                            .padding(start = 10.dp, end = 9.dp, top = 7.dp, bottom = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(19.dp)
+                                .clip(CircleShape)
+                                .background(if (eval.unlocked) toneAccent else Color(0xFF363F56)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            if (!eval.unlocked) {
+                                Icon(
+                                    imageVector = Icons.Default.Lock,
+                                    contentDescription = strings.rp.choiceLockedLabel,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(10.5.dp),
+                                )
+                            } else {
+                                Text(
+                                    text = "${idx + 1}",
+                                    color = Color.White,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                            }
+                        }
+
+                        Text(
+                            text = choice.label,
+                            color = if (eval.unlocked) Color(0xFFF9F6EF) else Color(0xFFAEB9CC),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            if (hasSkill) {
+                                val dcSuffix = choice.difficulty?.let { "DC$it" }.orEmpty()
+                                ChoiceMetaChip(
+                                    text = "🎲${choice.skillCheck}$dcSuffix",
+                                    variant = GuBadgeVariant.HONEY,
+                                    onDarkStage = true,
+                                )
+                            }
+                            if (affinityChipText != null) {
+                                ChoiceMetaChip(
+                                    text = affinityChipText,
+                                    variant = if (eval.unlocked) GuBadgeVariant.EMERALD else GuBadgeVariant.DANGER,
+                                    onDarkStage = true,
+                                )
+                            } else if (!eval.unlocked) {
+                                ChoiceMetaChip(
+                                    text = "🔒 $reasonText",
+                                    variant = GuBadgeVariant.DANGER,
+                                    onDarkStage = true,
+                                )
+                            } else if (toneMeta != null && !hasSkill) {
+                                ChoiceMetaChip(
+                                    text = toneMeta.first,
+                                    variant = toneMeta.second,
+                                    onDarkStage = true,
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -2423,9 +2548,10 @@ private fun StageCastMiniStrip(
     focusedNpcId: String?,
     stageAccent: Color,
     onSelectNpc: (RpCharacter) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -2437,11 +2563,11 @@ private fun StageCastMiniStrip(
                 shape = RoundedCornerShape(999.dp),
                 color = if (selected) Color(0xCC2C2113) else Color(0x99101522),
                 border = BorderStroke(
-                    0.8.dp,
+                    0.6.dp,
                     when {
-                        selected -> stageAccent.copy(alpha = 0.85f)
-                        npc.inScene -> Color(0x52CBD5E1)
-                        else -> Color(0x3394A3B8)
+                        selected -> stageAccent.copy(alpha = 0.80f)
+                        npc.inScene -> Color(0x44CBD5E1)
+                        else -> Color(0x2894A3B8)
                     },
                 ),
                 modifier = Modifier.alpha(if (npc.inScene || selected) 1f else 0.65f),
@@ -2455,13 +2581,13 @@ private fun StageCastMiniStrip(
                         character = npc,
                         fallbackName = npc.name,
                         size = 20.dp,
-                        borderColor = if (selected) stageAccent else Color(0x66CBD5E1),
+                        borderColor = if (selected) stageAccent else Color(0x55CBD5E1),
                     )
                     Text(
                         text = if (selected) "${npc.name} ♥${npc.affinity}" else npc.name,
                         color = if (selected) Color(0xFFFFF4DC) else Color(0xFFD8E1F2),
                         fontSize = 11.sp,
-                        fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.Medium,
+                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
                         maxLines = 1,
                     )
                     if (npc.inScene) {
@@ -2498,7 +2624,6 @@ internal fun TheaterStageBackdrop(
     }
 
     Box(modifier = modifier) {
-        // Layer 1: Custom CG or Curated 3-Stop Atmosphere Gradient
         if (sceneFile != null) {
             Image(
                 painter = rememberAsyncImagePainter(sceneFile),
@@ -2529,7 +2654,6 @@ internal fun TheaterStageBackdrop(
             )
         }
 
-        // Layer 2: Soft Radial Spotlight behind Active Speaker
         if (dimForReading) {
             Box(
                 modifier = Modifier
@@ -2552,7 +2676,6 @@ internal fun TheaterStageBackdrop(
             )
         }
 
-        // Layer 3: Live backdropDim Scrim & Smooth Cinema Reading Vignette
         if (dimForReading) {
             Box(
                 modifier = Modifier
@@ -2631,13 +2754,15 @@ private fun formatRpRoleLabel(role: String, isZh: Boolean): String {
     val trimmed = role.trim()
     if (trimmed.isEmpty()) return ""
     return when (trimmed.lowercase()) {
-        "romance" -> if (isZh) "攻略" else "Romance"
+        "protagonist", "player", "lead" -> if (isZh) "主角" else "Protagonist"
+        "companion", "partner" -> if (isZh) "核心伙伴" else "Companion"
+        "romance", "heroine", "love_interest" -> if (isZh) "攻略角色" else "Romance"
         "rival" -> if (isZh) "对手" else "Rival"
         "ally" -> if (isZh) "盟友" else "Ally"
         "mentor" -> if (isZh) "导师" else "Mentor"
-        "companion" -> if (isZh) "同伴" else "Companion"
-        "antagonist" -> if (isZh) "反派" else "Antagonist"
-        "npc" -> "NPC"
+        "antagonist", "villain" -> if (isZh) "反派" else "Antagonist"
+        "mystery" -> if (isZh) "神秘人" else "Mystery"
+        "passerby", "minor", "extra", "npc" -> if (isZh) "路人" else "Passerby"
         else -> trimmed
     }
 }
@@ -2664,7 +2789,7 @@ private fun TheaterTopStageBar(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 10.dp, vertical = 3.dp),
+            .padding(horizontal = 10.dp, vertical = 4.dp),
         verticalArrangement = Arrangement.spacedBy(3.dp),
     ) {
         Row(
@@ -2672,7 +2797,6 @@ private fun TheaterTopStageBar(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            // Left: Chapter / Act pill gets full remaining width before ellipsizing
             Box(
                 modifier = Modifier.weight(1f),
                 contentAlignment = Alignment.CenterStart,
@@ -2681,7 +2805,7 @@ private fun TheaterTopStageBar(
                     onClick = onOpenStudio,
                     shape = RoundedCornerShape(999.dp),
                     color = Color(0xC4131928),
-                    border = BorderStroke(0.8.dp, stageAccent.copy(alpha = 0.66f)),
+                    border = BorderStroke(0.6.dp, stageAccent.copy(alpha = 0.56f)),
                     modifier = Modifier.heightIn(min = 28.dp),
                 ) {
                     Row(
@@ -2699,7 +2823,7 @@ private fun TheaterTopStageBar(
                             text = actLabel,
                             color = Color(0xFFFFF4DC),
                             fontSize = 11.sp,
-                            fontWeight = FontWeight.ExtraBold,
+                            fontWeight = FontWeight.Bold,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
@@ -2707,7 +2831,6 @@ private fun TheaterTopStageBar(
                 }
             }
 
-            // Right: Stream / History / Frontend Appearance / Hide UI / Studio pills
             StageGlassPill(
                 label = strings.rp.chatModeBtn,
                 icon = Icons.Default.Forum,
@@ -2719,13 +2842,6 @@ private fun TheaterTopStageBar(
                 contentDescription = strings.rp.theaterLogBtn,
                 accentColor = stageAccent,
                 onClick = onOpenHistory,
-            )
-            StageGlassIconPill(
-                icon = Icons.Default.Palette,
-                contentDescription = strings.rp.frontendTab,
-                accent = true,
-                accentColor = stageAccent,
-                onClick = onOpenFrontendEditor,
             )
             StageGlassIconPill(
                 icon = Icons.Default.VisibilityOff,
@@ -2742,48 +2858,22 @@ private fun TheaterTopStageBar(
             )
         }
 
-        if (!hideSecondaryEnvRow && (envText.isNotBlank() || rp.state.gold > 0 || rp.state.hp < rp.state.maxHp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(5.dp),
+        if (!hideSecondaryEnvRow && envText.isNotBlank()) {
+            Surface(
+                onClick = onOpenStudio,
+                shape = RoundedCornerShape(999.dp),
+                color = Color(0xA60D121F),
+                border = BorderStroke(0.5.dp, Color(0x40CBD5E1)),
             ) {
-                if (envText.isNotBlank()) {
-                    Surface(
-                        onClick = onOpenStudio,
-                        shape = RoundedCornerShape(999.dp),
-                        color = Color(0xA60D121F),
-                        border = BorderStroke(0.8.dp, Color(0x47CBD5E1)),
-                        modifier = Modifier.weight(1f, fill = false),
-                    ) {
-                        Text(
-                            text = "📍 $envText",
-                            color = Color(0xFFDDE5F5),
-                            fontSize = 10.5.sp,
-                            fontWeight = FontWeight.Medium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-                        )
-                    }
-                }
-                if (rp.playStyle == RpPlayStyle.trpg || rp.state.gold > 0 || rp.state.hp < rp.state.maxHp) {
-                    Surface(
-                        onClick = onOpenStudio,
-                        shape = RoundedCornerShape(999.dp),
-                        color = Color(0xA60D121F),
-                        border = BorderStroke(0.8.dp, stageAccent.copy(alpha = 0.48f)),
-                    ) {
-                        Text(
-                            text = "♥${rp.state.hp}/${rp.state.maxHp} · 🪙${rp.state.gold}",
-                            color = Color(0xFFFDE68A),
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
-                        )
-                    }
-                }
+                Text(
+                    text = "📍 $envText",
+                    color = Color(0xFFDDE5F5),
+                    fontSize = 10.5.sp,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                )
             }
         }
     }
@@ -2801,7 +2891,7 @@ internal fun StageGlassPill(
         onClick = onClick,
         shape = RoundedCornerShape(999.dp),
         color = if (accent) Color(0xD42A1F12) else Color(0xBA0D1220),
-        border = BorderStroke(0.8.dp, if (accent) accentColor.copy(alpha = 0.72f) else Color(0x52CBD5E1)),
+        border = BorderStroke(0.6.dp, if (accent) accentColor.copy(alpha = 0.65f) else Color(0x44CBD5E1)),
         modifier = Modifier.heightIn(min = 28.dp),
     ) {
         Row(
@@ -2819,7 +2909,7 @@ internal fun StageGlassPill(
                 text = label,
                 color = if (accent) Color(0xFFFFF4DC) else Color(0xFFE2E8F0),
                 fontSize = 10.5.sp,
-                fontWeight = FontWeight.Bold,
+                fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
             )
         }
@@ -2838,7 +2928,7 @@ internal fun StageGlassIconPill(
         onClick = onClick,
         shape = CircleShape,
         color = if (accent) Color(0xD42A1F12) else Color(0xBA0D1220),
-        border = BorderStroke(0.8.dp, if (accent) accentColor.copy(alpha = 0.72f) else Color(0x52CBD5E1)),
+        border = BorderStroke(0.6.dp, if (accent) accentColor.copy(alpha = 0.65f) else Color(0x44CBD5E1)),
         modifier = Modifier.size(28.dp),
     ) {
         Box(contentAlignment = Alignment.Center) {
@@ -2875,7 +2965,7 @@ private fun TheaterCastPortraitShowcase(
             onClick = onOpenStudio,
             shape = RoundedCornerShape(16.dp),
             color = Color(0xB8111726),
-            border = BorderStroke(1.dp, stageAccent.copy(alpha = 0.45f)),
+            border = BorderStroke(0.6.dp, stageAccent.copy(alpha = 0.42f)),
             modifier = Modifier.fillMaxWidth(),
         ) {
             Row(
@@ -2888,9 +2978,9 @@ private fun TheaterCastPortraitShowcase(
                 RpNpcPortraitAvatar(
                     character = focusedNpc,
                     fallbackName = focusedNpc.name,
-                    size = 74.dp,
+                    size = 70.dp,
                     cornerRadius = 14.dp,
-                    borderColor = stageAccent.copy(alpha = 0.75f),
+                    borderColor = stageAccent.copy(alpha = 0.65f),
                 )
                 Column(
                     modifier = Modifier.weight(1f),
@@ -2903,8 +2993,8 @@ private fun TheaterCastPortraitShowcase(
                         Text(
                             text = focusedNpc.name,
                             color = Color(0xFFFFF8EB),
-                            fontSize = 15.5.sp,
-                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f, fill = false),
@@ -2913,13 +3003,12 @@ private fun TheaterCastPortraitShowcase(
                             Surface(
                                 shape = RoundedCornerShape(999.dp),
                                 color = Color(0x66273452),
-                                border = BorderStroke(1.dp, Color(0x55A7B9DC)),
                             ) {
                                 Text(
                                     text = "${expressionEmoji(exprKey)} ${focusedNpc.mood}",
                                     color = Color(0xFFDCE6FA),
                                     fontSize = 10.5.sp,
-                                    fontWeight = FontWeight.SemiBold,
+                                    fontWeight = FontWeight.Medium,
                                     maxLines = 1,
                                     modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
                                 )
@@ -2932,16 +3021,12 @@ private fun TheaterCastPortraitShowcase(
                         .filter { it.isNotEmpty() }
                         .joinToString(" · ")
                     if (subtitle.isNotBlank()) {
-                        Text(
+                        GuMetaText(
                             text = subtitle,
                             color = Color(0xFFB5C0D6),
-                            fontSize = 11.5.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
                         )
                     }
 
-                    // Affinity Heart Progress Bar & Tier
                     Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -2952,26 +3037,26 @@ private fun TheaterCastPortraitShowcase(
                                 text = "♥ ${focusedNpc.affinity}",
                                 color = if (focusedNpc.affinity < 0) Color(0xFFFCA5A5) else Color(0xFFFF9EBB),
                                 fontSize = 11.5.sp,
-                                fontWeight = FontWeight.ExtraBold,
+                                fontWeight = FontWeight.Bold,
                             )
                             Text(
                                 text = tierLabel,
                                 color = Color(0xFFFDE68A),
                                 fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
+                                fontWeight = FontWeight.SemiBold,
                             )
                         }
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(6.dp)
+                                .height(5.dp)
                                 .clip(RoundedCornerShape(999.dp))
-                                .background(Color(0x55FFFFFF)),
+                                .background(Color(0x44FFFFFF)),
                         ) {
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth(tier.progress.coerceIn(0.04f, 1f))
-                                    .height(6.dp)
+                                    .height(5.dp)
                                     .clip(RoundedCornerShape(999.dp))
                                     .background(
                                         Brush.horizontalGradient(
@@ -3008,9 +3093,9 @@ private fun StageVariantSwipePill(
     onSwitch: (Int) -> Unit,
 ) {
     Surface(
-        shape = RoundedCornerShape(topStart = 10.dp, topEnd = 10.dp, bottomStart = 2.dp, bottomEnd = 2.dp),
+        shape = RoundedCornerShape(999.dp),
         color = Color(0xD4101522),
-        border = BorderStroke(0.8.dp, Color(0x5CE2E8F0)),
+        border = BorderStroke(0.5.dp, Color(0x48E2E8F0)),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -3019,32 +3104,32 @@ private fun StageVariantSwipePill(
             IconButton(
                 onClick = { onSwitch((index - 1).coerceAtLeast(0)) },
                 enabled = index > 0,
-                modifier = Modifier.size(28.dp),
+                modifier = Modifier.size(24.dp),
             ) {
                 Icon(
                     Icons.Default.ChevronLeft,
                     contentDescription = null,
-                    tint = if (index > 0) Color(0xFFF3F6FC) else Color(0x55CBD5E1),
-                    modifier = Modifier.size(16.dp),
+                    tint = if (index > 0) Color(0xFFF3F6FC) else Color(0x48CBD5E1),
+                    modifier = Modifier.size(15.dp),
                 )
             }
             Text(
                 text = "${index + 1}/$total",
                 color = accentColor,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
+                fontSize = 10.5.sp,
+                fontWeight = FontWeight.SemiBold,
                 fontFamily = FontFamily.Monospace,
             )
             IconButton(
                 onClick = { onSwitch((index + 1).coerceAtMost(total - 1)) },
                 enabled = index < total - 1,
-                modifier = Modifier.size(28.dp),
+                modifier = Modifier.size(24.dp),
             ) {
                 Icon(
                     Icons.Default.ChevronRight,
                     contentDescription = null,
-                    tint = if (index < total - 1) Color(0xFFF3F6FC) else Color(0x55CBD5E1),
-                    modifier = Modifier.size(16.dp),
+                    tint = if (index < total - 1) Color(0xFFF3F6FC) else Color(0x48CBD5E1),
+                    modifier = Modifier.size(15.dp),
                 )
             }
         }
@@ -3062,10 +3147,10 @@ private fun StageInlineActionChip(
     accentColor: Color = Color(0xFFF5C563),
 ) {
     val bg = when {
-        !onDarkSurface && highlight && enabled -> Color(0x339C723C)
-        !onDarkSurface -> Color(0x1F5C4326)
-        highlight && enabled -> accentColor.copy(alpha = 0.22f)
-        else -> Color(0x66222B42)
+        !onDarkSurface && highlight && enabled -> Color(0x2E9C723C)
+        !onDarkSurface -> Color(0x185C4326)
+        highlight && enabled -> accentColor.copy(alpha = 0.20f)
+        else -> Color(0x55222B42)
     }
     val fg = when {
         !enabled -> if (onDarkSurface) Color(0x6694A3B8) else Color(0x666B5946)
@@ -3075,30 +3160,30 @@ private fun StageInlineActionChip(
         else -> Color(0xFFDCE4F5)
     }
     val border = when {
-        !enabled -> if (onDarkSurface) Color(0x3364748B) else Color(0x338C7558)
-        !onDarkSurface && highlight -> Color(0x889C723C)
-        !onDarkSurface -> Color(0x448C7558)
-        highlight -> accentColor.copy(alpha = 0.65f)
-        else -> Color(0x44CBD5E1)
+        !enabled -> if (onDarkSurface) Color(0x2864748B) else Color(0x288C7558)
+        !onDarkSurface && highlight -> Color(0x669C723C)
+        !onDarkSurface -> Color(0x368C7558)
+        highlight -> accentColor.copy(alpha = 0.55f)
+        else -> Color(0x36CBD5E1)
     }
     Surface(
         onClick = onClick,
         enabled = enabled,
         shape = RoundedCornerShape(999.dp),
         color = bg,
-        border = BorderStroke(0.8.dp, border),
+        border = BorderStroke(0.5.dp, border),
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.5.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(3.5.dp),
+            horizontalArrangement = Arrangement.spacedBy(3.dp),
         ) {
-            Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(12.5.dp))
+            Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(12.dp))
             Text(
                 text = label,
                 color = fg,
                 fontSize = 10.5.sp,
-                fontWeight = FontWeight.Bold,
+                fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
             )
         }
@@ -3135,7 +3220,7 @@ private fun TheaterOpeningCurtain(
                 onClick = onOpenModelSheet,
                 shape = RoundedCornerShape(999.dp),
                 color = Color(0xCC121726),
-                border = BorderStroke(1.dp, stageAccent.copy(alpha = 0.65f)),
+                border = BorderStroke(0.8.dp, stageAccent.copy(alpha = 0.55f)),
             ) {
                 Row(
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
@@ -3146,7 +3231,7 @@ private fun TheaterOpeningCurtain(
                         text = strings.chat.selectModel,
                         color = Color(0xFFFDE68A),
                         fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
+                        fontWeight = FontWeight.SemiBold,
                     )
                     Icon(
                         Icons.Default.KeyboardArrowDown,
@@ -3162,8 +3247,8 @@ private fun TheaterOpeningCurtain(
         Surface(
             shape = RoundedCornerShape(20.dp),
             color = Color(0xD9101522),
-            border = BorderStroke(1.2.dp, stageAccent.copy(alpha = 0.68f)),
-            shadowElevation = 8.dp,
+            border = BorderStroke(0.8.dp, stageAccent.copy(alpha = 0.52f)),
+            shadowElevation = 6.dp,
             modifier = Modifier.fillMaxWidth(),
         ) {
             Column(
@@ -3189,7 +3274,7 @@ private fun TheaterOpeningCurtain(
                     text = rp.title,
                     color = Color(0xFFFFF8EA),
                     fontSize = 20.sp,
-                    fontWeight = FontWeight.ExtraBold,
+                    fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.Center,
                 )
 
@@ -3217,7 +3302,7 @@ private fun TheaterOpeningCurtain(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(999.dp))
                                     .background(Color(0x991C2438))
-                                    .border(1.dp, stageAccent.copy(alpha = 0.45f), RoundedCornerShape(999.dp))
+                                    .border(0.6.dp, stageAccent.copy(alpha = 0.42f), RoundedCornerShape(999.dp))
                                     .padding(start = 4.dp, end = 10.dp, top = 4.dp, bottom = 4.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -3227,7 +3312,7 @@ private fun TheaterOpeningCurtain(
                                     text = "${npc.name} ♥${npc.affinity}",
                                     color = Color(0xFFFDE68A),
                                     fontSize = 11.5.sp,
-                                    fontWeight = FontWeight.Bold,
+                                    fontWeight = FontWeight.SemiBold,
                                 )
                             }
                         }
@@ -3246,7 +3331,7 @@ private fun TheaterOpeningCurtain(
                 ) {
                     Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text(strings.rp.wizardStartBtn, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold)
+                    Text(strings.rp.wizardStartBtn, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -3270,8 +3355,18 @@ private fun TheaterHistoryLogSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = sheetBg,
+        scrimColor = Color(0x8C060912),
+        dragHandle = { GuModalDragHandle() },
         modifier = Modifier.statusBarsPadding(),
     ) {
+        val dialogView = LocalView.current
+        SideEffect {
+            val window = (dialogView.parent as? DialogWindowProvider)?.window ?: return@SideEffect
+            val controller = WindowCompat.getInsetsController(window, dialogView)
+            controller.isAppearanceLightStatusBars = false
+            controller.isAppearanceLightNavigationBars = !appTheme.isDark
+        }
+
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -3288,7 +3383,7 @@ private fun TheaterHistoryLogSheet(
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(max = 520.dp),
-                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 items(messages, key = { it.id }) { msg ->
@@ -3307,7 +3402,6 @@ private fun TheaterHistoryLogSheet(
                     Surface(
                         shape = RoundedCornerShape(14.dp),
                         color = if (isUser) c.primarySoft.copy(alpha = 0.65f) else c.surface,
-                        border = BorderStroke(0.8.dp, if (isUser) c.primary.copy(alpha = 0.3f) else c.border),
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Column(
@@ -3325,7 +3419,7 @@ private fun TheaterHistoryLogSheet(
                                     text = speaker,
                                     color = if (isUser) c.primarySoftInk else c.ink,
                                     fontSize = 12.5.sp,
-                                    fontWeight = FontWeight.ExtraBold,
+                                    fontWeight = FontWeight.SemiBold,
                                     modifier = Modifier.weight(1f),
                                 )
                                 if (isUser && msg.rpInputKind != null) {
