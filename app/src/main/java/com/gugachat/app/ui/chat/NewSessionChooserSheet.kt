@@ -147,11 +147,11 @@ fun NewSessionChooserSheet(
                             contentPadding = PaddingValues(horizontal = 2.dp),
                         ) {
                             items(effectiveRecentCards, key = { it.id }) { card ->
-                                val avatarFile = remember(card.avatarPath, card.spritePath) {
-                                    LocalMediaPathResolver.resolveFile(
-                                        ctx.applicationContext.filesDir.absolutePath,
+                                val avatarModel = remember(card.avatarPath, card.spritePath) {
+                                    LocalMediaPathResolver.resolveImageModel(
+                                        ctx,
                                         card.avatarPath ?: card.spritePath,
-                                    )?.takeIf { it.isFile }
+                                    )
                                 }
                                 Surface(
                                     onClick = {
@@ -173,9 +173,9 @@ fun NewSessionChooserSheet(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                                     ) {
-                                        if (avatarFile != null) {
+                                        if (avatarModel != null) {
                                             Image(
-                                                painter = rememberAsyncImagePainter(avatarFile),
+                                                painter = rememberAsyncImagePainter(avatarModel),
                                                 contentDescription = card.name,
                                                 contentScale = ContentScale.Crop,
                                                 alignment = Alignment.TopCenter,

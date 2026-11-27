@@ -447,6 +447,41 @@ class RpEngineTest {
     }
 
     @Test
+    fun rpPresets_allBuiltInNpcsHaveExistingBundledSpriteAssets() {
+        val assetsDir = listOf(java.io.File("src/main/assets"), java.io.File("app/src/main/assets"))
+            .firstOrNull { it.isDirectory }
+        assertNotNull("Expected app/src/main/assets directory to exist", assetsDir)
+
+        var npcCount = 0
+        for (preset in RpPresets.ALL) {
+            val primary = preset.primarySpritePath
+            assertNotNull("Preset ${preset.id} must define primarySpritePath", primary)
+            assertTrue(
+                "Preset ${preset.id} primarySpritePath must be bundled asset URI",
+                com.gugachat.app.core.storage.LocalMediaPathResolver.isAssetUri(primary),
+            )
+            val npcs = preset.config.cast.filter { !it.isPlayer }
+            assertTrue("Preset ${preset.id} should have at least one NPC", npcs.isNotEmpty())
+            for (npc in npcs) {
+                npcCount++
+                assertTrue(
+                    "NPC ${npc.id} avatarPath should be android_asset URI",
+                    com.gugachat.app.core.storage.LocalMediaPathResolver.isAssetUri(npc.avatarPath),
+                )
+                assertTrue(
+                    "NPC ${npc.id} spritePath should be android_asset URI",
+                    com.gugachat.app.core.storage.LocalMediaPathResolver.isAssetUri(npc.spritePath),
+                )
+                val rel = com.gugachat.app.core.storage.LocalMediaPathResolver.extractAssetPath(npc.spritePath)
+                assertNotNull("NPC ${npc.id} should have valid asset relative path", rel)
+                val file = java.io.File(assetsDir!!, rel!!)
+                assertTrue("Expected bundled sprite file to exist: ${file.path}", file.isFile && file.length() > 1024L)
+            }
+        }
+        assertEquals(10, npcCount)
+    }
+
+    @Test
     fun resolveExpressionKey_mapsBilingualMoodsAccurately() {
         assertEquals(8, RpEngine.STANDARD_EXPRESSIONS.size)
         assertEquals("neutral", RpEngine.resolveExpressionKey(null))

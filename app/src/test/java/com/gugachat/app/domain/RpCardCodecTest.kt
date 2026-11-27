@@ -384,4 +384,25 @@ class RpCardCodecTest {
         val parsed = RpCardCodec.parseCardJson(extracted.cardJson, conversationId = "charx-1")
         assertEquals("夏洛特", parsed.rpConfig.title)
     }
+
+    @Test
+    fun exportCardToPngBytesFromPaths_usesAssetReaderForBundledSprites() {
+        val palace = RpPresets.findById("palace_intrigue").config
+        val requestedAssets = mutableListOf<String>()
+        val pngCover = buildMinimalValidPng()
+        val exported = RpCardCodec.exportCardToPngBytesFromPaths(
+            rp = palace,
+            filesDirPath = "/tmp/nonexistent-files-dir",
+            assetReader = { rel ->
+                requestedAssets += rel
+                pngCover
+            },
+            imageTranscoder = { it },
+        )
+        assertTrue(RpCardCodec.isPngBytes(exported))
+        assertTrue(requestedAssets.contains("rp_sprites/npc_xiao.webp"))
+        val extracted = RpCardCodec.extractCardJsonFromPng(exported)
+        assertNotNull(extracted)
+        assertTrue(extracted!!.contains("萧景珩"))
+    }
 }

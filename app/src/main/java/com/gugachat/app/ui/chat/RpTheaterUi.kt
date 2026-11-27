@@ -215,14 +215,13 @@ fun RpNpcPortraitAvatar(
     ) {
         character?.let { RpEngine.resolveCharacterSpritePath(it) }
     }
-    val avatarFile = remember(resolvedPath) {
-        LocalMediaPathResolver.resolveFile(ctx.applicationContext.filesDir.absolutePath, resolvedPath)
-            ?.takeIf { it.isFile }
+    val avatarModel = remember(resolvedPath) {
+        LocalMediaPathResolver.resolveImageModel(ctx, resolvedPath)
     }
 
-    if (avatarFile != null) {
+    if (avatarModel != null) {
         Image(
-            painter = rememberAsyncImagePainter(avatarFile),
+            painter = rememberAsyncImagePainter(avatarModel),
             contentDescription = displayName,
             contentScale = ContentScale.Crop,
             alignment = Alignment.TopCenter,
@@ -1452,13 +1451,13 @@ fun RpTheaterStageView(
                                     val spritesWithFiles = remember(stageCharacters) {
                                         stageCharacters.filter { (_, ch) ->
                                             val path = RpEngine.resolveCharacterSpritePath(ch)
-                                            LocalMediaPathResolver.resolveFile(ctx.applicationContext.filesDir.absolutePath, path)
-                                                ?.isFile == true
+                                            LocalMediaPathResolver.resolveImageModel(ctx, path) != null
                                         }
                                     }
                                     if (spritesWithFiles.isNotEmpty()) {
-                                        // Full-height proportion (~0.62f by default, feather-faded behind Layer 2!)
-                                        val spriteHeightFraction = (theme.spriteHeightRatio + 0.18f).coerceIn(0.52f, 0.72f)
+                                        // Anchor full half-body stage below top HUD so character faces stay clear above choice buttons
+                                        val spriteTopClearance = if (showInternalTopBar) 92.dp else 44.dp
+                                        val spriteHeightFraction = (theme.spriteHeightRatio + 0.50f).coerceIn(0.84f, 1.0f)
                                         val stageActors = remember(spritesWithFiles) {
                                             if (spritesWithFiles.size <= 2) spritesWithFiles
                                             else {
@@ -1472,7 +1471,7 @@ fun RpTheaterStageView(
                                             modifier = Modifier
                                                 .align(Alignment.BottomCenter)
                                                 .fillMaxWidth()
-                                                .padding(bottom = dialogueHeight * 0.42f)
+                                                .padding(top = spriteTopClearance, bottom = dialogueHeight * 0.34f)
                                                 .fillMaxHeight(spriteHeightFraction),
                                         ) {
                                             stageActors.forEachIndexed { idx, (slot, char) ->
@@ -1598,8 +1597,7 @@ fun RpTheaterStageView(
 
                             val hasSprites = stageCharacters.any { (_, ch) ->
                                 val path = RpEngine.resolveCharacterSpritePath(ch)
-                                LocalMediaPathResolver.resolveFile(ctx.applicationContext.filesDir.absolutePath, path)
-                                    ?.isFile == true
+                                LocalMediaPathResolver.resolveImageModel(ctx, path) != null
                             }
                             if (hasSprites && nonPlayerCast.size > 1 && spriteLayout == "stage") {
                                 StageCastMiniStrip(
@@ -1734,9 +1732,8 @@ private fun FeatherHalfBodySprite(
     ) {
         RpEngine.resolveCharacterSpritePath(character)
     }
-    val spriteFile = remember(resolvedPath) {
-        LocalMediaPathResolver.resolveFile(ctx.applicationContext.filesDir.absolutePath, resolvedPath)
-            ?.takeIf { it.isFile }
+    val spriteModel = remember(resolvedPath) {
+        LocalMediaPathResolver.resolveImageModel(ctx, resolvedPath)
     } ?: return
 
     Box(
@@ -1744,7 +1741,7 @@ private fun FeatherHalfBodySprite(
         contentAlignment = Alignment.BottomCenter,
     ) {
         Image(
-            painter = rememberAsyncImagePainter(spriteFile),
+            painter = rememberAsyncImagePainter(spriteModel),
             contentDescription = character.name,
             contentScale = ContentScale.Crop,
             alignment = Alignment.TopCenter,
@@ -2681,9 +2678,8 @@ internal fun TheaterStageBackdrop(
     modifier: Modifier = Modifier,
 ) {
     val ctx = LocalContext.current
-    val sceneFile = remember(rp.state.sceneImagePath) {
-        LocalMediaPathResolver.resolveFile(ctx.applicationContext.filesDir.absolutePath, rp.state.sceneImagePath)
-            ?.takeIf { it.isFile }
+    val sceneModel = remember(rp.state.sceneImagePath) {
+        LocalMediaPathResolver.resolveImageModel(ctx, rp.state.sceneImagePath)
     }
     val effectiveDim = backdropDim.coerceIn(0f, 0.78f)
     val spotlightXRatio = when (activeSlot) {
@@ -2693,9 +2689,9 @@ internal fun TheaterStageBackdrop(
     }
 
     Box(modifier = modifier) {
-        if (sceneFile != null) {
+        if (sceneModel != null) {
             Image(
-                painter = rememberAsyncImagePainter(sceneFile),
+                painter = rememberAsyncImagePainter(sceneModel),
                 contentDescription = rp.state.scene,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
@@ -2733,7 +2729,7 @@ internal fun TheaterStageBackdrop(
                             drawRect(
                                 brush = Brush.radialGradient(
                                     colors = listOf(
-                                        stageAccent.copy(alpha = if (sceneFile != null) 0.16f else 0.22f),
+                                        stageAccent.copy(alpha = if (sceneModel != null) 0.16f else 0.22f),
                                         Color.Transparent,
                                     ),
                                     center = Offset(size.width * spotlightXRatio, size.height * 0.34f),
@@ -2756,14 +2752,14 @@ internal fun TheaterStageBackdrop(
                     .fillMaxSize()
                     .background(
                         Brush.verticalGradient(
-                            0.0f to Color(if (sceneFile != null) 0x5C060912 else 0x3305070E),
+                            0.0f to Color(if (sceneModel != null) 0x5C060912 else 0x3305070E),
                             0.24f to Color.Transparent,
-                            0.62f to Color(if (sceneFile != null) 0x58060912 else 0x2605070E),
-                            1.0f to Color(if (sceneFile != null) 0xC4060912 else 0x8C05070E),
+                            0.62f to Color(if (sceneModel != null) 0x58060912 else 0x2605070E),
+                            1.0f to Color(if (sceneModel != null) 0xC4060912 else 0x8C05070E),
                         ),
                     ),
             )
-        } else if (sceneFile != null) {
+        } else if (sceneModel != null) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()

@@ -244,16 +244,32 @@ class AppUpdateAbiSelectionTest {
 
             val res = AppUpdateService.checkLatestRelease(
                 httpClient = OkHttpClient(),
-                currentVersion = "0.3.6",
+                currentVersion = "0.0.1",
                 endpointUrl = server.url("/latest-release.json").toString(),
                 supportedAbis = listOf("x86_64"),
             ) as UpdateCheckResult.UpdateAvailable
 
-            assertEquals("0.3.7", res.info.versionName)
+            val manifestJson = kotlinx.serialization.json.Json.parseToJsonElement(body)
+                as kotlinx.serialization.json.JsonObject
+            val expectedVersion = manifestJson["version_name"]
+                ?.let { (it as kotlinx.serialization.json.JsonPrimitive).content }
+            val expectedX86 = (manifestJson["abi_apks"] as kotlinx.serialization.json.JsonObject)["x86_64"]
+                as kotlinx.serialization.json.JsonObject
+
+            assertEquals(expectedVersion, res.info.versionName)
             assertEquals("x86_64", res.info.resolvedAbi)
-            assertEquals("GuGuChat-v0.3.7-x86_64.apk", res.info.apkFileName)
-            assertEquals(27974019L, res.info.apkSizeBytes)
-            assertEquals(x8664Sha, res.info.apkSha256)
+            assertEquals(
+                (expectedX86["apk_name"] as kotlinx.serialization.json.JsonPrimitive).content,
+                res.info.apkFileName,
+            )
+            assertEquals(
+                (expectedX86["apk_size"] as kotlinx.serialization.json.JsonPrimitive).content.toLong(),
+                res.info.apkSizeBytes,
+            )
+            assertEquals(
+                (expectedX86["apk_sha256"] as kotlinx.serialization.json.JsonPrimitive).content,
+                res.info.apkSha256,
+            )
         } finally {
             server.shutdown()
         }

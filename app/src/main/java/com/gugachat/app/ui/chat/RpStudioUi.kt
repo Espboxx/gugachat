@@ -933,11 +933,11 @@ fun RpWizardDialog(
                         ) {
                             items(globalCards, key = { it.id }) { card ->
                                 val cardSelected = selectedGlobalCardId == card.id
-                                val avatarFile = remember(card.avatarPath, card.spritePath) {
-                                    LocalMediaPathResolver.resolveFile(
-                                        ctx.applicationContext.filesDir.absolutePath,
+                                val avatarModel = remember(card.avatarPath, card.spritePath) {
+                                    LocalMediaPathResolver.resolveImageModel(
+                                        ctx,
                                         card.avatarPath ?: card.spritePath,
-                                    )?.takeIf { it.isFile }
+                                    )
                                 }
                                 Surface(
                                     onClick = {
@@ -961,9 +961,9 @@ fun RpWizardDialog(
                                                 .background(c.surfaceSoft),
                                             contentAlignment = Alignment.Center,
                                         ) {
-                                            if (avatarFile != null) {
+                                            if (avatarModel != null) {
                                                 Image(
-                                                    painter = rememberAsyncImagePainter(avatarFile),
+                                                    painter = rememberAsyncImagePainter(avatarModel),
                                                     contentDescription = card.name,
                                                     contentScale = ContentScale.Crop,
                                                     alignment = Alignment.TopCenter,
@@ -1012,6 +1012,9 @@ fun RpWizardDialog(
                         items(RpPresets.ALL, key = { it.id }) { preset ->
                             val isSelected = selectedGlobalCard == null && selectedPreset == preset.id
                             val visual = remember(preset.id) { resolveRpPresetCoverVisual(preset.id) }
+                            val presetCoverModel = remember(preset.id) {
+                                LocalMediaPathResolver.resolveImageModel(ctx, preset.primarySpritePath)
+                            }
                             val presetLabel = strings.rp.presets[preset.id] ?: preset.name
                             val presetGreetings = (if (preset.config.greeting.isNotBlank()) 1 else 0) +
                                 preset.config.alternateGreetings.size
@@ -1033,29 +1036,70 @@ fun RpWizardDialog(
                                 shadowElevation = if (isSelected && !theme.isDark) 3.dp else 0.dp,
                                 modifier = Modifier
                                     .width(164.dp)
-                                    .height(124.dp),
+                                    .height(132.dp),
                             ) {
                                 Column(modifier = Modifier.fillMaxSize()) {
                                     Box(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .height(44.dp)
-                                            .background(Brush.horizontalGradient(listOf(visual.startColor, visual.endColor)))
-                                            .padding(horizontal = 10.dp),
+                                            .height(52.dp)
+                                            .background(Brush.horizontalGradient(listOf(visual.startColor, visual.endColor))),
                                     ) {
+                                        if (presetCoverModel != null) {
+                                            Image(
+                                                painter = rememberAsyncImagePainter(presetCoverModel),
+                                                contentDescription = presetLabel,
+                                                contentScale = ContentScale.Crop,
+                                                alignment = Alignment.TopCenter,
+                                                modifier = Modifier
+                                                    .fillMaxSize()
+                                                    .alpha(0.45f),
+                                            )
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxSize()
+                                                    .background(
+                                                        Brush.horizontalGradient(
+                                                            listOf(
+                                                                visual.startColor.copy(alpha = 0.72f),
+                                                                visual.endColor.copy(alpha = 0.56f),
+                                                            ),
+                                                        ),
+                                                    ),
+                                            )
+                                        }
                                         Row(
-                                            modifier = Modifier.fillMaxSize(),
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .padding(horizontal = 10.dp),
                                             verticalAlignment = Alignment.CenterVertically,
                                             horizontalArrangement = Arrangement.spacedBy(7.dp),
                                         ) {
-                                            GuIconTile(
-                                                icon = visual.icon,
-                                                tint = visual.accentTint,
-                                                backgroundColor = Color.White.copy(alpha = 0.14f),
-                                                size = 26.dp,
-                                                iconSize = 14.dp,
-                                                cornerRadius = 8.dp,
-                                            )
+                                            if (presetCoverModel != null) {
+                                                Image(
+                                                    painter = rememberAsyncImagePainter(presetCoverModel),
+                                                    contentDescription = presetLabel,
+                                                    contentScale = ContentScale.Crop,
+                                                    alignment = Alignment.TopCenter,
+                                                    modifier = Modifier
+                                                        .size(34.dp)
+                                                        .clip(RoundedCornerShape(9.dp))
+                                                        .border(
+                                                            0.8.dp,
+                                                            Color.White.copy(alpha = 0.35f),
+                                                            RoundedCornerShape(9.dp),
+                                                        ),
+                                                )
+                                            } else {
+                                                GuIconTile(
+                                                    icon = visual.icon,
+                                                    tint = visual.accentTint,
+                                                    backgroundColor = Color.White.copy(alpha = 0.14f),
+                                                    size = 26.dp,
+                                                    iconSize = 14.dp,
+                                                    cornerRadius = 8.dp,
+                                                )
+                                            }
                                             Surface(
                                                 shape = RoundedCornerShape(999.dp),
                                                 color = Color.Black.copy(alpha = 0.34f),
@@ -2395,9 +2439,8 @@ private fun RpCastSection(
                 val resolvedPath = remember(npc.spritePath, npc.avatarPath, npc.mood, npc.expressionSprites) {
                     RpEngine.resolveCharacterSpritePath(npc)
                 }
-                val portraitFile = remember(resolvedPath) {
-                    LocalMediaPathResolver.resolveFile(ctx.applicationContext.filesDir.absolutePath, resolvedPath)
-                        ?.takeIf { it.isFile }
+                val portraitModel = remember(resolvedPath) {
+                    LocalMediaPathResolver.resolveImageModel(ctx, resolvedPath)
                 }
                 val boundExprCount = remember(npc.expressionSprites, npc.spritePath) {
                     val exprHits = RpEngine.STANDARD_EXPRESSIONS.count { key ->
@@ -2428,9 +2471,9 @@ private fun RpCastSection(
                                 .background(c.surfaceSoft),
                             contentAlignment = Alignment.Center,
                         ) {
-                            if (portraitFile != null) {
+                            if (portraitModel != null) {
                                 Image(
-                                    painter = rememberAsyncImagePainter(portraitFile),
+                                    painter = rememberAsyncImagePainter(portraitModel),
                                     contentDescription = npc.name,
                                     contentScale = ContentScale.Crop,
                                     alignment = Alignment.TopCenter,
@@ -2659,13 +2702,11 @@ private fun RpCharacterUnifiedSubpage(
     val previewPath = remember(previewChar.mood, npc.expressionSprites, npc.spritePath, npc.avatarPath) {
         RpEngine.resolveCharacterSpritePath(previewChar)
     }
-    val previewFile = remember(previewPath) {
-        LocalMediaPathResolver.resolveFile(ctx.applicationContext.filesDir.absolutePath, previewPath)
-            ?.takeIf { it.isFile }
+    val previewModel = remember(previewPath) {
+        LocalMediaPathResolver.resolveImageModel(ctx, previewPath)
     }
-    val avatarFile = remember(npc.avatarPath) {
-        LocalMediaPathResolver.resolveFile(ctx.applicationContext.filesDir.absolutePath, npc.avatarPath)
-            ?.takeIf { it.isFile }
+    val avatarModel = remember(npc.avatarPath) {
+        LocalMediaPathResolver.resolveImageModel(ctx, npc.avatarPath)
     }
     val boundCount = remember(npc.expressionSprites) {
         RpEngine.STANDARD_EXPRESSIONS.count { key ->
@@ -2732,9 +2773,9 @@ private fun RpCharacterUnifiedSubpage(
                     "right" -> Alignment.BottomEnd
                     else -> Alignment.BottomCenter
                 }
-                if (previewFile != null) {
+                if (previewModel != null) {
                     Image(
-                        painter = rememberAsyncImagePainter(previewFile),
+                        painter = rememberAsyncImagePainter(previewModel),
                         contentDescription = name,
                         contentScale = ContentScale.Crop,
                         alignment = Alignment.TopCenter,
@@ -2793,11 +2834,12 @@ private fun RpCharacterUnifiedSubpage(
                             .background(c.primarySoft),
                         contentAlignment = Alignment.Center,
                     ) {
-                        if (avatarFile != null) {
+                        if (avatarModel != null) {
                             Image(
-                                painter = rememberAsyncImagePainter(avatarFile),
+                                painter = rememberAsyncImagePainter(avatarModel),
                                 contentDescription = name,
                                 contentScale = ContentScale.Crop,
+                                alignment = Alignment.TopCenter,
                                 modifier = Modifier.fillMaxSize(),
                             )
                         } else {
@@ -3004,9 +3046,8 @@ private fun RpCharacterUnifiedSubpage(
                         ?.value
                         ?.trim()
                         ?.takeIf { it.isNotEmpty() }
-                    val exprFile = remember(boundPath) {
-                        LocalMediaPathResolver.resolveFile(ctx.applicationContext.filesDir.absolutePath, boundPath)
-                            ?.takeIf { it.isFile }
+                    val exprModel = remember(boundPath) {
+                        LocalMediaPathResolver.resolveImageModel(ctx, boundPath)
                     }
                     val exprLabel = strings.rp.expressionLabels[exprKey] ?: exprKey
 
@@ -3029,9 +3070,9 @@ private fun RpCharacterUnifiedSubpage(
                                 },
                             contentAlignment = Alignment.Center,
                         ) {
-                            if (exprFile != null) {
+                            if (exprModel != null) {
                                 Image(
-                                    painter = rememberAsyncImagePainter(exprFile),
+                                    painter = rememberAsyncImagePainter(exprModel),
                                     contentDescription = exprLabel,
                                     contentScale = ContentScale.Crop,
                                     alignment = Alignment.TopCenter,

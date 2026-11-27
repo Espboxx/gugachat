@@ -962,6 +962,7 @@ object RpCardCodec {
         lore: List<NovelLoreEntry> = emptyList(),
         filesDirPath: String? = null,
         extraPaths: List<String?> = emptyList(),
+        assetReader: ((String) -> ByteArray?)? = null,
         imageTranscoder: (ByteArray) -> ByteArray? = { transcodeToPngBytes(it) },
     ): ByteArray {
         val leadChar = rp.cast.firstOrNull { !it.isPlayer } ?: rp.cast.firstOrNull()
@@ -974,6 +975,12 @@ object RpCardCodec {
         }.distinct()
 
         val candidateBytes = orderedPaths.mapNotNull { rawPath ->
+            val assetRel = LocalMediaPathResolver.extractAssetPath(rawPath)
+            if (assetRel != null) {
+                return@mapNotNull runCatching {
+                    assetReader?.invoke(assetRel)?.takeIf { it.isNotEmpty() && it.size.toLong() <= 20L * 1024L * 1024L }
+                }.getOrNull()
+            }
             val file = if (!filesDirPath.isNullOrBlank()) {
                 LocalMediaPathResolver.resolveFile(filesDirPath, rawPath)
             } else {

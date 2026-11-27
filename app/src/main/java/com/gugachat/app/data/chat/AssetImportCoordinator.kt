@@ -172,6 +172,9 @@ class AssetImportCoordinator(
                 lore = lore,
                 filesDirPath = filesDir.absolutePath,
                 extraPaths = extraPaths,
+                assetReader = { rel ->
+                    runCatching { appContext.assets.open(rel).use { it.readBytes() } }.getOrNull()
+                },
             )
             contentResolver.openOutputStream(uri)?.use { it.write(cardPng) }
                 ?: error("Failed to open output stream")

@@ -14,9 +14,19 @@ data class RpPresetTemplate(
     val description: String,
     val config: RpConfig,
     val starterLore: List<RpStarterLore> = emptyList(),
-)
+) {
+    val primarySpritePath: String?
+        get() = config.cast
+            .firstOrNull { !it.isPlayer }
+            ?.let { ch ->
+                ch.spritePath?.trim()?.takeIf { it.isNotEmpty() }
+                    ?: ch.avatarPath?.trim()?.takeIf { it.isNotEmpty() }
+            }
+}
 
 object RpPresets {
+    private const val BUILTIN_SPRITE_DIR = "file:///android_asset/rp_sprites/"
+    private fun builtinSpriteUri(fileName: String): String = "$BUILTIN_SPRITE_DIR$fileName"
     val ALL: List<RpPresetTemplate> = listOf(
         RpPresetTemplate(
             id = "palace_intrigue",
@@ -48,6 +58,8 @@ object RpPresets {
                         secret = "暗中重查三年前云家冤案，对云疏月入宫既戒备又存一丝愧疚。",
                         inScene = true,
                         stageSlot = "left",
+                        avatarPath = builtinSpriteUri("npc_xiao.webp"),
+                        spritePath = builtinSpriteUri("npc_xiao.webp"),
                         appearancePrompt = "handsome young Chinese emperor, dark obsidian and gold dragon-embroidered imperial robe, sharp cold phoenix eyes, sculpted features, wearing a black jade thumb ring, regal composed posture",
                     ),
                     RpCharacter(
@@ -66,6 +78,8 @@ object RpPresets {
                         secret = "并非真心争宠，只为替兄长稳住西北军饷供给，暗中忌惮太后旧党。",
                         inScene = true,
                         stageSlot = "right",
+                        avatarPath = builtinSpriteUri("npc_shen.webp"),
+                        spritePath = builtinSpriteUri("npc_shen.webp"),
                         appearancePrompt = "striking noble Chinese imperial consort, crimson brocade palace gown with gold phoenix embroidery, ornate eastern pearl hairpin tassels, poised subtle smile with sharp intelligent eyes",
                     ),
                 ),
@@ -196,6 +210,8 @@ object RpPresets {
                         secret = "阁楼抽屉里收着三年前{{user}}曾在旧展馆拍下却未署名的那张海边黑白照片。",
                         inScene = true,
                         stageSlot = "center",
+                        avatarPath = builtinSpriteUri("npc_jiang.webp"),
+                        spritePath = builtinSpriteUri("npc_jiang.webp"),
                         appearancePrompt = "elegant young Chinese female bartender, loose black silk button-up shirt with rolled sleeves, wavy dark chestnut hair loosely tied up, tiny silver crescent moon necklace, languid warm eyes",
                     ),
                 ),
@@ -320,6 +336,8 @@ object RpPresets {
                         secret = "她的铜星盘实际上是黑曜迷宫底层封印的半枚钥匙。",
                         inScene = true,
                         stageSlot = "right",
+                        avatarPath = builtinSpriteUri("npc_lyra.webp"),
+                        spritePath = builtinSpriteUri("npc_lyra.webp"),
                         appearancePrompt = "young female arcane astronomer mage, short silver hair, bright golden eyes, blue and white star-patterned travel robe, ornate brass astrolabe at waist, confident curious gaze",
                     ),
                     RpCharacter(
@@ -336,6 +354,8 @@ object RpPresets {
                         speakingStyle = "嗓门粗哑爱讨价还价，但谈到旧战友时会忽然严肃。",
                         inScene = true,
                         stageSlot = "left",
+                        avatarPath = builtinSpriteUri("npc_garrick.webp"),
+                        spritePath = builtinSpriteUri("npc_garrick.webp"),
                         appearancePrompt = "grizzled stout dwarf tavern keeper, thick braided beard, scar across left brow, eyepatch, leather apron over rugged wool tunic, shrewd loyal gaze",
                     ),
                 ),
@@ -418,6 +438,8 @@ object RpPresets {
                         secret = "冷库里的零号原型备份中藏着她失踪妹妹的残缺记忆扇区。",
                         inScene = true,
                         stageSlot = "center",
+                        avatarPath = builtinSpriteUri("npc_vesper.webp"),
+                        spritePath = builtinSpriteUri("npc_vesper.webp"),
                         appearancePrompt = "cool female cyberpunk netrunner, translucent holographic fiber trench coat over dark techwear, sleek dark bob hair, glowing cyan neural interface ports on neck, sharp vigilant eyes",
                     ),
                 ),
@@ -501,6 +523,8 @@ object RpPresets {
                         secret = "她此行实为追回医药谷失窃的另一半残锋令。",
                         inScene = true,
                         stageSlot = "center",
+                        avatarPath = builtinSpriteUri("npc_su.webp"),
+                        spritePath = builtinSpriteUri("npc_su.webp"),
                         appearancePrompt = "aloof graceful Chinese wuxia swordswoman, moon-white silk martial robes with embroidered winter plum blossoms on sleeves, white bamboo veil hat tilted back, jade-like serene demeanor",
                     ),
                 ),
@@ -583,6 +607,8 @@ object RpPresets {
                         secret = "她的兄长正是 1879 年在圣玛丽灯塔失踪的守灯人之一。",
                         inScene = true,
                         stageSlot = "center",
+                        avatarPath = builtinSpriteUri("npc_evelyn.webp"),
+                        spritePath = builtinSpriteUri("npc_evelyn.webp"),
                         appearancePrompt = "composed Victorian female archivist investigator, charcoal grey wool trench coat over dark high-collared dress, holding glowing brass storm lantern, resolute solemn eyes",
                     ),
                 ),
@@ -655,6 +681,8 @@ object RpPresets {
                         speakingStyle = "语速快、爱抱怨飞船贷款和零件磨损，但从不掉链子。",
                         inScene = true,
                         stageSlot = "center",
+                        avatarPath = builtinSpriteUri("npc_kai.webp"),
+                        spritePath = builtinSpriteUri("npc_kai.webp"),
                         appearancePrompt = "energetic male sci-fi starship chief engineer, grease-stained orange flight jumpsuit, holographic wrench hanging around neck, tousled hair, bright dependable grin",
                     ),
                 ),
@@ -728,6 +756,8 @@ object RpPresets {
                         secret = "她这次个人画展压轴那幅《晴日窗边》，画的正是去年秋天在书屋睡着的陈夏。",
                         inScene = true,
                         stageSlot = "center",
+                        avatarPath = builtinSpriteUri("npc_linzhi.webp"),
+                        spritePath = builtinSpriteUri("npc_linzhi.webp"),
                         appearancePrompt = "gentle East Asian female university illustrator, soft light khaki knit cardigan over white blouse, dark brown hair with small silver hairpin, canvas tote bag, warm sunlit smile",
                     ),
                 ),

@@ -479,8 +479,8 @@ fun CharactersHubTab(
             }
 
             items(items = filteredCards, key = { "card_${it.id}" }) { card ->
-                val avatarFile = remember(card.avatarPath, card.spritePath) {
-                    LocalMediaPathResolver.resolveFile(ctx, card.avatarPath ?: card.spritePath)
+                val avatarModel = remember(card.avatarPath, card.spritePath) {
+                    LocalMediaPathResolver.resolveImageModel(ctx, card.avatarPath ?: card.spritePath)
                 }
                 val greetingsCount = remember(card.firstMes, card.alternateGreetingsJson) {
                     card.allGreetings().size
@@ -499,7 +499,7 @@ fun CharactersHubTab(
                             append(if (isZh) "${greetingsCount}开场" else "${greetingsCount}G")
                         }
                     },
-                    avatarFile = avatarFile,
+                    imageModel = avatarModel,
                     imageLoader = container.imageLoader,
                     gradientSpec = resolveCardGradient(card.id),
                     isFavorite = card.favorite,
@@ -527,11 +527,14 @@ fun CharactersHubTab(
             }
 
             items(items = filteredPresets, key = { "preset_${it.id}" }) { preset ->
+                val presetCoverModel = remember(preset.id) {
+                    LocalMediaPathResolver.resolveImageModel(ctx, preset.primarySpritePath)
+                }
                 CharacterPosterCard(
                     title = preset.name,
                     subtitle = preset.description,
                     topBadge = if (isZh) "官方剧本" else "Official",
-                    avatarFile = null,
+                    imageModel = presetCoverModel,
                     imageLoader = container.imageLoader,
                     gradientSpec = resolvePresetGradient(preset.id),
                     isFavorite = null,
@@ -670,7 +673,7 @@ private fun CharacterPosterCard(
     title: String,
     subtitle: String,
     topBadge: String,
-    avatarFile: File?,
+    imageModel: Any?,
     imageLoader: coil.ImageLoader,
     gradientSpec: CardGradientSpec,
     isFavorite: Boolean?,
@@ -692,13 +695,14 @@ private fun CharacterPosterCard(
             .aspectRatio(0.667f),
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
-            // Backdrop: real local image if present, else deterministic aesthetic gradient
-            if (avatarFile != null && avatarFile.exists()) {
+            // Backdrop: real local image or bundled asset if present, else deterministic aesthetic gradient
+            if (imageModel != null) {
                 AsyncImage(
-                    model = avatarFile,
+                    model = imageModel,
                     imageLoader = imageLoader,
                     contentDescription = title,
                     contentScale = ContentScale.Crop,
+                    alignment = Alignment.TopCenter,
                     modifier = Modifier.fillMaxSize(),
                 )
             } else {
@@ -1003,8 +1007,11 @@ private fun CharacterCardLaunchSheet(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
-                            val coverFile = remember(cardTarget?.avatarPath, cardTarget?.spritePath) {
-                                cardTarget?.let { LocalMediaPathResolver.resolveFile(ctx, it.avatarPath ?: it.spritePath) }
+                            val coverModel = remember(cardTarget?.avatarPath, cardTarget?.spritePath, presetTarget?.id) {
+                                LocalMediaPathResolver.resolveImageModel(
+                                    ctx,
+                                    cardTarget?.avatarPath ?: cardTarget?.spritePath ?: presetTarget?.primarySpritePath,
+                                )
                             }
                             val grad = if (cardTarget != null) resolveCardGradient(cardTarget.id)
                             else resolvePresetGradient(presetTarget?.id.orEmpty())
@@ -1014,12 +1021,13 @@ private fun CharacterCardLaunchSheet(
                                 color = grad.end,
                                 modifier = Modifier.size(width = 68.dp, height = 102.dp),
                             ) {
-                                if (coverFile != null && coverFile.exists()) {
+                                if (coverModel != null) {
                                     AsyncImage(
-                                        model = coverFile,
+                                        model = coverModel,
                                         imageLoader = container.imageLoader,
                                         contentDescription = title,
                                         contentScale = ContentScale.Crop,
+                                        alignment = Alignment.TopCenter,
                                         modifier = Modifier.fillMaxSize(),
                                     )
                                 } else {

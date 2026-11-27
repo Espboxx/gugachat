@@ -1548,7 +1548,13 @@ object BackupArchiveEngine {
         collectedRelPaths: MutableSet<String>?,
     ): String? {
         val strippedFileScheme = rawPath?.trim()?.let { p ->
-            if (p.startsWith("file://", ignoreCase = true)) p.substring("file://".length) else p
+            if (LocalMediaPathResolver.isAssetUri(p)) {
+                p
+            } else if (p.startsWith("file://", ignoreCase = true)) {
+                p.substring("file://".length)
+            } else {
+                p
+            }
         }
         val rel = LocalMediaPathResolver.toRelativePath(filesDirPath, strippedFileScheme) ?: return null
         if (collectedRelPaths != null) {

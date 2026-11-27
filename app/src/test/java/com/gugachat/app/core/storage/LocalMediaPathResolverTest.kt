@@ -1,7 +1,9 @@
 package com.gugachat.app.core.storage
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -129,5 +131,30 @@ class LocalMediaPathResolverTest {
         assertNull(LocalMediaPathResolver.resolveFile(sandboxFilesDir, "data:image/png;base64,AAAA"))
         assertNull(LocalMediaPathResolver.resolveAbsolutePath(sandboxFilesDir, "   "))
         assertNull(LocalMediaPathResolver.resolveFile(sandboxFilesDir, null))
+    }
+
+    @Test
+    fun androidAssetUri_isPreservedExtractedAndResolvedAsImageModel() {
+        val sandboxFilesDir = tempFolder.newFolder("files_assets").absolutePath
+        val assetUri = "file:///android_asset/rp_sprites/npc_xiao.webp"
+
+        assertTrue(LocalMediaPathResolver.isAssetUri(assetUri))
+        assertFalse(LocalMediaPathResolver.isAssetUri("rp_media/foo.png"))
+        assertEquals("rp_sprites/npc_xiao.webp", LocalMediaPathResolver.extractAssetPath(assetUri))
+        assertNull(LocalMediaPathResolver.extractAssetPath("file:///android_asset/../secret.txt"))
+        assertNull(LocalMediaPathResolver.extractAssetPath("file:///android_asset/"))
+
+        assertEquals(assetUri, LocalMediaPathResolver.toRelativePath(defaultFilesDir, assetUri))
+        assertEquals(assetUri, LocalMediaPathResolver.resolveAbsolutePath(sandboxFilesDir, assetUri))
+        assertNull(LocalMediaPathResolver.resolveFile(sandboxFilesDir, assetUri))
+        assertEquals(assetUri, LocalMediaPathResolver.resolveImageModel(sandboxFilesDir, assetUri))
+        assertNull(LocalMediaPathResolver.resolveImageModel(sandboxFilesDir, "file:///android_asset/../escape.webp"))
+
+        val localFile = File(sandboxFilesDir, "rp_media/custom.webp").apply {
+            parentFile?.mkdirs()
+            writeBytes(byteArrayOf(1, 2, 3))
+        }
+        assertEquals(localFile, LocalMediaPathResolver.resolveImageModel(sandboxFilesDir, "rp_media/custom.webp"))
+        assertNull(LocalMediaPathResolver.resolveImageModel(sandboxFilesDir, "rp_media/missing.webp"))
     }
 }
