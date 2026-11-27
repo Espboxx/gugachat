@@ -1,8 +1,8 @@
 package com.gugachat.app.ui.chat
 
-import androidx.compose.foundation.BorderStroke
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -33,23 +34,24 @@ import androidx.compose.material.icons.filled.AutoStories
 import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Bookmarks
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Memory
+import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.WarningAmber
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -61,7 +63,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -73,17 +77,19 @@ import com.gugachat.app.core.i18n.fmt
 import com.gugachat.app.core.theme.GuBadge
 import com.gugachat.app.core.theme.GuBadgeVariant
 import com.gugachat.app.core.theme.GuButton
-import com.gugachat.app.core.theme.GuButtonVariant
 import com.gugachat.app.core.theme.GuCard
+import com.gugachat.app.core.theme.GuCompactSearchBar
 import com.gugachat.app.core.theme.GuEmptyState
-import com.gugachat.app.core.theme.GuGroupedCard
+import com.gugachat.app.core.theme.GuMetaText
 import com.gugachat.app.core.theme.GuModalDragHandle
 import com.gugachat.app.core.theme.GuPill
+import com.gugachat.app.core.theme.GuPopupMenu
 import com.gugachat.app.core.theme.GuSectionHeader
 import com.gugachat.app.core.theme.GuSegmentedControl
 import com.gugachat.app.core.theme.GuSheetHeader
 import com.gugachat.app.core.theme.GuTextField
 import com.gugachat.app.core.theme.LocalAppTheme
+import com.gugachat.app.core.util.FuzzyMatcher
 import com.gugachat.app.domain.chat.ContextWaterlineSummary
 import com.gugachat.app.domain.chat.FileContextBudgeter
 import com.gugachat.app.domain.chat.MemoryCategory
@@ -92,6 +98,17 @@ import com.gugachat.app.domain.chat.MemoryLedgerItem
 import com.gugachat.app.domain.chat.RetrievalMode
 import com.gugachat.app.domain.chat.UserMemory
 import com.gugachat.app.domain.chat.VectorIndexProgress
+import java.util.Locale
+
+private val MEMORY_CATEGORIES = listOf(
+    MemoryCategory.preference,
+    MemoryCategory.profile,
+    MemoryCategory.project,
+    MemoryCategory.rule,
+    MemoryCategory.other,
+)
+
+private val LEDGER_KINDS = listOf("fact", "relation", "promise", "event", "quest")
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -127,12 +144,28 @@ fun ChatMemorySheet(
     val isZh = strings.language == AppLanguage.ZH
     var tab by remember(initialTab) { mutableIntStateOf(initialTab.coerceIn(0, 3)) }
 
+    // Tab 0 state
+    var memSearch by remember { mutableStateOf("") }
+    var showAddMemory by remember { mutableStateOf(false) }
     var newMemCat by remember { mutableStateOf(MemoryCategory.preference) }
     var newMemText by remember { mutableStateOf("") }
+    var editingMemoryId by remember { mutableStateOf<String?>(null) }
+    var editMemCat by remember { mutableStateOf(MemoryCategory.preference) }
+    var editMemText by remember { mutableStateOf("") }
 
+    // Tab 1 state
+    var ledgerSearch by remember { mutableStateOf("") }
+    var showAddLedger by remember { mutableStateOf(false) }
     var newLedgerKind by remember { mutableStateOf("fact") }
     var newLedgerTitle by remember { mutableStateOf("") }
     var newLedgerContent by remember { mutableStateOf("") }
+    var editingLedgerId by remember { mutableStateOf<String?>(null) }
+    var editLedgerKind by remember { mutableStateOf("fact") }
+    var editLedgerTitle by remember { mutableStateOf("") }
+    var editLedgerContent by remember { mutableStateOf("") }
+
+    // Tab 3 state
+    var expandedRecallKey by remember { mutableStateOf<String?>(null) }
 
     val tabLabels = remember(isZh) {
         if (isZh) {
@@ -145,6 +178,23 @@ fun ChatMemorySheet(
         buildMap {
             if (userMemories.isNotEmpty()) put(0, userMemories.size)
             if (waterline.recalledItems.isNotEmpty()) put(3, waterline.recalledItems.size)
+        }
+    }
+
+    val filteredMemories = remember(userMemories, memSearch, strings) {
+        FuzzyMatcher.filterAndRank(userMemories, memSearch) { mem ->
+            listOf(mem.content, localizeMemoryCategory(mem.category, strings))
+        }
+    }
+
+    val filteredLedger = remember(ledgerItems, ledgerSearch, strings) {
+        FuzzyMatcher.filterAndRank(ledgerItems, ledgerSearch) { item ->
+            listOf(
+                item.title,
+                item.content,
+                strings.chat.ledgerKinds[item.kind] ?: item.kind,
+                item.aliases.joinToString(" "),
+            )
         }
     }
 
@@ -181,6 +231,7 @@ fun ChatMemorySheet(
             )
 
             when (tab) {
+                // Tab 0: Saved Memories
                 0 -> {
                     LazyColumn(
                         modifier = Modifier
@@ -188,45 +239,50 @@ fun ChatMemorySheet(
                             .weight(1f)
                             .padding(horizontal = 16.dp),
                         contentPadding = PaddingValues(bottom = 16.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        item(key = "__mem_controls__") {
+                        item(key = "__mem_toolbar__") {
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                GuSectionHeader(
-                                    title = strings.chat.savedMemories.fmt("count" to userMemories.size),
-                                    subtitle = strings.chat.memoryCapacityCount.fmt("count" to userMemories.size, "max" to 500),
-                                    trailing = {
-                                        GuButton(
-                                            onClick = onExtractMemories,
-                                            loading = isExtracting,
-                                            compact = true,
-                                            variant = GuButtonVariant.HONEY,
-                                        ) {
-                                            Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(14.dp))
-                                            Spacer(Modifier.size(4.dp))
-                                            Text(strings.chat.extractMemory, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
-                                        }
-                                    },
-                                )
-
-                                GuGroupedCard(modifier = Modifier.fillMaxWidth()) {
-                                    Column(
+                                // 40dp single-line toolbar: [🔍 检索…] [+ 新增] [✨ AI 提炼]
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                ) {
+                                    GuCompactSearchBar(
+                                        value = memSearch,
+                                        onValueChange = { memSearch = it },
+                                        placeholder = strings.chat.searchMemories,
+                                        clearContentDescription = strings.common.clear,
                                         modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(12.dp),
-                                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                                            .weight(1f)
+                                            .height(40.dp),
+                                    )
+                                    ToolbarPillButton(
+                                        icon = Icons.Default.Add,
+                                        label = if (isZh) "新增" else "Add",
+                                        fgColor = if (showAddMemory) Color.White else c.primarySoftInk,
+                                        bgColor = if (showAddMemory) c.primary else c.primarySoft,
+                                        onClick = { showAddMemory = !showAddMemory },
+                                    )
+                                    ToolbarPillButton(
+                                        icon = Icons.Default.AutoAwesome,
+                                        label = strings.chat.extractMemory,
+                                        loading = isExtracting,
+                                        fgColor = c.tagInk,
+                                        bgColor = c.tag,
+                                        onClick = onExtractMemories,
+                                    )
+                                }
+
+                                // Collapsible add-memory form
+                                AnimatedVisibility(visible = showAddMemory) {
+                                    GuCard(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        contentPadding = PaddingValues(12.dp),
                                     ) {
                                         LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                            items(
-                                                listOf(
-                                                    MemoryCategory.preference,
-                                                    MemoryCategory.profile,
-                                                    MemoryCategory.project,
-                                                    MemoryCategory.rule,
-                                                    MemoryCategory.other,
-                                                ),
-                                                key = { it.name },
-                                            ) { cat ->
+                                            items(MEMORY_CATEGORIES, key = { it.name }) { cat ->
                                                 GuPill(
                                                     label = localizeMemoryCategory(cat, strings),
                                                     selected = newMemCat == cat,
@@ -234,101 +290,239 @@ fun ChatMemorySheet(
                                                 )
                                             }
                                         }
-
+                                        Spacer(Modifier.height(8.dp))
+                                        GuTextField(
+                                            value = newMemText,
+                                            onValueChange = { newMemText = it },
+                                            placeholder = strings.chat.memoryContentPlaceholder,
+                                            singleLine = false,
+                                            minLines = 2,
+                                            maxLines = 4,
+                                        )
+                                        Spacer(Modifier.height(8.dp))
                                         Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.End,
                                             verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
                                         ) {
-                                            GuTextField(
-                                                value = newMemText,
-                                                onValueChange = { newMemText = it },
-                                                placeholder = strings.chat.memoryContentPlaceholder,
-                                                modifier = Modifier.weight(1f),
-                                            )
+                                            TextButton(
+                                                onClick = {
+                                                    showAddMemory = false
+                                                    newMemText = ""
+                                                },
+                                            ) {
+                                                Text(strings.common.cancel, color = c.muted, fontSize = 12.5.sp)
+                                            }
                                             GuButton(
                                                 onClick = {
                                                     if (newMemText.isNotBlank()) {
                                                         onAddMemory(newMemCat, newMemText)
                                                         newMemText = ""
+                                                        showAddMemory = false
                                                     }
                                                 },
                                                 enabled = newMemText.isNotBlank(),
                                                 compact = true,
                                             ) {
-                                                Icon(Icons.Default.Add, contentDescription = strings.chat.addMemory, modifier = Modifier.size(18.dp))
+                                                Text(strings.common.save, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold)
                                             }
                                         }
                                     }
                                 }
+
+                                // Compact count & capacity meta line
+                                val enabledTok = remember(userMemories) {
+                                    userMemories.filter { it.enabled }.sumOf { it.estimatedTokens }
+                                }
+                                GuMetaText(
+                                    text = if (isZh) {
+                                        "共 ${userMemories.size} / 500 条 · 已启用约 ${enabledTok}t（点击条目可编辑）"
+                                    } else {
+                                        "${userMemories.size} / 500 items · ~${enabledTok}t enabled (tap to edit)"
+                                    },
+                                    modifier = Modifier.padding(horizontal = 2.dp),
+                                )
                             }
                         }
 
-                        if (userMemories.isEmpty()) {
+                        if (filteredMemories.isEmpty()) {
                             item(key = "__mem_empty__") {
                                 GuEmptyState(
-                                    title = strings.chat.emptyMemories,
+                                    title = when {
+                                        userMemories.isEmpty() -> strings.chat.emptyMemories
+                                        isZh -> "未找到匹配记忆"
+                                        else -> "No matching memories"
+                                    },
                                     icon = Icons.Default.Psychology,
                                 )
                             }
                         } else {
-                            items(userMemories, key = { it.id }) { mem ->
-                                GuCard(modifier = Modifier.fillMaxWidth()) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                    ) {
-                                        GuBadge(localizeMemoryCategory(mem.category, strings), variant = GuBadgeVariant.BLUE)
+                            items(filteredMemories, key = { it.id }) { mem ->
+                                val isEditing = editingMemoryId == mem.id
+                                var menuOpen by remember(mem.id) { mutableStateOf(false) }
+
+                                GuCard(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                                    onClick = if (!isEditing) {
+                                        {
+                                            editingMemoryId = mem.id
+                                            editMemCat = mem.category
+                                            editMemText = mem.content
+                                        }
+                                    } else {
+                                        null
+                                    },
+                                ) {
+                                    if (isEditing) {
+                                        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                            items(MEMORY_CATEGORIES, key = { it.name }) { cat ->
+                                                GuPill(
+                                                    label = localizeMemoryCategory(cat, strings),
+                                                    selected = editMemCat == cat,
+                                                    onClick = { editMemCat = cat },
+                                                )
+                                            }
+                                        }
+                                        Spacer(Modifier.height(8.dp))
+                                        GuTextField(
+                                            value = editMemText,
+                                            onValueChange = { editMemText = it },
+                                            singleLine = false,
+                                            minLines = 2,
+                                            maxLines = 5,
+                                        )
+                                        Spacer(Modifier.height(6.dp))
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.End,
+                                            verticalAlignment = Alignment.CenterVertically,
+                                        ) {
+                                            TextButton(onClick = { editingMemoryId = null }) {
+                                                Text(strings.common.cancel, color = c.muted, fontSize = 12.sp)
+                                            }
+                                            GuButton(
+                                                onClick = {
+                                                    val clean = editMemText.trim()
+                                                    if (clean.isNotEmpty() && (editMemCat != mem.category || clean != mem.content.trim())) {
+                                                        onDeleteMemory(mem.id)
+                                                        onAddMemory(editMemCat, clean)
+                                                    }
+                                                    editingMemoryId = null
+                                                },
+                                                enabled = editMemText.isNotBlank(),
+                                                compact = true,
+                                            ) {
+                                                Text(strings.common.save, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                            }
+                                        }
+                                    } else {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        ) {
+                                            // Semantic status dot (tappable to toggle enabled)
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(20.dp)
+                                                    .clip(CircleShape)
+                                                    .clickable { onToggleMemoryEnabled(mem.id) },
+                                                contentAlignment = Alignment.Center,
+                                            ) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(8.dp)
+                                                        .clip(CircleShape)
+                                                        .background(if (mem.enabled) c.success else c.muted.copy(alpha = 0.45f)),
+                                                )
+                                            }
+                                            GuBadge(
+                                                text = localizeMemoryCategory(mem.category, strings),
+                                                variant = if (mem.enabled) GuBadgeVariant.BLUE else GuBadgeVariant.NEUTRAL,
+                                            )
+                                            GuMetaText("~${mem.estimatedTokens}t")
+                                            if (!mem.enabled) {
+                                                GuMetaText(if (isZh) "已停用" else "Off")
+                                            }
+                                            Spacer(Modifier.weight(1f))
+                                            IconButton(
+                                                onClick = { onToggleMemoryPin(mem.id) },
+                                                modifier = Modifier.size(28.dp),
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.PushPin,
+                                                    contentDescription = if (mem.pinned) strings.chat.ledgerUnpin else strings.chat.ledgerPin,
+                                                    tint = if (mem.pinned) c.accent else c.muted.copy(alpha = 0.65f),
+                                                    modifier = Modifier.size(15.dp),
+                                                )
+                                            }
+                                            Box {
+                                                IconButton(
+                                                    onClick = { menuOpen = true },
+                                                    modifier = Modifier.size(28.dp),
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.MoreHoriz,
+                                                        contentDescription = strings.chat.moreActions,
+                                                        tint = c.muted,
+                                                        modifier = Modifier.size(16.dp),
+                                                    )
+                                                }
+                                                GuPopupMenu(
+                                                    expanded = menuOpen,
+                                                    onDismissRequest = { menuOpen = false },
+                                                ) {
+                                                    DropdownMenuItem(
+                                                        text = {
+                                                            Text(
+                                                                text = if (mem.enabled) {
+                                                                    if (isZh) "停用" else "Disable"
+                                                                } else {
+                                                                    if (isZh) "启用" else "Enable"
+                                                                },
+                                                                fontSize = 13.5.sp,
+                                                            )
+                                                        },
+                                                        onClick = {
+                                                            menuOpen = false
+                                                            onToggleMemoryEnabled(mem.id)
+                                                        },
+                                                    )
+                                                    DropdownMenuItem(
+                                                        text = { Text(strings.common.edit, fontSize = 13.5.sp) },
+                                                        onClick = {
+                                                            menuOpen = false
+                                                            editingMemoryId = mem.id
+                                                            editMemCat = mem.category
+                                                            editMemText = mem.content
+                                                        },
+                                                    )
+                                                    DropdownMenuItem(
+                                                        text = { Text(strings.common.delete, color = c.danger, fontSize = 13.5.sp) },
+                                                        onClick = {
+                                                            menuOpen = false
+                                                            onDeleteMemory(mem.id)
+                                                        },
+                                                    )
+                                                }
+                                            }
+                                        }
+                                        Spacer(Modifier.height(4.dp))
                                         Text(
-                                            text = "~${mem.estimatedTokens}t",
-                                            color = c.muted,
-                                            fontSize = 11.sp,
-                                            fontFamily = FontFamily.Monospace,
+                                            text = mem.content,
+                                            color = if (mem.enabled) c.ink else c.muted,
+                                            fontSize = 13.5.sp,
+                                            lineHeight = 19.sp,
                                         )
-                                        Spacer(Modifier.weight(1f))
-                                        Switch(
-                                            checked = mem.enabled,
-                                            onCheckedChange = { onToggleMemoryEnabled(mem.id) },
-                                            colors = SwitchDefaults.colors(
-                                                checkedThumbColor = Color.White,
-                                                checkedTrackColor = c.primary,
-                                                checkedBorderColor = c.primary,
-                                                uncheckedThumbColor = if (theme.isDark) Color(0xFFB4C0D6) else Color(0xFF64748B),
-                                                uncheckedTrackColor = c.surfaceSoft,
-                                                uncheckedBorderColor = c.outline,
-                                            ),
-                                        )
-                                        IconButton(
-                                            onClick = { onToggleMemoryPin(mem.id) },
-                                            modifier = Modifier.size(36.dp),
-                                        ) {
-                                            Icon(
-                                                Icons.Default.PushPin,
-                                                contentDescription = if (mem.pinned) strings.chat.ledgerUnpin else strings.chat.ledgerPin,
-                                                tint = if (mem.pinned) c.accent else c.muted,
-                                                modifier = Modifier.size(17.dp),
-                                            )
-                                        }
-                                        IconButton(
-                                            onClick = { onDeleteMemory(mem.id) },
-                                            modifier = Modifier.size(36.dp),
-                                        ) {
-                                            Icon(
-                                                Icons.Default.Delete,
-                                                contentDescription = strings.common.delete,
-                                                tint = c.danger,
-                                                modifier = Modifier.size(17.dp),
-                                            )
-                                        }
                                     }
-                                    Spacer(Modifier.height(6.dp))
-                                    Text(mem.content, color = c.ink, fontSize = 13.5.sp, lineHeight = 20.sp)
                                 }
                             }
                         }
                     }
                 }
 
+                // Tab 1: RP Ledger
                 1 -> {
                     LazyColumn(
                         modifier = Modifier
@@ -336,43 +530,78 @@ fun ChatMemorySheet(
                             .weight(1f)
                             .padding(horizontal = 16.dp),
                         contentPadding = PaddingValues(bottom = 16.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        item(key = "__ledger_form__") {
+                        item(key = "__ledger_toolbar__") {
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                GuSectionHeader(
-                                    title = strings.chat.ledgerTabTitle,
-                                    trailing = {
-                                        GuBadge("${ledgerItems.size}", variant = GuBadgeVariant.NEUTRAL)
-                                    },
-                                )
-                                GuGroupedCard(modifier = Modifier.fillMaxWidth()) {
-                                    Column(
+                                // 40dp single-line toolbar: [🔍 检索…] [+ 新增]
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    GuCompactSearchBar(
+                                        value = ledgerSearch,
+                                        onValueChange = { ledgerSearch = it },
+                                        placeholder = if (isZh) "检索账本…" else "Search ledger…",
+                                        clearContentDescription = strings.common.clear,
                                         modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(12.dp),
-                                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                                            .weight(1f)
+                                            .height(40.dp),
+                                    )
+                                    ToolbarPillButton(
+                                        icon = Icons.Default.Add,
+                                        label = if (isZh) "新增" else "Add",
+                                        fgColor = if (showAddLedger) Color.White else c.primarySoftInk,
+                                        bgColor = if (showAddLedger) c.primary else c.primarySoft,
+                                        onClick = { showAddLedger = !showAddLedger },
+                                    )
+                                }
+
+                                AnimatedVisibility(visible = showAddLedger) {
+                                    GuCard(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        contentPadding = PaddingValues(12.dp),
                                     ) {
                                         LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                            items(listOf("fact", "relation", "promise", "event", "quest"), key = { it }) { k ->
-                                                GuPill(strings.chat.ledgerKinds[k] ?: k, newLedgerKind == k, { newLedgerKind = k })
+                                            items(LEDGER_KINDS, key = { it }) { k ->
+                                                GuPill(
+                                                    label = strings.chat.ledgerKinds[k] ?: k,
+                                                    selected = newLedgerKind == k,
+                                                    onClick = { newLedgerKind = k },
+                                                )
                                             }
                                         }
+                                        Spacer(Modifier.height(8.dp))
                                         GuTextField(
                                             value = newLedgerTitle,
                                             onValueChange = { newLedgerTitle = it },
                                             placeholder = strings.chat.ledgerTitlePlaceholder,
                                         )
+                                        Spacer(Modifier.height(8.dp))
+                                        GuTextField(
+                                            value = newLedgerContent,
+                                            onValueChange = { newLedgerContent = it },
+                                            placeholder = strings.chat.ledgerContentPlaceholder,
+                                            singleLine = false,
+                                            minLines = 2,
+                                            maxLines = 4,
+                                        )
+                                        Spacer(Modifier.height(8.dp))
                                         Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.End,
                                             verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
                                         ) {
-                                            GuTextField(
-                                                value = newLedgerContent,
-                                                onValueChange = { newLedgerContent = it },
-                                                placeholder = strings.chat.ledgerContentPlaceholder,
-                                                modifier = Modifier.weight(1f),
-                                            )
+                                            TextButton(
+                                                onClick = {
+                                                    showAddLedger = false
+                                                    newLedgerTitle = ""
+                                                    newLedgerContent = ""
+                                                },
+                                            ) {
+                                                Text(strings.common.cancel, color = c.muted, fontSize = 12.5.sp)
+                                            }
                                             val canAddLedger = newLedgerTitle.isNotBlank() && newLedgerContent.isNotBlank()
                                             GuButton(
                                                 onClick = {
@@ -380,78 +609,209 @@ fun ChatMemorySheet(
                                                         onAddLedger(newLedgerKind, newLedgerTitle, newLedgerContent)
                                                         newLedgerTitle = ""
                                                         newLedgerContent = ""
+                                                        showAddLedger = false
                                                     }
                                                 },
                                                 enabled = canAddLedger,
                                                 compact = true,
                                             ) {
-                                                Icon(Icons.Default.Add, contentDescription = strings.chat.ledgerAddBtn, modifier = Modifier.size(18.dp))
+                                                Text(strings.common.save, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold)
                                             }
                                         }
                                     }
                                 }
+
+                                GuMetaText(
+                                    text = if (isZh) {
+                                        "${strings.chat.ledgerTabTitle} · ${ledgerItems.size} 条（点击条目可编辑）"
+                                    } else {
+                                        "${strings.chat.ledgerTabTitle} · ${ledgerItems.size} items (tap to edit)"
+                                    },
+                                    modifier = Modifier.padding(horizontal = 2.dp),
+                                )
                             }
                         }
 
-                        if (ledgerItems.isEmpty()) {
+                        if (filteredLedger.isEmpty()) {
                             item(key = "__ledger_empty__") {
                                 GuEmptyState(
-                                    title = strings.chat.ledgerEmpty,
+                                    title = when {
+                                        ledgerItems.isEmpty() -> strings.chat.ledgerEmpty
+                                        isZh -> "未找到匹配账本条目"
+                                        else -> "No matching ledger entries"
+                                    },
                                     icon = Icons.Default.Bookmarks,
                                 )
                             }
                         } else {
-                            items(ledgerItems, key = { it.id }) { item ->
-                                GuCard(modifier = Modifier.fillMaxWidth()) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                    ) {
-                                        GuBadge(strings.chat.ledgerKinds[item.kind] ?: item.kind, variant = GuBadgeVariant.HONEY)
-                                        Text(
-                                            text = item.title,
-                                            color = c.ink,
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 13.5.sp,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            modifier = Modifier.weight(1f),
+                            items(filteredLedger, key = { it.id }) { item ->
+                                val isEditing = editingLedgerId == item.id
+                                var menuOpen by remember(item.id) { mutableStateOf(false) }
+
+                                GuCard(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                                    onClick = if (!isEditing) {
+                                        {
+                                            editingLedgerId = item.id
+                                            editLedgerKind = item.kind
+                                            editLedgerTitle = item.title
+                                            editLedgerContent = item.content
+                                        }
+                                    } else {
+                                        null
+                                    },
+                                ) {
+                                    if (isEditing) {
+                                        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                            items(LEDGER_KINDS, key = { it }) { k ->
+                                                GuPill(
+                                                    label = strings.chat.ledgerKinds[k] ?: k,
+                                                    selected = editLedgerKind == k,
+                                                    onClick = { editLedgerKind = k },
+                                                )
+                                            }
+                                        }
+                                        Spacer(Modifier.height(8.dp))
+                                        GuTextField(
+                                            value = editLedgerTitle,
+                                            onValueChange = { editLedgerTitle = it },
+                                            placeholder = strings.chat.ledgerTitlePlaceholder,
                                         )
-                                        if (item.stale) {
-                                            GuBadge(if (isZh) "待更新" else "Stale", variant = GuBadgeVariant.DANGER)
-                                        }
-                                        IconButton(
-                                            onClick = { onToggleLedgerPin(item.id) },
-                                            modifier = Modifier.size(36.dp),
+                                        Spacer(Modifier.height(8.dp))
+                                        GuTextField(
+                                            value = editLedgerContent,
+                                            onValueChange = { editLedgerContent = it },
+                                            placeholder = strings.chat.ledgerContentPlaceholder,
+                                            singleLine = false,
+                                            minLines = 2,
+                                            maxLines = 4,
+                                        )
+                                        Spacer(Modifier.height(6.dp))
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.End,
+                                            verticalAlignment = Alignment.CenterVertically,
                                         ) {
-                                            Icon(
-                                                Icons.Default.PushPin,
-                                                contentDescription = if (item.pinned) strings.chat.ledgerUnpin else strings.chat.ledgerPin,
-                                                tint = if (item.pinned) c.accent else c.muted,
-                                                modifier = Modifier.size(17.dp),
-                                            )
+                                            TextButton(onClick = { editingLedgerId = null }) {
+                                                Text(strings.common.cancel, color = c.muted, fontSize = 12.sp)
+                                            }
+                                            val canSave = editLedgerTitle.isNotBlank() && editLedgerContent.isNotBlank()
+                                            GuButton(
+                                                onClick = {
+                                                    if (canSave) {
+                                                        val changed = editLedgerKind != item.kind ||
+                                                            editLedgerTitle.trim() != item.title.trim() ||
+                                                            editLedgerContent.trim() != item.content.trim()
+                                                        if (changed) {
+                                                            onDeleteLedger(item.id)
+                                                            onAddLedger(editLedgerKind, editLedgerTitle.trim(), editLedgerContent.trim())
+                                                        }
+                                                        editingLedgerId = null
+                                                    }
+                                                },
+                                                enabled = canSave,
+                                                compact = true,
+                                            ) {
+                                                Text(strings.common.save, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                            }
                                         }
-                                        IconButton(
-                                            onClick = { onDeleteLedger(item.id) },
-                                            modifier = Modifier.size(36.dp),
+                                    } else {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
                                         ) {
-                                            Icon(
-                                                Icons.Default.Delete,
-                                                contentDescription = strings.common.delete,
-                                                tint = c.danger,
-                                                modifier = Modifier.size(17.dp),
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(8.dp)
+                                                    .clip(CircleShape)
+                                                    .background(
+                                                        when {
+                                                            item.stale -> c.danger
+                                                            item.enabled -> c.success
+                                                            else -> c.muted.copy(alpha = 0.45f)
+                                                        },
+                                                    ),
                                             )
+                                            GuBadge(
+                                                text = strings.chat.ledgerKinds[item.kind] ?: item.kind,
+                                                variant = GuBadgeVariant.HONEY,
+                                            )
+                                            Text(
+                                                text = item.title,
+                                                color = if (item.enabled) c.ink else c.muted,
+                                                fontWeight = FontWeight.SemiBold,
+                                                fontSize = 13.5.sp,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.weight(1f),
+                                            )
+                                            if (item.stale) {
+                                                GuBadge(if (isZh) "待更新" else "Stale", variant = GuBadgeVariant.DANGER)
+                                            }
+                                            IconButton(
+                                                onClick = { onToggleLedgerPin(item.id) },
+                                                modifier = Modifier.size(28.dp),
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.PushPin,
+                                                    contentDescription = if (item.pinned) strings.chat.ledgerUnpin else strings.chat.ledgerPin,
+                                                    tint = if (item.pinned) c.accent else c.muted.copy(alpha = 0.65f),
+                                                    modifier = Modifier.size(15.dp),
+                                                )
+                                            }
+                                            Box {
+                                                IconButton(
+                                                    onClick = { menuOpen = true },
+                                                    modifier = Modifier.size(28.dp),
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.MoreHoriz,
+                                                        contentDescription = strings.chat.moreActions,
+                                                        tint = c.muted,
+                                                        modifier = Modifier.size(16.dp),
+                                                    )
+                                                }
+                                                GuPopupMenu(
+                                                    expanded = menuOpen,
+                                                    onDismissRequest = { menuOpen = false },
+                                                ) {
+                                                    DropdownMenuItem(
+                                                        text = { Text(strings.common.edit, fontSize = 13.5.sp) },
+                                                        onClick = {
+                                                            menuOpen = false
+                                                            editingLedgerId = item.id
+                                                            editLedgerKind = item.kind
+                                                            editLedgerTitle = item.title
+                                                            editLedgerContent = item.content
+                                                        },
+                                                    )
+                                                    DropdownMenuItem(
+                                                        text = { Text(strings.common.delete, color = c.danger, fontSize = 13.5.sp) },
+                                                        onClick = {
+                                                            menuOpen = false
+                                                            onDeleteLedger(item.id)
+                                                        },
+                                                    )
+                                                }
+                                            }
                                         }
+                                        Spacer(Modifier.height(4.dp))
+                                        Text(
+                                            text = item.content,
+                                            color = c.muted,
+                                            fontSize = 12.5.sp,
+                                            lineHeight = 18.sp,
+                                        )
                                     }
-                                    Spacer(Modifier.height(4.dp))
-                                    Text(item.content, color = c.muted, fontSize = 12.5.sp, lineHeight = 18.5.sp)
                                 }
                             }
                         }
                     }
                 }
 
+                // Tab 2: Episodes Chronicle
                 2 -> {
                     LazyColumn(
                         modifier = Modifier
@@ -459,7 +819,7 @@ fun ChatMemorySheet(
                             .weight(1f)
                             .padding(horizontal = 16.dp),
                         contentPadding = PaddingValues(bottom = 16.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         item(key = "__ep_header__") {
                             GuSectionHeader(
@@ -478,7 +838,10 @@ fun ChatMemorySheet(
                             }
                         } else {
                             items(episodes, key = { it.id }) { ep ->
-                                GuCard(modifier = Modifier.fillMaxWidth()) {
+                                GuCard(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    contentPadding = PaddingValues(12.dp),
+                                ) {
                                     Row(
                                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                                         verticalAlignment = Alignment.CenterVertically,
@@ -495,15 +858,16 @@ fun ChatMemorySheet(
                                         }
                                     }
                                     Spacer(Modifier.height(6.dp))
-                                    Text(ep.title, color = c.ink, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold)
+                                    Text(ep.title, color = c.ink, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                                     Spacer(Modifier.height(4.dp))
-                                    Text(ep.summary, color = c.muted, fontSize = 12.5.sp, lineHeight = 18.5.sp)
+                                    Text(ep.summary, color = c.muted, fontSize = 12.5.sp, lineHeight = 18.sp)
                                 }
                             }
                         }
                     }
                 }
 
+                // Tab 3: Recall Inspector (2-row ~84dp cards, 4+ visible per screen)
                 else -> {
                     val ctxUi = strings.contextUi
                     val recallBudget = waterline.recallBudgetTokens.coerceAtLeast(0)
@@ -520,10 +884,7 @@ fun ChatMemorySheet(
                         RetrievalMode.LOCAL_SMALL_MODEL -> GuBadgeVariant.EMERALD
                         RetrievalMode.REMOTE_API -> if (isRerankActive) GuBadgeVariant.BLUE else GuBadgeVariant.EMERALD
                     }
-                    val recallBudgetText = ctxUi.recallBudgetBadge.fmt(
-                        "used" to FileContextBudgeter.formatShortTokens(recallUsed),
-                        "budget" to FileContextBudgeter.formatShortTokens(recallBudget),
-                    )
+                    val recallBudgetText = "${FileContextBudgeter.formatShortTokens(recallUsed)} / ${FileContextBudgeter.formatShortTokens(recallBudget)} tok"
                     val showCalmStrip = waterline.isSliding || waterline.hardOverflow || waterline.trimmedMessageCount > 0
 
                     val groupedRecall = remember(waterline.recalledItems) {
@@ -566,31 +927,37 @@ fun ChatMemorySheet(
                             .weight(1f)
                             .padding(horizontal = 16.dp),
                         contentPadding = PaddingValues(bottom = 16.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
+                        // Compact single-line header + slim progress bar
                         item(key = "__recall_header__") {
-                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                GuSectionHeader(
-                                    title = strings.chat.recallTitle,
-                                    trailing = {
-                                        Row(
-                                            horizontalArrangement = Arrangement.spacedBy(5.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                        ) {
-                                            GuBadge(text = modePillLabel, variant = modePillVariant)
-                                            GuBadge(
-                                                text = recallBudgetText,
-                                                variant = if (recallOverCap) GuBadgeVariant.AMBER else GuBadgeVariant.BLUE,
-                                            )
-                                        }
-                                    },
-                                )
+                            Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                ) {
+                                    Text(
+                                        text = strings.chat.recallTitle,
+                                        color = c.ink,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    GuBadge(text = modePillLabel, variant = modePillVariant)
+                                    GuMetaText(
+                                        text = recallBudgetText,
+                                        color = if (recallOverCap) c.warning else c.muted,
+                                    )
+                                }
                                 if (recallBudget > 0) {
                                     LinearProgressIndicator(
                                         progress = { recallRatio },
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .height(4.dp)
+                                            .height(3.dp)
                                             .clip(RoundedCornerShape(999.dp)),
                                         color = if (recallOverCap) c.warning else c.primary,
                                         trackColor = c.surfaceSoft,
@@ -599,12 +966,12 @@ fun ChatMemorySheet(
                             }
                         }
 
+                        // Single-line narrow calm amber/danger sliding strip
                         if (showCalmStrip) {
                             item(key = "__recall_context_strip__") {
                                 val isDanger = waterline.hardOverflow
                                 val stripBg = if (isDanger) c.dangerBg else c.warningBg
                                 val stripFg = if (isDanger) c.danger else c.warning
-                                val stripBorder = stripFg.copy(alpha = 0.42f)
                                 val sentShort = FileContextBudgeter.formatShortTokens(waterline.sentTokens)
                                 val limitShort = FileContextBudgeter.formatShortTokens(waterline.effectiveLimitTokens)
                                 val windowShort = FileContextBudgeter.formatShortTokens(waterline.modelContextWindow)
@@ -617,53 +984,54 @@ fun ChatMemorySheet(
                                         "trimmed" to waterline.trimmedMessageCount,
                                     )
                                 }
-                                Surface(
-                                    onClick = { onOpenContextSettings?.invoke() },
-                                    enabled = onOpenContextSettings != null,
-                                    shape = RoundedCornerShape(12.dp),
-                                    color = stripBg,
-                                    border = BorderStroke(theme.borderWidth, stripBorder),
-                                    modifier = Modifier.fillMaxWidth(),
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(stripBg)
+                                        .then(
+                                            if (onOpenContextSettings != null) {
+                                                Modifier.clickable(onClick = onOpenContextSettings)
+                                            } else {
+                                                Modifier
+                                            },
+                                        )
+                                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                                 ) {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(horizontal = 11.dp, vertical = 8.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    ) {
-                                        Icon(
-                                            imageVector = if (isDanger) Icons.Default.WarningAmber else Icons.Default.Info,
-                                            contentDescription = null,
-                                            tint = stripFg,
-                                            modifier = Modifier.size(16.dp),
-                                        )
-                                        Text(
-                                            text = stripText,
-                                            color = stripFg,
-                                            fontSize = 11.5.sp,
-                                            lineHeight = 16.sp,
-                                            fontWeight = FontWeight.SemiBold,
-                                            modifier = Modifier.weight(1f),
-                                        )
-                                        if (onOpenContextSettings != null) {
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(1.dp),
-                                            ) {
-                                                Text(
-                                                    text = ctxUi.manageBudgetAction,
-                                                    color = stripFg,
-                                                    fontSize = 11.sp,
-                                                    fontWeight = FontWeight.ExtraBold,
-                                                )
-                                                Icon(
-                                                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                                                    contentDescription = null,
-                                                    tint = stripFg,
-                                                    modifier = Modifier.size(15.dp),
-                                                )
-                                            }
+                                    Icon(
+                                        imageVector = if (isDanger) Icons.Default.WarningAmber else Icons.Default.Info,
+                                        contentDescription = null,
+                                        tint = stripFg,
+                                        modifier = Modifier.size(14.dp),
+                                    )
+                                    Text(
+                                        text = stripText,
+                                        color = stripFg,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    if (onOpenContextSettings != null) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(1.dp),
+                                        ) {
+                                            Text(
+                                                text = ctxUi.manageBudgetAction,
+                                                color = stripFg,
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold,
+                                            )
+                                            Icon(
+                                                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                                contentDescription = null,
+                                                tint = stripFg,
+                                                modifier = Modifier.size(14.dp),
+                                            )
                                         }
                                     }
                                 }
@@ -672,100 +1040,64 @@ fun ChatMemorySheet(
 
                         if (activeRetrievalMode != RetrievalMode.LEXICAL_ONLY) {
                             item(key = "__recall_vector_strip__") {
-                                Surface(
-                                    shape = RoundedCornerShape(12.dp),
-                                    color = c.surface,
-                                    border = BorderStroke(theme.borderWidth, c.border),
-                                    modifier = Modifier.fillMaxWidth(),
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(c.surfaceSoft)
+                                        .padding(horizontal = 10.dp, vertical = 7.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(7.dp),
                                 ) {
-                                    Column(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(horizontal = 11.dp, vertical = 8.dp),
-                                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                                    ) {
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    Icon(
+                                        imageVector = Icons.Default.Memory,
+                                        contentDescription = null,
+                                        tint = if (vectorIndexProgress.lastError != null) c.danger else c.primary,
+                                        modifier = Modifier.size(14.dp),
+                                    )
+                                    val statusText = when {
+                                        vectorIndexProgress.running -> ctxUi.vectorIndexRunning.fmt(
+                                            "indexed" to vectorIndexProgress.indexed,
+                                            "total" to vectorIndexProgress.total,
+                                        )
+                                        !vectorIndexProgress.lastError.isNullOrBlank() -> vectorIndexProgress.lastError
+                                        vectorIndexProgress.total > 0 -> ctxUi.vectorIndexDone.fmt(
+                                            "indexed" to vectorIndexProgress.indexed,
+                                            "total" to vectorIndexProgress.total,
+                                        )
+                                        else -> ctxUi.vectorIndexIdle
+                                    }
+                                    Text(
+                                        text = statusText,
+                                        color = if (vectorIndexProgress.lastError != null) c.danger else c.muted,
+                                        fontSize = 11.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    if (onReindexVectors != null) {
+                                        Surface(
+                                            onClick = onReindexVectors,
+                                            enabled = !vectorIndexProgress.running,
+                                            shape = RoundedCornerShape(999.dp),
+                                            color = c.primarySoft,
                                         ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Memory,
-                                                contentDescription = null,
-                                                tint = if (vectorIndexProgress.lastError != null) c.danger else c.primary,
-                                                modifier = Modifier.size(16.dp),
-                                            )
-                                            val statusText = when {
-                                                vectorIndexProgress.running -> ctxUi.vectorIndexRunning.fmt(
-                                                    "indexed" to vectorIndexProgress.indexed,
-                                                    "total" to vectorIndexProgress.total,
+                                            Row(
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(3.dp),
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Refresh,
+                                                    contentDescription = ctxUi.vectorReindexBtn,
+                                                    tint = c.primarySoftInk,
+                                                    modifier = Modifier.size(12.dp),
                                                 )
-                                                !vectorIndexProgress.lastError.isNullOrBlank() -> vectorIndexProgress.lastError
-                                                vectorIndexProgress.total > 0 -> ctxUi.vectorIndexDone.fmt(
-                                                    "indexed" to vectorIndexProgress.indexed,
-                                                    "total" to vectorIndexProgress.total,
-                                                )
-                                                else -> ctxUi.vectorIndexIdle
-                                            }
-                                            Text(
-                                                text = statusText,
-                                                color = if (vectorIndexProgress.lastError != null) c.danger else c.muted,
-                                                fontSize = 11.5.sp,
-                                                fontWeight = FontWeight.Medium,
-                                                maxLines = 2,
-                                                overflow = TextOverflow.Ellipsis,
-                                                modifier = Modifier.weight(1f),
-                                            )
-                                            if (onReindexVectors != null) {
-                                                Surface(
-                                                    onClick = onReindexVectors,
-                                                    enabled = !vectorIndexProgress.running,
-                                                    shape = RoundedCornerShape(999.dp),
-                                                    color = c.primarySoft,
-                                                    border = BorderStroke(theme.borderWidth, c.primary.copy(alpha = 0.32f)),
-                                                ) {
-                                                    Row(
-                                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                                        verticalAlignment = Alignment.CenterVertically,
-                                                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                                    ) {
-                                                        Icon(
-                                                            imageVector = Icons.Default.Refresh,
-                                                            contentDescription = ctxUi.vectorReindexBtn,
-                                                            tint = c.primarySoftInk,
-                                                            modifier = Modifier.size(13.dp),
-                                                        )
-                                                        Text(
-                                                            text = ctxUi.vectorReindexBtn,
-                                                            color = c.primarySoftInk,
-                                                            fontSize = 11.sp,
-                                                            fontWeight = FontWeight.Bold,
-                                                        )
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        if (vectorIndexProgress.running) {
-                                            if (vectorIndexProgress.total > 0) {
-                                                val ratio = (vectorIndexProgress.indexed.toFloat() / vectorIndexProgress.total.toFloat())
-                                                    .coerceIn(0f, 1f)
-                                                LinearProgressIndicator(
-                                                    progress = { ratio },
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .height(4.dp)
-                                                        .clip(RoundedCornerShape(999.dp)),
-                                                    color = c.primary,
-                                                    trackColor = c.surfaceSoft,
-                                                )
-                                            } else {
-                                                LinearProgressIndicator(
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .height(4.dp)
-                                                        .clip(RoundedCornerShape(999.dp)),
-                                                    color = c.primary,
-                                                    trackColor = c.surfaceSoft,
+                                                Text(
+                                                    text = ctxUi.vectorReindexBtn,
+                                                    color = c.primarySoftInk,
+                                                    fontSize = 10.5.sp,
+                                                    fontWeight = FontWeight.SemiBold,
                                                 )
                                             }
                                         }
@@ -776,62 +1108,56 @@ fun ChatMemorySheet(
 
                         if (mutedRecallKeys.isNotEmpty() && onToggleMuteRecall != null) {
                             item(key = "__recall_muted_strip__") {
-                                Surface(
-                                    shape = RoundedCornerShape(12.dp),
-                                    color = c.surfaceSoft,
-                                    border = BorderStroke(theme.borderWidth, c.warning.copy(alpha = 0.38f)),
-                                    modifier = Modifier.fillMaxWidth(),
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(c.warningBg.copy(alpha = 0.65f))
+                                        .padding(horizontal = 10.dp, vertical = 7.dp),
+                                    verticalArrangement = Arrangement.spacedBy(5.dp),
                                 ) {
-                                    Column(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(horizontal = 11.dp, vertical = 8.dp),
-                                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                                    Text(
+                                        text = ctxUi.mutedSectionTitle.fmt("count" to mutedRecallKeys.size),
+                                        color = c.warning,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                    )
+                                    FlowRow(
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        verticalArrangement = Arrangement.spacedBy(4.dp),
                                     ) {
-                                        Text(
-                                            text = ctxUi.mutedSectionTitle.fmt("count" to mutedRecallKeys.size),
-                                            color = c.warning,
-                                            fontSize = 11.5.sp,
-                                            fontWeight = FontWeight.Bold,
-                                        )
-                                        FlowRow(
-                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                            verticalArrangement = Arrangement.spacedBy(6.dp),
-                                        ) {
-                                            mutedRecallKeys.forEach { key ->
-                                                val label = mutedTitlesByKey[key] ?: key
-                                                Surface(
-                                                    onClick = { onToggleMuteRecall(key) },
-                                                    shape = RoundedCornerShape(999.dp),
-                                                    color = c.warningBg,
-                                                    border = BorderStroke(theme.borderWidth, c.warning.copy(alpha = 0.42f)),
+                                        mutedRecallKeys.forEach { key ->
+                                            val label = mutedTitlesByKey[key] ?: key
+                                            Surface(
+                                                onClick = { onToggleMuteRecall(key) },
+                                                shape = RoundedCornerShape(999.dp),
+                                                color = c.surface,
+                                            ) {
+                                                Row(
+                                                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
                                                 ) {
-                                                    Row(
-                                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                                        verticalAlignment = Alignment.CenterVertically,
-                                                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                                    ) {
-                                                        Icon(
-                                                            imageVector = Icons.AutoMirrored.Filled.VolumeOff,
-                                                            contentDescription = null,
-                                                            tint = c.warning,
-                                                            modifier = Modifier.size(12.dp),
-                                                        )
-                                                        Text(
-                                                            text = label,
-                                                            color = c.warning,
-                                                            fontSize = 11.sp,
-                                                            fontWeight = FontWeight.SemiBold,
-                                                            maxLines = 1,
-                                                            overflow = TextOverflow.Ellipsis,
-                                                        )
-                                                        Icon(
-                                                            imageVector = Icons.Default.Close,
-                                                            contentDescription = ctxUi.unmuteThisTurn,
-                                                            tint = c.warning,
-                                                            modifier = Modifier.size(12.dp),
-                                                        )
-                                                    }
+                                                    Icon(
+                                                        imageVector = Icons.AutoMirrored.Filled.VolumeOff,
+                                                        contentDescription = null,
+                                                        tint = c.warning,
+                                                        modifier = Modifier.size(11.dp),
+                                                    )
+                                                    Text(
+                                                        text = label,
+                                                        color = c.warning,
+                                                        fontSize = 10.5.sp,
+                                                        fontWeight = FontWeight.Medium,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis,
+                                                    )
+                                                    Icon(
+                                                        imageVector = Icons.Default.Close,
+                                                        contentDescription = ctxUi.unmuteThisTurn,
+                                                        tint = c.warning,
+                                                        modifier = Modifier.size(11.dp),
+                                                    )
                                                 }
                                             }
                                         }
@@ -857,17 +1183,15 @@ fun ChatMemorySheet(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.SpaceBetween,
                                     ) {
-                                        Text(
-                                            text = groupTitle,
+                                        GuMetaText(
+                                            text = "$groupTitle (${groupItems.size})",
                                             color = c.muted,
-                                            fontSize = 11.5.sp,
-                                            fontWeight = FontWeight.Bold,
                                         )
-                                        GuBadge(text = "${groupItems.size}", variant = GuBadgeVariant.NEUTRAL)
                                     }
                                 }
                                 items(groupItems, key = { "${it.source}:${it.id}" }) { item ->
                                     val recallKey = "${item.source}:${item.id}"
+                                    val isExpanded = expandedRecallKey == recallKey
                                     val isMuted = recallKey in mutedRecallKeys
                                     val supportsPinOrDisable = item.source in setOf(
                                         "user_memory_archival",
@@ -876,132 +1200,136 @@ fun ChatMemorySheet(
                                     )
                                     val isPinnedOrConstant = item.triggerKind == "constant" || item.triggerKind == "pinned_ledger"
                                     val (triggerLabel, triggerVariant) = resolveTriggerBadge(item.triggerKind, strings)
+                                    val badgeText = item.score?.let { sc ->
+                                        "$triggerLabel · ${String.format(Locale.US, "%.2f", sc)}"
+                                    } ?: triggerLabel
 
-                                    GuCard(modifier = Modifier.fillMaxWidth()) {
-                                        // Header row: Trigger badge + Title + Monospace ~Nt badge
+                                    val fullText = remember(item, isExpanded, userMemories, ledgerItems, episodes) {
+                                        if (!isExpanded) {
+                                            item.contentPreview
+                                        } else {
+                                            when (item.source) {
+                                                "user_memory_archival" -> userMemories.firstOrNull { it.id == item.id }?.content
+                                                "rp_ledger" -> ledgerItems.firstOrNull { it.id == item.id }?.content
+                                                "episode_archived" -> episodes.firstOrNull { it.id == item.id }?.summary
+                                                else -> null
+                                            }?.takeIf { it.isNotBlank() } ?: item.contentPreview
+                                        }
+                                    }
+
+                                    val highlightedPreview = remember(fullText, item.matchedTerms, c.primarySoft, c.primarySoftInk) {
+                                        buildHighlightedRecallPreview(
+                                            text = fullText,
+                                            matchedTerms = item.matchedTerms,
+                                            highlightBg = c.primarySoft,
+                                            highlightFg = c.primarySoftInk,
+                                        )
+                                    }
+
+                                    GuCard(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 9.dp),
+                                        onClick = {
+                                            expandedRecallKey = if (isExpanded) null else recallKey
+                                        },
+                                    ) {
+                                        // Row 1: [6dp badge: trigger · score] + title + ~Nt + [🔇 | 📌]
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),
                                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                                             verticalAlignment = Alignment.CenterVertically,
                                         ) {
-                                            GuBadge(text = triggerLabel, variant = triggerVariant)
+                                            GuBadge(text = badgeText, variant = triggerVariant)
                                             Text(
                                                 text = item.title,
                                                 color = c.ink,
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 13.5.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                fontSize = 13.sp,
                                                 maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis,
                                                 modifier = Modifier.weight(1f),
                                             )
-                                            Box(
-                                                modifier = Modifier
-                                                    .clip(RoundedCornerShape(999.dp))
-                                                    .background(c.surfaceSoft)
-                                                    .border(theme.borderWidth, c.border, RoundedCornerShape(999.dp))
-                                                    .padding(horizontal = 7.dp, vertical = 2.dp),
-                                            ) {
-                                                Text(
-                                                    text = "~${item.estimatedTokens}t",
-                                                    color = c.ink,
-                                                    fontSize = 10.5.sp,
-                                                    fontFamily = FontFamily.Monospace,
-                                                    fontWeight = FontWeight.Bold,
-                                                )
-                                            }
-                                        }
-
-                                        Spacer(Modifier.height(6.dp))
-
-                                        // Secondary meta + quick controls row
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.spacedBy(5.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                        ) {
-                                            GuBadge(
-                                                text = localizeRecallSource(item.source, strings),
-                                                variant = GuBadgeVariant.NEUTRAL,
-                                            )
-                                            item.score?.let { sc ->
-                                                GuBadge(
-                                                    text = strings.chat.recallScore.fmt("score" to sc),
-                                                    variant = GuBadgeVariant.HONEY,
-                                                )
-                                            }
-                                            if (isMuted && onToggleMuteRecall != null) {
-                                                Surface(
-                                                    onClick = { onToggleMuteRecall(recallKey) },
-                                                    shape = RoundedCornerShape(999.dp),
-                                                    color = c.warningBg,
-                                                    border = BorderStroke(theme.borderWidth, c.warning.copy(alpha = 0.42f)),
-                                                ) {
-                                                    Text(
-                                                        text = ctxUi.unmuteThisTurn,
-                                                        color = c.warning,
-                                                        fontSize = 10.sp,
-                                                        fontWeight = FontWeight.Bold,
-                                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                                    )
-                                                }
-                                            }
-                                            Spacer(Modifier.weight(1f))
+                                            GuMetaText("~${item.estimatedTokens}t")
                                             if (onToggleMuteRecall != null) {
                                                 IconButton(
                                                     onClick = { onToggleMuteRecall(recallKey) },
-                                                    modifier = Modifier.size(30.dp),
+                                                    modifier = Modifier.size(26.dp),
                                                 ) {
                                                     Icon(
                                                         imageVector = if (isMuted) Icons.AutoMirrored.Filled.VolumeUp else Icons.AutoMirrored.Filled.VolumeOff,
                                                         contentDescription = if (isMuted) ctxUi.unmuteThisTurn else ctxUi.muteThisTurn,
-                                                        tint = if (isMuted) c.warning else c.muted,
-                                                        modifier = Modifier.size(15.dp),
+                                                        tint = if (isMuted) c.warning else c.muted.copy(alpha = 0.72f),
+                                                        modifier = Modifier.size(14.dp),
                                                     )
                                                 }
                                             }
                                             if (supportsPinOrDisable && onTogglePinRecall != null) {
                                                 IconButton(
                                                     onClick = { onTogglePinRecall(item.source, item.id) },
-                                                    modifier = Modifier.size(30.dp),
+                                                    modifier = Modifier.size(26.dp),
                                                 ) {
                                                     Icon(
                                                         imageVector = Icons.Default.PushPin,
                                                         contentDescription = ctxUi.pinAction,
-                                                        tint = if (isPinnedOrConstant) c.accent else c.muted,
-                                                        modifier = Modifier.size(15.dp),
-                                                    )
-                                                }
-                                            }
-                                            if (supportsPinOrDisable && onDisableRecall != null) {
-                                                IconButton(
-                                                    onClick = { onDisableRecall(item.source, item.id) },
-                                                    modifier = Modifier.size(30.dp),
-                                                ) {
-                                                    Icon(
-                                                        imageVector = Icons.Default.Block,
-                                                        contentDescription = ctxUi.disableAction,
-                                                        tint = c.danger.copy(alpha = 0.85f),
-                                                        modifier = Modifier.size(15.dp),
+                                                        tint = if (isPinnedOrConstant) c.accent else c.muted.copy(alpha = 0.72f),
+                                                        modifier = Modifier.size(14.dp),
                                                     )
                                                 }
                                             }
                                         }
 
-                                        Spacer(Modifier.height(6.dp))
+                                        Spacer(Modifier.height(5.dp))
+
+                                        // Row 2: 2-line preview with inline highlighted matched terms
                                         Text(
-                                            text = item.contentPreview,
+                                            text = highlightedPreview,
                                             color = c.muted,
-                                            fontSize = 12.5.sp,
-                                            lineHeight = 18.5.sp,
+                                            fontSize = 12.sp,
+                                            lineHeight = 16.5.sp,
+                                            maxLines = if (isExpanded) Int.MAX_VALUE else 2,
+                                            overflow = TextOverflow.Ellipsis,
                                         )
-                                        if (item.matchedTerms.isNotEmpty()) {
-                                            Spacer(Modifier.height(6.dp))
-                                            Text(
-                                                text = strings.chat.recallMatched.fmt("terms" to item.matchedTerms.joinToString(", ")),
-                                                color = c.primarySoftInk,
-                                                fontSize = 11.5.sp,
-                                                fontWeight = FontWeight.Medium,
-                                            )
+
+                                        // Tap-to-expand details + secondary Disable button
+                                        AnimatedVisibility(visible = isExpanded) {
+                                            Column(modifier = Modifier.padding(top = 8.dp)) {
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                                ) {
+                                                    GuMetaText(
+                                                        text = localizeRecallSource(item.source, strings),
+                                                        modifier = Modifier.weight(1f),
+                                                    )
+                                                    if (supportsPinOrDisable && onDisableRecall != null) {
+                                                        Surface(
+                                                            onClick = { onDisableRecall(item.source, item.id) },
+                                                            shape = RoundedCornerShape(999.dp),
+                                                            color = c.dangerBg,
+                                                        ) {
+                                                            Row(
+                                                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+                                                                verticalAlignment = Alignment.CenterVertically,
+                                                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                                            ) {
+                                                                Icon(
+                                                                    imageVector = Icons.Default.Block,
+                                                                    contentDescription = null,
+                                                                    tint = c.danger,
+                                                                    modifier = Modifier.size(12.dp),
+                                                                )
+                                                                Text(
+                                                                    text = if (isZh) "停用该条目" else ctxUi.disableAction,
+                                                                    color = c.danger,
+                                                                    fontSize = 11.sp,
+                                                                    fontWeight = FontWeight.SemiBold,
+                                                                )
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -1015,8 +1343,7 @@ fun ChatMemorySheet(
                                         .fillMaxWidth()
                                         .clip(RoundedCornerShape(10.dp))
                                         .background(c.surfaceSoft)
-                                        .border(theme.borderWidth, c.border, RoundedCornerShape(10.dp))
-                                        .padding(horizontal = 11.dp, vertical = 8.dp),
+                                        .padding(horizontal = 10.dp, vertical = 7.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                                 ) {
@@ -1024,19 +1351,107 @@ fun ChatMemorySheet(
                                         imageVector = Icons.Default.Info,
                                         contentDescription = null,
                                         tint = c.muted,
-                                        modifier = Modifier.size(14.dp),
+                                        modifier = Modifier.size(13.dp),
                                     )
-                                    Text(
+                                    GuMetaText(
                                         text = ctxUi.droppedRecallFooter.fmt("count" to waterline.droppedRecallCount),
-                                        color = c.muted,
-                                        fontSize = 11.5.sp,
-                                        fontWeight = FontWeight.Medium,
                                     )
                                 }
                             }
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ToolbarPillButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    fgColor: Color,
+    bgColor: Color,
+    loading: Boolean = false,
+    onClick: () -> Unit,
+) {
+    Surface(
+        onClick = onClick,
+        enabled = !loading,
+        shape = RoundedCornerShape(11.dp),
+        color = bgColor,
+        modifier = Modifier.height(40.dp),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            if (loading) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(13.dp),
+                    strokeWidth = 1.8.dp,
+                    color = fgColor,
+                )
+            } else {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = fgColor,
+                    modifier = Modifier.size(14.dp),
+                )
+            }
+            Text(
+                text = label,
+                color = fgColor,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+private fun buildHighlightedRecallPreview(
+    text: String,
+    matchedTerms: List<String>,
+    highlightBg: Color,
+    highlightFg: Color,
+): AnnotatedString {
+    val cleanTerms = matchedTerms.asSequence()
+        .map { it.trim() }
+        .filter { it.isNotEmpty() }
+        .distinctBy { it.lowercase() }
+        .sortedByDescending { it.length }
+        .toList()
+    if (cleanTerms.isEmpty() || text.isEmpty()) return AnnotatedString(text)
+
+    val spans = ArrayList<Pair<Int, Int>>()
+    for (term in cleanTerms) {
+        var startIndex = 0
+        while (startIndex < text.length) {
+            val found = text.indexOf(term, startIndex = startIndex, ignoreCase = true)
+            if (found < 0) break
+            val end = found + term.length
+            val overlaps = spans.any { (s, e) -> found < e && end > s }
+            if (!overlaps) {
+                spans.add(found to end)
+            }
+            startIndex = end.coerceAtLeast(startIndex + 1)
+        }
+    }
+    if (spans.isEmpty()) return AnnotatedString(text)
+
+    return buildAnnotatedString {
+        append(text)
+        val style = SpanStyle(
+            background = highlightBg,
+            color = highlightFg,
+            fontWeight = FontWeight.SemiBold,
+        )
+        for ((start, end) in spans) {
+            if (start in 0 until end && end <= text.length) {
+                addStyle(style, start, end)
             }
         }
     }

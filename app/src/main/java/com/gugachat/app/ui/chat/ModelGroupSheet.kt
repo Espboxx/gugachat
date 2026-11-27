@@ -1,9 +1,7 @@
 package com.gugachat.app.ui.chat
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,6 +13,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -25,6 +24,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -32,15 +32,14 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ExpandLess
-import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -72,11 +71,11 @@ import com.gugachat.app.core.theme.GuBadgeVariant
 import com.gugachat.app.core.theme.GuCompactSearchBar
 import com.gugachat.app.core.theme.GuEmptyState
 import com.gugachat.app.core.theme.GuIconTile
+import com.gugachat.app.core.theme.GuMetaText
 import com.gugachat.app.core.theme.GuModalDragHandle
+import com.gugachat.app.core.theme.GuModelAvatar
 import com.gugachat.app.core.theme.GuPill
-import com.gugachat.app.core.theme.GuSectionHeader
 import com.gugachat.app.core.theme.GuSegmentedControl
-import com.gugachat.app.core.theme.GuSelectableListRow
 import com.gugachat.app.core.theme.GuSheetHeader
 import com.gugachat.app.core.theme.GuTextField
 import com.gugachat.app.core.theme.LocalAppTheme
@@ -90,7 +89,6 @@ import java.util.Locale
 
 private val CONTEXT_WINDOW_PRESETS: List<Pair<Int?, String>> = listOf(
     null to "AUTO",
-    8_000 to "8K",
     16_000 to "16K",
     32_000 to "32K",
     64_000 to "64K",
@@ -100,7 +98,7 @@ private val CONTEXT_WINDOW_PRESETS: List<Pair<Int?, String>> = listOf(
     1_000_000 to "1M",
 )
 
-private val HISTORY_MESSAGE_PRESETS: List<Int?> = listOf(null, 6, 12, 20, 40, 80)
+private val HISTORY_MESSAGE_PRESETS: List<Int?> = listOf(null, 10, 20, 40, 80)
 
 private val MAX_OUTPUT_PRESETS: List<Pair<Int?, String>> = listOf(
     null to "AUTO",
@@ -108,7 +106,6 @@ private val MAX_OUTPUT_PRESETS: List<Pair<Int?, String>> = listOf(
     4096 to "4K",
     8192 to "8K",
     16384 to "16K",
-    32768 to "32K",
 )
 
 internal fun formatContextTokenBadge(tokens: Int): String = when {
@@ -137,11 +134,10 @@ fun ModelGroupSheet(
     val theme = LocalAppTheme.current
     val c = theme.colors
     val isZh = strings.language == AppLanguage.ZH
-    var groupSearch by remember { mutableStateOf("") }
-    var showGroupSearch by remember { mutableStateOf(false) }
-    var showContextSettings by remember { mutableStateOf(false) }
-    var modelSearch by remember { mutableStateOf("") }
+
+    var searchQuery by remember { mutableStateOf("") }
     var capFilterIndex by remember { mutableIntStateOf(0) } // 0=All, 1=Free, 2=Vision, 3=Reasoning
+    var showContextSettings by remember { mutableStateOf(false) }
 
     val capFilterLabels = remember(isZh, strings) {
         listOf(
@@ -152,8 +148,8 @@ fun ModelGroupSheet(
         )
     }
 
-    val filteredGroups = remember(groups, groupSearch, strings.providers.protocolShortNames) {
-        FuzzyMatcher.filterAndRank(groups, groupSearch) { g ->
+    val groupFieldsProvider = remember(strings.providers.protocolShortNames) {
+        { g: OnlineChatGroupDto ->
             val protoTag = if (ApiProviderConfig.isCustomProviderId(g.id)) {
                 strings.providers.protocolShortNames[g.platform].orEmpty()
             } else {
@@ -169,14 +165,22 @@ fun ModelGroupSheet(
         }
     }
 
-    val filteredModels = remember(models, modelSearch, capFilterIndex) {
+    val matchedGroups = remember(groups, searchQuery, groupFieldsProvider) {
+        if (searchQuery.isBlank()) groups
+        else FuzzyMatcher.filterAndRank(groups, searchQuery, groupFieldsProvider)
+    }
+    val displayedGroups = remember(groups, matchedGroups, searchQuery) {
+        if (searchQuery.isBlank() || matchedGroups.isNotEmpty()) matchedGroups else groups
+    }
+
+    val filteredModels = remember(models, searchQuery, capFilterIndex) {
         val byCap = when (capFilterIndex) {
             1 -> models.filter { FreeQuotaUtils.hasAvailableFreeQuota(it.free_quota) || it.free_quota != null }
             2 -> models.filter { it.supports_vision }
             3 -> models.filter { it.supports_reasoning }
             else -> models
         }
-        FuzzyMatcher.filterAndRank(byCap, modelSearch) { m ->
+        FuzzyMatcher.filterAndRank(byCap, searchQuery) { m ->
             listOf(
                 m.id,
                 if (m.supports_vision) "视觉 vision" else "",
@@ -189,9 +193,13 @@ fun ModelGroupSheet(
     val activeGroup = remember(groups, selectedGroupId) {
         groups.firstOrNull { it.id == selectedGroupId }
     }
-    val trimmedModelSearch = modelSearch.trim()
-    val showCustomAction = trimmedModelSearch.isNotEmpty() &&
-        models.none { it.id.equals(trimmedModelSearch, ignoreCase = true) }
+    val trimmedSearch = searchQuery.trim()
+    val showCustomAction = trimmedSearch.isNotEmpty() &&
+        models.none { it.id.equals(trimmedSearch, ignoreCase = true) }
+
+    val hasCustomContext = params.contextWindowOverride != null ||
+        params.maxHistoryMessages != null ||
+        params.maxTokens != null
 
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
@@ -208,76 +216,112 @@ fun ModelGroupSheet(
                 .imePadding()
                 .navigationBarsPadding(),
         ) {
+            val subtitleText = remember(activeGroup?.name, models.size, filteredModels.size, trimmedSearch, capFilterIndex) {
+                val countPart = if (trimmedSearch.isNotEmpty() || capFilterIndex != 0) {
+                    "${filteredModels.size}/${models.size}"
+                } else {
+                    "${models.size}"
+                }
+                val base = activeGroup?.name?.takeIf { it.isNotBlank() }
+                if (base != null) "$base · $countPart" else countPart
+            }
+
             GuSheetHeader(
                 title = strings.chat.selectModel,
-                subtitle = activeGroup?.name,
+                subtitle = subtitleText,
                 onClose = onDismiss,
                 closeContentDescription = strings.common.close,
+                trailing = if (onUpdateContextSettings != null) {
+                    {
+                        val triggerShape = RoundedCornerShape(999.dp)
+                        val activeTrigger = showContextSettings || hasCustomContext
+                        Row(
+                            modifier = Modifier
+                                .clip(triggerShape)
+                                .background(if (activeTrigger) c.primarySoft else c.surfaceSoft)
+                                .clickable { showContextSettings = !showContextSettings }
+                                .padding(horizontal = 10.dp, vertical = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            if (hasCustomContext) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(6.dp)
+                                        .clip(CircleShape)
+                                        .background(c.primary),
+                                )
+                            }
+                            Text(
+                                text = if (isZh) {
+                                    "上下文设置 ${if (showContextSettings) "▾" else "▸"}"
+                                } else {
+                                    "Context ${if (showContextSettings) "▾" else "▸"}"
+                                },
+                                color = if (activeTrigger) c.primarySoftInk else c.muted,
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                    }
+                } else {
+                    null
+                },
             )
 
-            // Provider / Group channel strip
+            // Collapsible context settings (default collapsed to avoid competing with model list)
+            if (onUpdateContextSettings != null) {
+                val activeModelWindow = remember(models, selectedModelId) {
+                    models.firstOrNull { it.id == selectedModelId }?.context_window ?: 128_000
+                }
+                AnimatedVisibility(visible = showContextSettings) {
+                    Column {
+                        ModelContextSettingsDrawer(
+                            activeModelId = selectedModelId,
+                            nativeModelWindow = activeModelWindow,
+                            params = params,
+                            waterline = waterline,
+                            isZh = isZh,
+                            onUpdate = onUpdateContextSettings,
+                        )
+                        HorizontalDivider(
+                            thickness = 0.5.dp,
+                            color = c.border.copy(alpha = 0.45f),
+                        )
+                    }
+                }
+            }
+
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 8.dp, bottom = 10.dp),
+                    .weight(1f)
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                GuSectionHeader(
-                    title = strings.chat.selectGroup,
-                    modifier = Modifier.padding(horizontal = 12.dp),
-                    trailing = {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            GuBadge(
-                                text = if (groupSearch.isNotBlank()) "${filteredGroups.size}/${groups.size}" else "${groups.size}",
-                                variant = GuBadgeVariant.NEUTRAL,
-                            )
-                            if (groups.size > 4) {
-                                IconButton(
-                                    onClick = {
-                                        showGroupSearch = !showGroupSearch
-                                        if (!showGroupSearch) groupSearch = ""
-                                    },
-                                    modifier = Modifier.size(36.dp),
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Search,
-                                        contentDescription = strings.chat.searchGroups,
-                                        tint = if (showGroupSearch || groupSearch.isNotBlank()) c.primary else c.muted,
-                                        modifier = Modifier.size(18.dp),
-                                    )
-                                }
-                            }
-                        }
-                    },
+                // 1. Unified 38dp search bar (fuzzy matches both channel names and model IDs)
+                GuCompactSearchBar(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = if (isZh) "搜索渠道或模型…" else "Search channels or models…",
+                    clearContentDescription = strings.common.clear,
+                    modifier = Modifier.height(38.dp),
                 )
 
-                AnimatedVisibility(visible = showGroupSearch) {
-                    GuCompactSearchBar(
-                        value = groupSearch,
-                        onValueChange = { groupSearch = it },
-                        placeholder = strings.chat.searchGroups,
-                        clearContentDescription = strings.common.clear,
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                    )
-                }
-
-                if (filteredGroups.isEmpty()) {
+                // 2. Single-line horizontal channel capsule strip
+                if (displayedGroups.isEmpty()) {
                     Text(
-                        text = if (groups.isEmpty()) strings.chat.noGroups else strings.chat.noMatchingGroups,
+                        text = strings.chat.noGroups,
                         color = c.muted,
-                        fontSize = 12.5.sp,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(horizontal = 2.dp, vertical = 2.dp),
                     )
                 } else {
                     LazyRow(
                         modifier = Modifier.fillMaxWidth(),
-                        contentPadding = PaddingValues(horizontal = 16.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
-                        items(filteredGroups, key = { it.id }) { g ->
+                        items(displayedGroups, key = { it.id }) { g ->
                             val selected = g.id == selectedGroupId
                             val protoTag = if (ApiProviderConfig.isCustomProviderId(g.id)) {
                                 strings.providers.protocolShortNames[g.platform]
@@ -287,23 +331,27 @@ fun ModelGroupSheet(
                             Surface(
                                 onClick = {
                                     onSelectGroup(g.id)
-                                    modelSearch = ""
                                     capFilterIndex = 0
+                                    if (trimmedSearch.isNotEmpty() &&
+                                        FuzzyMatcher.scoreItem(trimmedSearch, groupFieldsProvider(g)) != null
+                                    ) {
+                                        searchQuery = ""
+                                    }
                                 },
-                                shape = RoundedCornerShape(12.dp),
-                                color = if (selected) c.primary else c.surface,
-                                border = BorderStroke(theme.borderWidth, if (selected) c.primary else c.border),
-                                modifier = Modifier.heightIn(min = 38.dp),
+                                shape = RoundedCornerShape(999.dp),
+                                color = if (selected) c.primary else c.surfaceSoft,
+                                border = null,
+                                modifier = Modifier.height(32.dp),
                             ) {
                                 Row(
-                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                    modifier = Modifier.padding(horizontal = 11.dp),
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(5.dp),
                                 ) {
                                     if (g.has_free_quotas) {
                                         Box(
                                             modifier = Modifier
-                                                .size(7.dp)
+                                                .size(6.dp)
                                                 .clip(CircleShape)
                                                 .background(if (selected) Color.White else c.success),
                                         )
@@ -311,23 +359,23 @@ fun ModelGroupSheet(
                                     Text(
                                         text = g.name,
                                         color = if (selected) Color.White else c.ink,
-                                        fontSize = 12.5.sp,
-                                        fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold,
+                                        fontSize = 12.sp,
+                                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
                                         maxLines = 1,
                                     )
                                     if (protoTag != null) {
                                         Text(
                                             text = protoTag,
-                                            color = if (selected) Color.White.copy(alpha = 0.86f) else c.primarySoftInk,
-                                            fontSize = 10.5.sp,
-                                            fontWeight = FontWeight.Bold,
+                                            color = if (selected) Color.White.copy(alpha = 0.85f) else c.primarySoftInk,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.SemiBold,
                                         )
                                     } else if (g.rate_multiplier != 1.0) {
                                         Text(
                                             text = "${g.rate_multiplier}x",
-                                            color = if (selected) Color.White.copy(alpha = 0.86f) else c.accent,
-                                            fontSize = 10.5.sp,
-                                            fontWeight = FontWeight.Bold,
+                                            color = if (selected) Color.White.copy(alpha = 0.85f) else c.accent,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.SemiBold,
                                         )
                                     }
                                 }
@@ -335,78 +383,8 @@ fun ModelGroupSheet(
                         }
                     }
                 }
-            }
 
-            HorizontalDivider(
-                thickness = theme.borderWidth,
-                color = c.border.copy(alpha = 0.75f),
-            )
-
-            if (onUpdateContextSettings != null) {
-                val activeModelWindow = remember(models, selectedModelId) {
-                    models.firstOrNull { it.id == selectedModelId }?.context_window ?: 128_000
-                }
-                ModelContextSettingsSection(
-                    expanded = showContextSettings,
-                    onToggleExpand = { showContextSettings = !showContextSettings },
-                    activeModelId = selectedModelId,
-                    nativeModelWindow = activeModelWindow,
-                    params = params,
-                    waterline = waterline,
-                    isZh = isZh,
-                    onUpdate = onUpdateContextSettings,
-                )
-
-                HorizontalDivider(
-                    thickness = theme.borderWidth,
-                    color = c.border.copy(alpha = 0.75f),
-                )
-            }
-
-            // Full-height searchable model picker
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f)
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                GuSectionHeader(
-                    title = strings.chat.model,
-                    trailing = {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            if (!selectedModelId.isNullOrBlank()) {
-                                GuBadge(
-                                    text = selectedModelId,
-                                    variant = GuBadgeVariant.BLUE,
-                                )
-                            }
-                            GuBadge(
-                                text = if (modelSearch.isNotBlank() || capFilterIndex != 0) {
-                                    "${filteredModels.size}/${models.size}"
-                                } else {
-                                    "${models.size}"
-                                },
-                                variant = if (filteredModels.isEmpty() && models.isNotEmpty()) {
-                                    GuBadgeVariant.AMBER
-                                } else {
-                                    GuBadgeVariant.NEUTRAL
-                                },
-                            )
-                        }
-                    },
-                )
-
-                GuCompactSearchBar(
-                    value = modelSearch,
-                    onValueChange = { modelSearch = it },
-                    placeholder = strings.chat.searchModels,
-                    clearContentDescription = strings.common.clear,
-                )
-
+                // 3. Single-line capability filter capsule bar
                 if (models.isNotEmpty()) {
                     GuSegmentedControl(
                         items = capFilterLabels,
@@ -417,11 +395,12 @@ fun ModelGroupSheet(
                     )
                 }
 
+                // 4. Clean flat / borderless grouped model rows (7~8+ visible above fold)
                 if (filteredModels.isEmpty() && !showCustomAction) {
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(vertical = 20.dp),
+                            .padding(vertical = 16.dp),
                         contentAlignment = Alignment.Center,
                     ) {
                         GuEmptyState(
@@ -435,21 +414,20 @@ fun ModelGroupSheet(
                             .fillMaxWidth()
                             .weight(1f),
                         contentPadding = PaddingValues(top = 2.dp, bottom = 14.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         if (showCustomAction) {
                             item(key = "__custom_model__") {
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
+                                        .padding(bottom = 8.dp)
                                         .clip(RoundedCornerShape(12.dp))
                                         .background(c.primarySoft)
-                                        .border(theme.borderWidth, c.primary.copy(alpha = 0.45f), RoundedCornerShape(12.dp))
                                         .clickable {
-                                            onSelectCustomModel(trimmedModelSearch)
+                                            onSelectCustomModel(trimmedSearch)
                                             onDismiss()
                                         }
-                                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                                        .padding(horizontal = 12.dp, vertical = 9.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                                 ) {
@@ -457,15 +435,15 @@ fun ModelGroupSheet(
                                         icon = Icons.Default.Add,
                                         tint = Color.White,
                                         backgroundColor = c.primary,
-                                        size = 30.dp,
-                                        iconSize = 17.dp,
-                                        cornerRadius = 8.dp,
+                                        size = 24.dp,
+                                        iconSize = 15.dp,
+                                        cornerRadius = 7.dp,
                                     )
                                     Text(
-                                        text = strings.providers.useCustomModelFormat.fmt("model" to trimmedModelSearch),
+                                        text = strings.providers.useCustomModelFormat.fmt("model" to trimmedSearch),
                                         color = c.primarySoftInk,
                                         fontSize = 13.sp,
-                                        fontWeight = FontWeight.Bold,
+                                        fontWeight = FontWeight.SemiBold,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
                                         modifier = Modifier.weight(1f),
@@ -474,36 +452,92 @@ fun ModelGroupSheet(
                             }
                         }
 
-                        items(filteredModels, key = { it.id }) { model ->
-                            val quotaBadge = FreeQuotaUtils.formatFreeQuotaBadge(model.free_quota, isZh = isZh)
-                            GuSelectableListRow(
-                                title = model.id,
-                                selected = model.id == selectedModelId,
-                                highlightFree = false,
-                                onClick = {
-                                    onSelectModel(model.id)
-                                    onDismiss()
-                                },
-                                badges = {
-                                    if (quotaBadge != null) {
+                        itemsIndexed(filteredModels, key = { _, m -> m.id }) { index, model ->
+                            val selected = model.id == selectedModelId
+                            val isFirst = index == 0
+                            val isLast = index == filteredModels.lastIndex
+                            val cornerRadius = theme.cardRadius
+                            val itemShape = RoundedCornerShape(
+                                topStart = if (isFirst) cornerRadius else 0.dp,
+                                topEnd = if (isFirst) cornerRadius else 0.dp,
+                                bottomStart = if (isLast) cornerRadius else 0.dp,
+                                bottomEnd = if (isLast) cornerRadius else 0.dp,
+                            )
+
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(itemShape)
+                                    .background(if (selected) c.primarySoft else c.surface),
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            onSelectModel(model.id)
+                                            onDismiss()
+                                        }
+                                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(9.dp),
+                                ) {
+                                    GuModelAvatar(
+                                        modelId = model.id,
+                                        size = 22.dp,
+                                    )
+                                    Text(
+                                        text = model.id,
+                                        color = if (selected) c.primarySoftInk else c.ink,
+                                        fontSize = 13.5.sp,
+                                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    if (model.free_quota != null) {
+                                        val available = FreeQuotaUtils.hasAvailableFreeQuota(model.free_quota)
                                         GuBadge(
-                                            text = quotaBadge,
-                                            variant = if (FreeQuotaUtils.hasAvailableFreeQuota(model.free_quota)) {
-                                                GuBadgeVariant.EMERALD
-                                            } else {
-                                                GuBadgeVariant.NEUTRAL
-                                            },
+                                            text = if (isZh) "限免" else "Free",
+                                            variant = if (available) GuBadgeVariant.EMERALD else GuBadgeVariant.NEUTRAL,
                                         )
                                     }
                                     if (model.supports_vision) {
-                                        GuBadge(strings.chat.visionCap, variant = GuBadgeVariant.BLUE)
+                                        Icon(
+                                            imageVector = Icons.Outlined.Visibility,
+                                            contentDescription = strings.chat.visionCap,
+                                            tint = if (selected) c.primarySoftInk else c.muted.copy(alpha = 0.78f),
+                                            modifier = Modifier.size(14.dp),
+                                        )
                                     }
                                     if (model.supports_reasoning) {
-                                        GuBadge(strings.chat.reasoningCap, variant = GuBadgeVariant.HONEY)
+                                        Icon(
+                                            imageVector = Icons.Default.AutoAwesome,
+                                            contentDescription = strings.chat.reasoningCap,
+                                            tint = if (selected) c.primarySoftInk else c.muted.copy(alpha = 0.78f),
+                                            modifier = Modifier.size(14.dp),
+                                        )
                                     }
-                                    GuBadge(formatContextTokenBadge(model.context_window), variant = GuBadgeVariant.NEUTRAL)
-                                },
-                            )
+                                    GuMetaText(
+                                        text = formatContextTokenBadge(model.context_window),
+                                        color = if (selected) c.primarySoftInk.copy(alpha = 0.85f) else c.muted,
+                                    )
+                                    if (selected) {
+                                        Icon(
+                                            imageVector = Icons.Default.Check,
+                                            contentDescription = null,
+                                            tint = c.primary,
+                                            modifier = Modifier.size(15.dp),
+                                        )
+                                    }
+                                }
+                                if (!isLast) {
+                                    HorizontalDivider(
+                                        modifier = Modifier.padding(start = 43.dp, end = 12.dp),
+                                        thickness = 0.5.dp,
+                                        color = c.border.copy(alpha = 0.45f),
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -513,9 +547,7 @@ fun ModelGroupSheet(
 }
 
 @Composable
-private fun ModelContextSettingsSection(
-    expanded: Boolean,
-    onToggleExpand: () -> Unit,
+private fun ModelContextSettingsDrawer(
     activeModelId: String?,
     nativeModelWindow: Int,
     params: ChatParams,
@@ -523,21 +555,11 @@ private fun ModelContextSettingsSection(
     isZh: Boolean,
     onUpdate: (contextWindowOverride: Int?, maxHistoryMessages: Int?, maxTokens: Int?) -> Unit,
 ) {
-    val theme = LocalAppTheme.current
-    val c = theme.colors
+    val c = LocalAppTheme.current.colors
     val hasAnyCustom = params.contextWindowOverride != null ||
         params.maxHistoryMessages != null ||
         params.maxTokens != null
-
     val effectiveWindow = params.contextWindowOverride ?: nativeModelWindow
-    val windowBadgeText = if (params.contextWindowOverride != null) {
-        formatContextTokenBadge(params.contextWindowOverride)
-    } else {
-        if (isZh) "自动 ${formatContextTokenBadge(nativeModelWindow)}" else "Auto ${formatContextTokenBadge(nativeModelWindow)}"
-    }
-    val historyBadgeText = params.maxHistoryMessages?.let { n ->
-        if (isZh) "近 $n 条" else "Last $n"
-    } ?: if (isZh) "不限条数" else "All msgs"
 
     var customWindowKText by remember {
         mutableStateOf(params.contextWindowOverride?.let { (it / 1000).toString() }.orEmpty())
@@ -548,335 +570,213 @@ private fun ModelContextSettingsSection(
 
     LaunchedEffect(params.contextWindowOverride) {
         val expected = params.contextWindowOverride?.let { (it / 1000).toString() }.orEmpty()
-        if (customWindowKText != expected) {
-            customWindowKText = expected
-        }
+        if (customWindowKText != expected) customWindowKText = expected
     }
     LaunchedEffect(params.maxHistoryMessages) {
         val expected = params.maxHistoryMessages?.toString().orEmpty()
-        if (customHistoryText != expected) {
-            customHistoryText = expected
-        }
+        if (customHistoryText != expected) customHistoryText = expected
     }
 
-    Column(modifier = Modifier.fillMaxWidth()) {
-        // Compact 1-line summary header
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(max = 320.dp)
+            .verticalScroll(rememberScrollState())
+            .background(c.surfaceSoft.copy(alpha = 0.55f))
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable(onClick = onToggleExpand)
-                .padding(horizontal = 16.dp, vertical = 10.dp),
+            modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            GuIconTile(
-                icon = Icons.Default.Tune,
-                tint = if (hasAnyCustom) c.primarySoftInk else c.muted,
-                backgroundColor = if (hasAnyCustom) c.primarySoft else c.surfaceSoft,
-                size = 28.dp,
-                iconSize = 15.dp,
-                cornerRadius = 8.dp,
-            )
-            Text(
-                text = if (isZh) "上下文设置" else "Context Settings",
-                color = c.ink,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Bold,
-            )
-            Row(
+            val usedCompact = if (waterline.usedTokens >= 1000) {
+                String.format(Locale.US, "%.1fK", waterline.usedTokens / 1000f)
+            } else {
+                "${waterline.usedTokens}"
+            }
+            val budgetCompact = formatContextTokenBadge(waterline.effectiveLimitTokens.coerceAtLeast(1024))
+            val modelLabel = activeModelId?.take(20).orEmpty().ifBlank { if (isZh) "当前模型" else "Model" }
+            GuMetaText(
+                text = if (isZh) {
+                    "$modelLabel · 原生 ${formatContextTokenBadge(nativeModelWindow)} · 已用 $usedCompact / $budgetCompact (${waterline.percentage}%)"
+                } else {
+                    "$modelLabel · Native ${formatContextTokenBadge(nativeModelWindow)} · Used $usedCompact / $budgetCompact (${waterline.percentage}%)"
+                },
+                color = if (waterline.exceedsModelWindow) c.danger else c.muted,
                 modifier = Modifier.weight(1f),
-                horizontalArrangement = Arrangement.spacedBy(5.dp, Alignment.End),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                GuBadge(
-                    text = windowBadgeText,
-                    variant = if (params.contextWindowOverride != null) GuBadgeVariant.BLUE else GuBadgeVariant.NEUTRAL,
-                )
-                GuBadge(
-                    text = historyBadgeText,
-                    variant = if (params.maxHistoryMessages != null) GuBadgeVariant.BLUE else GuBadgeVariant.NEUTRAL,
-                )
-                if (params.maxTokens != null) {
-                    GuBadge(
-                        text = if (isZh) "输出 ${formatContextTokenBadge(params.maxTokens)}" else "Out ${formatContextTokenBadge(params.maxTokens)}",
-                        variant = GuBadgeVariant.HONEY,
+            )
+            if (hasAnyCustom) {
+                Spacer(Modifier.width(8.dp))
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(999.dp))
+                        .clickable { onUpdate(null, null, null) }
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(3.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.RestartAlt,
+                        contentDescription = null,
+                        tint = c.primary,
+                        modifier = Modifier.size(13.dp),
+                    )
+                    Text(
+                        text = if (isZh) "重置" else "Reset",
+                        color = c.primary,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
                     )
                 }
-                Icon(
-                    imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                    contentDescription = null,
-                    tint = c.muted,
-                    modifier = Modifier.size(18.dp),
+            }
+        }
+
+        // Context Window Override
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = if (isZh) "窗口上限" else "Context Window",
+                color = c.ink,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+            GuMetaText(
+                text = if (params.contextWindowOverride == null) {
+                    if (isZh) "跟随模型 (${formatContextTokenBadge(effectiveWindow)})" else "Auto (${formatContextTokenBadge(effectiveWindow)})"
+                } else {
+                    formatContextTokenBadge(effectiveWindow)
+                },
+                color = if (params.contextWindowOverride != null) c.primarySoftInk else c.muted,
+            )
+        }
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            items(CONTEXT_WINDOW_PRESETS, key = { it.second }) { (tokens, label) ->
+                GuPill(
+                    label = if (tokens == null) (if (isZh) "自动" else "Auto") else label,
+                    selected = params.contextWindowOverride == tokens,
+                    onClick = { onUpdate(tokens, params.maxHistoryMessages, params.maxTokens) },
                 )
             }
         }
 
-        AnimatedVisibility(visible = expanded) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 365.dp)
-                    .verticalScroll(rememberScrollState())
-                    .background(c.surfaceSoft.copy(alpha = 0.55f))
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                // Live waterline & model window status + Reset
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    val usedCompact = if (waterline.usedTokens >= 1000) {
-                        String.format(Locale.US, "%.1fK", waterline.usedTokens / 1000f)
-                    } else {
-                        "${waterline.usedTokens}"
-                    }
-                    val budgetCompact = formatContextTokenBadge(waterline.effectiveLimitTokens.coerceAtLeast(1024))
-                    val modelLabel = activeModelId?.take(22).orEmpty().ifBlank { if (isZh) "当前模型" else "Model" }
-                    Text(
-                        text = if (isZh) {
-                            "$modelLabel 原生 ${formatContextTokenBadge(nativeModelWindow)} · 已用 $usedCompact / $budgetCompact (${waterline.percentage}%)"
-                        } else {
-                            "$modelLabel native ${formatContextTokenBadge(nativeModelWindow)} · Used $usedCompact / $budgetCompact (${waterline.percentage}%)"
-                        },
-                        color = if (waterline.exceedsModelWindow) c.danger else c.muted,
-                        fontSize = 11.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f),
-                    )
-                    if (hasAnyCustom) {
-                        Spacer(Modifier.width(8.dp))
-                        Row(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(999.dp))
-                                .clickable { onUpdate(null, null, null) }
-                                .padding(horizontal = 6.dp, vertical = 3.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(3.dp),
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.RestartAlt,
-                                contentDescription = null,
-                                tint = c.primary,
-                                modifier = Modifier.size(13.dp),
-                            )
-                            Text(
-                                text = if (isZh) "重置默认" else "Reset",
-                                color = c.primary,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                            )
-                        }
-                    }
-                }
-
-                // 1. Context Window Override
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            text = if (isZh) "上下文窗口上限" else "Context Window Limit",
-                            color = c.ink,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                        )
-                        Text(
-                            text = if (params.contextWindowOverride == null) {
-                                if (isZh) "跟随模型 (${formatContextTokenBadge(effectiveWindow)})" else "Model (${formatContextTokenBadge(effectiveWindow)})"
-                            } else {
-                                formatContextTokenBadge(effectiveWindow)
-                            },
-                            color = if (params.contextWindowOverride != null) c.primarySoftInk else c.muted,
-                            fontSize = 11.5.sp,
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold,
-                        )
-                    }
-                    LazyRow(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        items(CONTEXT_WINDOW_PRESETS, key = { it.second }) { (tokens, label) ->
-                            val selected = params.contextWindowOverride == tokens
-                            val displayLabel = if (tokens == null) {
-                                if (isZh) "自动" else "Auto"
-                            } else {
-                                label
-                            }
-                            GuPill(
-                                label = displayLabel,
-                                selected = selected,
-                                onClick = {
-                                    onUpdate(tokens, params.maxHistoryMessages, params.maxTokens)
-                                },
-                            )
-                        }
-                    }
-                }
-
-                // 2. Attached History Messages Count
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            text = if (isZh) "附带历史消息数" else "Attached History Messages",
-                            color = c.ink,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                        )
-                        Text(
-                            text = params.maxHistoryMessages?.let {
-                                if (isZh) "最近 $it 条" else "Last $it"
-                            } ?: if (isZh) "不限（按 Token 裁剪）" else "Unlimited (token budget)",
-                            color = if (params.maxHistoryMessages != null) c.primarySoftInk else c.muted,
-                            fontSize = 11.5.sp,
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold,
-                        )
-                    }
-                    LazyRow(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        items(HISTORY_MESSAGE_PRESETS, key = { it ?: -1 }) { count ->
-                            val selected = params.maxHistoryMessages == count
-                            val label = count?.let { if (isZh) "$it 条" else "$it" }
-                                ?: if (isZh) "不限" else "All"
-                            GuPill(
-                                label = label,
-                                selected = selected,
-                                onClick = {
-                                    onUpdate(params.contextWindowOverride, count, params.maxTokens)
-                                },
-                            )
-                        }
-                    }
-                }
-
-                // 3. Max Output Tokens
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            text = if (isZh) "单次最大输出" else "Max Output Tokens",
-                            color = c.ink,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                        )
-                        Text(
-                            text = params.maxTokens?.let { formatContextTokenBadge(it) }
-                                ?: if (isZh) "模型默认" else "Default",
-                            color = if (params.maxTokens != null) c.primarySoftInk else c.muted,
-                            fontSize = 11.5.sp,
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold,
-                        )
-                    }
-                    LazyRow(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        items(MAX_OUTPUT_PRESETS, key = { it.second }) { (tokens, label) ->
-                            val selected = params.maxTokens == tokens
-                            val displayLabel = if (tokens == null) {
-                                if (isZh) "默认" else "Auto"
-                            } else {
-                                label
-                            }
-                            GuPill(
-                                label = displayLabel,
-                                selected = selected,
-                                onClick = {
-                                    onUpdate(params.contextWindowOverride, params.maxHistoryMessages, tokens)
-                                },
-                            )
-                        }
-                    }
-                }
-
-                // 4. Custom numeric inputs row (Custom Window K + Custom Message Count)
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    GuTextField(
-                        value = customWindowKText,
-                        onValueChange = { raw ->
-                            val digits = raw.filter { it.isDigit() }.take(4)
-                            customWindowKText = digits
-                            if (digits.isEmpty()) {
-                                onUpdate(null, params.maxHistoryMessages, params.maxTokens)
-                            } else {
-                                val kVal = digits.toIntOrNull()
-                                if (kVal != null && kVal >= 4) {
-                                    onUpdate(
-                                        (kVal * 1000).coerceIn(4096, 2_000_000),
-                                        params.maxHistoryMessages,
-                                        params.maxTokens,
-                                    )
-                                }
-                            }
-                        },
-                        placeholder = if (isZh) "自定义上限 (K)" else "Custom K",
-                        trailingIcon = {
-                            Text(
-                                text = "K",
-                                color = c.muted,
-                                fontSize = 11.5.sp,
-                                fontFamily = FontFamily.Monospace,
-                                fontWeight = FontWeight.Bold,
-                            )
-                        },
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.Number,
-                            imeAction = ImeAction.Next,
-                        ),
-                        modifier = Modifier.weight(1f),
-                    )
-                    GuTextField(
-                        value = customHistoryText,
-                        onValueChange = { raw ->
-                            val digits = raw.filter { it.isDigit() }.take(3)
-                            customHistoryText = digits
-                            if (digits.isEmpty()) {
-                                onUpdate(params.contextWindowOverride, null, params.maxTokens)
-                            } else {
-                                val n = digits.toIntOrNull()
-                                if (n != null && n > 0) {
-                                    onUpdate(
-                                        params.contextWindowOverride,
-                                        n.coerceIn(1, 500),
-                                        params.maxTokens,
-                                    )
-                                }
-                            }
-                        },
-                        placeholder = if (isZh) "自定义消息条数" else "Custom msgs",
-                        trailingIcon = {
-                            Text(
-                                text = if (isZh) "条" else "#",
-                                color = c.muted,
-                                fontSize = 11.5.sp,
-                                fontWeight = FontWeight.Bold,
-                            )
-                        },
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.Number,
-                            imeAction = ImeAction.Done,
-                        ),
-                        modifier = Modifier.weight(1f),
-                    )
-                }
+        // History Message Count
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = if (isZh) "历史保留条数" else "History Messages",
+                color = c.ink,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+            GuMetaText(
+                text = params.maxHistoryMessages?.let {
+                    if (isZh) "最近 $it 条" else "Last $it"
+                } ?: if (isZh) "不限" else "Unlimited",
+                color = if (params.maxHistoryMessages != null) c.primarySoftInk else c.muted,
+            )
+        }
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            items(HISTORY_MESSAGE_PRESETS, key = { it ?: -1 }) { count ->
+                val label = count?.let { if (isZh) "${it}条" else "$it" } ?: if (isZh) "不限" else "All"
+                GuPill(
+                    label = label,
+                    selected = params.maxHistoryMessages == count,
+                    onClick = { onUpdate(params.contextWindowOverride, count, params.maxTokens) },
+                )
             }
+        }
+
+        // Max Output Tokens
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = if (isZh) "单次最大输出" else "Max Output",
+                color = c.ink,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+            GuMetaText(
+                text = params.maxTokens?.let { formatContextTokenBadge(it) } ?: if (isZh) "默认" else "Default",
+                color = if (params.maxTokens != null) c.primarySoftInk else c.muted,
+            )
+        }
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            items(MAX_OUTPUT_PRESETS, key = { it.second }) { (tokens, label) ->
+                GuPill(
+                    label = if (tokens == null) (if (isZh) "默认" else "Auto") else label,
+                    selected = params.maxTokens == tokens,
+                    onClick = { onUpdate(params.contextWindowOverride, params.maxHistoryMessages, tokens) },
+                )
+            }
+        }
+
+        // Compact custom inputs
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            GuTextField(
+                value = customWindowKText,
+                onValueChange = { raw ->
+                    val digits = raw.filter { it.isDigit() }.take(4)
+                    customWindowKText = digits
+                    if (digits.isEmpty()) {
+                        onUpdate(null, params.maxHistoryMessages, params.maxTokens)
+                    } else {
+                        digits.toIntOrNull()?.takeIf { it >= 4 }?.let { kVal ->
+                            onUpdate((kVal * 1000).coerceIn(4096, 2_000_000), params.maxHistoryMessages, params.maxTokens)
+                        }
+                    }
+                },
+                placeholder = if (isZh) "自定义窗口 (K)" else "Custom K",
+                trailingIcon = {
+                    Text(
+                        text = "K",
+                        color = c.muted,
+                        fontSize = 11.5.sp,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Next),
+                modifier = Modifier.weight(1f),
+            )
+            GuTextField(
+                value = customHistoryText,
+                onValueChange = { raw ->
+                    val digits = raw.filter { it.isDigit() }.take(3)
+                    customHistoryText = digits
+                    if (digits.isEmpty()) {
+                        onUpdate(params.contextWindowOverride, null, params.maxTokens)
+                    } else {
+                        digits.toIntOrNull()?.takeIf { it > 0 }?.let { n ->
+                            onUpdate(params.contextWindowOverride, n.coerceIn(1, 500), params.maxTokens)
+                        }
+                    }
+                },
+                placeholder = if (isZh) "自定义条数" else "Custom msgs",
+                trailingIcon = {
+                    Text(
+                        text = if (isZh) "条" else "#",
+                        color = c.muted,
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
+                modifier = Modifier.weight(1f),
+            )
         }
     }
 }
