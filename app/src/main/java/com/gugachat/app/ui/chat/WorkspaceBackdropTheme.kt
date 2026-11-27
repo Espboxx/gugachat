@@ -93,11 +93,19 @@ private val NOVEL_PAPER_NIGHT = NovelPaperTheme(
 private val HEX_COLOR_REGEX = Regex("^#?([0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$")
 private val DEFAULT_RP_STAGE_ACCENT = Color(0xFFF5C563)
 
-fun resolveNovelPaperTheme(paper: String): NovelPaperTheme = when (paper.trim().lowercase()) {
-    "parchment" -> NOVEL_PAPER_PARCHMENT
-    "sage" -> NOVEL_PAPER_SAGE
-    "night" -> NOVEL_PAPER_NIGHT
-    else -> NOVEL_PAPER_CREAM
+fun resolveNovelPaperTheme(
+    paper: String,
+    isAppDark: Boolean = false,
+): NovelPaperTheme {
+    val clean = paper.trim().lowercase()
+    return when (clean) {
+        "night" -> NOVEL_PAPER_NIGHT
+        "parchment" -> NOVEL_PAPER_PARCHMENT
+        "sage" -> NOVEL_PAPER_SAGE
+        "cream_light", "cream_force" -> NOVEL_PAPER_CREAM
+        "cream", "auto", "" -> if (isAppDark) NOVEL_PAPER_NIGHT else NOVEL_PAPER_CREAM
+        else -> if (isAppDark) NOVEL_PAPER_NIGHT else NOVEL_PAPER_CREAM
+    }
 }
 
 fun resolveRpStageAccent(accentHex: String?): Color {

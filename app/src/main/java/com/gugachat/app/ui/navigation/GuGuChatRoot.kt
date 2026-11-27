@@ -1,6 +1,14 @@
 package com.gugachat.app.ui.navigation
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -16,6 +24,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -42,6 +51,7 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
@@ -69,8 +79,10 @@ import com.gugachat.app.core.i18n.EnStrings
 import com.gugachat.app.core.i18n.LocalAppStrings
 import com.gugachat.app.core.i18n.ZhStrings
 import com.gugachat.app.core.i18n.fmt
+import com.gugachat.app.core.theme.AppShellController
 import com.gugachat.app.core.theme.GuGuChatTheme
 import com.gugachat.app.core.theme.GuToastHost
+import com.gugachat.app.core.theme.LocalAppShellController
 import com.gugachat.app.core.theme.LocalAppTheme
 import com.gugachat.app.domain.chat.ConversationMode
 import com.gugachat.app.ui.auth.AuthViewModel
@@ -229,9 +241,34 @@ private fun AuthenticatedShell(container: AppContainer) {
     var activeTabOrdinal by rememberSaveable { mutableIntStateOf(MainTab.CHAT.ordinal) }
     val activeTab = MainTab.entries.getOrElse(activeTabOrdinal) { MainTab.CHAT }
     val saveableStateHolder = rememberSaveableStateHolder()
+    var isChatDrawerOpen by remember { mutableStateOf(false) }
+    var isScrollHidingBottomBar by remember { mutableStateOf(false) }
 
     val activeConv = chatState.activeConversation
-    val isImeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    LaunchedEffect(activeTab) {
+        if (activeTab != MainTab.CHAT) {
+            isChatDrawerOpen = false
+            isScrollHidingBottomBar = false
+        }
+    }
+    LaunchedEffect(activeConv?.id, chatState.messages.isEmpty()) {
+        if (chatState.messages.isEmpty()) {
+            isScrollHidingBottomBar = false
+        }
+    }
+
+    val shellController = remember {
+        AppShellController(
+            setChatDrawerOpen = { open -> isChatDrawerOpen = open },
+            setScrollHideBottomBar = { hide -> isScrollHidingBottomBar = hide },
+            selectMainTab = { idx ->
+                activeTabOrdinal = idx.coerceIn(0, MainTab.entries.lastIndex)
+            },
+        )
+    }
+
+    val density = LocalDensity.current
+    val isImeVisible = WindowInsets.ime.getBottom(density) > 0
     val isNovelWorkspace = activeTab == MainTab.CHAT &&
         activeConv?.mode == ConversationMode.novel &&
         activeConv.novel != null
@@ -241,37 +278,43 @@ private fun AuthenticatedShell(container: AppContainer) {
     val isTheaterImmersive = isRpWorkspace && activeConv?.rp?.theaterMode == true
     val isRpStreamBar = isRpWorkspace && !isTheaterImmersive
     val isPureReading = activeTab == MainTab.CHAT && chatState.pureReadingMode
-    val showBottomBar = !isImeVisible && !isTheaterImmersive && !isPureReading
+    val showBottomBar = !isImeVisible &&
+        !isTheaterImmersive &&
+        !isPureReading &&
+        !isChatDrawerOpen &&
+        !isScrollHidingBottomBar
 
+    val novelPaper = remember(chatState.readerPaper, theme.isDark) {
+        resolveNovelPaperTheme(chatState.readerPaper, theme.isDark)
+    }
     val scaffoldContainerColor = when {
-        isNovelWorkspace -> resolveNovelPaperTheme(chatState.readerPaper).bg
+        isNovelWorkspace -> novelPaper.bg
         isRpWorkspace -> Color(0xFF090D16)
         else -> c.page
     }
     val bottomBarPalette = remember(
         isNovelWorkspace,
         isRpStreamBar,
-        chatState.readerPaper,
+        novelPaper,
         activeConv?.rp?.visualTheme?.accentHex,
         c,
     ) {
         when {
             isNovelWorkspace -> {
-                val paper = resolveNovelPaperTheme(chatState.readerPaper)
                 BottomBarPalette(
-                    container = paper.chromeBg,
-                    divider = paper.border.copy(alpha = 0.85f),
-                    selectedCapsule = paper.accent.copy(alpha = if (paper.isNight) 0.24f else 0.14f),
-                    selectedContent = if (paper.isNight) Color(0xFFB8CEFF) else paper.accent,
-                    unselectedContent = paper.muted,
-                    indicatorDot = paper.accent,
+                    container = novelPaper.chromeBg.copy(alpha = 0.92f),
+                    divider = novelPaper.border.copy(alpha = 0.45f),
+                    selectedCapsule = novelPaper.accent.copy(alpha = if (novelPaper.isNight) 0.22f else 0.14f),
+                    selectedContent = if (novelPaper.isNight) Color(0xFFB8CEFF) else novelPaper.accent,
+                    unselectedContent = novelPaper.muted,
+                    indicatorDot = novelPaper.accent,
                 )
             }
             isRpStreamBar -> {
                 val stageAccent = resolveRpStageAccent(activeConv?.rp?.visualTheme?.accentHex)
                 BottomBarPalette(
-                    container = Color(0xF00B0F1A),
-                    divider = stageAccent.copy(alpha = 0.36f),
+                    container = Color(0xEB0B0F1A),
+                    divider = stageAccent.copy(alpha = 0.28f),
                     selectedCapsule = stageAccent.copy(alpha = 0.20f),
                     selectedContent = stageAccent,
                     unselectedContent = Color(0xFFA7B3CB),
@@ -279,8 +322,8 @@ private fun AuthenticatedShell(container: AppContainer) {
                 )
             }
             else -> BottomBarPalette(
-                container = c.surface,
-                divider = c.border.copy(alpha = 0.85f),
+                container = c.surface.copy(alpha = 0.92f),
+                divider = c.border.copy(alpha = 0.45f),
                 selectedCapsule = c.primarySoft,
                 selectedContent = c.primarySoftInk,
                 unselectedContent = c.muted,
@@ -296,86 +339,103 @@ private fun AuthenticatedShell(container: AppContainer) {
         targetValue = bottomBarPalette.divider,
         label = "bottom_bar_divider",
     )
+    val navBarBottomPadding = if (!isImeVisible && !isPureReading) {
+        with(density) { WindowInsets.navigationBars.getBottom(this).toDp() }
+    } else {
+        0.dp
+    }
 
-    Scaffold(
-        containerColor = scaffoldContainerColor,
-        bottomBar = {
-            if (showBottomBar) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(animatedBarContainer)
-                        .navigationBarsPadding(),
+    CompositionLocalProvider(LocalAppShellController provides shellController) {
+        Scaffold(
+            containerColor = scaffoldContainerColor,
+            contentWindowInsets = WindowInsets(0, 0, 0, 0),
+            bottomBar = {
+                AnimatedVisibility(
+                    visible = showBottomBar,
+                    enter = fadeIn(tween(180)) +
+                        expandVertically(expandFrom = Alignment.Top, animationSpec = tween(200)) +
+                        slideInVertically(tween(200)) { it / 3 },
+                    exit = fadeOut(tween(150)) +
+                        shrinkVertically(shrinkTowards = Alignment.Top, animationSpec = tween(180)) +
+                        slideOutVertically(tween(180)) { it / 3 },
                 ) {
-                    HorizontalDivider(
-                        thickness = theme.borderWidth,
-                        color = animatedBarDivider,
-                    )
-                    Row(
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(50.dp)
-                            .padding(horizontal = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
+                            .background(animatedBarContainer)
+                            .navigationBarsPadding(),
                     ) {
-                        CompactBottomNavItem(
-                            selected = activeTab == MainTab.CHAT,
-                            selectedIcon = Icons.AutoMirrored.Filled.Chat,
-                            unselectedIcon = Icons.AutoMirrored.Outlined.Chat,
-                            label = strings.nav.tabChat,
-                            palette = bottomBarPalette,
-                            onClick = { activeTabOrdinal = MainTab.CHAT.ordinal },
-                            modifier = Modifier.weight(1f),
+                        HorizontalDivider(
+                            thickness = 0.5.dp,
+                            color = animatedBarDivider,
                         )
-                        CompactBottomNavItem(
-                            selected = activeTab == MainTab.STUDIO,
-                            selectedIcon = Icons.Filled.AutoAwesome,
-                            unselectedIcon = Icons.Outlined.AutoAwesome,
-                            label = strings.nav.tabStudio,
-                            palette = bottomBarPalette,
-                            showIndicatorDot = activeImageTasks > 0,
-                            onClick = { activeTabOrdinal = MainTab.STUDIO.ordinal },
-                            modifier = Modifier.weight(1f),
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .padding(horizontal = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            CompactBottomNavItem(
+                                selected = activeTab == MainTab.CHAT,
+                                selectedIcon = Icons.AutoMirrored.Filled.Chat,
+                                unselectedIcon = Icons.AutoMirrored.Outlined.Chat,
+                                label = strings.nav.tabChat,
+                                palette = bottomBarPalette,
+                                onClick = { activeTabOrdinal = MainTab.CHAT.ordinal },
+                                modifier = Modifier.weight(1f),
+                            )
+                            CompactBottomNavItem(
+                                selected = activeTab == MainTab.STUDIO,
+                                selectedIcon = Icons.Filled.AutoAwesome,
+                                unselectedIcon = Icons.Outlined.AutoAwesome,
+                                label = strings.nav.tabStudio,
+                                palette = bottomBarPalette,
+                                showIndicatorDot = activeImageTasks > 0,
+                                onClick = { activeTabOrdinal = MainTab.STUDIO.ordinal },
+                                modifier = Modifier.weight(1f),
+                            )
+                            CompactBottomNavItem(
+                                selected = activeTab == MainTab.MINE,
+                                selectedIcon = Icons.Filled.Person,
+                                unselectedIcon = Icons.Outlined.Person,
+                                label = strings.nav.tabMine,
+                                palette = bottomBarPalette,
+                                onClick = { activeTabOrdinal = MainTab.MINE.ordinal },
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    }
+                }
+            },
+        ) { innerPadding ->
+            val barSpace = if (isImeVisible) 0.dp else innerPadding.calculateBottomPadding()
+            val contentBottomPadding = maxOf(barSpace, navBarBottomPadding)
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(bottom = contentBottomPadding),
+            ) {
+                saveableStateHolder.SaveableStateProvider(key = activeTab.name) {
+                    when (activeTab) {
+                        MainTab.CHAT -> ChatWorkspaceScreen(container = container, viewModel = chatVm)
+                        MainTab.STUDIO -> CreativeStudioScreen(
+                            container = container,
+                            imageViewModel = imageVm,
+                            onOpenProfile = { activeTabOrdinal = MainTab.MINE.ordinal },
                         )
-                        CompactBottomNavItem(
-                            selected = activeTab == MainTab.MINE,
-                            selectedIcon = Icons.Filled.Person,
-                            unselectedIcon = Icons.Outlined.Person,
-                            label = strings.nav.tabMine,
-                            palette = bottomBarPalette,
-                            onClick = { activeTabOrdinal = MainTab.MINE.ordinal },
-                            modifier = Modifier.weight(1f),
+                        MainTab.MINE -> ProfileScreen(
+                            container = container,
+                            viewModel = profileVm,
+                            imageGroupsCount = resolvedImageGroupsCount,
                         )
                     }
                 }
             }
-        },
-    ) { innerPadding ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(bottom = if (showBottomBar) innerPadding.calculateBottomPadding() else 0.dp)
-                .then(if (!showBottomBar && !isImeVisible && !isPureReading) Modifier.navigationBarsPadding() else Modifier),
-        ) {
-            saveableStateHolder.SaveableStateProvider(key = activeTab.name) {
-                when (activeTab) {
-                    MainTab.CHAT -> ChatWorkspaceScreen(container = container, viewModel = chatVm)
-                    MainTab.STUDIO -> CreativeStudioScreen(
-                        container = container,
-                        imageViewModel = imageVm,
-                        onOpenProfile = { activeTabOrdinal = MainTab.MINE.ordinal },
-                    )
-                    MainTab.MINE -> ProfileScreen(
-                        container = container,
-                        viewModel = profileVm,
-                        imageGroupsCount = resolvedImageGroupsCount,
-                    )
-                }
-            }
         }
-    }
 
-    ImageStudioModals(container = container, imageVm = imageVm)
+        ImageStudioModals(container = container, imageVm = imageVm)
+    }
 }
 
 @Immutable
@@ -424,7 +484,7 @@ private fun CompactBottomNavItem(
         Box(contentAlignment = Alignment.Center) {
             Box(
                 modifier = Modifier
-                    .width(46.dp)
+                    .width(38.dp)
                     .height(24.dp)
                     .clip(RoundedCornerShape(999.dp))
                     .background(capsuleBg),
@@ -434,14 +494,14 @@ private fun CompactBottomNavItem(
                     imageVector = if (selected) selectedIcon else unselectedIcon,
                     contentDescription = null,
                     tint = iconTint,
-                    modifier = Modifier.size(19.dp),
+                    modifier = Modifier.size(18.dp),
                 )
             }
             if (showIndicatorDot) {
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
-                        .offset(x = (-5).dp, y = 1.dp)
+                        .offset(x = (-3).dp, y = 1.dp)
                         .size(7.dp)
                         .clip(CircleShape)
                         .background(palette.indicatorDot)
@@ -452,9 +512,9 @@ private fun CompactBottomNavItem(
         Spacer(Modifier.height(2.dp))
         Text(
             text = label,
-            fontSize = 10.5.sp,
-            lineHeight = 12.sp,
-            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+            fontSize = 11.sp,
+            lineHeight = 13.sp,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
             color = labelTint,
             maxLines = 1,
         )

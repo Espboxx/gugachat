@@ -90,21 +90,21 @@ fun <T> GuSearchableListBox(
                     text = title,
                     color = c.ink,
                     fontSize = 13.sp,
-                    fontWeight = FontWeight.ExtraBold,
+                    fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                 )
                 if (!selectedSummary.isNullOrBlank()) {
                     Surface(
-                        shape = RoundedCornerShape(theme.pillRadius),
+                        shape = RoundedCornerShape(6.dp),
                         color = c.primarySoft,
-                        border = BorderStroke(theme.borderWidth, c.primary.copy(alpha = 0.34f)),
+                        border = null,
                         modifier = Modifier.weight(1f, fill = false),
                     ) {
                         Text(
                             text = selectedSummary,
                             color = c.primarySoftInk,
                             fontSize = 10.5.sp,
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.SemiBold,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.5.dp),
@@ -126,8 +126,8 @@ fun <T> GuSearchableListBox(
             modifier = Modifier.fillMaxWidth(),
             shape = shape,
             color = c.surfaceSoft,
-            border = BorderStroke(theme.borderWidth, c.border),
-            shadowElevation = if (theme.isDark) 0.dp else 0.5.dp,
+            border = if (theme.isDark) BorderStroke(0.5.dp, c.border.copy(alpha = 0.55f)) else null,
+            shadowElevation = if (theme.isDark) 0.dp else 0.8.dp,
         ) {
             Column(modifier = Modifier.fillMaxWidth()) {
                 Row(
@@ -186,7 +186,7 @@ fun <T> GuSearchableListBox(
                     }
                 }
 
-                HorizontalDivider(thickness = theme.borderWidth, color = c.border)
+                HorizontalDivider(thickness = 0.5.dp, color = c.border.copy(alpha = 0.45f))
 
                 Box(
                     modifier = Modifier
@@ -253,9 +253,9 @@ fun GuSelectableListRow(
         else -> c.surface
     }
     val rowBorder = when {
-        selected -> c.primary
-        highlightFree -> c.accent.copy(alpha = 0.42f)
-        else -> c.border
+        selected -> c.primary.copy(alpha = 0.45f)
+        theme.isDark -> c.border.copy(alpha = 0.45f)
+        else -> null
     }
 
     Row(
@@ -263,7 +263,9 @@ fun GuSelectableListRow(
             .fillMaxWidth()
             .clip(rowShape)
             .background(rowBg)
-            .border(theme.borderWidth, rowBorder, rowShape)
+            .then(
+                if (rowBorder != null) Modifier.border(0.5.dp, rowBorder, rowShape) else Modifier,
+            )
             .clickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -277,7 +279,7 @@ fun GuSelectableListRow(
                 text = title,
                 color = if (selected) c.primarySoftInk else c.ink,
                 fontSize = 13.5.sp,
-                fontWeight = FontWeight.Bold,
+                fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )

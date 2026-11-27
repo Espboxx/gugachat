@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.ContextWrapper
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
@@ -14,8 +15,11 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 
 enum class ThemeStyle(val wireValue: String) {
@@ -95,46 +99,46 @@ data class AppThemeSpec(
 )
 
 val GUGUGA_LIGHT = AppColors(
-    page = Color(0xFFF6F7FB),
+    page = Color(0xFFFAF8F5),
     surface = Color(0xFFFFFFFF),
-    surfaceSoft = Color(0xFFEEF2F8),
-    awning = Color(0xFFF3F6FD),
-    plankGrain = Color(0x104361EE),
+    surfaceSoft = Color(0xFFF1EFEA),
+    awning = Color(0xFFFAF8F5),
+    plankGrain = Color(0x0D4361EE),
     primary = Color(0xFF4361EE),
     primaryDark = Color(0xFF344ED6),
     primaryDeep = Color(0xFF263DB3),
-    primarySoft = Color(0xFFEBF0FF),
+    primarySoft = Color(0xFFEDF1FF),
     primarySoftInk = Color(0xFF2842BA),
     surfaceElevated = Color(0xFFFFFFFF),
-    accent = Color(0xFFC96F0A),
-    accentSoft = Color(0xFFFFF8EB),
+    accent = Color(0xFFD97706),
+    accentSoft = Color(0xFFFFF7ED),
     tag = Color(0xFFFEF0C7),
     tagInk = Color(0xFF8A3E08),
-    ink = Color(0xFF101623),
-    muted = Color(0xFF5B677D),
-    outline = Color(0xFFC8D2E3),
-    border = Color(0xFFE4E9F2),
+    ink = Color(0xFF141821),
+    muted = Color(0xFF646D7E),
+    outline = Color(0xFFCBD2DF),
+    border = Color(0xFFE6E3DC),
     success = Color(0xFF15803D),
     successBg = Color(0xFFE6F9EE),
     warning = Color(0xFFB45309),
     warningBg = Color(0xFFFEF3C7),
     danger = Color(0xFFDC2626),
     dangerBg = Color(0xFFFEE2E2),
-    shadowColor = Color(0x12101623),
+    shadowColor = Color(0x10141821),
 )
 
 val GUGUGA_DARK = AppColors(
-    page = Color(0xFF0A0D14),
-    surface = Color(0xFF131824),
-    surfaceSoft = Color(0xFF1B2233),
-    awning = Color(0xFF0E131F),
+    page = Color(0xFF0B0E14),
+    surface = Color(0xFF131823),
+    surfaceSoft = Color(0xFF1B2232),
+    awning = Color(0xFF0E131D),
     plankGrain = Color(0x184968F2),
     primary = Color(0xFF4968F2),
     primaryDark = Color(0xFF3A58DE),
     primaryDeep = Color(0xFF2B45B8),
     primarySoft = Color(0xFF182442),
     primarySoftInk = Color(0xFFB2C8FF),
-    surfaceElevated = Color(0xFF1F273A),
+    surfaceElevated = Color(0xFF20283B),
     accent = Color(0xFFF5AD3B),
     accentSoft = Color(0xFF271F13),
     tag = Color(0xFF332614),
@@ -142,7 +146,7 @@ val GUGUGA_DARK = AppColors(
     ink = Color(0xFFF2F5FC),
     muted = Color(0xFF96A3BD),
     outline = Color(0xFF34425E),
-    border = Color(0xFF222C42),
+    border = Color(0xFF232C40),
     success = Color(0xFF4ADE80),
     successBg = Color(0xFF102A1E),
     warning = Color(0xFFFBBF24),
@@ -153,11 +157,11 @@ val GUGUGA_DARK = AppColors(
 )
 
 val CLASSIC_LIGHT = AppColors(
-    page = Color(0xFFF5F6F8),
+    page = Color(0xFFF7F7F8),
     surface = Color(0xFFFFFFFF),
-    surfaceSoft = Color(0xFFF0F1F4),
-    awning = Color(0xFFFFFFFF),
-    plankGrain = Color(0x08000000),
+    surfaceSoft = Color(0xFFEFEFF2),
+    awning = Color(0xFFF7F7F8),
+    plankGrain = Color(0x06000000),
     primary = Color(0xFF2563EB),
     primaryDark = Color(0xFF1D4ED8),
     primaryDeep = Color(0xFF1E40AF),
@@ -168,31 +172,31 @@ val CLASSIC_LIGHT = AppColors(
     accentSoft = Color(0xFFFFFBEB),
     tag = Color(0xFFFEF3C7),
     tagInk = Color(0xFF8C3D0A),
-    ink = Color(0xFF111827),
-    muted = Color(0xFF606978),
-    outline = Color(0xFFCBD2DC),
-    border = Color(0xFFE5E7EC),
+    ink = Color(0xFF111318),
+    muted = Color(0xFF606570),
+    outline = Color(0xFFCFD3DC),
+    border = Color(0xFFE6E7EB),
     success = Color(0xFF15803D),
     successBg = Color(0xFFE6F9EE),
     warning = Color(0xFFB45309),
     warningBg = Color(0xFFFEF3C7),
     danger = Color(0xFFDC2626),
     dangerBg = Color(0xFFFEE2E2),
-    shadowColor = Color(0x12111827),
+    shadowColor = Color(0x10111318),
 )
 
 val CLASSIC_DARK = AppColors(
-    page = Color(0xFF0A0A0D),
-    surface = Color(0xFF141418),
-    surfaceSoft = Color(0xFF1E1E24),
-    awning = Color(0xFF0E0E12),
+    page = Color(0xFF09090B),
+    surface = Color(0xFF121216),
+    surfaceSoft = Color(0xFF1C1C22),
+    awning = Color(0xFF0C0C10),
     plankGrain = Color(0x0DFFFFFF),
     primary = Color(0xFF2F74F0),
     primaryDark = Color(0xFF2563EB),
     primaryDeep = Color(0xFF1D4ED8),
     primarySoft = Color(0xFF172440),
     primarySoftInk = Color(0xFF9BC2FF),
-    surfaceElevated = Color(0xFF24242B),
+    surfaceElevated = Color(0xFF24242C),
     accent = Color(0xFFF5A623),
     accentSoft = Color(0xFF261F13),
     tag = Color(0xFF342411),
@@ -219,14 +223,57 @@ fun resolveAppTheme(style: ThemeStyle, isDark: Boolean): AppThemeSpec {
         style = style,
         isDark = isDark,
         colors = colors,
-        borderWidth = 0.8.dp,
-        cardRadius = if (style == ThemeStyle.GUGUGA) 16.dp else 14.dp,
+        borderWidth = 0.5.dp,
+        cardRadius = if (style == ThemeStyle.GUGUGA) 18.dp else 14.dp,
         pillRadius = 999.dp,
-        inputRadius = 14.dp,
+        inputRadius = if (style == ThemeStyle.GUGUGA) 12.dp else 11.dp,
     )
 }
 
 val LocalAppTheme = staticCompositionLocalOf { resolveAppTheme(ThemeStyle.GUGUGA, false) }
+
+@Immutable
+data class AppShellController(
+    val setChatDrawerOpen: (Boolean) -> Unit = {},
+    val setScrollHideBottomBar: (Boolean) -> Unit = {},
+    val selectMainTab: (Int) -> Unit = {},
+)
+
+val LocalAppShellController = staticCompositionLocalOf { AppShellController() }
+
+private val GuTypography = Typography(
+    headlineSmall = TextStyle(
+        fontSize = 20.sp,
+        lineHeight = 28.sp,
+        fontWeight = FontWeight.Bold,
+    ),
+    titleLarge = TextStyle(
+        fontSize = 16.5.sp,
+        lineHeight = 22.sp,
+        fontWeight = FontWeight.SemiBold,
+    ),
+    titleMedium = TextStyle(
+        fontSize = 14.5.sp,
+        lineHeight = 20.sp,
+        fontWeight = FontWeight.SemiBold,
+    ),
+    bodyLarge = TextStyle(
+        fontSize = 15.5.sp,
+        lineHeight = 24.sp,
+        fontWeight = FontWeight.Normal,
+    ),
+    bodyMedium = TextStyle(
+        fontSize = 13.5.sp,
+        lineHeight = 19.sp,
+        fontWeight = FontWeight.Normal,
+    ),
+    labelMedium = TextStyle(
+        fontSize = 11.5.sp,
+        lineHeight = 15.sp,
+        fontWeight = FontWeight.Medium,
+        fontFeatureSettings = "tnum",
+    ),
+)
 
 @Composable
 fun GuGuChatTheme(
@@ -311,6 +358,7 @@ fun GuGuChatTheme(
     CompositionLocalProvider(LocalAppTheme provides spec) {
         MaterialTheme(
             colorScheme = materialScheme,
+            typography = GuTypography,
             content = content,
         )
     }
