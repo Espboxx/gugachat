@@ -1,7 +1,5 @@
 package com.gugachat.app.ui.chat
 
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
@@ -355,8 +353,7 @@ fun MarkdownMessageText(
                             copyLabel = strings.chat.copyCode,
                             copiedLabel = strings.common.copied,
                             onCopy = {
-                                val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                cm.setPrimaryClip(ClipData.newPlainText("code", block.code))
+                                com.gugachat.app.core.util.ClipboardUtils.copyText(ctx, "code", block.code)
                                 onCopyToast?.invoke(strings.common.copied)
                             },
                         )

@@ -14,8 +14,8 @@ import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.theme.ColorMode
 import com.gugachat.app.core.theme.ThemeStyle
 import com.gugachat.app.core.theme.UiScalePreset
+import com.gugachat.app.core.util.CoreAppJson
 import com.gugachat.app.core.util.ServerUrlUtils
-import com.gugachat.app.data.api.AppJson
 import com.gugachat.app.data.api.SseRetryPolicy
 import com.gugachat.app.data.api.UpdateChannel
 import com.gugachat.app.domain.chat.RetrievalSettings
@@ -239,7 +239,7 @@ class SettingsStore(private val context: Context) {
         } else {
             settings
         }
-        val encoded = AppJson.encodeToString(RetrievalSettings.serializer(), toPersist)
+        val encoded = CoreAppJson.encodeToString(RetrievalSettings.serializer(), toPersist)
         context.settingsDataStore.edit { prefs ->
             prefs[Keys.RETRIEVAL_SETTINGS_JSON] = encoded
         }
@@ -256,7 +256,7 @@ class SettingsStore(private val context: Context) {
     }
 
     suspend fun setWebDavConfig(config: WebDavSyncConfig) {
-        val encoded = AppJson.encodeToString(WebDavSyncConfig.serializer(), config)
+        val encoded = CoreAppJson.encodeToString(WebDavSyncConfig.serializer(), config)
         context.settingsDataStore.edit { prefs ->
             prefs[Keys.WEBDAV_CONFIG_JSON] = encoded
         }
@@ -276,7 +276,7 @@ class SettingsStore(private val context: Context) {
             if (rerankKey.isNotBlank() && secretVaultStore.getRemoteRerankApiKey().isBlank()) {
                 secretVaultStore.setRemoteRerankApiKey(rerankKey)
             }
-            prefs[Keys.RETRIEVAL_SETTINGS_JSON] = AppJson.encodeToString(
+            prefs[Keys.RETRIEVAL_SETTINGS_JSON] = CoreAppJson.encodeToString(
                 RetrievalSettings.serializer(),
                 decoded.sanitizedForPlaintextStorage(),
             )
@@ -289,7 +289,7 @@ class SettingsStore(private val context: Context) {
         context.settingsDataStore.edit { prefs ->
             val existing = decodeTokenCalibrationMap(prefs[Keys.TOKEN_CALIBRATION_MAP_JSON])
             val updated = updateTokenCalibrationMap(existing, cleanKey, factor)
-            prefs[Keys.TOKEN_CALIBRATION_MAP_JSON] = AppJson.encodeToString(
+            prefs[Keys.TOKEN_CALIBRATION_MAP_JSON] = CoreAppJson.encodeToString(
                 TOKEN_CAL_MAP_SERIALIZER,
                 updated,
             )
@@ -315,27 +315,17 @@ class SettingsStore(private val context: Context) {
                 remoteRerank = settings.remoteRerank.copy(customApiKey = ""),
             )
 
-        internal fun decodeRetrievalSettings(raw: String?): RetrievalSettings {
-            val clean = raw?.trim().orEmpty()
-            if (clean.isEmpty()) return RetrievalSettings()
-            return runCatching {
-                AppJson.decodeFromString(RetrievalSettings.serializer(), clean)
-            }.getOrDefault(RetrievalSettings())
-        }
+        internal fun decodeRetrievalSettings(raw: String?): RetrievalSettings =
+            com.gugachat.app.core.util.JsonUtils.decodeOrDefault(raw, RetrievalSettings())
 
-        internal fun decodeWebDavConfig(raw: String?): WebDavSyncConfig {
-            val clean = raw?.trim().orEmpty()
-            if (clean.isEmpty()) return WebDavSyncConfig()
-            return runCatching {
-                AppJson.decodeFromString(WebDavSyncConfig.serializer(), clean)
-            }.getOrDefault(WebDavSyncConfig())
-        }
+        internal fun decodeWebDavConfig(raw: String?): WebDavSyncConfig =
+            com.gugachat.app.core.util.JsonUtils.decodeOrDefault(raw, WebDavSyncConfig())
 
         internal fun decodeTokenCalibrationMap(raw: String?): Map<String, Double> {
             val clean = raw?.trim().orEmpty()
             if (clean.isEmpty()) return emptyMap()
             val parsed = runCatching {
-                AppJson.decodeFromString(TOKEN_CAL_MAP_SERIALIZER, clean)
+                com.gugachat.app.core.util.CoreAppJson.decodeFromString(TOKEN_CAL_MAP_SERIALIZER, clean)
             }.getOrDefault(emptyMap())
             if (parsed.isEmpty()) return emptyMap()
             val out = LinkedHashMap<String, Double>(parsed.size)

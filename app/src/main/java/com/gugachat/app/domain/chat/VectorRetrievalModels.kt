@@ -2,7 +2,6 @@ package com.gugachat.app.domain.chat
 
 import com.gugachat.app.core.storage.ApiProtocol
 import kotlinx.serialization.Serializable
-import java.security.MessageDigest
 import java.text.Normalizer
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -73,11 +72,6 @@ data class VectorIndexProgress(
 object VectorQuantizer {
     const val QUANT_INT8_UNIT = "int8_unit"
     const val QUANT_FP16 = "fp16"
-
-    private val HEX_CHARS = charArrayOf(
-        '0', '1', '2', '3', '4', '5', '6', '7',
-        '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
-    )
 
     fun l2Normalize(vec: FloatArray): FloatArray {
         val n = vec.size
@@ -163,16 +157,8 @@ object VectorQuantizer {
         return acc * scale
     }
 
-    fun sha256Hex(text: String): String {
-        val digest = MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8))
-        val chars = CharArray(digest.size * 2)
-        for (i in digest.indices) {
-            val b = digest[i].toInt() and 0xFF
-            chars[i * 2] = HEX_CHARS[b ushr 4]
-            chars[i * 2 + 1] = HEX_CHARS[b and 0x0F]
-        }
-        return String(chars)
-    }
+    fun sha256Hex(text: String): String =
+        com.gugachat.app.core.util.HashUtils.sha256Hex(text)
 
     fun normalizeCanonicalText(text: String): String =
         Normalizer.normalize(text, Normalizer.Form.NFKC)

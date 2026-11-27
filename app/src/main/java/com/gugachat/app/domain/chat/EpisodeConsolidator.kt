@@ -1,6 +1,6 @@
 package com.gugachat.app.domain.chat
 
-import com.gugachat.app.data.api.AppJson
+import com.gugachat.app.core.util.CoreAppJson
 import com.gugachat.app.data.api.WireChatMessageDto
 import kotlinx.serialization.Serializable
 import java.util.UUID
@@ -115,7 +115,7 @@ object EpisodeConsolidator {
         val jsonBlock = extractFirstJsonObject(raw)
         val parsed = if (jsonBlock != null) {
             try {
-                AppJson.decodeFromString(EpisodeConsolidationJson.serializer(), jsonBlock)
+                CoreAppJson.decodeFromString(EpisodeConsolidationJson.serializer(), jsonBlock)
             } catch (_: Exception) {
                 null
             }

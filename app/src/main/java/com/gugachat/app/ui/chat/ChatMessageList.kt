@@ -487,8 +487,7 @@ fun ChatMessageList(
                             onBranchFromMessage(msg.id)
                         },
                         onCopy = {
-                            val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                            cm.setPrimaryClip(ClipData.newPlainText("message", msg.content))
+                            com.gugachat.app.core.util.ClipboardUtils.copyText(ctx, "message", msg.content)
                             onToast(strings.common.copied)
                             revealedActionMsgId = null
                         },
@@ -564,8 +563,7 @@ fun ChatMessageList(
                             onDelete = { deleteTarget = msg },
                             onSwitchVariant = { idx -> onSwitchVariant(msg.id, idx) },
                             onCopyText = { body ->
-                                val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                cm.setPrimaryClip(ClipData.newPlainText("reply", body))
+                                com.gugachat.app.core.util.ClipboardUtils.copyText(ctx, "reply", body)
                                 onToast(strings.common.copied)
                             },
                             onFrontendAction = onFrontendAction,

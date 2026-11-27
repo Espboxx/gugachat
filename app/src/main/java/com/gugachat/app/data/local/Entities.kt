@@ -233,14 +233,8 @@ data class AttachmentMetaEntity(
     val injectMode: String = "auto",
 )
 
-private inline fun <reified T> decodeOrDefault(raw: String?, fallback: T): T {
-    if (raw.isNullOrBlank()) return fallback
-    return try {
-        AppJson.decodeFromString<T>(raw)
-    } catch (_: Exception) {
-        fallback
-    }
-}
+private inline fun <reified T> decodeOrDefault(raw: String?, fallback: T): T =
+    com.gugachat.app.core.util.JsonUtils.decodeOrDefault(raw, fallback)
 
 fun ConversationEntity.toDomain(): ChatConversation = ChatConversation(
     id = id,

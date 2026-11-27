@@ -1,7 +1,5 @@
 package com.gugachat.app.ui.profile
 
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -364,8 +362,7 @@ fun ProfileScreen(
             },
             onSelectChannel = viewModel::setUpdateChannel,
             onCopyQqGroup = {
-                val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                cm?.setPrimaryClip(ClipData.newPlainText("qq_group", "587660465"))
+                com.gugachat.app.core.util.ClipboardUtils.copyText(ctx, "qq_group", "587660465")
                 container.toastController.show(strings.common.copied)
             },
             onOpenDownloadPage = {
@@ -569,8 +566,7 @@ fun ProfileScreen(
 
                         Surface(
                             onClick = {
-                                val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                                cm?.setPrimaryClip(ClipData.newPlainText("endpoint", copyValue))
+                                com.gugachat.app.core.util.ClipboardUtils.copyText(ctx, "endpoint", copyValue)
                                 container.toastController.show(strings.common.copied)
                             },
                             shape = RoundedCornerShape(6.dp),
@@ -1824,8 +1820,7 @@ private fun WebDavSyncSheet(
 
 private fun formatSyncShortTime(timestamp: Long, isZh: Boolean): String {
     if (timestamp <= 0L) return if (isZh) "未同步" else "Never"
-    val fmt = SimpleDateFormat("MM-dd HH:mm", Locale.getDefault())
-    return fmt.format(Date(timestamp))
+    return com.gugachat.app.core.util.FormatUtils.formatDateTimeShort(timestamp)
 }
 
 private fun formatSyncFullTime(timestamp: Long): String {

@@ -10,7 +10,6 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.nio.charset.StandardCharsets
 import java.security.GeneralSecurityException
-import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.Arrays
 import javax.crypto.Cipher
@@ -50,10 +49,6 @@ object SyncCryptoCodec {
 
     private val STREAM_MAGIC: ByteArray = "GGENC01".toByteArray(StandardCharsets.US_ASCII)
     private val VAULT_AAD: ByteArray = VAULT_SUBKEY_INFO.toByteArray(StandardCharsets.UTF_8)
-    private val HEX_CHARS = charArrayOf(
-        '0', '1', '2', '3', '4', '5', '6', '7',
-        '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
-    )
 
     private val secureRandom: SecureRandom = SecureRandom()
 
@@ -455,33 +450,14 @@ object SyncCryptoCodec {
         }
     }
 
-    fun sha256Hex(bytes: ByteArray): String {
-        val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
-        return toHex(digest)
-    }
+    fun sha256Hex(bytes: ByteArray): String =
+        com.gugachat.app.core.util.HashUtils.sha256Hex(bytes)
 
-    fun sha256Hex(file: File): String {
-        val md = MessageDigest.getInstance("SHA-256")
-        val buf = ByteArray(DEFAULT_CHUNK_SIZE)
-        BufferedInputStream(FileInputStream(file), DEFAULT_CHUNK_SIZE).use { ins ->
-            while (true) {
-                val n = ins.read(buf)
-                if (n <= 0) break
-                md.update(buf, 0, n)
-            }
-        }
-        return toHex(md.digest())
-    }
+    fun sha256Hex(file: File): String =
+        com.gugachat.app.core.util.HashUtils.sha256Hex(file)
 
-    fun toHex(bytes: ByteArray): String {
-        val chars = CharArray(bytes.size * 2)
-        for (i in bytes.indices) {
-            val v = bytes[i].toInt() and 0xFF
-            chars[i * 2] = HEX_CHARS[v ushr 4]
-            chars[i * 2 + 1] = HEX_CHARS[v and 0x0F]
-        }
-        return String(chars)
-    }
+    fun toHex(bytes: ByteArray): String =
+        com.gugachat.app.core.util.HashUtils.toHex(bytes)
 
     fun fromHex(hex: String): ByteArray {
         val clean = hex.trim()

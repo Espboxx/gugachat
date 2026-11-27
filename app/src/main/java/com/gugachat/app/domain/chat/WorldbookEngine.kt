@@ -1,6 +1,5 @@
 package com.gugachat.app.domain.chat
 
-import com.gugachat.app.data.api.AppJson
 import com.gugachat.app.data.local.WorldbookEntity
 import com.gugachat.app.data.local.WorldbookEntryEntity
 import kotlinx.serialization.json.JsonArray
@@ -597,16 +596,8 @@ object WorldbookEngine {
     private fun isAsciiWordChar(ch: Char): Boolean =
         (ch in 'a'..'z') || (ch in 'A'..'Z') || (ch in '0'..'9') || ch == '_'
 
-    internal fun decodeStringListJson(rawJson: String): List<String> {
-        val trimmed = rawJson.trim()
-        if (trimmed.isEmpty() || trimmed == "[]") return emptyList()
-        return runCatching {
-            val arr = AppJson.parseToJsonElement(trimmed) as? JsonArray ?: return@runCatching emptyList()
-            arr.mapNotNull { el ->
-                (el as? JsonPrimitive)?.takeUnless { it is JsonNull }?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
-            }
-        }.getOrDefault(emptyList())
-    }
+    internal fun decodeStringListJson(rawJson: String): List<String> =
+        com.gugachat.app.core.util.JsonUtils.decodeStringListJson(rawJson, trimAndFilterEmpty = true)
 
     private fun collectMergedCandidates(
         books: List<WorldbookMountedBook>,

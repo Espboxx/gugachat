@@ -1,7 +1,5 @@
 package com.gugachat.app.ui.chat
 
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
@@ -143,12 +141,8 @@ private fun resolveFileStyle(fileName: String, isDark: Boolean): FileBadgeStyle 
     }
 }
 
-fun formatAttachmentBytes(bytes: Long): String = when {
-    bytes >= 1024L * 1024L -> String.format(Locale.US, "%.1f MB", bytes / (1024.0 * 1024.0))
-    bytes >= 1024L -> "${(bytes / 1024L).coerceAtLeast(1)} KB"
-    bytes > 0L -> "$bytes B"
-    else -> ""
-}
+fun formatAttachmentBytes(bytes: Long): String =
+    com.gugachat.app.core.util.FormatUtils.formatAttachmentBytes(bytes)
 
 @Composable
 fun FileAttachmentCard(
@@ -559,8 +553,7 @@ fun FilePreviewAndStrategyDialog(
                     if (!loadedText.isNullOrBlank()) {
                         TextButton(
                             onClick = {
-                                val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                cm.setPrimaryClip(ClipData.newPlainText(meta.fileName, loadedText!!.take(100_000)))
+                                com.gugachat.app.core.util.ClipboardUtils.copyText(ctx, meta.fileName, loadedText!!.take(100_000))
                                 onCopiedToast?.invoke()
                             },
                         ) {

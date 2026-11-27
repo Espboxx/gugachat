@@ -1,10 +1,7 @@
 package com.gugachat.app.ui.studio
 
 import android.content.ContentResolver
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.net.Uri
-import android.provider.OpenableColumns
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.room.withTransaction
@@ -18,6 +15,11 @@ import com.gugachat.app.data.local.PersonaEntity
 import com.gugachat.app.data.local.PromptPresetEntity
 import com.gugachat.app.data.local.WorldbookEntity
 import com.gugachat.app.data.local.WorldbookEntryEntity
+import com.gugachat.app.data.local.decodedAltGreetings
+import com.gugachat.app.data.local.decodedCast
+import com.gugachat.app.data.local.decodedExpressionSprites
+import com.gugachat.app.data.local.decodedRegexScripts
+import com.gugachat.app.data.local.decodedVisualTheme
 import com.gugachat.app.data.local.toDomain
 import com.gugachat.app.data.local.toEntity
 import com.gugachat.app.domain.chat.ChatConversation
@@ -462,7 +464,7 @@ class AssetHubViewModel(private val container: AppContainer) : ViewModel() {
                     val card = assetDao.getCharacterCardById(cardId) ?: return@withContext
                     val ext = if (RpCardCodec.isPngBytes(imageBytes)) "png" else "jpg"
                     val relPath = saveRpMediaRelative(imageBytes, "card_ai_portrait", ext)
-                    val existingCast = decodeJsonOrDefault<List<RpCharacter>>(card.castJson, emptyList())
+                    val existingCast = card.decodedCast()
                     val leadIdx = existingCast.indexOfFirst { !it.isPlayer }.takeIf { it >= 0 } ?: 0
                     val nextCast = if (existingCast.isNotEmpty()) {
                         existingCast.mapIndexed { idx, ch ->
@@ -1201,10 +1203,10 @@ class AssetHubViewModel(private val container: AppContainer) : ViewModel() {
                 val preset = presetId?.takeIf { it.isNotBlank() }?.let { assetDao.getPromptPresetById(it) }
                     ?: assetDao.getDefaultRpPromptPreset()
 
-                val rawCast = decodeJsonOrDefault<List<RpCharacter>>(card.castJson, emptyList())
+                val rawCast = card.decodedCast()
                 val cardAvatarRel = LocalMediaPathResolver.toRelativePath(filesDirPath, card.avatarPath)
                 val cardSpriteRel = LocalMediaPathResolver.toRelativePath(filesDirPath, card.spritePath) ?: cardAvatarRel
-                val cardExprRels = decodeJsonOrDefault<Map<String, String>>(card.expressionSpritesJson, emptyMap())
+                val cardExprRels = card.decodedExpressionSprites()
                     .mapValuesNotNull { (_, v) -> LocalMediaPathResolver.toRelativePath(filesDirPath, v) }
 
                 val normalizedCast = if (rawCast.isNotEmpty()) {
@@ -1251,9 +1253,9 @@ class AssetHubViewModel(private val container: AppContainer) : ViewModel() {
                 }
 
                 val style = RpPlayStyle.entries.firstOrNull { it.name == card.playStyle } ?: RpPlayStyle.chengguang
-                val altGreetings = decodeJsonOrDefault<List<String>>(card.alternateGreetingsJson, emptyList())
-                val regexScripts = decodeJsonOrDefault<List<RpRegexScript>>(card.regexScriptsJson, emptyList())
-                val visualTheme = decodeJsonOrDefault(card.visualThemeJson, RpVisualTheme())
+                val altGreetings = card.decodedAltGreetings()
+                val regexScripts = card.decodedRegexScripts()
+                val visualTheme = card.decodedVisualTheme()
                 val resolvedPlayerName = persona?.name?.trim()?.takeIf { it.isNotEmpty() } ?: "旅人"
                 val resolvedPlayerPersona = persona?.description?.trim().orEmpty()
 
@@ -1569,40 +1571,23 @@ class AssetHubViewModel(private val container: AppContainer) : ViewModel() {
         )
     }
 
-    private fun saveRpMediaRelative(bytes: ByteArray, prefix: String, ext: String): String {
-        val dir = File(filesDir, "rp_media").apply { mkdirs() }
-        val safeExt = ext.lowercase().replace(Regex("[^a-z0-9]"), "").ifEmpty { "png" }
-        val file = File(dir, "${prefix}_${UUID.randomUUID().toString().take(12)}.$safeExt")
-        file.writeBytes(bytes)
-        return LocalMediaPathResolver.toRelativePath(container.appContext, file.absolutePath)
-            ?: "rp_media/${file.name}"
-    }
+    private fun saveRpMediaRelative(bytes: ByteArray, prefix: String, ext: String): String =
+        LocalMediaPathResolver.saveRpMediaBytes(
+            filesDir = filesDir,
+            bytes = bytes,
+            prefix = prefix,
+            ext = ext,
+            shortUuid = true,
+        ).first
 
-    private fun transcodeToPngBytes(raw: ByteArray): ByteArray? {
-        val bmp = BitmapFactory.decodeByteArray(raw, 0, raw.size) ?: return null
-        return try {
-            ByteArrayOutputStream().use { out ->
-                bmp.compress(Bitmap.CompressFormat.PNG, 100, out)
-                out.toByteArray()
-            }
-        } finally {
-            bmp.recycle()
-        }
-    }
+    private fun transcodeToPngBytes(raw: ByteArray): ByteArray? =
+        RpCardCodec.transcodeToPngBytes(raw, maxSide = 1024)
 
-    private fun resolveUriDisplayName(contentResolver: ContentResolver, uri: Uri): String? {
-        return runCatching {
-            contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
-                val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                if (idx >= 0 && cursor.moveToFirst()) cursor.getString(idx) else null
-            }
-        }.getOrNull() ?: uri.lastPathSegment?.substringAfterLast('/')
-    }
+    private fun resolveUriDisplayName(contentResolver: ContentResolver, uri: Uri): String? =
+        com.gugachat.app.core.util.UriUtils.resolveDisplayName(contentResolver, uri)
 
-    private inline fun <reified T> decodeJsonOrDefault(raw: String?, fallback: T): T {
-        if (raw.isNullOrBlank()) return fallback
-        return runCatching { AppJson.decodeFromString<T>(raw) }.getOrDefault(fallback)
-    }
+    private inline fun <reified T> decodeJsonOrDefault(raw: String?, fallback: T): T =
+        com.gugachat.app.core.util.JsonUtils.decodeOrDefault(raw, fallback)
 
     private inline fun <K, V, R : Any> Map<K, V>.mapValuesNotNull(transform: (Map.Entry<K, V>) -> R?): Map<K, R> {
         val out = LinkedHashMap<K, R>(size)
@@ -1612,15 +1597,8 @@ class AssetHubViewModel(private val container: AppContainer) : ViewModel() {
         return out
     }
 
-    private fun sha256Hex(text: String): String {
-        val digest = MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8))
-        val sb = StringBuilder(digest.size * 2)
-        for (b in digest) {
-            sb.append(((b.toInt() ushr 4) and 0xF).toString(16))
-            sb.append((b.toInt() and 0xF).toString(16))
-        }
-        return sb.toString()
-    }
+    private fun sha256Hex(text: String): String =
+        com.gugachat.app.core.util.HashUtils.sha256Hex(text)
 }
 
 private data class ImportedCardFilePayload(

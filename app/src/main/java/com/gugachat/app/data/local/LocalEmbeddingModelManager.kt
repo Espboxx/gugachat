@@ -598,40 +598,12 @@ class LocalEmbeddingModelManager internal constructor(
             }
         }
 
-        internal fun normalizeSha256(raw: String?): String? {
-            val clean = raw?.trim()
-                ?.removePrefix("sha256:")
-                ?.removePrefix("SHA256:")
-                ?.trim()
-                ?.lowercase(Locale.ROOT)
-                ?: return null
-            return if (clean.length == 64 && clean.all { it in '0'..'9' || it in 'a'..'f' }) clean else null
-        }
+        internal fun normalizeSha256(raw: String?): String? =
+            com.gugachat.app.core.util.HashUtils.normalizeSha256(raw)
 
-        internal fun computeFileSha256(file: File): String? {
-            if (!file.isFile) return null
-            return runCatching {
-                val digest = MessageDigest.getInstance("SHA-256")
-                val buf = ByteArray(16 * 1024)
-                FileInputStream(file).use { fis ->
-                    while (true) {
-                        val n = fis.read(buf)
-                        if (n <= 0) break
-                        digest.update(buf, 0, n)
-                    }
-                }
-                val bytes = digest.digest()
-                val sb = StringBuilder(bytes.size * 2)
-                for (b in bytes) {
-                    val v = b.toInt() and 0xFF
-                    sb.append(HEX_CHARS[v ushr 4])
-                    sb.append(HEX_CHARS[v and 0x0F])
-                }
-                sb.toString()
-            }.getOrNull()
-        }
+        internal fun computeFileSha256(file: File): String? =
+            com.gugachat.app.core.util.HashUtils.sha256HexOrNull(file)
 
-        private val HEX_CHARS = "0123456789abcdef".toCharArray()
         private val CONTENT_RANGE_REGEX = Regex("""bytes\s+(\d+)-(\d+)/(\d+|\*)""", RegexOption.IGNORE_CASE)
         private val CONTENT_RANGE_TOTAL_REGEX = Regex("""bytes\s+\*/(\d+)""", RegexOption.IGNORE_CASE)
 

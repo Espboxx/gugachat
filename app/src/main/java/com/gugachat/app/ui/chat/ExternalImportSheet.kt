@@ -1,9 +1,7 @@
 package com.gugachat.app.ui.chat
 
-import android.content.ClipboardManager
 import android.content.Context
 import android.net.Uri
-import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -1078,18 +1076,8 @@ private fun sourceDisplayName(source: ExternalImportSource, strings: AppStrings)
     ExternalImportSource.GENERIC -> strings.chat.importSourceOther
 }
 
-private fun readClipboardText(ctx: Context): String {
-    val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return ""
-    return cm.primaryClip?.getItemAt(0)?.coerceToText(ctx)?.toString().orEmpty()
-}
+private fun readClipboardText(ctx: Context): String =
+    com.gugachat.app.core.util.ClipboardUtils.readText(ctx)
 
-private fun queryDisplayName(ctx: Context, uri: Uri): String? = runCatching {
-    ctx.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
-        if (cursor.moveToFirst()) {
-            val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-            if (idx >= 0) cursor.getString(idx) else null
-        } else {
-            null
-        }
-    }
-}.getOrNull() ?: uri.lastPathSegment
+private fun queryDisplayName(ctx: Context, uri: Uri): String? =
+    com.gugachat.app.core.util.UriUtils.resolveDisplayName(ctx.contentResolver, uri) ?: uri.lastPathSegment

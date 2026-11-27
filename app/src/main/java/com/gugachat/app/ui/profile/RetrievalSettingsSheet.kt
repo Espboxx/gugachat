@@ -1339,8 +1339,5 @@ private fun LexicalFeatureRow(text: String) {
     }
 }
 
-private fun formatSizeMb(sizeBytes: Long): String {
-    if (sizeBytes <= 0L) return "0 MB"
-    val mb = sizeBytes / (1024.0 * 1024.0)
-    return String.format(Locale.US, "%.1f MB", mb)
-}
+private fun formatSizeMb(sizeBytes: Long): String =
+    com.gugachat.app.core.util.FormatUtils.formatSizeMb(sizeBytes)

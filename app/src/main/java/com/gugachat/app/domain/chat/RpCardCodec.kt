@@ -3,7 +3,7 @@ package com.gugachat.app.domain.chat
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import com.gugachat.app.core.storage.LocalMediaPathResolver
-import com.gugachat.app.data.api.AppJson
+import com.gugachat.app.core.util.CoreAppJson
 import com.gugachat.app.data.local.CharacterCardEntity
 import com.gugachat.app.data.local.WorldbookEntryEntity
 import kotlinx.serialization.Serializable
@@ -32,7 +32,6 @@ import java.util.UUID
 import java.util.zip.CRC32
 import java.util.zip.Deflater
 import java.util.zip.Inflater
-import java.util.zip.ZipInputStream
 
 @Serializable
 private data class StLoreEntryJson(
@@ -140,7 +139,7 @@ object RpCardCodec {
     fun parseCardJson(rawJson: String, conversationId: String = "preview"): ImportedRpCard {
         val cleaned = rawJson.removePrefix("\uFEFF").trim()
         val root = try {
-            AppJson.parseToJsonElement(cleaned) as? JsonObject
+            CoreAppJson.parseToJsonElement(cleaned) as? JsonObject
         } catch (e: Exception) {
             throw IllegalArgumentException("无效的角色卡 JSON 格式：${e.message}")
         } ?: throw IllegalArgumentException("角色卡 JSON 根节点必须为对象")
@@ -264,7 +263,7 @@ object RpCardCodec {
     ): ParsedCharacterCardV4 {
         val cleaned = rawJson.removePrefix("\uFEFF").trim()
         val root = try {
-            AppJson.parseToJsonElement(cleaned) as? JsonObject
+            CoreAppJson.parseToJsonElement(cleaned) as? JsonObject
         } catch (e: Exception) {
             throw IllegalArgumentException("无效的角色卡 JSON 格式：${e.message}")
         } ?: throw IllegalArgumentException("角色卡 JSON 根节点必须为对象")
@@ -345,15 +344,15 @@ object RpCardCodec {
             characterVersion = charVersion,
             avatarPath = avatarPath,
             spritePath = spritePath,
-            expressionSpritesJson = AppJson.encodeToString(expressionSprites),
-            tagsJson = AppJson.encodeToString(tags),
+            expressionSpritesJson = CoreAppJson.encodeToString(expressionSprites),
+            tagsJson = CoreAppJson.encodeToString(tags),
             playStyle = imported.rpConfig.playStyle.name,
             description = desc,
             personality = personality,
             scenario = scenario,
             firstMes = firstMes,
-            alternateGreetingsJson = AppJson.encodeToString(imported.rpConfig.alternateGreetings),
-            groupOnlyGreetingsJson = AppJson.encodeToString(groupGreetings),
+            alternateGreetingsJson = CoreAppJson.encodeToString(imported.rpConfig.alternateGreetings),
+            groupOnlyGreetingsJson = CoreAppJson.encodeToString(groupGreetings),
             mesExample = imported.rpConfig.mesExample,
             systemPrompt = imported.rpConfig.systemRules,
             postHistoryInstructions = imported.rpConfig.postHistoryInstructions,
@@ -361,9 +360,9 @@ object RpCardCodec {
             depthPromptText = imported.rpConfig.authorNote,
             depthPromptDepth = imported.rpConfig.authorNoteDepth,
             depthPromptRole = depthPromptRole,
-            castJson = AppJson.encodeToString(updatedCast),
-            regexScriptsJson = AppJson.encodeToString(imported.rpConfig.regexScripts),
-            visualThemeJson = AppJson.encodeToString(imported.rpConfig.visualTheme),
+            castJson = CoreAppJson.encodeToString(updatedCast),
+            regexScriptsJson = CoreAppJson.encodeToString(imported.rpConfig.regexScripts),
+            visualThemeJson = CoreAppJson.encodeToString(imported.rpConfig.visualTheme),
             primaryWorldbookId = parsedBook?.worldbook?.id,
             sourceSpec = imported.specVersion,
             contentFingerprint = fingerprint,
@@ -384,64 +383,52 @@ object RpCardCodec {
      * `data.assets` icon/sprite/emotion/background images).
      */
     fun extractCardFromZipBytes(zipBytes: ByteArray): ExtractedZipCard? {
-        if (!DeepSeekImportCodec.isZipBytes(zipBytes)) return null
+        if (!com.gugachat.app.core.util.StreamZipUtils.isZipBytes(zipBytes)) return null
         var exactCardJson: String? = null
         var fallbackCardJson: String? = null
         val imageEntries = LinkedHashMap<String, Pair<ByteArray, String>>()
         var totalImgBytes = 0
 
         runCatching {
-            ZipInputStream(ByteArrayInputStream(zipBytes)).use { zis ->
-                while (true) {
-                    val entry = zis.nextEntry ?: break
-                    if (entry.isDirectory) {
-                        zis.closeEntry()
-                        continue
-                    }
-                    val norm = entry.name.replace('\\', '/').trimStart('/')
-                    val fileName = norm.substringAfterLast('/')
-                    val lowerPath = norm.lowercase()
-                    val lowerName = fileName.lowercase()
-                    if (lowerName.startsWith("._") || lowerPath.contains("__macosx/")) {
-                        zis.closeEntry()
-                        continue
-                    }
-
-                    when {
-                        lowerName == "card.json" && exactCardJson == null -> {
-                            val text = readZipBounded(zis, MAX_ZIP_JSON_BYTES)
-                                ?.toString(Charsets.UTF_8)
-                                ?.removePrefix("\uFEFF")
-                                ?.trim()
-                            if (!text.isNullOrEmpty() && text.startsWith("{")) {
-                                exactCardJson = text
-                            }
+            com.gugachat.app.core.util.StreamZipUtils.forEachZipEntry(zipBytes) { norm, zis ->
+                val lowerName = norm.substringAfterLast('/').lowercase()
+                when {
+                    lowerName == "card.json" && exactCardJson == null -> {
+                        val text = com.gugachat.app.core.util.StreamZipUtils.run {
+                            zis.readBoundedBytesOrNull(MAX_ZIP_JSON_BYTES.toLong())
+                        }?.toString(Charsets.UTF_8)
+                            ?.removePrefix("\uFEFF")
+                            ?.trim()
+                        if (!text.isNullOrEmpty() && text.startsWith("{")) {
+                            exactCardJson = text
                         }
-                        lowerName.endsWith(".json") && exactCardJson == null && fallbackCardJson == null -> {
-                            val text = readZipBounded(zis, MAX_ZIP_JSON_BYTES)
-                                ?.toString(Charsets.UTF_8)
-                                ?.removePrefix("\uFEFF")
-                                ?.trim()
-                            if (!text.isNullOrEmpty() && text.startsWith("{") &&
-                                (text.contains("\"spec\"") || text.contains("\"character_book\"") || text.contains("\"first_mes\""))
-                            ) {
-                                fallbackCardJson = text
-                            }
+                    }
+                    lowerName.endsWith(".json") && exactCardJson == null && fallbackCardJson == null -> {
+                        val text = com.gugachat.app.core.util.StreamZipUtils.run {
+                            zis.readBoundedBytesOrNull(MAX_ZIP_JSON_BYTES.toLong())
+                        }?.toString(Charsets.UTF_8)
+                            ?.removePrefix("\uFEFF")
+                            ?.trim()
+                        if (!text.isNullOrEmpty() && text.startsWith("{") &&
+                            (text.contains("\"spec\"") || text.contains("\"character_book\"") || text.contains("\"first_mes\""))
+                        ) {
+                            fallbackCardJson = text
                         }
-                        lowerName.endsWith(".png") || lowerName.endsWith(".webp") ||
-                            lowerName.endsWith(".jpg") || lowerName.endsWith(".jpeg") -> {
-                            val ext = lowerName.substringAfterLast('.').let { if (it == "jpeg") "jpg" else it }
-                            if (totalImgBytes < MAX_ZIP_TOTAL_IMAGE_BYTES) {
-                                readZipBounded(zis, MAX_ZIP_IMAGE_BYTES)?.takeIf { it.isNotEmpty() }?.let { bytes ->
-                                    if (totalImgBytes + bytes.size <= MAX_ZIP_TOTAL_IMAGE_BYTES) {
-                                        imageEntries[norm] = bytes to ext
-                                        totalImgBytes += bytes.size
-                                    }
+                    }
+                    lowerName.endsWith(".png") || lowerName.endsWith(".webp") ||
+                        lowerName.endsWith(".jpg") || lowerName.endsWith(".jpeg") -> {
+                        val ext = lowerName.substringAfterLast('.').let { if (it == "jpeg") "jpg" else it }
+                        if (totalImgBytes < MAX_ZIP_TOTAL_IMAGE_BYTES) {
+                            com.gugachat.app.core.util.StreamZipUtils.run {
+                                zis.readBoundedBytesOrNull(MAX_ZIP_IMAGE_BYTES.toLong())
+                            }?.takeIf { it.isNotEmpty() }?.let { bytes ->
+                                if (totalImgBytes + bytes.size <= MAX_ZIP_TOTAL_IMAGE_BYTES) {
+                                    imageEntries[norm] = bytes to ext
+                                    totalImgBytes += bytes.size
                                 }
                             }
                         }
                     }
-                    zis.closeEntry()
                 }
             }
         }
@@ -491,7 +478,7 @@ object RpCardCodec {
         var backgroundPayload: Pair<ByteArray, String>? = null
 
         // 1. Parse CCv3 `data.assets` manifest if present
-        val rootObj = runCatching { AppJson.parseToJsonElement(jsonText) as? JsonObject }.getOrNull()
+        val rootObj = runCatching { CoreAppJson.parseToJsonElement(jsonText) as? JsonObject }.getOrNull()
         val assetsArr = rootObj?.objOrNull("data")?.arrOrNull("assets") ?: rootObj?.arrOrNull("assets")
         assetsArr?.forEach { el ->
             val assetObj = el as? JsonObject ?: return@forEach
@@ -576,7 +563,7 @@ object RpCardCodec {
         val raw = (elem as? JsonPrimitive)?.takeUnless { it is JsonNull }?.contentOrNull?.trim()
             ?: return null
         if (!raw.startsWith("{")) return null
-        return runCatching { AppJson.parseToJsonElement(raw) as? JsonObject }.getOrNull()
+        return runCatching { CoreAppJson.parseToJsonElement(raw) as? JsonObject }.getOrNull()
     }
 
     internal fun parseCharacterBookEntries(
@@ -795,7 +782,7 @@ object RpCardCodec {
             }
             StCharacterBookJson(
                 name = rp.title,
-                entries = AppJson.encodeToJsonElement(serializedEntries),
+                entries = CoreAppJson.encodeToJsonElement(serializedEntries),
             )
         } else {
             null
@@ -822,7 +809,7 @@ object RpCardCodec {
             spec_version = "3.0",
             data = cardData,
         )
-        return AppJson.encodeToString(env)
+        return CoreAppJson.encodeToString(env)
     }
 
     fun createMinimalCardPngBytes(
@@ -1076,51 +1063,22 @@ object RpCardCodec {
     // ==================== Safe JSON Accessors ====================
 
     internal fun JsonObject.objOrNull(key: String): JsonObject? =
-        this[key] as? JsonObject
+        com.gugachat.app.core.util.JsonUtils.run { objOrNull(key) }
 
     internal fun JsonObject.arrOrNull(key: String): JsonArray? =
-        this[key] as? JsonArray
+        com.gugachat.app.core.util.JsonUtils.run { arrOrNull(key) }
 
     internal fun JsonObject.strOrNull(key: String): String? =
-        (this[key] as? JsonPrimitive)?.takeUnless { it is JsonNull }?.contentOrNull
+        com.gugachat.app.core.util.JsonUtils.run { strOrNull(key) }
 
-    internal fun JsonObject.boolOrNull(key: String): Boolean? {
-        val prim = this[key] as? JsonPrimitive ?: return null
-        if (prim is JsonNull) return null
-        prim.booleanOrNull?.let { return it }
-        return when (prim.contentOrNull?.trim()?.lowercase()) {
-            "true", "1" -> true
-            "false", "0" -> false
-            else -> null
-        }
-    }
+    internal fun JsonObject.boolOrNull(key: String): Boolean? =
+        com.gugachat.app.core.util.JsonUtils.run { boolOrNull(key) }
 
-    internal fun JsonObject.intOrNull(key: String): Int? {
-        val prim = this[key] as? JsonPrimitive ?: return null
-        if (prim is JsonNull) return null
-        return prim.intOrNull ?: prim.contentOrNull?.trim()?.toIntOrNull()
-    }
+    internal fun JsonObject.intOrNull(key: String): Int? =
+        com.gugachat.app.core.util.JsonUtils.run { intOrNull(key) }
 
-    internal fun JsonObject.strListOrEmpty(key: String): List<String> {
-        val arr = this[key] as? JsonArray ?: return emptyList()
-        return arr.mapNotNull { el ->
-            (el as? JsonPrimitive)?.takeUnless { it is JsonNull }?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
-        }
-    }
-
-    private fun readZipBounded(zis: ZipInputStream, maxBytes: Int): ByteArray? {
-        val baos = ByteArrayOutputStream()
-        val buf = ByteArray(8192)
-        var total = 0
-        while (true) {
-            val read = zis.read(buf)
-            if (read <= 0) break
-            total += read
-            if (total > maxBytes) return null
-            baos.write(buf, 0, read)
-        }
-        return baos.toByteArray()
-    }
+    internal fun JsonObject.strListOrEmpty(key: String): List<String> =
+        com.gugachat.app.core.util.JsonUtils.run { strListOrEmpty(key) }
 
     private fun writeChunk(out: ByteArrayOutputStream, type: String, data: ByteArray) {
         val typeBytes = type.toByteArray(StandardCharsets.US_ASCII)

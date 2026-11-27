@@ -1099,7 +1099,7 @@ private fun formatChapterFooterLabel(order: Int?, title: String, isZh: Boolean):
 }
 
 private fun formatCompactReaderCount(count: Int): String =
-    String.format(Locale.US, "%,d", count.coerceAtLeast(0))
+    com.gugachat.app.core.util.FormatUtils.formatCommaCount(count)
 
 @Composable
 private fun ReaderActionPill(

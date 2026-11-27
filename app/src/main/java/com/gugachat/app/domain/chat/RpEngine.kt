@@ -1,6 +1,6 @@
 package com.gugachat.app.domain.chat
 
-import com.gugachat.app.data.api.AppJson
+import com.gugachat.app.core.util.CoreAppJson
 import com.gugachat.app.data.api.WireChatMessageDto
 import kotlinx.serialization.Serializable
 import java.util.UUID
@@ -625,7 +625,7 @@ object RpEngine {
             val jsonObj = EpisodeConsolidator.extractFirstJsonObject(m.groupValues[1])
             if (jsonObj != null) {
                 try {
-                    val patch = AppJson.decodeFromString(RpStatePatchDto.serializer(), jsonObj)
+                    val patch = CoreAppJson.decodeFromString(RpStatePatchDto.serializer(), jsonObj)
                     patch.activeSpeaker?.trim()?.takeIf { it.isNotEmpty() }?.let { speakerName = it }
 
                     val nextHp = (patch.hp ?: (newState.hp + (patch.hpDelta ?: 0))).coerceIn(0, newState.maxHp)
@@ -782,7 +782,7 @@ object RpEngine {
             val jsonObj = EpisodeConsolidator.extractFirstJsonObject(inner)
             val endingRecord = if (jsonObj != null) {
                 try {
-                    val dto = AppJson.decodeFromString(RpEndingDto.serializer(), jsonObj)
+                    val dto = CoreAppJson.decodeFromString(RpEndingDto.serializer(), jsonObj)
                     val title = dto.title.trim()
                     if (title.isNotEmpty()) {
                         RpEndingRecord(
@@ -836,7 +836,7 @@ object RpEngine {
             val arrEnd = body.lastIndexOf(']')
             if (arrStart >= 0 && arrEnd > arrStart) {
                 try {
-                    val dtos = AppJson.decodeFromString<List<RpLedgerSyncDto>>(body.substring(arrStart, arrEnd + 1))
+                    val dtos = CoreAppJson.decodeFromString<List<RpLedgerSyncDto>>(body.substring(arrStart, arrEnd + 1))
                     val now = System.currentTimeMillis()
                     dtos.forEach { dto ->
                         val title = dto.title.trim()
@@ -1210,7 +1210,7 @@ object RpEngine {
         val arrEnd = body.lastIndexOf(']')
         if (arrStart < 0 || arrEnd <= arrStart) return emptyList()
         return try {
-            val dtos = AppJson.decodeFromString<List<RpChoiceDto>>(body.substring(arrStart, arrEnd + 1))
+            val dtos = CoreAppJson.decodeFromString<List<RpChoiceDto>>(body.substring(arrStart, arrEnd + 1))
             dtos.take(4).mapNotNull { dto ->
                 if (dto.label.isBlank() && dto.actionText.isBlank()) return@mapNotNull null
                 RpChoice(

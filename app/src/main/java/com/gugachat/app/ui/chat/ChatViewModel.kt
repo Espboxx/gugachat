@@ -31,6 +31,11 @@ import com.gugachat.app.data.local.PersonaEntity
 import com.gugachat.app.data.local.PromptPresetEntity
 import com.gugachat.app.data.local.WorldbookEntity
 import com.gugachat.app.data.local.WorldbookEntryEntity
+import com.gugachat.app.data.local.decodedAltGreetings
+import com.gugachat.app.data.local.decodedCast
+import com.gugachat.app.data.local.decodedExpressionSprites
+import com.gugachat.app.data.local.decodedRegexScripts
+import com.gugachat.app.data.local.decodedVisualTheme
 import com.gugachat.app.data.local.toDomain
 import com.gugachat.app.data.local.toEntity
 import com.gugachat.app.domain.chat.TokenEstimator
@@ -189,9 +194,7 @@ data class ChatUiState(
         get() {
             val card = boundCharacterCard
             if (card != null) {
-                val alts = runCatching {
-                    AppJson.decodeFromString(ListSerializer(String.serializer()), card.alternateGreetingsJson)
-                }.getOrDefault(emptyList())
+                val alts = card.decodedAltGreetings()
                 return (listOf(card.firstMes) + alts).map { it.trim() }.filter { it.isNotEmpty() }
             }
             val rp = activeConversation?.rp ?: return emptyList()
@@ -3842,18 +3845,10 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             val card = assetDao.getCharacterCardById(cardId) ?: return@launch
             val playStyle = runCatching { RpPlayStyle.valueOf(card.playStyle) }.getOrDefault(RpPlayStyle.chengguang)
-            val cast = runCatching {
-                AppJson.decodeFromString(ListSerializer(RpCharacter.serializer()), card.castJson)
-            }.getOrDefault(emptyList())
-            val altGreetings = runCatching {
-                AppJson.decodeFromString(ListSerializer(String.serializer()), card.alternateGreetingsJson)
-            }.getOrDefault(emptyList())
-            val regexScripts = runCatching {
-                AppJson.decodeFromString(ListSerializer(RpRegexScript.serializer()), card.regexScriptsJson)
-            }.getOrDefault(emptyList())
-            val visualTheme = runCatching {
-                AppJson.decodeFromString(RpVisualTheme.serializer(), card.visualThemeJson)
-            }.getOrDefault(RpVisualTheme())
+            val cast = card.decodedCast()
+            val altGreetings = card.decodedAltGreetings()
+            val regexScripts = card.decodedRegexScripts()
+            val visualTheme = card.decodedVisualTheme()
             val leadChar = cast.firstOrNull { !it.isPlayer } ?: RpCharacter(
                 id = UUID.randomUUID().toString(),
                 name = card.name,
@@ -4132,18 +4127,10 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             val fresh = chatDao.getConversationById(activeId)?.toDomain() ?: return@launch
             val rp = fresh.rp ?: return@launch
             val card = fresh.characterCardId?.let { assetDao.getCharacterCardById(it) } ?: return@launch
-            val cardCast = runCatching {
-                AppJson.decodeFromString(ListSerializer(RpCharacter.serializer()), card.castJson)
-            }.getOrDefault(emptyList())
-            val cardExpr = runCatching {
-                AppJson.decodeFromString(MapSerializer(String.serializer(), String.serializer()), card.expressionSpritesJson)
-            }.getOrDefault(emptyMap())
-            val cardRegex = runCatching {
-                AppJson.decodeFromString(ListSerializer(RpRegexScript.serializer()), card.regexScriptsJson)
-            }.getOrDefault(emptyList())
-            val altGreetings = runCatching {
-                AppJson.decodeFromString(ListSerializer(String.serializer()), card.alternateGreetingsJson)
-            }.getOrDefault(emptyList())
+            val cardCast = card.decodedCast()
+            val cardExpr = card.decodedExpressionSprites()
+            val cardRegex = card.decodedRegexScripts()
+            val altGreetings = card.decodedAltGreetings()
 
             val leadCardChar = cardCast.firstOrNull { !it.isPlayer }
             val updatedCast = rp.cast.mapIndexed { idx, ch ->
@@ -4297,9 +4284,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         val greetingMsg = active.firstOrNull { it.role == "assistant" && it.seq == 1 } ?: return
 
         val rawGreetings = if (card != null) {
-            val alts = runCatching {
-                AppJson.decodeFromString(ListSerializer(String.serializer()), card.alternateGreetingsJson)
-            }.getOrDefault(emptyList())
+            val alts = card.decodedAltGreetings()
             (listOf(card.firstMes) + alts).map { it.trim() }.filter { it.isNotEmpty() }
         } else {
             val rp = conv.rp
@@ -4362,12 +4347,8 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     ): ChatConversation {
         val rp = conv.rp ?: return conv
         if (card == null) return conv
-        val cardCast = runCatching {
-            AppJson.decodeFromString(ListSerializer(RpCharacter.serializer()), card.castJson)
-        }.getOrDefault(emptyList())
-        val cardExpr = runCatching {
-            AppJson.decodeFromString(MapSerializer(String.serializer(), String.serializer()), card.expressionSpritesJson)
-        }.getOrDefault(emptyMap())
+        val cardCast = card.decodedCast()
+        val cardExpr = card.decodedExpressionSprites()
         val leadCardChar = cardCast.firstOrNull { !it.isPlayer }
         var changed = false
         val enrichedCast = rp.cast.mapIndexed { idx, ch ->

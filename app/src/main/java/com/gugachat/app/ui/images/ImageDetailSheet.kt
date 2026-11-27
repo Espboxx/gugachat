@@ -1,7 +1,5 @@
 package com.gugachat.app.ui.images
 
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -290,8 +288,7 @@ fun ImageDetailSheet(
                                 )
                                 IconButton(
                                     onClick = {
-                                        val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                        cm.setPrimaryClip(ClipData.newPlainText("prompt", generation.prompt))
+                                        com.gugachat.app.core.util.ClipboardUtils.copyText(ctx, "prompt", generation.prompt)
                                         container.toastController.show(strings.common.copied)
                                     },
                                     modifier = Modifier.size(34.dp),

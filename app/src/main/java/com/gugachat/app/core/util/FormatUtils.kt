@@ -3,16 +3,23 @@ package com.gugachat.app.core.util
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import kotlin.math.abs
 import kotlin.math.roundToLong
 
 object FormatUtils {
-    fun formatUsdEstimate(value: Double): String {
-        if (!value.isFinite() || value <= 0.0) return "$0.00"
+    fun formatUsdEstimate(
+        value: Double,
+        prefix: String = "$",
+        trimTrailingZeros: Boolean = false,
+    ): String {
+        if (!value.isFinite() || value <= 0.0) return "${prefix}0.00"
+        if (trimTrailingZeros) {
+            val rounded = (value * 10000.0).roundToLong() / 10000.0
+            return prefix + String.format(Locale.US, "%.4f", rounded).trimEnd('0').trimEnd('.')
+        }
         return when {
-            value < 0.01 -> "$" + String.format(Locale.US, "%.4f", value).trimEnd('0').trimEnd('.')
-            value < 1.0 -> "$" + String.format(Locale.US, "%.3f", value).trimEnd('0').trimEnd('.')
-            else -> "$" + String.format(Locale.US, "%.2f", value)
+            value < 0.01 -> prefix + String.format(Locale.US, "%.4f", value).trimEnd('0').trimEnd('.')
+            value < 1.0 -> prefix + String.format(Locale.US, "%.3f", value).trimEnd('0').trimEnd('.')
+            else -> prefix + String.format(Locale.US, "%.2f", value)
         }
     }
 
@@ -21,31 +28,32 @@ object FormatUtils {
         return "$" + String.format(Locale.US, "%.2f", balance)
     }
 
-    fun formatFreeQuotaAmount(quotaType: String, amount: Double): String {
-        if (!amount.isFinite()) return "0"
-        if (quotaType == "requests") {
-            return amount.roundToLong().toString()
-        }
-        val rounded = (amount * 100.0).roundToLong() / 100.0
-        val text = if (abs(rounded - rounded.toLong()) < 1e-6) {
-            rounded.toLong().toString()
-        } else {
-            String.format(Locale.US, "%.2f", rounded).trimEnd('0').trimEnd('.')
-        }
-        return "$$text"
-    }
-
     fun formatDateTimeShort(epochMs: Long): String {
         val sdf = SimpleDateFormat("MM-dd HH:mm", Locale.getDefault())
         return sdf.format(Date(epochMs))
     }
 
-    fun formatClockFromIso(iso: String?): String {
-        if (iso.isNullOrBlank()) return ""
-        val tIndex = iso.indexOf('T')
-        if (tIndex >= 0 && iso.length >= tIndex + 6) {
-            return iso.substring(tIndex + 1, tIndex + 6)
-        }
-        return ""
+    fun formatBytes(bytes: Long): String {
+        if (bytes <= 0L) return "0 B"
+        val mb = bytes / (1024.0 * 1024.0)
+        if (mb >= 1.0) return String.format(Locale.US, "%.1f MB", mb)
+        val kb = bytes / 1024.0
+        return String.format(Locale.US, "%.0f KB", kb)
     }
+
+    fun formatAttachmentBytes(bytes: Long): String = when {
+        bytes >= 1024L * 1024L -> String.format(Locale.US, "%.1f MB", bytes / (1024.0 * 1024.0))
+        bytes >= 1024L -> "${(bytes / 1024L).coerceAtLeast(1)} KB"
+        bytes > 0L -> "$bytes B"
+        else -> ""
+    }
+
+    fun formatSizeMb(sizeBytes: Long): String {
+        if (sizeBytes <= 0L) return "0 MB"
+        val mb = sizeBytes / (1024.0 * 1024.0)
+        return String.format(Locale.US, "%.1f MB", mb)
+    }
+
+    fun formatCommaCount(value: Int): String =
+        String.format(Locale.US, "%,d", value.coerceAtLeast(0))
 }

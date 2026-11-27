@@ -2,6 +2,7 @@ package com.gugachat.app.core.storage
 
 import android.content.Context
 import java.io.File
+import java.util.UUID
 
 object LocalMediaPathResolver {
     const val ANDROID_ASSET_URI_PREFIX = "file:///android_asset/"
@@ -126,6 +127,23 @@ object LocalMediaPathResolver {
         val file = resolveFile(context, storedPath)?.takeIf { it.isFile && it.length() in 1L..maxBytes }
             ?: return null
         return runCatching { file.readBytes() }.getOrNull()
+    }
+
+    fun saveRpMediaBytes(
+        filesDir: File,
+        bytes: ByteArray,
+        prefix: String,
+        ext: String,
+        shortUuid: Boolean = false,
+    ): Pair<String, File> {
+        val dir = File(filesDir, "rp_media")
+        if (!dir.exists()) dir.mkdirs()
+        val safeExt = ext.trim().lowercase().replace(Regex("[^a-z0-9]"), "").ifBlank { "png" }
+        val token = UUID.randomUUID().toString().let { if (shortUuid) it.take(12) else it }
+        val outFile = File(dir, "${prefix}_$token.$safeExt")
+        outFile.writeBytes(bytes)
+        val rel = toRelativePath(filesDir.absolutePath, outFile.absolutePath) ?: "rp_media/${outFile.name}"
+        return rel to outFile
     }
 
     private fun isExternalOrDataUri(path: String): Boolean =

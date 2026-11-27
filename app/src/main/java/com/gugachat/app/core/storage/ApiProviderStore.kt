@@ -2,9 +2,7 @@ package com.gugachat.app.core.storage
 
 import android.content.Context
 import android.content.SharedPreferences
-import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKey
-import com.gugachat.app.data.api.AppJson
+import com.gugachat.app.core.util.CoreAppJson
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -66,7 +64,11 @@ data class ApiProviderConfig(
 }
 
 class ApiProviderStore(context: Context) {
-    private val prefs: SharedPreferences = createEncryptedOrFallbackPrefs(context.applicationContext)
+    private val prefs: SharedPreferences = EncryptedPrefsFactory.create(
+        context = context.applicationContext,
+        encryptedName = "gugachat_secure_providers",
+        fallbackName = "gugachat_providers_fallback",
+    )
     private val _providers = MutableStateFlow(readPersistedProviders())
     val providers: StateFlow<List<ApiProviderConfig>> = _providers.asStateFlow()
 
@@ -171,34 +173,17 @@ class ApiProviderStore(context: Context) {
         val raw = prefs.getString(KEY_PROVIDERS_JSON, null)?.trim().orEmpty()
         if (raw.isEmpty()) return emptyList()
         return runCatching {
-            AppJson.decodeFromString(ListSerializer(ApiProviderConfig.serializer()), raw)
+            CoreAppJson.decodeFromString(ListSerializer(ApiProviderConfig.serializer()), raw)
         }.getOrDefault(emptyList())
     }
 
     private fun persistList(list: List<ApiProviderConfig>) {
-        val encoded = AppJson.encodeToString(ListSerializer(ApiProviderConfig.serializer()), list)
+        val encoded = CoreAppJson.encodeToString(ListSerializer(ApiProviderConfig.serializer()), list)
         prefs.edit().putString(KEY_PROVIDERS_JSON, encoded).apply()
         _providers.value = list
     }
 
     private companion object {
         const val KEY_PROVIDERS_JSON = "custom_api_providers_json"
-
-        fun createEncryptedOrFallbackPrefs(context: Context): SharedPreferences {
-            return try {
-                val masterKey = MasterKey.Builder(context)
-                    .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-                    .build()
-                EncryptedSharedPreferences.create(
-                    context,
-                    "gugachat_secure_providers",
-                    masterKey,
-                    EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                    EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
-                )
-            } catch (_: Throwable) {
-                context.getSharedPreferences("gugachat_providers_fallback", Context.MODE_PRIVATE)
-            }
-        }
     }
 }

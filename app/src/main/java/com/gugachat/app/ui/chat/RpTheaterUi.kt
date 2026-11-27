@@ -1,7 +1,5 @@
 package com.gugachat.app.ui.chat
 
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
@@ -1556,8 +1554,7 @@ fun RpTheaterStageView(
                             onOpenHistory = { setShowHistorySheet(true) },
                             onCopyBody = {
                                 if (cleanBody.isNotBlank()) {
-                                    val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                    cm.setPrimaryClip(ClipData.newPlainText("reply", cleanBody))
+                                    com.gugachat.app.core.util.ClipboardUtils.copyText(ctx, "reply", cleanBody)
                                     onToast(strings.common.copied)
                                 }
                             },

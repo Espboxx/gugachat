@@ -1,12 +1,12 @@
 package com.gugachat.app.domain.chat
 
-import com.gugachat.app.data.api.AppJson
-import com.gugachat.app.domain.chat.RpCardCodec.arrOrNull
-import com.gugachat.app.domain.chat.RpCardCodec.boolOrNull
-import com.gugachat.app.domain.chat.RpCardCodec.intOrNull
-import com.gugachat.app.domain.chat.RpCardCodec.objOrNull
-import com.gugachat.app.domain.chat.RpCardCodec.strListOrEmpty
-import com.gugachat.app.domain.chat.RpCardCodec.strOrNull
+import com.gugachat.app.core.util.CoreAppJson
+import com.gugachat.app.core.util.JsonUtils.arrOrNull
+import com.gugachat.app.core.util.JsonUtils.boolOrNull
+import com.gugachat.app.core.util.JsonUtils.intOrNull
+import com.gugachat.app.core.util.JsonUtils.objOrNull
+import com.gugachat.app.core.util.JsonUtils.strListOrEmpty
+import com.gugachat.app.core.util.JsonUtils.strOrNull
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -64,7 +64,7 @@ object UuSaveCodec {
     fun parseJsonText(rawJson: String, fileName: String? = null): ExternalImportBundle {
         val cleaned = rawJson.removePrefix("\uFEFF").trim()
         val root = try {
-            AppJson.parseToJsonElement(cleaned) as? JsonObject
+            CoreAppJson.parseToJsonElement(cleaned) as? JsonObject
         } catch (e: Exception) {
             throw IllegalArgumentException("无效的 UU 存档 JSON 格式：${e.message}")
         } ?: throw IllegalArgumentException("UU 存档 JSON 根节点必须为对象")
@@ -815,7 +815,7 @@ object UuSaveCodec {
     fun formatAsAttachmentMarkdown(rawJson: String, fileName: String? = null): String? {
         val cleaned = rawJson.removePrefix("\uFEFF").trim()
         if (!cleaned.startsWith("{")) return null
-        val root = runCatching { AppJson.parseToJsonElement(cleaned) as? JsonObject }.getOrNull() ?: return null
+        val root = runCatching { CoreAppJson.parseToJsonElement(cleaned) as? JsonObject }.getOrNull() ?: return null
         if (!isUuGameSave(root)) return null
         val item = runCatching { parseJsonElement(root, fileName).items.firstOrNull() }.getOrNull() ?: return null
         val rp = item.conversation.rp ?: return null
@@ -950,24 +950,6 @@ object UuSaveCodec {
         return null
     }
 
-    private fun parseTimestamp(elem: JsonElement?): Long? {
-        val prim = elem as? JsonPrimitive ?: return null
-        if (prim is JsonNull) return null
-        if (prim.isString) {
-            val s = prim.content.trim()
-            if (s.isEmpty()) return null
-            s.toLongOrNull()?.let { return if (it < 10_000_000_000L) it * 1000L else it }
-            runCatching { return OffsetDateTime.parse(s).toInstant().toEpochMilli() }
-            runCatching { return Instant.parse(s).toEpochMilli() }
-            runCatching {
-                return LocalDateTime.parse(s.replace(' ', 'T'), DateTimeFormatter.ISO_LOCAL_DATE_TIME)
-                    .atZone(ZoneId.systemDefault())
-                    .toInstant()
-                    .toEpochMilli()
-            }
-            return null
-        }
-        prim.longOrNull?.let { return if (it < 10_000_000_000L) it * 1000L else it }
-        return null
-    }
+    private fun parseTimestamp(elem: JsonElement?): Long? =
+        com.gugachat.app.core.util.JsonUtils.parseFlexibleTimestamp(elem)
 }

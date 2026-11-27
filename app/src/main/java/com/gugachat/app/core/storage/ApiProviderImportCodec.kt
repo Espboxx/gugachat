@@ -1,21 +1,19 @@
 package com.gugachat.app.core.storage
 
-import com.gugachat.app.data.api.AppJson
-import com.gugachat.app.domain.chat.DeepSeekImportCodec
-import com.gugachat.app.domain.chat.RpCardCodec.arrOrNull
-import com.gugachat.app.domain.chat.RpCardCodec.boolOrNull
-import com.gugachat.app.domain.chat.RpCardCodec.objOrNull
-import com.gugachat.app.domain.chat.RpCardCodec.strOrNull
+import com.gugachat.app.core.util.CoreAppJson
+import com.gugachat.app.core.util.JsonUtils.arrOrNull
+import com.gugachat.app.core.util.JsonUtils.boolOrNull
+import com.gugachat.app.core.util.JsonUtils.objOrNull
+import com.gugachat.app.core.util.JsonUtils.strOrNull
+import com.gugachat.app.core.util.StreamZipUtils
+import com.gugachat.app.core.util.StreamZipUtils.readBoundedUtf8
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
-import java.io.ByteArrayInputStream
-import java.io.ByteArrayOutputStream
 import java.util.Base64
-import java.util.zip.ZipInputStream
 
 data class ApiProviderImportBundle(
     val sourceFormat: String,
@@ -40,7 +38,7 @@ object ApiProviderImportCodec {
 
     fun parseBytes(bytes: ByteArray, fileName: String? = null): ApiProviderImportBundle {
         if (bytes.isEmpty()) throw IllegalArgumentException("文件内容为空")
-        if (DeepSeekImportCodec.isZipBytes(bytes)) {
+        if (StreamZipUtils.isZipBytes(bytes)) {
             return parseZipBytes(bytes)
         }
         val text = bytes.toString(Charsets.UTF_8).removePrefix("\uFEFF").trim()
@@ -69,7 +67,7 @@ object ApiProviderImportCodec {
 
         // 2. JSON payload
         val root = try {
-            AppJson.parseToJsonElement(clean)
+            CoreAppJson.parseToJsonElement(clean)
         } catch (e: Exception) {
             throw IllegalArgumentException("无效的 JSON 或分享串格式：${e.message}")
         }
@@ -147,29 +145,20 @@ object ApiProviderImportCodec {
 
     private fun parseZipBytes(zipBytes: ByteArray): ApiProviderImportBundle {
         val jsonEntries = LinkedHashMap<String, String>()
-        ZipInputStream(ByteArrayInputStream(zipBytes)).use { zis ->
-            while (true) {
-                val entry = zis.nextEntry ?: break
-                if (entry.isDirectory) {
-                    zis.closeEntry()
-                    continue
-                }
-                val norm = entry.name.replace('\\', '/').trimStart('/')
-                val lower = norm.lowercase()
-                val base = lower.substringAfterLast('/')
-                if (!lower.contains("__macosx/") && !base.startsWith("._") && lower.endsWith(".json")) {
-                    if (base == "data.json" || base == "settings.json" || base == "manifest.json" || base.contains("provider")) {
-                        val content = readBoundedUtf8(zis, MAX_JSON_BYTES).removePrefix("\uFEFF").trim()
-                        if (content.isNotEmpty()) jsonEntries[norm] = content
-                    }
-                }
-                zis.closeEntry()
+        StreamZipUtils.forEachZipEntry(zipBytes) { norm, zis ->
+            val lower = norm.lowercase()
+            val base = lower.substringAfterLast('/')
+            if (lower.endsWith(".json") && (base == "data.json" || base == "settings.json" || base == "manifest.json" || base.contains("provider"))) {
+                val content = zis.readBoundedUtf8(MAX_JSON_BYTES.toLong(), "配置文件超过体积限制")
+                    .removePrefix("\uFEFF")
+                    .trim()
+                if (content.isNotEmpty()) jsonEntries[norm] = content
             }
         }
 
         // Priority 1: Cherry Studio `data.json`
         jsonEntries.entries.firstOrNull { it.key.substringAfterLast('/').equals("data.json", ignoreCase = true) }?.let { (_, raw) ->
-            val elem = runCatching { AppJson.parseToJsonElement(raw) }.getOrNull()
+            val elem = runCatching { CoreAppJson.parseToJsonElement(raw) }.getOrNull()
             if (elem != null) {
                 tryExtractFromJsonElement(elem, "data.json")?.let { return it.copy(sourceFormat = "cherry_studio_zip") }
             }
@@ -178,13 +167,13 @@ object ApiProviderImportCodec {
         // Priority 2: Chatbox Backup v2 `manifest.json` -> settings path
         val manifestRaw = jsonEntries.entries.firstOrNull { it.key.substringAfterLast('/').equals("manifest.json", ignoreCase = true) }?.value
         if (manifestRaw != null) {
-            val manifest = runCatching { AppJson.parseToJsonElement(manifestRaw) as? JsonObject }.getOrNull()
+            val manifest = runCatching { CoreAppJson.parseToJsonElement(manifestRaw) as? JsonObject }.getOrNull()
             if (manifest?.strOrNull("format") == "chatbox-backup") {
                 val settingsPath = manifest.objOrNull("data")?.objOrNull("settings")?.strOrNull("path") ?: "settings.json"
                 val settingsRaw = jsonEntries[settingsPath]
                     ?: jsonEntries.entries.firstOrNull { it.key.substringAfterLast('/').equals("settings.json", ignoreCase = true) }?.value
                 if (settingsRaw != null) {
-                    val elem = runCatching { AppJson.parseToJsonElement(settingsRaw) }.getOrNull()
+                    val elem = runCatching { CoreAppJson.parseToJsonElement(settingsRaw) }.getOrNull()
                     if (elem != null) {
                         tryExtractFromJsonElement(elem, settingsPath)?.let {
                             return it.copy(sourceFormat = "chatbox_v2_zip", sourceLabel = "Chatbox")
@@ -196,7 +185,7 @@ object ApiProviderImportCodec {
 
         // Priority 3: RikkaHub `settings.json` or any settings/provider JSON in ZIP
         for ((path, raw) in jsonEntries) {
-            val elem = runCatching { AppJson.parseToJsonElement(raw) }.getOrNull() ?: continue
+            val elem = runCatching { CoreAppJson.parseToJsonElement(raw) }.getOrNull() ?: continue
             tryExtractFromJsonElement(elem, path)?.let { return it }
         }
 
@@ -208,7 +197,7 @@ object ApiProviderImportCodec {
             ?: runCatching { Base64.getUrlDecoder().decode(encoded) }.getOrNull()
             ?: return null
         val jsonStr = rawBytes.toString(Charsets.UTF_8).removePrefix("\uFEFF").trim()
-        val obj = runCatching { AppJson.parseToJsonElement(jsonStr) as? JsonObject }.getOrNull() ?: return null
+        val obj = runCatching { CoreAppJson.parseToJsonElement(jsonStr) as? JsonObject }.getOrNull() ?: return null
         return parseSingleProviderObject(obj)
     }
 
@@ -218,7 +207,7 @@ object ApiProviderImportCodec {
         val persisted: JsonObject = when (persistElem) {
             is JsonObject -> persistElem
             is JsonPrimitive -> persistElem.takeUnless { it is JsonNull }?.contentOrNull?.let { raw ->
-                runCatching { AppJson.parseToJsonElement(raw) as? JsonObject }.getOrNull()
+                runCatching { CoreAppJson.parseToJsonElement(raw) as? JsonObject }.getOrNull()
             } ?: return null
             else -> return null
         }
@@ -226,7 +215,7 @@ object ApiProviderImportCodec {
         val llm: JsonObject = when (llmElem) {
             is JsonObject -> llmElem
             is JsonPrimitive -> llmElem.takeUnless { it is JsonNull }?.contentOrNull?.let { raw ->
-                runCatching { AppJson.parseToJsonElement(raw) as? JsonObject }.getOrNull()
+                runCatching { CoreAppJson.parseToJsonElement(raw) as? JsonObject }.getOrNull()
             } ?: return null
             else -> return null
         }
@@ -428,19 +417,5 @@ object ApiProviderImportCodec {
         "mistral" -> "Mistral"
         "perplexity" -> "Perplexity"
         else -> providerKey.replaceFirstChar { it.uppercaseChar() }
-    }
-
-    private fun readBoundedUtf8(zis: ZipInputStream, maxBytes: Int): String {
-        val baos = ByteArrayOutputStream()
-        val buf = ByteArray(8192)
-        var total = 0
-        while (true) {
-            val n = zis.read(buf)
-            if (n <= 0) break
-            total += n
-            if (total > maxBytes) throw IllegalArgumentException("配置文件超过体积限制")
-            baos.write(buf, 0, n)
-        }
-        return baos.toString(Charsets.UTF_8.name())
     }
 }

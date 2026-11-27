@@ -1,6 +1,6 @@
 package com.gugachat.app.domain.chat
 
-import com.gugachat.app.data.api.AppJson
+import com.gugachat.app.core.util.CoreAppJson
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -11,15 +11,12 @@ import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
-import java.io.ByteArrayInputStream
-import java.io.ByteArrayOutputStream
 import java.time.Instant
 import java.time.LocalDateTime
 import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.UUID
-import java.util.zip.ZipInputStream
 
 data class DeepSeekImportedConversation(
     val sourceId: String,
@@ -43,10 +40,7 @@ object DeepSeekImportCodec {
     }
 
     fun isZipBytes(bytes: ByteArray): Boolean =
-        bytes.size >= 4 &&
-            bytes[0] == 0x50.toByte() &&
-            bytes[1] == 0x4B.toByte() &&
-            (bytes[2] == 0x03.toByte() || bytes[2] == 0x05.toByte() || bytes[2] == 0x07.toByte())
+        com.gugachat.app.core.util.StreamZipUtils.isZipBytes(bytes)
 
     fun parseBytes(bytes: ByteArray, fileName: String? = null): DeepSeekImportBundle {
         if (bytes.isEmpty()) {
@@ -75,21 +69,12 @@ object DeepSeekImportCodec {
 
     fun parseZipBytes(zipBytes: ByteArray): DeepSeekImportBundle {
         val textEntries = LinkedHashMap<String, String>()
-        ZipInputStream(ByteArrayInputStream(zipBytes)).use { zis ->
-            while (true) {
-                val entry = zis.nextEntry ?: break
-                if (entry.isDirectory) {
-                    zis.closeEntry()
-                    continue
-                }
-                val normName = entry.name.replace('\\', '/').trimStart('/')
-                val lower = normName.lowercase()
-                if (lower.contains("_files/") || (!lower.endsWith(".json") && !lower.endsWith(".csv"))) {
-                    zis.closeEntry()
-                    continue
-                }
-                val content = readBoundedUtf8(zis, MAX_JSON_ENTRY_BYTES).removePrefix("\uFEFF").trim()
-                zis.closeEntry()
+        com.gugachat.app.core.util.StreamZipUtils.forEachZipEntry(zipBytes, skipMacOsMeta = false) { normName, zis ->
+            val lower = normName.lowercase()
+            if (!lower.contains("_files/") && (lower.endsWith(".json") || lower.endsWith(".csv"))) {
+                val content = com.gugachat.app.core.util.StreamZipUtils.run {
+                    zis.readBoundedUtf8(MAX_JSON_ENTRY_BYTES.toLong(), "导出文件体积过大（超过 64MB）")
+                }.removePrefix("\uFEFF").trim()
                 if (content.isNotEmpty()) {
                     textEntries[normName] = content
                 }
@@ -126,7 +111,7 @@ object DeepSeekImportCodec {
         if (v3SessionFiles.isNotEmpty()) {
             val indexMeta = sessionIndexJson?.let(::parseV3IndexMetadata).orEmpty()
             val items = v3SessionFiles.mapNotNull { (fallbackId, raw) ->
-                val elem = runCatching { AppJson.parseToJsonElement(raw) }.getOrNull() as? JsonObject ?: return@mapNotNull null
+                val elem = runCatching { CoreAppJson.parseToJsonElement(raw) }.getOrNull() as? JsonObject ?: return@mapNotNull null
                 val meta = indexMeta[fallbackId] ?: elem.stringField("id")?.let { indexMeta[it] }
                 parseConversationObject(elem, fallbackId = fallbackId, indexMeta = meta)
             }.sortedByDescending { it.conversation.updatedAt }
@@ -364,7 +349,7 @@ object DeepSeekImportCodec {
     fun parseJsonText(rawJson: String): DeepSeekImportBundle {
         val trimmed = rawJson.removePrefix("\uFEFF").trim()
         val root = try {
-            AppJson.parseToJsonElement(trimmed)
+            CoreAppJson.parseToJsonElement(trimmed)
         } catch (e: Exception) {
             throw IllegalArgumentException("无效的 JSON 格式：${e.message}")
         }
@@ -408,7 +393,7 @@ object DeepSeekImportCodec {
     )
 
     private fun parseV3IndexMetadata(raw: String): Map<String, V3SessionIndexMeta> {
-        val root = runCatching { AppJson.parseToJsonElement(raw) }.getOrNull() ?: return emptyMap()
+        val root = runCatching { CoreAppJson.parseToJsonElement(raw) }.getOrNull() ?: return emptyMap()
         val arr = when (root) {
             is JsonArray -> root
             is JsonObject -> (root["sessions"] as? JsonArray) ?: (root["chat_sessions"] as? JsonArray) ?: (root["items"] as? JsonArray)
@@ -1118,51 +1103,9 @@ object DeepSeekImportCodec {
         else -> null
     }
 
-    private fun parseTimestamp(elem: JsonElement?): Long? {
-        val prim = elem as? JsonPrimitive ?: return null
-        if (prim.isString) {
-            val s = prim.content.trim()
-            if (s.isEmpty()) return null
-            s.toLongOrNull()?.let { return if (it < 10_000_000_000L) it * 1000L else it }
-            s.toDoubleOrNull()?.let { d ->
-                val v = d.toLong()
-                return if (v < 10_000_000_000L) (d * 1000.0).toLong() else v
-            }
-            runCatching { return OffsetDateTime.parse(s).toInstant().toEpochMilli() }
-            runCatching { return Instant.parse(s).toEpochMilli() }
-            runCatching {
-                val normalized = s.replace(' ', 'T')
-                return LocalDateTime.parse(normalized, DateTimeFormatter.ISO_LOCAL_DATE_TIME)
-                    .atZone(ZoneId.systemDefault())
-                    .toInstant()
-                    .toEpochMilli()
-            }
-            return null
-        }
-        prim.longOrNull?.let { return if (it < 10_000_000_000L) it * 1000L else it }
-        prim.doubleOrNull?.let { d ->
-            val v = d.toLong()
-            return if (v < 10_000_000_000L) (d * 1000.0).toLong() else v
-        }
-        return null
-    }
+    private fun parseTimestamp(elem: JsonElement?): Long? =
+        com.gugachat.app.core.util.JsonUtils.parseFlexibleTimestamp(elem)
 
     private fun JsonObject.stringField(key: String): String? =
         (this[key] as? JsonPrimitive)?.contentOrNull
-
-    private fun readBoundedUtf8(zis: ZipInputStream, maxBytes: Int): String {
-        val baos = ByteArrayOutputStream()
-        val buf = ByteArray(8192)
-        var total = 0
-        while (true) {
-            val read = zis.read(buf)
-            if (read <= 0) break
-            total += read
-            if (total > maxBytes) {
-                throw IllegalArgumentException("导出文件体积过大（超过 64MB）")
-            }
-            baos.write(buf, 0, read)
-        }
-        return baos.toString(Charsets.UTF_8.name())
-    }
 }

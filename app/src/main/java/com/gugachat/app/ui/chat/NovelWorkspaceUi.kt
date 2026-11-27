@@ -1106,4 +1106,4 @@ private fun NovelBookmarkFloatingOverlay(
 }
 
 private fun formatCompactCount(value: Int): String =
-    String.format(Locale.US, "%,d", value.coerceAtLeast(0))
+    com.gugachat.app.core.util.FormatUtils.formatCommaCount(value)

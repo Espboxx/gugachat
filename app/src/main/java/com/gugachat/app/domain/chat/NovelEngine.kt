@@ -1,6 +1,6 @@
 package com.gugachat.app.domain.chat
 
-import com.gugachat.app.data.api.AppJson
+import com.gugachat.app.core.util.CoreAppJson
 import com.gugachat.app.data.api.WireChatMessageDto
 import kotlinx.serialization.Serializable
 import java.util.UUID
@@ -500,7 +500,7 @@ object NovelEngine {
             val jsonObj = EpisodeConsolidator.extractFirstJsonObject(m.groupValues[1])
             if (jsonObj != null) {
                 try {
-                    val dto = AppJson.decodeFromString(NovelStatusHudDto.serializer(), jsonObj)
+                    val dto = CoreAppJson.decodeFromString(NovelStatusHudDto.serializer(), jsonObj)
                     statusHud = NovelStatusHud(
                         chapterTitle = dto.chapterTitle.orEmpty().trim(),
                         time = dto.time.orEmpty().trim(),
@@ -524,7 +524,7 @@ object NovelEngine {
             val arrEnd = body.lastIndexOf(']')
             if (arrStart >= 0 && arrEnd > arrStart) {
                 try {
-                    val dtos = AppJson.decodeFromString<List<NovelLoreSyncDto>>(body.substring(arrStart, arrEnd + 1))
+                    val dtos = CoreAppJson.decodeFromString<List<NovelLoreSyncDto>>(body.substring(arrStart, arrEnd + 1))
                     dtos.forEach { dto ->
                         val title = dto.title.trim()
                         val content = dto.content.trim()
@@ -577,7 +577,7 @@ object NovelEngine {
             val jsonObj = EpisodeConsolidator.extractFirstJsonObject(inner)
             if (jsonObj != null) {
                 try {
-                    val dto = AppJson.decodeFromString(NovelChapterEndDto.serializer(), jsonObj)
+                    val dto = CoreAppJson.decodeFromString(NovelChapterEndDto.serializer(), jsonObj)
                     chapterEndSummary = dto.summary.trim().ifEmpty { inner }
                     nextChapterTitle = (dto.nextChapterTitle ?: dto.nextTitle)?.trim()?.ifEmpty { null }
                 } catch (_: Exception) {
@@ -656,7 +656,7 @@ object NovelEngine {
     ): NovelGenesisResult? {
         val jsonObj = EpisodeConsolidator.extractFirstJsonObject(raw) ?: return null
         return try {
-            val dto = AppJson.decodeFromString(NovelGenesisDto.serializer(), jsonObj)
+            val dto = CoreAppJson.decodeFromString(NovelGenesisDto.serializer(), jsonObj)
             val now = System.currentTimeMillis()
             val resolvedTitle = fallbackTitle.trim().ifBlank { dto.title.trim() }.ifBlank { preset.name }
             val loreList = dto.starterLore.mapNotNull { item ->
@@ -750,7 +750,7 @@ object NovelEngine {
         val arrEnd = trimmed.lastIndexOf(']')
         if (arrStart < 0 || arrEnd <= arrStart) return emptyList()
         return try {
-            val dtos = AppJson.decodeFromString<List<NovelLoreSyncDto>>(trimmed.substring(arrStart, arrEnd + 1))
+            val dtos = CoreAppJson.decodeFromString<List<NovelLoreSyncDto>>(trimmed.substring(arrStart, arrEnd + 1))
             val now = System.currentTimeMillis()
             val existingByTitle = existingLore.associateBy { it.title.trim().lowercase() }
             dtos.mapNotNull { dto ->
@@ -819,7 +819,7 @@ object NovelEngine {
         val arrEnd = trimmed.lastIndexOf(']')
         if (arrStart < 0 || arrEnd <= arrStart) return emptyList()
         return try {
-            AppJson.decodeFromString<List<SuggestedChapterDto>>(trimmed.substring(arrStart, arrEnd + 1))
+            CoreAppJson.decodeFromString<List<SuggestedChapterDto>>(trimmed.substring(arrStart, arrEnd + 1))
                 .mapNotNull { dto ->
                     val title = dto.title.trim()
                     val outline = dto.outline.trim()
@@ -912,7 +912,7 @@ object NovelEngine {
         val arrEnd = trimmed.lastIndexOf(']')
         if (arrStart < 0 || arrEnd <= arrStart) return emptyList()
         return try {
-            AppJson.decodeFromString<List<ThreePathDraftDto>>(trimmed.substring(arrStart, arrEnd + 1))
+            CoreAppJson.decodeFromString<List<ThreePathDraftDto>>(trimmed.substring(arrStart, arrEnd + 1))
                 .mapNotNull { dto ->
                     if (dto.title.isBlank() && dto.summary.isBlank()) null
                     else NovelDraftOption(
@@ -933,7 +933,7 @@ object NovelEngine {
         val arrEnd = body.lastIndexOf(']')
         if (arrStart < 0 || arrEnd <= arrStart) return emptyList()
         return try {
-            AppJson.decodeFromString<List<String>>(body.substring(arrStart, arrEnd + 1))
+            CoreAppJson.decodeFromString<List<String>>(body.substring(arrStart, arrEnd + 1))
                 .map { it.trim() }
                 .filter { it.isNotEmpty() }
                 .distinct()

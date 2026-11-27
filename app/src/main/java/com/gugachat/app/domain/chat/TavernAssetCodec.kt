@@ -1,15 +1,16 @@
 package com.gugachat.app.domain.chat
 
-import com.gugachat.app.data.api.AppJson
+import com.gugachat.app.core.util.CoreAppJson
+import com.gugachat.app.core.util.HashUtils
+import com.gugachat.app.core.util.JsonUtils.arrOrNull
+import com.gugachat.app.core.util.JsonUtils.boolOrNull
+import com.gugachat.app.core.util.JsonUtils.intOrNull
+import com.gugachat.app.core.util.JsonUtils.objOrNull
+import com.gugachat.app.core.util.JsonUtils.strListOrEmpty
+import com.gugachat.app.core.util.JsonUtils.strOrNull
 import com.gugachat.app.data.local.PromptPresetEntity
 import com.gugachat.app.data.local.WorldbookEntity
 import com.gugachat.app.data.local.WorldbookEntryEntity
-import com.gugachat.app.domain.chat.RpCardCodec.arrOrNull
-import com.gugachat.app.domain.chat.RpCardCodec.boolOrNull
-import com.gugachat.app.domain.chat.RpCardCodec.intOrNull
-import com.gugachat.app.domain.chat.RpCardCodec.objOrNull
-import com.gugachat.app.domain.chat.RpCardCodec.strListOrEmpty
-import com.gugachat.app.domain.chat.RpCardCodec.strOrNull
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -21,7 +22,6 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
-import java.security.MessageDigest
 import java.util.UUID
 
 data class ParsedWorldbookV4(
@@ -85,7 +85,7 @@ object TavernAssetCodec {
     ): ParsedTavernAsset? {
         val cleaned = rawJson.removePrefix("\uFEFF").trim()
         if (cleaned.isEmpty()) return null
-        val root = runCatching { AppJson.parseToJsonElement(cleaned) }.getOrNull() ?: return null
+        val root = runCatching { CoreAppJson.parseToJsonElement(cleaned) }.getOrNull() ?: return null
         return parseJsonElement(root, conversationId, fileName)
     }
 
@@ -666,7 +666,7 @@ object TavernAssetCodec {
     ): ParsedWorldbookV4 {
         val cleaned = rawJson.removePrefix("\uFEFF").trim()
         val root = try {
-            AppJson.parseToJsonElement(cleaned)
+            CoreAppJson.parseToJsonElement(cleaned)
         } catch (e: Exception) {
             throw IllegalArgumentException("无效的世界书 JSON 格式：${e.message}")
         }
@@ -855,8 +855,8 @@ object TavernAssetCodec {
                 title = title,
                 content = content,
                 category = entry.strOrNull("category")?.trim()?.takeIf { it.isNotEmpty() } ?: "concept",
-                keysJson = AppJson.encodeToString(keys),
-                secondaryKeysJson = AppJson.encodeToString(secondaryKeys),
+                keysJson = CoreAppJson.encodeToString(keys),
+                secondaryKeysJson = CoreAppJson.encodeToString(secondaryKeys),
                 selectiveLogic = selectiveLogic,
                 constant = constant,
                 enabled = enabled,
@@ -918,7 +918,7 @@ object TavernAssetCodec {
     ): PromptPresetEntity {
         val cleaned = rawJson.removePrefix("\uFEFF").trim()
         val obj = try {
-            AppJson.parseToJsonElement(cleaned) as? JsonObject
+            CoreAppJson.parseToJsonElement(cleaned) as? JsonObject
         } catch (e: Exception) {
             throw IllegalArgumentException("无效的预设 JSON 格式：${e.message}")
         } ?: throw IllegalArgumentException("预设 JSON 根节点必须为对象")
@@ -954,7 +954,7 @@ object TavernAssetCodec {
                 id = presetId,
                 name = name,
                 sourceFormat = "rikkahub_mode_injection",
-                blocksJson = AppJson.encodeToString(listOf(block)),
+                blocksJson = CoreAppJson.encodeToString(listOf(block)),
                 regexScriptsJson = "[]",
                 samplingPatchJson = "{}",
                 isDefaultRp = false,
@@ -1067,8 +1067,8 @@ object TavernAssetCodec {
                 id = presetId,
                 name = presetName,
                 sourceFormat = "sillytavern_preset_ordered",
-                blocksJson = AppJson.encodeToString(blocks),
-                regexScriptsJson = AppJson.encodeToString(embeddedRegex),
+                blocksJson = CoreAppJson.encodeToString(blocks),
+                regexScriptsJson = CoreAppJson.encodeToString(embeddedRegex),
                 samplingPatchJson = samplingJson,
                 isDefaultRp = false,
                 createdAt = now,
@@ -1099,8 +1099,8 @@ object TavernAssetCodec {
             id = presetId,
             name = presetName,
             sourceFormat = "sillytavern_preset_flat",
-            blocksJson = AppJson.encodeToString(flatBlocks),
-            regexScriptsJson = AppJson.encodeToString(embeddedRegex),
+            blocksJson = CoreAppJson.encodeToString(flatBlocks),
+            regexScriptsJson = CoreAppJson.encodeToString(embeddedRegex),
             samplingPatchJson = samplingJson,
             isDefaultRp = false,
             createdAt = now,
@@ -1165,13 +1165,6 @@ object TavernAssetCodec {
         }
     }
 
-    private fun sha256Hex(text: String): String {
-        val digest = MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8))
-        val sb = StringBuilder(digest.size * 2)
-        for (b in digest) {
-            sb.append(((b.toInt() ushr 4) and 0xF).toString(16))
-            sb.append((b.toInt() and 0xF).toString(16))
-        }
-        return sb.toString()
-    }
+    private fun sha256Hex(text: String): String =
+        HashUtils.sha256Hex(text)
 }

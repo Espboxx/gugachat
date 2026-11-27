@@ -1523,21 +1523,10 @@ object BackupArchiveEngine {
         return total
     }
 
-    private fun readUtf8Bounded(input: InputStream, maxBytes: Long): String {
-        val out = ByteArrayOutputStream()
-        val buf = ByteArray(IO_BUFFER_BYTES)
-        var total = 0L
-        while (true) {
-            val n = input.read(buf)
-            if (n <= 0) break
-            total += n
-            if (total > maxBytes) {
-                throw IllegalArgumentException("JSON backup exceeds size limit ($maxBytes bytes)")
-            }
-            out.write(buf, 0, n)
+    private fun readUtf8Bounded(input: InputStream, maxBytes: Long): String =
+        com.gugachat.app.core.util.StreamZipUtils.run {
+            input.readBoundedUtf8(maxBytes, "JSON backup exceeds size limit ($maxBytes bytes)")
         }
-        return out.toString(StandardCharsets.UTF_8.name())
-    }
 
     // ==================== Path Normalization & Media Collection ====================
 

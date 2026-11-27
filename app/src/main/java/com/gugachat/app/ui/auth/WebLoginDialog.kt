@@ -52,11 +52,11 @@ import com.gugachat.app.core.theme.GuAwningHeader
 import com.gugachat.app.core.theme.GuButton
 import com.gugachat.app.core.theme.GuButtonVariant
 import com.gugachat.app.core.theme.LocalAppTheme
+import com.gugachat.app.core.util.CoreAppJson
 import com.gugachat.app.core.util.ServerUrlUtils
 import kotlinx.coroutines.delay
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.serializer
-import kotlinx.serialization.json.Json
 
 @Serializable
 private data class WebAuthSnapshot(
@@ -64,8 +64,6 @@ private data class WebAuthSnapshot(
     val refresh: String = "",
     val userJson: String = "",
 )
-
-private val WEB_SNAPSHOT_JSON = Json { ignoreUnknownKeys = true; isLenient = true }
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
@@ -100,10 +98,10 @@ fun WebLoginDialog(
         wv.evaluateJavascript(js) { raw ->
             if (capturedHandled || raw.isNullOrBlank() || raw == "null") return@evaluateJavascript
             val unquoted = runCatching {
-                WEB_SNAPSHOT_JSON.decodeFromString(String.serializer(), raw)
+                CoreAppJson.decodeFromString(String.serializer(), raw)
             }.getOrElse { raw }
             val snap = runCatching {
-                WEB_SNAPSHOT_JSON.decodeFromString(WebAuthSnapshot.serializer(), unquoted)
+                CoreAppJson.decodeFromString(WebAuthSnapshot.serializer(), unquoted)
             }.getOrNull() ?: return@evaluateJavascript
 
             if (snap.token.isNotBlank() && !capturedHandled) {

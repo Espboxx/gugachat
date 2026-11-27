@@ -2,13 +2,15 @@ package com.gugachat.app.domain.chat
 
 import com.gugachat.app.core.storage.ApiProviderConfig
 import com.gugachat.app.core.storage.ApiProviderImportCodec
-import com.gugachat.app.data.api.AppJson
+import com.gugachat.app.core.util.CoreAppJson
+import com.gugachat.app.core.util.JsonUtils.arrOrNull
+import com.gugachat.app.core.util.JsonUtils.boolOrNull
+import com.gugachat.app.core.util.JsonUtils.intOrNull
+import com.gugachat.app.core.util.JsonUtils.objOrNull
+import com.gugachat.app.core.util.JsonUtils.strOrNull
+import com.gugachat.app.core.util.StreamZipUtils
+import com.gugachat.app.core.util.StreamZipUtils.readBoundedBytesOrThrow
 import com.gugachat.app.data.local.PromptPresetEntity
-import com.gugachat.app.domain.chat.RpCardCodec.arrOrNull
-import com.gugachat.app.domain.chat.RpCardCodec.boolOrNull
-import com.gugachat.app.domain.chat.RpCardCodec.intOrNull
-import com.gugachat.app.domain.chat.RpCardCodec.objOrNull
-import com.gugachat.app.domain.chat.RpCardCodec.strOrNull
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -19,15 +21,12 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.longOrNull
-import java.io.ByteArrayInputStream
-import java.io.ByteArrayOutputStream
 import java.time.Instant
 import java.time.LocalDateTime
 import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.UUID
-import java.util.zip.ZipInputStream
 
 enum class ExternalImportSource {
     DEEPSEEK,
@@ -281,35 +280,27 @@ object ExternalImportCodec {
         val textEntries = LinkedHashMap<String, String>()
         val pngEntries = LinkedHashMap<String, ByteArray>()
 
-        ZipInputStream(ByteArrayInputStream(zipBytes)).use { zis ->
-            while (true) {
-                val entry = zis.nextEntry ?: break
-                if (entry.isDirectory) {
-                    zis.closeEntry()
-                    continue
+        StreamZipUtils.forEachZipEntry(zipBytes) { norm, zis ->
+            val lower = norm.lowercase()
+            when {
+                lower.contains("_files/") -> Unit
+                lower.endsWith(".json") || lower.endsWith(".jsonl") || lower.endsWith(".txt") || lower.endsWith(".md") || lower.endsWith(".csv") -> {
+                    val content = zis.readBoundedBytesOrThrow(MAX_ENTRY_BYTES.toLong(), "压缩包内单文件体积超过限制")
+                        .toString(Charsets.UTF_8)
+                        .removePrefix("\uFEFF")
+                        .trim()
+                    if (content.isNotEmpty()) textEntries[norm] = content
                 }
-                val norm = entry.name.replace('\\', '/').trimStart('/')
-                val lower = norm.lowercase()
-                val baseName = lower.substringAfterLast('/')
-                when {
-                    lower.contains("__macosx/") || baseName.startsWith("._") -> Unit
-                    lower.contains("_files/") -> Unit
-                    lower.endsWith(".json") || lower.endsWith(".jsonl") || lower.endsWith(".txt") || lower.endsWith(".md") || lower.endsWith(".csv") -> {
-                        val content = readBoundedBytes(zis, MAX_ENTRY_BYTES).toString(Charsets.UTF_8).removePrefix("\uFEFF").trim()
-                        if (content.isNotEmpty()) textEntries[norm] = content
-                    }
-                    lower.endsWith(".png") -> {
-                        val b = readBoundedBytes(zis, 16 * 1024 * 1024)
-                        if (RpCardCodec.isPngBytes(b)) pngEntries[norm] = b
-                    }
+                lower.endsWith(".png") -> {
+                    val b = zis.readBoundedBytesOrThrow(16L * 1024 * 1024, "压缩包内单文件体积超过限制")
+                    if (RpCardCodec.isPngBytes(b)) pngEntries[norm] = b
                 }
-                zis.closeEntry()
             }
         }
 
         // 0b. Single-card ZIP containing `card.json` (e.g. renamed .charx/.byaf -> .zip)
         textEntries.entries.firstOrNull { it.key.substringAfterLast('/').equals("card.json", ignoreCase = true) }?.let { (path, content) ->
-            val obj = runCatching { AppJson.parseToJsonElement(content) as? JsonObject }.getOrNull()
+            val obj = runCatching { CoreAppJson.parseToJsonElement(content) as? JsonObject }.getOrNull()
             if (obj != null && isSillyTavernCardObject(obj)) {
                 val extracted = RpCardCodec.extractCardFromZipBytes(zipBytes)
                 if (extracted != null) {
@@ -339,7 +330,7 @@ object ExternalImportCodec {
         // 2. Chatbox Backup v2 ZIP (`manifest.json` with format="chatbox-backup")
         val manifestEntry = textEntries.entries.firstOrNull { it.key.substringAfterLast('/').equals("manifest.json", ignoreCase = true) }
         if (manifestEntry != null) {
-            val manifestObj = runCatching { AppJson.parseToJsonElement(manifestEntry.value) as? JsonObject }.getOrNull()
+            val manifestObj = runCatching { CoreAppJson.parseToJsonElement(manifestEntry.value) as? JsonObject }.getOrNull()
             if (manifestObj?.strOrNull("format") == "chatbox-backup") {
                 return parseChatboxV2Zip(manifestObj, textEntries)
             }
@@ -348,7 +339,7 @@ object ExternalImportCodec {
         // 3. Cherry Studio Backup ZIP (`data.json` containing `persist:cherry-studio`)
         val dataJsonEntry = textEntries.entries.firstOrNull { it.key.substringAfterLast('/').equals("data.json", ignoreCase = true) }
         if (dataJsonEntry != null) {
-            val dataObj = runCatching { AppJson.parseToJsonElement(dataJsonEntry.value) as? JsonObject }.getOrNull()
+            val dataObj = runCatching { CoreAppJson.parseToJsonElement(dataJsonEntry.value) as? JsonObject }.getOrNull()
             val cherryProviders = dataObj?.let { ApiProviderImportCodec.extractCherryStudioProviders(it) }
             if (cherryProviders != null && cherryProviders.isNotEmpty()) {
                 return ExternalImportBundle(
@@ -363,7 +354,7 @@ object ExternalImportCodec {
         // 4. RikkaHub Backup ZIP (`settings.json` with assistants/lorebooks/providers)
         val settingsEntry = textEntries.entries.firstOrNull { it.key.substringAfterLast('/').equals("settings.json", ignoreCase = true) }
         if (settingsEntry != null) {
-            val settingsObj = runCatching { AppJson.parseToJsonElement(settingsEntry.value) as? JsonObject }.getOrNull()
+            val settingsObj = runCatching { CoreAppJson.parseToJsonElement(settingsEntry.value) as? JsonObject }.getOrNull()
             if (settingsObj != null && isRikkaHubSettingsJson(settingsObj)) {
                 return parseRikkaHubSettingsJson(settingsObj, sourceFormat = "rikkahub_backup_zip")
             }
@@ -459,7 +450,7 @@ object ExternalImportCodec {
         hintSource: ExternalImportSource?,
     ): ExternalImportBundle {
         val root = try {
-            AppJson.parseToJsonElement(rawJson)
+            CoreAppJson.parseToJsonElement(rawJson)
         } catch (e: Exception) {
             throw IllegalArgumentException("无效的 JSON 格式：${e.message}")
         }
@@ -643,7 +634,7 @@ object ExternalImportCodec {
         val settingsRaw = textEntries[settingsPath]
             ?: textEntries.entries.firstOrNull { it.key.substringAfterLast('/').equals("settings.json", ignoreCase = true) }?.value
         val providers = settingsRaw?.let { raw ->
-            val sObj = runCatching { AppJson.parseToJsonElement(raw) as? JsonObject }.getOrNull()
+            val sObj = runCatching { CoreAppJson.parseToJsonElement(raw) as? JsonObject }.getOrNull()
             sObj?.objOrNull("providers")?.let(ApiProviderImportCodec::parseChatboxProvidersMap).orEmpty()
         }.orEmpty().distinctBy(ApiProviderImportCodec::dedupeKey)
 
@@ -655,7 +646,7 @@ object ExternalImportCodec {
                 val path = entry.strOrNull("path") ?: return@forEachIndexed
                 if (!isSafeArchivePath(path)) return@forEachIndexed
                 val raw = textEntries[path] ?: return@forEachIndexed
-                val sObj = runCatching { AppJson.parseToJsonElement(raw) as? JsonObject }.getOrNull() ?: return@forEachIndexed
+                val sObj = runCatching { CoreAppJson.parseToJsonElement(raw) as? JsonObject }.getOrNull() ?: return@forEachIndexed
                 val meta = entry.objOrNull("meta")
                 val parsed = parseChatboxSessionObject(
                     sObj = sObj,
@@ -671,7 +662,7 @@ object ExternalImportCodec {
             textEntries.entries
                 .filter { it.key.lowercase().startsWith("sessions/") && it.key.lowercase().endsWith(".json") }
                 .forEachIndexed { idx, (_, raw) ->
-                    val sObj = runCatching { AppJson.parseToJsonElement(raw) as? JsonObject }.getOrNull() ?: return@forEachIndexed
+                    val sObj = runCatching { CoreAppJson.parseToJsonElement(raw) as? JsonObject }.getOrNull() ?: return@forEachIndexed
                     parseChatboxSessionObject(sObj, "cb2_$idx", null, null, false)?.let(items::add)
                 }
         }
@@ -1102,7 +1093,7 @@ object ExternalImportCodec {
                 }
                 inDir(path, "worlds") && lower.endsWith(".json") -> {
                     runCatching {
-                        val root = AppJson.parseToJsonElement(content)
+                        val root = CoreAppJson.parseToJsonElement(content)
                         val baseId = path.hashCode().toUInt().toString(16)
                         val convId = "st_lore_$baseId"
                         val asset = TavernAssetCodec.parseLorebookJson(root, convId, path)
@@ -1111,7 +1102,7 @@ object ExternalImportCodec {
                 }
                 inDir(path, "OpenAI Settings") && lower.endsWith(".json") -> {
                     runCatching {
-                        val obj = AppJson.parseToJsonElement(content) as? JsonObject ?: return@runCatching null
+                        val obj = CoreAppJson.parseToJsonElement(content) as? JsonObject ?: return@runCatching null
                         val baseId = path.hashCode().toUInt().toString(16)
                         val convId = "st_preset_$baseId"
                         val asset = TavernAssetCodec.parseChatPresetJson(obj, convId, path)
@@ -1120,14 +1111,14 @@ object ExternalImportCodec {
                 }
                 inDir(path, "QuickReplies") && lower.endsWith(".json") -> {
                     runCatching {
-                        val root = AppJson.parseToJsonElement(content)
+                        val root = CoreAppJson.parseToJsonElement(content)
                         val qr = TavernAssetCodec.parseQuickRepliesJson(root, path)
                         buildQuickRepliesBundle(qr, path)
                     }.getOrNull()?.let { collected.addAll(it.items) }
                 }
                 baseName == "settings.json" -> {
                     runCatching {
-                        val obj = AppJson.parseToJsonElement(content) as? JsonObject ?: return@runCatching null
+                        val obj = CoreAppJson.parseToJsonElement(content) as? JsonObject ?: return@runCatching null
                         val st = TavernAssetCodec.parseSillyTavernSettingsJson(obj)
                         if (st.regexScripts.isNotEmpty() || st.authorNote.isNotBlank()) {
                             buildTavernSettingsBundle(st, path)
@@ -1260,7 +1251,7 @@ object ExternalImportCodec {
         }
 
         val worldbookV4 = runCatching {
-            val rootObj = AppJson.parseToJsonElement(rawJson.removePrefix("\uFEFF").trim()) as? JsonObject
+            val rootObj = CoreAppJson.parseToJsonElement(rawJson.removePrefix("\uFEFF").trim()) as? JsonObject
             val bookObj = rootObj?.objOrNull("data")?.objOrNull("character_book")
                 ?: rootObj?.objOrNull("character_book")
                 ?: rootObj?.objOrNull("character_embdings")
@@ -1619,7 +1610,7 @@ object ExternalImportCodec {
         val convId = "st_chat_$baseId"
 
         lines.forEachIndexed { idx, line ->
-            val obj = runCatching { AppJson.parseToJsonElement(line) }.getOrNull() as? JsonObject ?: return@forEachIndexed
+            val obj = runCatching { CoreAppJson.parseToJsonElement(line) }.getOrNull() as? JsonObject ?: return@forEachIndexed
             // Header line carries user_name / character_name / chat_metadata without mes
             if (!obj.containsKey("mes") && (obj.containsKey("character_name") || obj.containsKey("user_name"))) {
                 obj.strOrNull("user_name")?.takeIf { it.isNotBlank() }?.let { userName = it }
@@ -2600,46 +2591,6 @@ object ExternalImportCodec {
         )
     }
 
-    private fun parseTimestamp(elem: JsonElement?): Long? {
-        val prim = elem as? JsonPrimitive ?: return null
-        if (prim is JsonNull) return null
-        if (prim.isString) {
-            val s = prim.content.trim()
-            if (s.isEmpty()) return null
-            s.toLongOrNull()?.let { return if (it < 10_000_000_000L) it * 1000L else it }
-            s.toDoubleOrNull()?.let { d ->
-                val v = d.toLong()
-                return if (v < 10_000_000_000L) (d * 1000.0).toLong() else v
-            }
-            runCatching { return OffsetDateTime.parse(s).toInstant().toEpochMilli() }
-            runCatching { return Instant.parse(s).toEpochMilli() }
-            runCatching {
-                return LocalDateTime.parse(s.replace(' ', 'T'), DateTimeFormatter.ISO_LOCAL_DATE_TIME)
-                    .atZone(ZoneId.systemDefault())
-                    .toInstant()
-                    .toEpochMilli()
-            }
-            return null
-        }
-        prim.longOrNull?.let { return if (it < 10_000_000_000L) it * 1000L else it }
-        prim.doubleOrNull?.let { d ->
-            val v = d.toLong()
-            return if (v < 10_000_000_000L) (d * 1000.0).toLong() else v
-        }
-        return null
-    }
-
-    private fun readBoundedBytes(zis: ZipInputStream, maxBytes: Int): ByteArray {
-        val baos = ByteArrayOutputStream()
-        val buf = ByteArray(8192)
-        var total = 0
-        while (true) {
-            val read = zis.read(buf)
-            if (read <= 0) break
-            total += read
-            if (total > maxBytes) throw IllegalArgumentException("压缩包内单文件体积超过限制")
-            baos.write(buf, 0, read)
-        }
-        return baos.toByteArray()
-    }
+    private fun parseTimestamp(elem: JsonElement?): Long? =
+        com.gugachat.app.core.util.JsonUtils.parseFlexibleTimestamp(elem)
 }

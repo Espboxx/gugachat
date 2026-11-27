@@ -813,7 +813,7 @@ object AppUpdateService {
                         throw IllegalStateException("Empty APK file")
                     }
                     if (digest != null && normalizedExpectedSha != null) {
-                        val actualSha = digest.digest().toHexString()
+                        val actualSha = com.gugachat.app.core.util.HashUtils.toHex(digest.digest())
                         if (!actualSha.equals(normalizedExpectedSha, ignoreCase = true)) {
                             throw IllegalStateException("APK SHA-256 mismatch")
                         }
@@ -873,39 +873,14 @@ object AppUpdateService {
         throw IllegalStateException(errors.lastOrNull() ?: "All download sources failed")
     }
 
-    fun computeFileSha256(file: File): String? {
-        if (!file.isFile) return null
-        return runCatching {
-            val md = MessageDigest.getInstance("SHA-256")
-            val buf = ByteArray(16 * 1024)
-            FileInputStream(file).use { fis ->
-                while (true) {
-                    val n = fis.read(buf)
-                    if (n <= 0) break
-                    md.update(buf, 0, n)
-                }
-            }
-            md.digest().toHexString()
-        }.getOrNull()
-    }
+    fun computeFileSha256(file: File): String? =
+        com.gugachat.app.core.util.HashUtils.sha256HexOrNull(file)
 
-    fun normalizeSha256(raw: String?): String? {
-        val clean = raw?.trim()
-            ?.removePrefix("sha256:")
-            ?.removePrefix("SHA256:")
-            ?.trim()
-            ?.lowercase(Locale.ROOT)
-            ?: return null
-        return if (clean.length == 64 && clean.all { it in '0'..'9' || it in 'a'..'f' }) clean else null
-    }
+    fun normalizeSha256(raw: String?): String? =
+        com.gugachat.app.core.util.HashUtils.normalizeSha256(raw)
 
-    fun formatBytes(bytes: Long): String {
-        if (bytes <= 0L) return "0 B"
-        val mb = bytes / (1024.0 * 1024.0)
-        if (mb >= 1.0) return String.format(Locale.US, "%.1f MB", mb)
-        val kb = bytes / 1024.0
-        return String.format(Locale.US, "%.0f KB", kb)
-    }
+    fun formatBytes(bytes: Long): String =
+        com.gugachat.app.core.util.FormatUtils.formatBytes(bytes)
 
     fun launchApkInstall(context: Context, apkFile: File): InstallLaunchResult {
         if (!apkFile.exists()) return InstallLaunchResult.FAILED
@@ -988,22 +963,10 @@ object AppUpdateService {
     }
 
     private fun JsonObject.str(key: String): String? =
-        (this[key] as? JsonPrimitive)?.contentOrNull
+        com.gugachat.app.core.util.JsonUtils.run { strOrNull(key) }
 
     private fun JsonObject.strList(key: String): List<String> =
-        (this[key] as? JsonArray)
-            ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { s -> s.isNotEmpty() } }
-            ?: emptyList()
-
-    private fun ByteArray.toHexString(): String = buildString(size * 2) {
-        for (b in this@toHexString) {
-            val i = b.toInt() and 0xFF
-            append(HEX_CHARS[i ushr 4])
-            append(HEX_CHARS[i and 0x0F])
-        }
-    }
-
-    private const val HEX_CHARS = "0123456789abcdef"
+        com.gugachat.app.core.util.JsonUtils.run { strListOrEmpty(key) }
 }
 
 class AppUpdateController(

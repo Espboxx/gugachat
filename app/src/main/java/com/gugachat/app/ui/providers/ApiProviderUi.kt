@@ -1,8 +1,6 @@
 package com.gugachat.app.ui.providers
 
-import android.content.ClipboardManager
 import android.content.Context
-import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -515,13 +513,7 @@ fun ApiProviderFormContent(
                 }
                 Surface(
                     onClick = {
-                        val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                        val clip = cm?.primaryClip?.takeIf { it.itemCount > 0 }
-                            ?.getItemAt(0)
-                            ?.coerceToText(ctx)
-                            ?.toString()
-                            ?.trim()
-                            .orEmpty()
+                        val clip = com.gugachat.app.core.util.ClipboardUtils.readText(ctx).trim()
                         if (clip.isNotBlank()) {
                             onApiKeyChange(clip)
                         }
@@ -1185,16 +1177,8 @@ fun ApiProviderImportSheet(
                 val (bytes, name) = withContext(Dispatchers.IO) {
                     val data = ctx.contentResolver.openInputStream(uri)?.use { it.readBytes() }
                         ?: error("Cannot read selected file")
-                    val disp = runCatching {
-                        ctx.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cur ->
-                            if (cur.moveToFirst()) {
-                                val idx = cur.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                                if (idx >= 0) cur.getString(idx) else null
-                            } else {
-                                null
-                            }
-                        }
-                    }.getOrNull() ?: uri.lastPathSegment
+                    val disp = com.gugachat.app.core.util.UriUtils.resolveDisplayName(ctx.contentResolver, uri)
+                        ?: uri.lastPathSegment
                     data to disp
                 }
                 val bundle = withContext(Dispatchers.Default) {
@@ -1303,12 +1287,7 @@ fun ApiProviderImportSheet(
                                     trailingIcon = {
                                         IconButton(
                                             onClick = {
-                                                val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                                                val clip = cm?.primaryClip?.takeIf { it.itemCount > 0 }
-                                                    ?.getItemAt(0)
-                                                    ?.coerceToText(ctx)
-                                                    ?.toString()
-                                                    .orEmpty()
+                                                val clip = com.gugachat.app.core.util.ClipboardUtils.readText(ctx)
                                                 if (clip.isNotBlank()) {
                                                     pasteInput = clip
                                                     errorMsg = null

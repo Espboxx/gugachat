@@ -2,8 +2,6 @@ package com.gugachat.app.core.storage
 
 import android.content.Context
 import android.content.SharedPreferences
-import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKey
 
 data class TokenSnapshot(
     val accessToken: String?,
@@ -29,7 +27,11 @@ interface TokenStore {
 }
 
 class SecureTokenStore(context: Context) : TokenStore {
-    private val prefs: SharedPreferences = createEncryptedOrFallbackPrefs(context.applicationContext)
+    private val prefs: SharedPreferences = EncryptedPrefsFactory.create(
+        context = context.applicationContext,
+        encryptedName = "gugachat_secure_tokens",
+        fallbackName = "gugachat_tokens_fallback",
+    )
 
     private object Keys {
         const val ACCESS_TOKEN = "auth_token"
@@ -93,24 +95,5 @@ class SecureTokenStore(context: Context) : TokenStore {
             .remove(Keys.TOKEN_EXPIRES_AT)
             .remove(Keys.AUTH_USER_JSON)
             .apply()
-    }
-
-    private companion object {
-        fun createEncryptedOrFallbackPrefs(context: Context): SharedPreferences {
-            return try {
-                val masterKey = MasterKey.Builder(context)
-                    .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-                    .build()
-                EncryptedSharedPreferences.create(
-                    context,
-                    "gugachat_secure_tokens",
-                    masterKey,
-                    EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                    EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
-                )
-            } catch (_: Throwable) {
-                context.getSharedPreferences("gugachat_tokens_fallback", Context.MODE_PRIVATE)
-            }
-        }
     }
 }

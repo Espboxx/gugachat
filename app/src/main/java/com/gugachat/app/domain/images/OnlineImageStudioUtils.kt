@@ -1,10 +1,9 @@
 package com.gugachat.app.domain.images
 
+import com.gugachat.app.core.util.FormatUtils
 import com.gugachat.app.data.api.OnlineImageKeyDto
 import com.gugachat.app.data.api.OnlineImageModelDto
 import com.gugachat.app.domain.chat.FreeQuotaUtils
-import java.util.Locale
-import kotlin.math.roundToLong
 
 data class ImageCostEstimate(
     val amountUsd: Double?,
@@ -169,10 +168,8 @@ object OnlineImageStudioUtils {
         )
     }
 
-    private fun formatUsdEstimate(value: Double): String {
-        val rounded = (value * 10000.0).roundToLong() / 10000.0
-        return "~$" + String.format(Locale.US, "%.4f", rounded).trimEnd('0').trimEnd('.')
-    }
+    private fun formatUsdEstimate(value: Double): String =
+        FormatUtils.formatUsdEstimate(value = value, prefix = "~$", trimTrailingZeros = true)
 }
 
 private object NovelAICostCalculator {

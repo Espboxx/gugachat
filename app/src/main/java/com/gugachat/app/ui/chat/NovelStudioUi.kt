@@ -1,7 +1,5 @@
 package com.gugachat.app.ui.chat
 
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import android.net.Uri
 import androidx.activity.compose.BackHandler
@@ -3025,9 +3023,8 @@ private fun localizeChapterStatus(status: String, isZh: Boolean): String = when 
 }
 
 private fun formatStudioCount(value: Int): String =
-    String.format(Locale.US, "%,d", value.coerceAtLeast(0))
+    com.gugachat.app.core.util.FormatUtils.formatCommaCount(value)
 
 private fun copyTextToClipboard(ctx: Context, label: String, text: String) {
-    val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
-    cm.setPrimaryClip(ClipData.newPlainText(label, text))
+    com.gugachat.app.core.util.ClipboardUtils.copyText(ctx, label, text)
 }

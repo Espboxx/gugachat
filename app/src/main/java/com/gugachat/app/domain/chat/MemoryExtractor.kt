@@ -1,6 +1,6 @@
 package com.gugachat.app.domain.chat
 
-import com.gugachat.app.data.api.AppJson
+import com.gugachat.app.core.util.CoreAppJson
 import com.gugachat.app.data.api.WireChatMessageDto
 import kotlinx.serialization.Serializable
 import java.util.UUID
@@ -61,7 +61,7 @@ object MemoryExtractor {
         if (start < 0 || end <= start) return emptyList()
         val jsonArr = stripped.substring(start, end + 1)
         val dtos = try {
-            AppJson.decodeFromString<List<ExtractedMemoryDto>>(jsonArr)
+            CoreAppJson.decodeFromString<List<ExtractedMemoryDto>>(jsonArr)
         } catch (_: Exception) {
             return emptyList()
         }

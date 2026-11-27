@@ -409,33 +409,21 @@ object FileTextExtractor {
     ): Map<String, ByteArray> {
         val out = LinkedHashMap<String, ByteArray>()
         var totalBytes = 0L
-        ZipInputStream(ByteArrayInputStream(bytes)).use { zis ->
-            while (true) {
-                val entry = zis.nextEntry ?: break
-                if (!entry.isDirectory && predicate(entry.name)) {
-                    val data = readLimitedBytes(zis, MAX_ZIP_ENTRY_BYTES)
-                    totalBytes += data.size
-                    if (totalBytes <= MAX_ZIP_ENTRY_BYTES * 3L) {
-                        out[entry.name] = data
-                    }
+        com.gugachat.app.core.util.StreamZipUtils.forEachZipEntry(
+            zipBytes = bytes,
+            skipMacOsMeta = false,
+        ) { entryName, zis ->
+            if (predicate(entryName)) {
+                val data = com.gugachat.app.core.util.StreamZipUtils.run {
+                    zis.readTruncatedBytes(MAX_ZIP_ENTRY_BYTES)
                 }
-                zis.closeEntry()
+                totalBytes += data.size
+                if (totalBytes <= MAX_ZIP_ENTRY_BYTES * 3L) {
+                    out[entryName] = data
+                }
             }
         }
         return out
-    }
-
-    private fun readLimitedBytes(ins: ZipInputStream, maxBytes: Int): ByteArray {
-        val buf = ByteArray(8192)
-        val baos = java.io.ByteArrayOutputStream()
-        var total = 0
-        while (total < maxBytes) {
-            val n = ins.read(buf, 0, min(buf.size, maxBytes - total))
-            if (n <= 0) break
-            baos.write(buf, 0, n)
-            total += n
-        }
-        return baos.toByteArray()
     }
 
     private fun parseXmlSafely(bytes: ByteArray): org.w3c.dom.Document? = runCatching {

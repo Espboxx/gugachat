@@ -2,8 +2,6 @@ package com.gugachat.app.core.storage
 
 import android.content.Context
 import android.content.SharedPreferences
-import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKey
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -11,7 +9,9 @@ import kotlinx.coroutines.flow.asStateFlow
 class SecretVaultStore internal constructor(
     private val prefs: SharedPreferences,
 ) {
-    constructor(context: Context) : this(createEncryptedOrFallbackPrefs(context.applicationContext))
+    constructor(context: Context) : this(
+        EncryptedPrefsFactory.create(context.applicationContext, PREFS_NAME, FALLBACK_PREFS_NAME),
+    )
 
     private val _secretsFlow = MutableStateFlow(readSecretsSnapshotLocked())
     val secretsFlow: StateFlow<Map<String, String>> = _secretsFlow.asStateFlow()
@@ -159,22 +159,5 @@ class SecretVaultStore internal constructor(
 
         private fun isInternalCryptoKey(key: String): Boolean =
             key.startsWith("__androidx_security_crypto_")
-
-        private fun createEncryptedOrFallbackPrefs(context: Context): SharedPreferences {
-            return try {
-                val masterKey = MasterKey.Builder(context)
-                    .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-                    .build()
-                EncryptedSharedPreferences.create(
-                    context,
-                    PREFS_NAME,
-                    masterKey,
-                    EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                    EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
-                )
-            } catch (_: Throwable) {
-                context.getSharedPreferences(FALLBACK_PREFS_NAME, Context.MODE_PRIVATE)
-            }
-        }
     }
 }

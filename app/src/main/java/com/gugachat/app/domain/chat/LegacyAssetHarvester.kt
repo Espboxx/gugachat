@@ -1,13 +1,13 @@
 package com.gugachat.app.domain.chat
 
-import com.gugachat.app.data.api.AppJson
+import com.gugachat.app.core.util.CoreAppJson
+import com.gugachat.app.core.util.HashUtils
 import com.gugachat.app.data.local.AssetDao
 import com.gugachat.app.data.local.CharacterCardEntity
 import com.gugachat.app.data.local.ChatDao
 import com.gugachat.app.data.local.PersonaEntity
 import com.gugachat.app.data.local.toDomain
 import kotlinx.serialization.encodeToString
-import java.security.MessageDigest
 
 data class LegacyHarvestResult(
     val harvestedCardCount: Int = 0,
@@ -88,14 +88,14 @@ object LegacyAssetHarvester {
                     characterVersion = "legacy",
                     avatarPath = leadChar?.avatarPath?.takeIf { it.isNotBlank() },
                     spritePath = leadChar?.spritePath?.takeIf { it.isNotBlank() },
-                    expressionSpritesJson = AppJson.encodeToString(leadChar?.expressionSprites.orEmpty()),
+                    expressionSpritesJson = CoreAppJson.encodeToString(leadChar?.expressionSprites.orEmpty()),
                     tagsJson = "[]",
                     playStyle = rp.playStyle.name,
                     description = leadDesc,
                     personality = leadChar?.personality.orEmpty().trim(),
                     scenario = rp.worldview.trim(),
                     firstMes = rp.greeting,
-                    alternateGreetingsJson = AppJson.encodeToString(rp.alternateGreetings),
+                    alternateGreetingsJson = CoreAppJson.encodeToString(rp.alternateGreetings),
                     groupOnlyGreetingsJson = "[]",
                     mesExample = rp.mesExample,
                     systemPrompt = rp.systemRules,
@@ -104,9 +104,9 @@ object LegacyAssetHarvester {
                     depthPromptText = rp.authorNote,
                     depthPromptDepth = rp.authorNoteDepth.coerceIn(0, 12),
                     depthPromptRole = "system",
-                    castJson = AppJson.encodeToString(rp.cast),
-                    regexScriptsJson = AppJson.encodeToString(rp.regexScripts),
-                    visualThemeJson = AppJson.encodeToString(rp.visualTheme),
+                    castJson = CoreAppJson.encodeToString(rp.cast),
+                    regexScriptsJson = CoreAppJson.encodeToString(rp.regexScripts),
+                    visualThemeJson = CoreAppJson.encodeToString(rp.visualTheme),
                     primaryWorldbookId = null,
                     sourceSpec = rp.cardSource?.takeIf { it.isNotBlank() } ?: "legacy_rp",
                     contentFingerprint = fingerprint,
@@ -157,13 +157,6 @@ object LegacyAssetHarvester {
     private fun personaDedupeKey(name: String, description: String): String =
         "${name.trim().lowercase()}|${description.trim()}"
 
-    private fun sha256Hex(text: String): String {
-        val digest = MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8))
-        val sb = StringBuilder(digest.size * 2)
-        for (b in digest) {
-            sb.append(((b.toInt() ushr 4) and 0xF).toString(16))
-            sb.append((b.toInt() and 0xF).toString(16))
-        }
-        return sb.toString()
-    }
+    private fun sha256Hex(text: String): String =
+        com.gugachat.app.core.util.HashUtils.sha256Hex(text)
 }

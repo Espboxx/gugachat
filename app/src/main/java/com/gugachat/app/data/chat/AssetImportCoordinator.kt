@@ -3,7 +3,6 @@ package com.gugachat.app.data.chat
 import android.content.ContentResolver
 import android.content.Context
 import android.net.Uri
-import android.provider.OpenableColumns
 import com.gugachat.app.core.storage.LocalMediaPathResolver
 import com.gugachat.app.data.api.AppJson
 import com.gugachat.app.data.local.AppDatabase
@@ -299,19 +298,14 @@ class AssetImportCoordinator(
         return normalizedBook to (existing != null)
     }
 
-    private fun saveMediaBytesSync(bytes: ByteArray, prefix: String, ext: String): String {
-        val dir = File(filesDir, "rp_media")
-        if (!dir.exists()) dir.mkdirs()
-        val safeExt = ext.trim().lowercase().ifBlank { "png" }
-        val outFile = File(dir, "${prefix}_${UUID.randomUUID()}.$safeExt")
-        outFile.writeBytes(bytes)
-        return LocalMediaPathResolver.toRelativePath(filesDir.absolutePath, outFile.absolutePath)
-            ?: "rp_media/${outFile.name}"
-    }
+    private fun saveMediaBytesSync(bytes: ByteArray, prefix: String, ext: String): String =
+        LocalMediaPathResolver.saveRpMediaBytes(
+            filesDir = filesDir,
+            bytes = bytes,
+            prefix = prefix,
+            ext = ext,
+        ).first
 
-    private fun resolveUriDisplayName(contentResolver: ContentResolver, uri: Uri): String? = runCatching {
-        contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
-            if (c.moveToFirst()) c.getString(0) else null
-        }
-    }.getOrNull() ?: uri.lastPathSegment?.substringAfterLast('/')
+    private fun resolveUriDisplayName(contentResolver: ContentResolver, uri: Uri): String? =
+        com.gugachat.app.core.util.UriUtils.resolveDisplayName(contentResolver, uri)
 }

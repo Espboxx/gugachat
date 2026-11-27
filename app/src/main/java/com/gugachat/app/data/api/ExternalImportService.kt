@@ -195,26 +195,19 @@ object ExternalImportService {
                             if (!resp.isSuccessful) return@use
                             val ctype = resp.header("Content-Type").orEmpty().lowercase()
                             val body = resp.body ?: return@use
-                            val out = ByteArrayOutputStream()
-                            val buf = ByteArray(8192)
-                            var total = 0
-                            body.byteStream().use { ins ->
-                                while (true) {
-                                    val n = ins.read(buf)
-                                    if (n <= 0) break
-                                    total += n
-                                    if (total > maxImageBytes) return@use
-                                    out.write(buf, 0, n)
-                                }
-                            }
-                            val bytes = out.toByteArray()
+                            val bytes = com.gugachat.app.core.util.StreamZipUtils.run {
+                                body.byteStream().readBoundedBytesOrNull(maxImageBytes.toLong(), bufSize = 8192)
+                            } ?: return@use
                             if (bytes.size < 16) return@use
                             val ext = inferRemoteImageExt(bytes, ctype, url) ?: return@use
                             val safeCharId = npc.id.replace(Regex("[^A-Za-z0-9_-]"), "_").take(32)
                             val safeConv = convId.replace(Regex("[^A-Za-z0-9_-]"), "_").take(24)
                             val file = File(mediaDir, "imp_${safeConv}_${safeCharId}.$ext")
                             file.writeBytes(bytes)
-                            downloaded[npc.id] = file.absolutePath
+                            downloaded[npc.id] = com.gugachat.app.core.storage.LocalMediaPathResolver.toRelativePath(
+                                appContext.filesDir.absolutePath,
+                                file.absolutePath,
+                            ) ?: "rp_media/${file.name}"
                         }
                     }
                 }

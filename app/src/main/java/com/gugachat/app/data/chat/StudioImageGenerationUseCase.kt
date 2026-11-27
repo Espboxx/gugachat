@@ -1,8 +1,6 @@
 package com.gugachat.app.data.chat
 
 import android.content.Context
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import com.gugachat.app.AuthSessionState
 import com.gugachat.app.core.storage.ApiProviderStore
 import com.gugachat.app.core.storage.LocalMediaPathResolver
@@ -22,9 +20,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.withContext
-import java.io.ByteArrayOutputStream
 import java.io.File
-import java.util.UUID
 
 data class GeneratedRpMediaResult(
     val relativePath: String,
@@ -175,13 +171,12 @@ class StudioImageGenerationUseCase(
         prefix: String,
         ext: String,
     ): GeneratedRpMediaResult = withContext(Dispatchers.IO) {
-        val dir = File(filesDir, "rp_media")
-        if (!dir.exists()) dir.mkdirs()
-        val safeExt = ext.trim().lowercase().ifBlank { "png" }
-        val outFile = File(dir, "${prefix}_${UUID.randomUUID()}.$safeExt")
-        outFile.writeBytes(bytes)
-        val relPath = LocalMediaPathResolver.toRelativePath(filesDir.absolutePath, outFile.absolutePath)
-            ?: "rp_media/${outFile.name}"
+        val (relPath, outFile) = LocalMediaPathResolver.saveRpMediaBytes(
+            filesDir = filesDir,
+            bytes = bytes,
+            prefix = prefix,
+            ext = ext,
+        )
         GeneratedRpMediaResult(relativePath = relPath, absoluteFile = outFile)
     }
 
@@ -189,37 +184,15 @@ class StudioImageGenerationUseCase(
         bytes: ByteArray,
         prefix: String,
         ext: String,
-    ): String {
-        val dir = File(filesDir, "rp_media")
-        if (!dir.exists()) dir.mkdirs()
-        val safeExt = ext.trim().lowercase().ifBlank { "png" }
-        val outFile = File(dir, "${prefix}_${UUID.randomUUID()}.$safeExt")
-        outFile.writeBytes(bytes)
-        return LocalMediaPathResolver.toRelativePath(filesDir.absolutePath, outFile.absolutePath)
-            ?: "rp_media/${outFile.name}"
-    }
+    ): String = LocalMediaPathResolver.saveRpMediaBytes(
+        filesDir = filesDir,
+        bytes = bytes,
+        prefix = prefix,
+        ext = ext,
+    ).first
 
-    fun transcodeToPngBytes(rawBytes: ByteArray): ByteArray? = runCatching {
-        val decoded = BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size) ?: return@runCatching null
-        val maxSide = 1024
-        val bitmap = if (decoded.width > maxSide || decoded.height > maxSide) {
-            val scale = maxSide.toFloat() / maxOf(decoded.width, decoded.height).toFloat()
-            val w = (decoded.width * scale).toInt().coerceAtLeast(1)
-            val h = (decoded.height * scale).toInt().coerceAtLeast(1)
-            Bitmap.createScaledBitmap(decoded, w, h, true).also {
-                if (it !== decoded) decoded.recycle()
-            }
-        } else {
-            decoded
-        }
-        try {
-            val out = ByteArrayOutputStream()
-            bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
-            out.toByteArray()
-        } finally {
-            bitmap.recycle()
-        }
-    }.getOrNull()
+    fun transcodeToPngBytes(rawBytes: ByteArray): ByteArray? =
+        RpCardCodec.transcodeToPngBytes(rawBytes, maxSide = 1024)
 
     fun inferImageExt(mimeType: String?): String = when (mimeType?.lowercase()) {
         "image/png" -> "png"

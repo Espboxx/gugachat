@@ -1,7 +1,5 @@
 package com.gugachat.app.ui.images
 
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -191,8 +189,7 @@ fun InspireTabContent(
     }
 
     fun copyPrompt(text: String) {
-        val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        cm.setPrimaryClip(ClipData.newPlainText("prompt", text))
+        com.gugachat.app.core.util.ClipboardUtils.copyText(ctx, "prompt", text)
         onToast(strings.common.copied)
     }
 

@@ -7,7 +7,6 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.pdf.PdfRenderer
 import android.net.Uri
-import android.provider.OpenableColumns
 import android.util.Base64
 import androidx.core.content.FileProvider
 import com.gugachat.app.domain.chat.AttachmentKind
@@ -319,51 +318,14 @@ class AttachmentFileStore(
         }
     }
 
-    private fun queryDisplayName(uri: Uri): String {
-        val resolver = context.contentResolver
-        runCatching {
-            resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
-                if (cursor.moveToFirst()) {
-                    val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                    if (idx >= 0) {
-                        val name = cursor.getString(idx)
-                        if (!name.isNullOrBlank()) return name.trim()
-                    }
-                }
-            }
-        }
-        return uri.lastPathSegment?.substringAfterLast('/')?.trim().orEmpty()
-    }
+    private fun queryDisplayName(uri: Uri): String =
+        com.gugachat.app.core.util.UriUtils.resolveDisplayName(context.contentResolver, uri).orEmpty()
 
-    private fun queryFileSize(uri: Uri): Long {
-        val resolver = context.contentResolver
-        runCatching {
-            resolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { cursor ->
-                if (cursor.moveToFirst()) {
-                    val idx = cursor.getColumnIndex(OpenableColumns.SIZE)
-                    if (idx >= 0 && !cursor.isNull(idx)) return cursor.getLong(idx)
-                }
-            }
-        }
-        return -1L
-    }
+    private fun queryFileSize(uri: Uri): Long =
+        com.gugachat.app.core.util.UriUtils.queryFileSize(context.contentResolver, uri)
 
-    private fun readBoundedBytes(uri: Uri, maxBytes: Long): ByteArray? {
-        val ins = context.contentResolver.openInputStream(uri) ?: return null
-        ins.use { stream ->
-            val baos = ByteArrayOutputStream()
-            val buf = ByteArray(16 * 1024)
-            var total = 0L
-            while (true) {
-                val n = stream.read(buf)
-                if (n <= 0) break
-                total += n
-                if (total > maxBytes) return null
-                baos.write(buf, 0, n)
-            }
-            return baos.toByteArray()
-        }
-    }
+    private fun readBoundedBytes(uri: Uri, maxBytes: Long): ByteArray? =
+        com.gugachat.app.core.util.UriUtils.readBoundedBytes(context.contentResolver, uri, maxBytes)
 
     private fun inferMimeFromName(fileName: String): String = when (FileTextExtractor.extensionOf(fileName)) {
         "pdf" -> "application/pdf"

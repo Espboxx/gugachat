@@ -1,6 +1,6 @@
 package com.gugachat.app.domain.chat
 
-import com.gugachat.app.data.api.AppJson
+import com.gugachat.app.core.util.CoreAppJson
 import com.gugachat.app.data.local.CharacterCardEntity
 import com.gugachat.app.data.local.PersonaEntity
 import com.gugachat.app.data.local.PromptPresetEntity
@@ -769,24 +769,14 @@ object ContextBuilder {
         else -> "system"
     }
 
-    private fun decodeStringList(rawJson: String): List<String> {
-        val trimmed = rawJson.trim()
-        if (trimmed.isEmpty() || trimmed == "[]") return emptyList()
-        return runCatching {
-            val arr = AppJson.parseToJsonElement(trimmed) as? kotlinx.serialization.json.JsonArray
-                ?: return@runCatching emptyList()
-            arr.mapNotNull { el ->
-                val prim = el as? kotlinx.serialization.json.JsonPrimitive
-                if (prim == null || prim is kotlinx.serialization.json.JsonNull) null else prim.content
-            }
-        }.getOrDefault(emptyList())
-    }
+    private fun decodeStringList(rawJson: String): List<String> =
+        com.gugachat.app.core.util.JsonUtils.decodeStringListJson(rawJson, trimAndFilterEmpty = false)
 
     private fun parsePresetBlocks(preset: PromptPresetEntity?): List<PromptPresetBlock> {
         val raw = preset?.blocksJson?.trim().orEmpty()
         if (raw.isEmpty() || raw == "[]") return emptyList()
         return runCatching {
-            AppJson.decodeFromString(ListSerializer(PromptPresetBlock.serializer()), raw)
+            CoreAppJson.decodeFromString(ListSerializer(PromptPresetBlock.serializer()), raw)
         }.getOrDefault(emptyList())
     }
 
@@ -794,7 +784,7 @@ object ContextBuilder {
         val raw = card?.castJson?.trim().orEmpty()
         if (raw.isEmpty() || raw == "[]") return emptyList()
         return runCatching {
-            AppJson.decodeFromString(ListSerializer(RpCharacter.serializer()), raw)
+            CoreAppJson.decodeFromString(ListSerializer(RpCharacter.serializer()), raw)
         }.getOrDefault(emptyList())
     }
 
