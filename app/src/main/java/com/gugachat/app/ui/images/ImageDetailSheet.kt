@@ -3,9 +3,7 @@ package com.gugachat.app.ui.images
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -29,9 +27,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddPhotoAlternate
+import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Refresh
@@ -42,7 +41,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -70,9 +68,7 @@ import com.gugachat.app.core.theme.GuButton
 import com.gugachat.app.core.theme.GuButtonVariant
 import com.gugachat.app.core.theme.GuConfirmDialog
 import com.gugachat.app.core.theme.GuGroupedCard
-import com.gugachat.app.core.theme.GuIconTile
 import com.gugachat.app.core.theme.GuModalDragHandle
-import com.gugachat.app.core.theme.GuPill
 import com.gugachat.app.core.theme.GuSectionHeader
 import com.gugachat.app.core.theme.GuSheetHeader
 import com.gugachat.app.core.theme.LocalAppTheme
@@ -133,7 +129,7 @@ fun ImageDetailSheet(
             val (rw, rh) = OnlineImageStudioUtils.parseAspectRatio(generation.aspect_ratio)
             (rw / rh).toFloat()
         }
-        raw.coerceIn(0.75f, 1.6f)
+        raw.coerceIn(0.68f, 1.6f)
     }
 
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -154,6 +150,19 @@ fun ImageDetailSheet(
                 subtitle = generation.model.takeIf { it.isNotBlank() },
                 onClose = onDismiss,
                 closeContentDescription = strings.common.close,
+                trailing = {
+                    IconButton(
+                        onClick = { showDeleteConfirm = true },
+                        modifier = Modifier.size(36.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.DeleteOutline,
+                            contentDescription = strings.common.delete,
+                            tint = c.muted,
+                            modifier = Modifier.size(19.dp),
+                        )
+                    }
+                },
             )
 
             Column(
@@ -161,7 +170,7 @@ fun ImageDetailSheet(
                     .fillMaxWidth()
                     .weight(1f, fill = false)
                     .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 val heroShape = RoundedCornerShape(16.dp)
@@ -172,7 +181,6 @@ fun ImageDetailSheet(
                         .aspectRatio(previewAspect)
                         .clip(heroShape)
                         .background(c.surfaceSoft)
-                        .border(theme.borderWidth, c.border, heroShape)
                         .clickable(onClick = onOpenLightbox),
                 ) {
                     AuthenticatedImage(
@@ -192,8 +200,7 @@ fun ImageDetailSheet(
                             .align(Alignment.BottomEnd)
                             .padding(10.dp)
                             .clip(RoundedCornerShape(999.dp))
-                            .background(Color.Black.copy(alpha = 0.62f))
-                            .border(0.8.dp, Color.White.copy(alpha = 0.24f), RoundedCornerShape(999.dp))
+                            .background(Color.Black.copy(alpha = 0.56f))
                             .padding(horizontal = 10.dp, vertical = 5.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -203,7 +210,7 @@ fun ImageDetailSheet(
                             text = strings.images.zoomPreview,
                             color = Color.White,
                             fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.SemiBold,
                         )
                     }
                 }
@@ -211,14 +218,24 @@ fun ImageDetailSheet(
                 if (generation.images.size > 1) {
                     Row(
                         modifier = Modifier.horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         generation.images.forEach { asset ->
-                            GuPill(
-                                label = "#${asset.index + 1}",
-                                selected = asset.index == safeIdx,
-                                onClick = { onSelectImageIndex(asset.index) },
-                            )
+                            val selected = asset.index == safeIdx
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(999.dp))
+                                    .background(if (selected) c.primarySoft else c.surfaceSoft)
+                                    .clickable { onSelectImageIndex(asset.index) }
+                                    .padding(horizontal = 11.dp, vertical = 5.dp),
+                            ) {
+                                Text(
+                                    text = "#${asset.index + 1}",
+                                    color = if (selected) c.primarySoftInk else c.muted,
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                            }
                         }
                     }
                 }
@@ -231,11 +248,21 @@ fun ImageDetailSheet(
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
                             versions.forEachIndexed { idx, v ->
-                                GuPill(
-                                    label = "v${idx + 1} · ${strings.images.actions[v.action] ?: (v.action ?: "gen")}",
-                                    selected = v.id == generation.id,
-                                    onClick = { onSelectVersion(v) },
-                                )
+                                val selected = v.id == generation.id
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(999.dp))
+                                        .background(if (selected) c.primarySoft else c.surfaceSoft)
+                                        .clickable { onSelectVersion(v) }
+                                        .padding(horizontal = 11.dp, vertical = 5.dp),
+                                ) {
+                                    Text(
+                                        text = "v${idx + 1} · ${strings.images.actions[v.action] ?: (v.action ?: "gen")}",
+                                        color = if (selected) c.primarySoftInk else c.muted,
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                    )
+                                }
                             }
                         }
                     }
@@ -259,7 +286,7 @@ fun ImageDetailSheet(
                                     text = strings.images.promptLabel,
                                     color = c.muted,
                                     fontSize = 11.5.sp,
-                                    fontWeight = FontWeight.Bold,
+                                    fontWeight = FontWeight.SemiBold,
                                 )
                                 IconButton(
                                     onClick = {
@@ -267,7 +294,7 @@ fun ImageDetailSheet(
                                         cm.setPrimaryClip(ClipData.newPlainText("prompt", generation.prompt))
                                         container.toastController.show(strings.common.copied)
                                     },
-                                    modifier = Modifier.size(36.dp),
+                                    modifier = Modifier.size(34.dp),
                                 ) {
                                     Icon(
                                         Icons.Default.ContentCopy,
@@ -282,20 +309,20 @@ fun ImageDetailSheet(
                                 color = c.ink,
                                 fontSize = 13.sp,
                                 lineHeight = 19.5.sp,
-                                fontWeight = FontWeight.Medium,
+                                fontWeight = FontWeight.Normal,
                                 modifier = Modifier.padding(end = 8.dp),
                             )
                         }
                         HorizontalDivider(
-                            thickness = theme.borderWidth,
-                            color = c.border.copy(alpha = 0.78f),
+                            thickness = 0.5.dp,
+                            color = c.border.copy(alpha = 0.55f),
                         )
                     }
 
                     FlowRow(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 14.dp, vertical = 11.dp),
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
@@ -323,147 +350,121 @@ fun ImageDetailSheet(
                         )
                     }
                 }
+            }
 
-                // Tier 1: Primary Studio & Draw Same CTAs
+            // Sticky positive action dock: [画同款] / [局部重绘 / 扩图] / [保存相册] + compact utilities
+            HorizontalDivider(thickness = 0.5.dp, color = c.border.copy(alpha = 0.55f))
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(c.surface)
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(9.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    DockUtilityChip(
+                        icon = Icons.Default.Download,
+                        label = if (isZh) "保存相册" else strings.images.actionDownload,
+                        onClick = onSaveToGallery,
+                        modifier = Modifier.weight(1f),
+                    )
+                    DockUtilityChip(
+                        icon = Icons.Default.AspectRatio,
+                        label = if (isZh) "智能扩图" else "Expand",
+                        onClick = { onOpenEditor(ImageEditMode.OUTPAINT) },
+                        modifier = Modifier.weight(1f),
+                    )
+                    DockUtilityChip(
+                        icon = Icons.Default.AddPhotoAlternate,
+                        label = strings.images.actionPadRef,
+                        onClick = onUseAsRef,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (generation.can_regenerate == true || generation.status == "completed") {
+                        DockUtilityChip(
+                            icon = Icons.Default.Refresh,
+                            label = if (isZh) "重绘" else strings.images.regenerate,
+                            onClick = onRegenerate,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    DockUtilityChip(
+                        icon = Icons.Default.Share,
+                        label = if (isZh) "分享" else "Share",
+                        onClick = onShare,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     GuButton(
                         onClick = { onOpenEditor(ImageEditMode.INPAINT) },
-                        variant = GuButtonVariant.HONEY,
+                        variant = GuButtonVariant.SUBTLE,
                         modifier = Modifier.weight(1f),
                     ) {
                         Icon(Icons.Default.Brush, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text(strings.images.actionStudio, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        Text(
+                            text = if (isZh) "局部重绘" else strings.images.actionStudio,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
                     }
                     GuButton(
                         onClick = onDrawSame,
                         variant = GuButtonVariant.PRIMARY,
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.weight(1.15f),
                     ) {
                         Icon(Icons.Default.Palette, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text(strings.images.actionDrawSame, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                    }
-                }
-
-                // Tier 2: 4-col compact utility tiles
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    DetailUtilityTile(
-                        icon = Icons.Default.AddPhotoAlternate,
-                        label = strings.images.actionPadRef,
-                        tint = c.success,
-                        bg = c.successBg,
-                        onClick = onUseAsRef,
-                        modifier = Modifier.weight(1f),
-                    )
-                    if (generation.can_regenerate == true || generation.status == "completed") {
-                        DetailUtilityTile(
-                            icon = Icons.Default.Refresh,
-                            label = strings.images.regenerate,
-                            tint = c.primarySoftInk,
-                            bg = c.primarySoft,
-                            onClick = onRegenerate,
-                            modifier = Modifier.weight(1f),
-                        )
-                    }
-                    DetailUtilityTile(
-                        icon = Icons.Default.Download,
-                        label = strings.images.actionDownload,
-                        tint = c.accent,
-                        bg = c.accentSoft,
-                        onClick = onSaveToGallery,
-                        modifier = Modifier.weight(1f),
-                    )
-                    DetailUtilityTile(
-                        icon = Icons.Default.Share,
-                        label = if (isZh) "分享" else "Share",
-                        tint = c.ink,
-                        bg = c.surfaceSoft,
-                        onClick = onShare,
-                        modifier = Modifier.weight(1f),
-                    )
-                }
-
-                // Tier 3: Softened danger Delete pill
-                Surface(
-                    onClick = { showDeleteConfirm = true },
-                    shape = RoundedCornerShape(theme.pillRadius),
-                    color = c.dangerBg.copy(alpha = 0.42f),
-                    border = BorderStroke(theme.borderWidth, c.danger.copy(alpha = 0.42f)),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 44.dp),
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 10.dp),
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(Icons.Default.Delete, contentDescription = null, tint = c.danger, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(6.dp))
                         Text(
-                            text = strings.common.delete,
-                            color = c.danger,
+                            text = strings.images.actionDrawSame,
                             fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.SemiBold,
                         )
                     }
                 }
-
-                Spacer(Modifier.height(6.dp))
             }
         }
     }
 }
 
 @Composable
-private fun DetailUtilityTile(
+private fun DockUtilityChip(
     icon: ImageVector,
     label: String,
-    tint: Color,
-    bg: Color,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val theme = LocalAppTheme.current
-    val c = theme.colors
-    Surface(
-        onClick = onClick,
-        shape = RoundedCornerShape(14.dp),
-        color = c.surface,
-        border = BorderStroke(theme.borderWidth, c.border),
-        shadowElevation = if (theme.isDark) 0.dp else 0.5.dp,
-        modifier = modifier.heightIn(min = 66.dp),
+    val c = LocalAppTheme.current.colors
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(c.surfaceSoft)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 4.dp, vertical = 7.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(3.dp),
     ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 6.dp, vertical = 9.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(5.dp),
-        ) {
-            GuIconTile(
-                icon = icon,
-                tint = tint,
-                backgroundColor = bg,
-                size = 30.dp,
-                iconSize = 16.dp,
-                cornerRadius = 8.dp,
-            )
-            Text(
-                text = label,
-                color = c.ink,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = c.ink,
+            modifier = Modifier.size(16.dp),
+        )
+        Text(
+            text = label,
+            color = c.muted,
+            fontSize = 10.5.sp,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
