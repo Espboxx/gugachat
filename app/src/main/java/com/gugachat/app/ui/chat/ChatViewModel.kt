@@ -2603,14 +2603,14 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
 
                     is AssetImportResult.WorldbookImported -> {
                         container.toastController.show(
-                            if (isZh) "已导入世界书「${imported.worldbook.name}」到全局资产库"
+                            if (isZh) "已导入世界书「${imported.worldbook.name}」到「创作 → 设定」"
                             else "Imported worldbook \"${imported.worldbook.name}\" to library",
                         )
                     }
 
                     is AssetImportResult.PromptPresetImported -> {
                         container.toastController.show(
-                            if (isZh) "已导入预设「${imported.preset.name}」到全局资产库"
+                            if (isZh) "已导入预设「${imported.preset.name}」到「创作 → 设定」"
                             else "Imported preset \"${imported.preset.name}\" to library",
                         )
                     }
@@ -3868,14 +3868,14 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             }
             is AssetImportResult.WorldbookImported -> {
                 container.toastController.show(
-                    if (isZh) "已导入世界书「${imported.worldbook.name}」（${imported.entries.size} 条）到全局资产库"
+                    if (isZh) "已导入世界书「${imported.worldbook.name}」（${imported.entries.size} 条）到「创作 → 设定」"
                     else "Imported worldbook \"${imported.worldbook.name}\" (${imported.entries.size} entries)",
                 )
                 true
             }
             is AssetImportResult.PromptPresetImported -> {
                 container.toastController.show(
-                    if (isZh) "已导入预设「${imported.preset.name}」到全局资产库"
+                    if (isZh) "已导入预设「${imported.preset.name}」到「创作 → 设定」"
                     else "Imported preset \"${imported.preset.name}\" to library",
                 )
                 true

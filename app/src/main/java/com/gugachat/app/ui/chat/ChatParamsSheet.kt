@@ -531,12 +531,12 @@ fun ChatParamsSheet(
                             if (avail > 0) {
                                 if (isZh) "未挂载预设（点击从 $avail 套预设中选择）" else "None (tap to pick from $avail presets)"
                             } else {
-                                if (isZh) "暂无预设，可在工具→资产库或导入页添加" else "No presets imported yet"
+                                if (isZh) "暂无预设，可在「创作→设定」或导入页添加" else "No presets imported yet"
                             }
                         }
                         GuGroupedCard(modifier = Modifier.fillMaxWidth()) {
                             GuSettingsRow(
-                                title = if (isZh) "🎛 提示词预设" else "🎛 Prompt Preset",
+                                title = if (isZh) "提示词预设" else "Prompt Preset",
                                 subtitle = presetSubtitle,
                                 icon = Icons.Default.Tune,
                                 iconTint = c.primarySoftInk,

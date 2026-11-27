@@ -1760,12 +1760,15 @@ private fun WebDavSyncSheet(
                 ) {
                     Icon(Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text(if (isZh) "📥 从云端恢复" else "📥 Restore from Cloud")
+                    Text(if (isZh) "从云端恢复" else "Restore from Cloud")
                 }
 
                 // Status & Last Sync card
                 if (testStatus != null || config.lastSyncAt > 0L || remoteUpdatedAt != null || lastSyncSummary != null) {
-                    GuCard(backgroundColor = c.surfaceSoft) {
+                    GuCard(
+                        modifier = Modifier.fillMaxWidth(),
+                        backgroundColor = c.surfaceSoft,
+                    ) {
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             if (testStatus != null) {
                                 val isError = testStatus.startsWith("失败") || testStatus.startsWith("Failed")
