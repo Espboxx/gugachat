@@ -1,5 +1,7 @@
 package com.gugachat.app.ui.images
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
@@ -29,10 +31,13 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bookmarks
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Checklist
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.MoreHoriz
+import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.WarningAmber
@@ -42,6 +47,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -49,61 +55,154 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.gugachat.app.AppContainer
+import com.gugachat.app.AuthSessionState
 import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.i18n.LocalAppStrings
 import com.gugachat.app.core.theme.GuAwningHeader
 import com.gugachat.app.core.theme.GuIconTile
+import com.gugachat.app.core.theme.GuPill
 import com.gugachat.app.core.theme.GuPopupMenu
 import com.gugachat.app.core.theme.LocalAppShellController
 import com.gugachat.app.core.theme.LocalAppTheme
+import com.gugachat.app.ui.studio.AssetHubViewModel
+import com.gugachat.app.ui.studio.CharactersHubTab
+import com.gugachat.app.ui.studio.LoreSettingsHubTab
+import com.gugachat.app.ui.studio.StudioRoutingPolicy
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
+/**
+ * Three-domain Creative Studio hub unifying:
+ * 0. `角色` ([CharactersHubTab])
+ * 1. `设定` ([LoreSettingsHubTab])
+ * 2. `画室` ([GalleryTabContent], [InspireTabContent], [ToolsTabContent])
+ */
 @Composable
 fun CreativeStudioScreen(
     container: AppContainer,
     imageViewModel: ImageViewModel,
     onOpenProfile: (() -> Unit)? = null,
+    onOpenConversation: (String) -> Unit = {},
+    assetHubViewModel: AssetHubViewModel? = null,
 ) {
+    val authSession by container.authSession.collectAsStateWithLifecycle()
+    val sessionScopeKey = remember(authSession) {
+        when (val s = authSession) {
+            is AuthSessionState.LoggedIn -> "asset_hub_${s.user.id}_${s.isDirectApiOnly}"
+            else -> "asset_hub_guest"
+        }
+    }
+    val resolvedAssetHubVm: AssetHubViewModel = assetHubViewModel ?: viewModel(
+        key = sessionScopeKey,
+        factory = object : ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                return AssetHubViewModel(container) as T
+            }
+        },
+    )
+
     val state by imageViewModel.ui.collectAsStateWithLifecycle()
+    val assetState by resolvedAssetHubVm.ui.collectAsStateWithLifecycle()
     val strings = LocalAppStrings.current
     val theme = LocalAppTheme.current
     val c = theme.colors
+    val ctx = LocalContext.current
     val shellController = LocalAppShellController.current
     val scope = rememberCoroutineScope()
     val isZh = strings.language == AppLanguage.ZH
 
-    val pagerState = rememberPagerState(initialPage = 0, pageCount = { 3 })
+    val pagerState = rememberPagerState(
+        initialPage = assetState.activeStudioSubtab.coerceIn(0, 2),
+        pageCount = { 3 },
+    )
+
+    var lastAppliedInitialSubtab by remember { mutableIntStateOf(-1) }
+    LaunchedEffect(assetState.initialSubtabResolved, assetState.activeStudioSubtab) {
+        if (assetState.initialSubtabResolved && lastAppliedInitialSubtab != assetState.activeStudioSubtab) {
+            lastAppliedInitialSubtab = assetState.activeStudioSubtab
+            if (pagerState.currentPage != assetState.activeStudioSubtab) {
+                pagerState.scrollToPage(assetState.activeStudioSubtab)
+            }
+        }
+    }
+
+    LaunchedEffect(pagerState, assetState.initialSubtabResolved) {
+        snapshotFlow { pagerState.settledPage }
+            .distinctUntilChanged()
+            .collect { settled ->
+                if (assetState.initialSubtabResolved && settled != assetState.activeStudioSubtab) {
+                    resolvedAssetHubVm.selectStudioSubtab(settled)
+                }
+            }
+    }
+
+    var atelierSubtab by rememberSaveable { mutableIntStateOf(0) } // 0=作品, 1=灵感, 2=工坊
     var inspireSubtab by rememberSaveable { mutableIntStateOf(0) }
+
+    var showCharactersSearch by rememberSaveable { mutableStateOf(false) }
+    var charactersSearchQuery by rememberSaveable { mutableStateOf("") }
+    var showSettingsSearch by rememberSaveable { mutableStateOf(false) }
+    var settingsSearchQuery by rememberSaveable { mutableStateOf("") }
     var showGallerySearch by rememberSaveable { mutableStateOf(false) }
     var showInspireSearch by rememberSaveable { mutableStateOf(false) }
     var inspireSearchQuery by rememberSaveable { mutableStateOf("") }
-    var showMoreMenu by remember { mutableStateOf(false) }
 
+    var showMoreMenu by remember { mutableStateOf(false) }
+    var showCreateCardDialog by rememberSaveable { mutableStateOf(false) }
+
+    var charactersScrolled by remember { mutableStateOf(false) }
+    var settingsScrolled by remember { mutableStateOf(false) }
     var galleryScrolled by remember { mutableStateOf(false) }
     var inspireScrolled by remember { mutableStateOf(false) }
     var toolsScrolled by remember { mutableStateOf(false) }
+
+    val cardImportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri != null) {
+            resolvedAssetHubVm.importCharacterCardUri(uri, ctx.contentResolver)
+        }
+    }
+
+    val settingImportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri != null) {
+            resolvedAssetHubVm.importSettingAssetUri(uri, ctx.contentResolver)
+        }
+    }
 
     val processingCount = state.generations.count {
         it.status.lowercase() in setOf("pending", "queued", "processing", "running")
     }
 
     val isCurrentScrolled = when (pagerState.currentPage) {
-        0 -> galleryScrolled
-        1 -> inspireScrolled
-        else -> toolsScrolled
+        StudioRoutingPolicy.TAB_CHARACTERS -> charactersScrolled
+        StudioRoutingPolicy.TAB_SETTINGS -> settingsScrolled
+        else -> when (atelierSubtab) {
+            0 -> galleryScrolled
+            1 -> inspireScrolled
+            else -> toolsScrolled
+        }
     }
     val headerDividerColor by animateColorAsState(
         targetValue = if (isCurrentScrolled) c.border.copy(alpha = 0.55f) else Color.Transparent,
@@ -111,20 +210,41 @@ fun CreativeStudioScreen(
     )
 
     val tabTitles = listOf(
-        strings.nav.tabGallery,
-        strings.nav.tabInspire,
-        if (isZh) "工坊" else strings.nav.tabTools,
+        if (isZh) "角色" else "Characters",
+        if (isZh) "设定" else "Lore",
+        if (isZh) "画室" else "Atelier",
     )
 
+    val isDirectOnly = (authSession as? AuthSessionState.LoggedIn)?.isDirectApiOnly == true
     val showUnavailableBanner = !state.isLoadingCapabilities &&
-        (!state.enabled || !state.unavailableReason.isNullOrBlank())
+        (!state.enabled || (!isDirectOnly && !state.unavailableReason.isNullOrBlank()))
+    val unavailableText = remember(isDirectOnly, state.unavailableReason, isZh, strings.images.unavailable) {
+        if (isDirectOnly) {
+            if (isZh) {
+                "当前未配置支持生图的直连 API 渠道，请在「我的」中添加 OpenAI / Gemini / NovelAI 等生图通道"
+            } else {
+                "No image-capable Direct API channel configured yet. Configure one in Mine."
+            }
+        } else {
+            state.unavailableReason?.takeIf { it.isNotBlank() } ?: strings.images.unavailable
+        }
+    }
 
     val isSearchActiveForPage = when (pagerState.currentPage) {
-        0 -> showGallerySearch || state.searchQuery.isNotEmpty()
-        1 -> showInspireSearch || inspireSearchQuery.isNotEmpty()
-        else -> false
+        StudioRoutingPolicy.TAB_CHARACTERS -> showCharactersSearch || charactersSearchQuery.isNotEmpty()
+        StudioRoutingPolicy.TAB_SETTINGS -> showSettingsSearch || settingsSearchQuery.isNotEmpty()
+        else -> when (atelierSubtab) {
+            0 -> showGallerySearch || state.searchQuery.isNotEmpty()
+            1 -> showInspireSearch || inspireSearchQuery.isNotEmpty()
+            else -> false
+        }
     }
-    val isSearchEnabled = pagerState.currentPage != 2
+    val isSearchEnabled = pagerState.currentPage != StudioRoutingPolicy.TAB_ATELIER || atelierSubtab != 2
+
+    val navigateToConversation: (String) -> Unit = { convId ->
+        onOpenConversation(convId)
+        shellController.selectMainTab(0)
+    }
 
     Box(
         modifier = Modifier
@@ -132,7 +252,7 @@ fun CreativeStudioScreen(
             .background(c.page),
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            // Unified 48dp scroll-aware studio top bar
+            // Unified 48dp scroll-aware 3-domain studio top bar: 角色 · 设定 · 画室
             GuAwningHeader(dividerColor = headerDividerColor) {
                 Row(
                     modifier = Modifier
@@ -150,12 +270,18 @@ fun CreativeStudioScreen(
                     ) {
                         tabTitles.forEachIndexed { idx, label ->
                             val selected = pagerState.currentPage == idx
+                            val badgeCount = when (idx) {
+                                StudioRoutingPolicy.TAB_CHARACTERS -> assetState.characterCards.size
+                                StudioRoutingPolicy.TAB_SETTINGS -> assetState.worldbooks.size + assetState.promptPresets.size
+                                else -> state.totalWorks
+                            }
                             StudioTopTextTab(
                                 label = label,
                                 selected = selected,
-                                count = if (idx == 0) state.totalWorks else 0,
-                                showLiveDot = idx == 0 && processingCount > 0,
+                                count = badgeCount,
+                                showLiveDot = idx == StudioRoutingPolicy.TAB_ATELIER && processingCount > 0,
                                 onClick = {
+                                    resolvedAssetHubVm.selectStudioSubtab(idx)
                                     scope.launch { pagerState.animateScrollToPage(idx) }
                                 },
                             )
@@ -166,8 +292,12 @@ fun CreativeStudioScreen(
                     IconButton(
                         onClick = {
                             when (pagerState.currentPage) {
-                                0 -> showGallerySearch = !showGallerySearch
-                                1 -> showInspireSearch = !showInspireSearch
+                                StudioRoutingPolicy.TAB_CHARACTERS -> showCharactersSearch = !showCharactersSearch
+                                StudioRoutingPolicy.TAB_SETTINGS -> showSettingsSearch = !showSettingsSearch
+                                else -> when (atelierSubtab) {
+                                    0 -> showGallerySearch = !showGallerySearch
+                                    1 -> showInspireSearch = !showInspireSearch
+                                }
                             }
                         },
                         enabled = isSearchEnabled,
@@ -191,7 +321,7 @@ fun CreativeStudioScreen(
                             Icon(
                                 imageVector = Icons.Default.MoreHoriz,
                                 contentDescription = if (isZh) "更多操作" else "More",
-                                tint = if (state.batchMode) c.primary else c.ink,
+                                tint = if (pagerState.currentPage == StudioRoutingPolicy.TAB_ATELIER && state.batchMode) c.primary else c.ink,
                                 modifier = Modifier.size(20.dp),
                             )
                         }
@@ -200,146 +330,164 @@ fun CreativeStudioScreen(
                             expanded = showMoreMenu,
                             onDismissRequest = { showMoreMenu = false },
                         ) {
-                            DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        text = strings.images.batchManage,
-                                        color = if (state.batchMode) c.primary else c.ink,
-                                        fontSize = 13.5.sp,
-                                        fontWeight = FontWeight.Medium,
+                            when (pagerState.currentPage) {
+                                StudioRoutingPolicy.TAB_CHARACTERS -> {
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                text = if (isZh) "导入角色卡 (.png/.charx/.json)" else "Import Card (.png/.charx/.json)",
+                                                color = c.ink,
+                                                fontSize = 13.5.sp,
+                                                fontWeight = FontWeight.Medium,
+                                            )
+                                        },
+                                        leadingIcon = {
+                                            Icon(Icons.Default.Download, contentDescription = null, tint = c.muted, modifier = Modifier.size(18.dp))
+                                        },
+                                        onClick = {
+                                            showMoreMenu = false
+                                            cardImportLauncher.launch(arrayOf("*/*"))
+                                        },
                                     )
-                                },
-                                leadingIcon = {
-                                    Icon(
-                                        imageVector = Icons.Default.Checklist,
-                                        contentDescription = null,
-                                        tint = if (state.batchMode) c.primary else c.muted,
-                                        modifier = Modifier.size(18.dp),
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                text = if (isZh) "创建原创角色卡" else "Create Original Card",
+                                                color = c.ink,
+                                                fontSize = 13.5.sp,
+                                                fontWeight = FontWeight.Medium,
+                                            )
+                                        },
+                                        leadingIcon = {
+                                            Icon(Icons.Default.PersonAdd, contentDescription = null, tint = c.muted, modifier = Modifier.size(18.dp))
+                                        },
+                                        onClick = {
+                                            showMoreMenu = false
+                                            showCreateCardDialog = true
+                                        },
                                     )
-                                },
-                                trailingIcon = if (state.batchMode) {
-                                    {
-                                        Icon(
-                                            imageVector = Icons.Default.Check,
-                                            contentDescription = null,
-                                            tint = c.primary,
-                                            modifier = Modifier.size(16.dp),
-                                        )
-                                    }
-                                } else {
-                                    null
-                                },
-                                onClick = {
-                                    showMoreMenu = false
-                                    if (pagerState.currentPage != 0) {
-                                        scope.launch { pagerState.animateScrollToPage(0) }
-                                    }
-                                    imageViewModel.toggleBatchMode()
-                                },
-                            )
-                            DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        text = if (isZh) "刷新画廊" else strings.common.refresh,
-                                        color = if (state.isLoadingGallery) c.muted else c.ink,
-                                        fontSize = 13.5.sp,
-                                        fontWeight = FontWeight.Medium,
-                                    )
-                                },
-                                leadingIcon = {
-                                    Icon(
-                                        imageVector = Icons.Default.Refresh,
-                                        contentDescription = null,
-                                        tint = c.muted,
-                                        modifier = Modifier.size(18.dp),
-                                    )
-                                },
-                                enabled = !state.isLoadingGallery,
-                                onClick = {
-                                    showMoreMenu = false
-                                    imageViewModel.refreshGallery()
-                                },
-                            )
-                            DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        text = if (isZh) "我的预设" else strings.images.presetsTitle,
-                                        color = c.ink,
-                                        fontSize = 13.5.sp,
-                                        fontWeight = FontWeight.Medium,
-                                    )
-                                },
-                                leadingIcon = {
-                                    Icon(
-                                        imageVector = Icons.Default.Bookmarks,
-                                        contentDescription = null,
-                                        tint = c.muted,
-                                        modifier = Modifier.size(18.dp),
-                                    )
-                                },
-                                onClick = {
-                                    showMoreMenu = false
-                                    imageViewModel.setShowPresetSheet(true)
-                                },
-                            )
-                        }
-                    }
-                }
-            }
-
-            if (showUnavailableBanner) {
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = c.warningBg,
-                    border = null,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 5.dp),
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 11.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(9.dp),
-                    ) {
-                        GuIconTile(
-                            icon = Icons.Default.WarningAmber,
-                            tint = c.warning,
-                            backgroundColor = c.warning.copy(alpha = 0.14f),
-                            size = 26.dp,
-                            iconSize = 15.dp,
-                            cornerRadius = 8.dp,
-                        )
-                        Text(
-                            text = state.unavailableReason?.takeIf { it.isNotBlank() } ?: strings.images.unavailable,
-                            color = c.warning,
-                            fontSize = 12.sp,
-                            lineHeight = 16.sp,
-                            fontWeight = FontWeight.Medium,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f),
-                        )
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(999.dp))
-                                .background(c.warning.copy(alpha = 0.15f))
-                                .clickable {
-                                    if (onOpenProfile != null) {
-                                        onOpenProfile.invoke()
-                                    } else {
-                                        shellController.selectMainTab(2)
-                                    }
                                 }
-                                .padding(horizontal = 10.dp, vertical = 5.dp),
-                        ) {
-                            Text(
-                                text = if (isZh) "去配置 ▸" else "Configure ▸",
-                                color = c.warning,
-                                fontSize = 11.5.sp,
-                                fontWeight = FontWeight.SemiBold,
-                            )
+
+                                StudioRoutingPolicy.TAB_SETTINGS -> {
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                text = if (isZh) "导入世界书 / 预设 / 正则" else "Import Worldbook / Preset / Regex",
+                                                color = c.ink,
+                                                fontSize = 13.5.sp,
+                                                fontWeight = FontWeight.Medium,
+                                            )
+                                        },
+                                        leadingIcon = {
+                                            Icon(Icons.Default.Download, contentDescription = null, tint = c.muted, modifier = Modifier.size(18.dp))
+                                        },
+                                        onClick = {
+                                            showMoreMenu = false
+                                            settingImportLauncher.launch(arrayOf("*/*"))
+                                        },
+                                    )
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                text = if (isZh) "从旧会话提炼设定" else "Extract Legacy Session Lore",
+                                                color = c.ink,
+                                                fontSize = 13.5.sp,
+                                                fontWeight = FontWeight.Medium,
+                                            )
+                                        },
+                                        leadingIcon = {
+                                            Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = c.muted, modifier = Modifier.size(18.dp))
+                                        },
+                                        onClick = {
+                                            showMoreMenu = false
+                                            resolvedAssetHubVm.harvestLegacyNovelLoreToWorldbooks()
+                                        },
+                                    )
+                                }
+
+                                else -> {
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                text = strings.images.batchManage,
+                                                color = if (state.batchMode) c.primary else c.ink,
+                                                fontSize = 13.5.sp,
+                                                fontWeight = FontWeight.Medium,
+                                            )
+                                        },
+                                        leadingIcon = {
+                                            Icon(
+                                                imageVector = Icons.Default.Checklist,
+                                                contentDescription = null,
+                                                tint = if (state.batchMode) c.primary else c.muted,
+                                                modifier = Modifier.size(18.dp),
+                                            )
+                                        },
+                                        trailingIcon = if (state.batchMode) {
+                                            {
+                                                Icon(
+                                                    imageVector = Icons.Default.Check,
+                                                    contentDescription = null,
+                                                    tint = c.primary,
+                                                    modifier = Modifier.size(16.dp),
+                                                )
+                                            }
+                                        } else {
+                                            null
+                                        },
+                                        onClick = {
+                                            showMoreMenu = false
+                                            atelierSubtab = 0
+                                            imageViewModel.toggleBatchMode()
+                                        },
+                                    )
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                text = if (isZh) "刷新画廊" else strings.common.refresh,
+                                                color = if (state.isLoadingGallery) c.muted else c.ink,
+                                                fontSize = 13.5.sp,
+                                                fontWeight = FontWeight.Medium,
+                                            )
+                                        },
+                                        leadingIcon = {
+                                            Icon(
+                                                imageVector = Icons.Default.Refresh,
+                                                contentDescription = null,
+                                                tint = c.muted,
+                                                modifier = Modifier.size(18.dp),
+                                            )
+                                        },
+                                        enabled = !state.isLoadingGallery,
+                                        onClick = {
+                                            showMoreMenu = false
+                                            imageViewModel.refreshGallery()
+                                        },
+                                    )
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                text = if (isZh) "我的预设" else strings.images.presetsTitle,
+                                                color = c.ink,
+                                                fontSize = 13.5.sp,
+                                                fontWeight = FontWeight.Medium,
+                                            )
+                                        },
+                                        leadingIcon = {
+                                            Icon(
+                                                imageVector = Icons.Default.Bookmarks,
+                                                contentDescription = null,
+                                                tint = c.muted,
+                                                modifier = Modifier.size(18.dp),
+                                            )
+                                        },
+                                        onClick = {
+                                            showMoreMenu = false
+                                            imageViewModel.setShowPresetSheet(true)
+                                        },
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -353,57 +501,196 @@ fun CreativeStudioScreen(
                     .weight(1f),
             ) { page ->
                 when (page) {
-                    0 -> GalleryTabContent(
+                    StudioRoutingPolicy.TAB_CHARACTERS -> CharactersHubTab(
                         container = container,
-                        viewModel = imageViewModel,
-                        showSearchBar = showGallerySearch,
-                        onCloseSearchBar = { showGallerySearch = false },
-                        onNavigateToInspire = {
-                            inspireSubtab = 0
-                            scope.launch { pagerState.animateScrollToPage(1) }
-                        },
-                        onScrollStateChange = { galleryScrolled = it },
+                        assetHubViewModel = resolvedAssetHubVm,
+                        imageViewModel = imageViewModel,
+                        searchQuery = charactersSearchQuery,
+                        onSearchQueryChange = { charactersSearchQuery = it },
+                        showSearchBar = showCharactersSearch,
+                        onCloseSearchBar = { showCharactersSearch = false },
+                        showCreateCardDialog = showCreateCardDialog,
+                        onDismissCreateCardDialog = { showCreateCardDialog = false },
+                        onRequestCreateOriginalCard = { showCreateCardDialog = true },
+                        onRequestImportCard = { cardImportLauncher.launch(arrayOf("*/*")) },
+                        onOpenConversation = navigateToConversation,
+                        onScrollStateChange = { charactersScrolled = it },
                     )
 
-                    1 -> InspireTabContent(
-                        imageViewModel = imageViewModel,
-                        subtab = inspireSubtab,
-                        onSubtabChange = { inspireSubtab = it },
-                        onToast = { container.toastController.show(it) },
-                        searchQuery = inspireSearchQuery,
-                        onSearchQueryChange = { inspireSearchQuery = it },
-                        showSearchBar = showInspireSearch,
-                        onCloseSearchBar = { showInspireSearch = false },
-                        onScrollStateChange = { inspireScrolled = it },
+                    StudioRoutingPolicy.TAB_SETTINGS -> LoreSettingsHubTab(
+                        assetHubViewModel = resolvedAssetHubVm,
+                        searchQuery = settingsSearchQuery,
+                        onSearchQueryChange = { settingsSearchQuery = it },
+                        showSearchBar = showSettingsSearch,
+                        onCloseSearchBar = { showSettingsSearch = false },
+                        onRequestImportSetting = { settingImportLauncher.launch(arrayOf("*/*")) },
+                        onScrollStateChange = { settingsScrolled = it },
                     )
 
-                    else -> ToolsTabContent(
-                        container = container,
-                        imageViewModel = imageViewModel,
-                        onNavigateToWorks = {
-                            scope.launch { pagerState.animateScrollToPage(0) }
-                        },
-                        onNavigateToInspireStyles = {
-                            inspireSubtab = 1
-                            scope.launch { pagerState.animateScrollToPage(1) }
-                        },
-                        onScrollStateChange = { toolsScrolled = it },
-                    )
+                    else -> Column(modifier = Modifier.fillMaxSize()) {
+                        // Single 32dp borderless pill switcher: [作品] · [灵感] · [工坊]
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 6.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            GuPill(
+                                label = strings.nav.tabGallery,
+                                selected = atelierSubtab == 0,
+                                onClick = { atelierSubtab = 0 },
+                                modifier = Modifier.height(32.dp),
+                            )
+                            GuPill(
+                                label = strings.nav.tabInspire,
+                                selected = atelierSubtab == 1,
+                                onClick = { atelierSubtab = 1 },
+                                modifier = Modifier.height(32.dp),
+                            )
+                            GuPill(
+                                label = if (isZh) "工坊" else strings.nav.tabTools,
+                                selected = atelierSubtab == 2,
+                                onClick = { atelierSubtab = 2 },
+                                modifier = Modifier.height(32.dp),
+                            )
+                        }
+
+                        // Unavailable banner renders ONLY inside 画室 page
+                        if (showUnavailableBanner) {
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = c.warningBg,
+                                border = null,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 11.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(9.dp),
+                                ) {
+                                    GuIconTile(
+                                        icon = Icons.Default.WarningAmber,
+                                        tint = c.warning,
+                                        backgroundColor = c.warning.copy(alpha = 0.14f),
+                                        size = 26.dp,
+                                        iconSize = 15.dp,
+                                        cornerRadius = 8.dp,
+                                    )
+                                    Text(
+                                        text = unavailableText,
+                                        color = c.warning,
+                                        fontSize = 12.sp,
+                                        lineHeight = 16.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(999.dp))
+                                            .background(c.warning.copy(alpha = 0.15f))
+                                            .clickable {
+                                                if (onOpenProfile != null) {
+                                                    onOpenProfile.invoke()
+                                                } else {
+                                                    shellController.selectMainTab(2)
+                                                }
+                                            }
+                                            .padding(horizontal = 10.dp, vertical = 5.dp),
+                                    ) {
+                                        Text(
+                                            text = if (isZh) "去配置 ▸" else "Configure ▸",
+                                            color = c.warning,
+                                            fontSize = 11.5.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f),
+                        ) {
+                            when (atelierSubtab) {
+                                0 -> GalleryTabContent(
+                                    container = container,
+                                    viewModel = imageViewModel,
+                                    showSearchBar = showGallerySearch,
+                                    onCloseSearchBar = { showGallerySearch = false },
+                                    onNavigateToInspire = {
+                                        inspireSubtab = 0
+                                        atelierSubtab = 1
+                                    },
+                                    onScrollStateChange = { galleryScrolled = it },
+                                )
+
+                                1 -> InspireTabContent(
+                                    imageViewModel = imageViewModel,
+                                    subtab = inspireSubtab,
+                                    onSubtabChange = { inspireSubtab = it },
+                                    onToast = { container.toastController.show(it) },
+                                    searchQuery = inspireSearchQuery,
+                                    onSearchQueryChange = { inspireSearchQuery = it },
+                                    showSearchBar = showInspireSearch,
+                                    onCloseSearchBar = { showInspireSearch = false },
+                                    onScrollStateChange = { inspireScrolled = it },
+                                )
+
+                                else -> ToolsTabContent(
+                                    container = container,
+                                    imageViewModel = imageViewModel,
+                                    onNavigateToWorks = { atelierSubtab = 0 },
+                                    onNavigateToInspireStyles = {
+                                        inspireSubtab = 1
+                                        atelierSubtab = 1
+                                    },
+                                    onScrollStateChange = { toolsScrolled = it },
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
 
-        // Single prominent Create FAB (hidden only while batch selection mode is active on Gallery)
+        // Smart context-sensitive FAB
+        val showFab = !(pagerState.currentPage == StudioRoutingPolicy.TAB_ATELIER && atelierSubtab == 0 && state.batchMode)
         AnimatedVisibility(
-            visible = !(pagerState.currentPage == 0 && state.batchMode),
+            visible = showFab,
             enter = fadeIn() + scaleIn(initialScale = 0.9f),
             exit = fadeOut() + scaleOut(targetScale = 0.9f),
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .padding(end = 14.dp, bottom = 14.dp),
         ) {
+            val fabLabel = when (pagerState.currentPage) {
+                StudioRoutingPolicy.TAB_CHARACTERS -> if (isZh) "导入角色" else "Import Card"
+                StudioRoutingPolicy.TAB_SETTINGS -> if (isZh) "导入设定" else "Import Lore"
+                else -> strings.images.studioCreateFab
+            }
+            val fabIcon = when (pagerState.currentPage) {
+                StudioRoutingPolicy.TAB_CHARACTERS,
+                StudioRoutingPolicy.TAB_SETTINGS,
+                -> Icons.Default.Add
+                else -> Icons.Default.AutoAwesome
+            }
             Surface(
-                onClick = { imageViewModel.setShowCreateSheet(true) },
+                onClick = {
+                    when (pagerState.currentPage) {
+                        StudioRoutingPolicy.TAB_CHARACTERS -> cardImportLauncher.launch(arrayOf("*/*"))
+                        StudioRoutingPolicy.TAB_SETTINGS -> settingImportLauncher.launch(arrayOf("*/*"))
+                        else -> imageViewModel.setShowCreateSheet(true)
+                    }
+                },
                 shape = RoundedCornerShape(theme.pillRadius),
                 color = c.primary,
                 border = null,
@@ -416,13 +703,13 @@ fun CreativeStudioScreen(
                     horizontalArrangement = Arrangement.spacedBy(5.dp),
                 ) {
                     Icon(
-                        Icons.Default.Add,
+                        imageVector = fabIcon,
                         contentDescription = null,
                         tint = Color.White,
                         modifier = Modifier.size(18.dp),
                     )
                     Text(
-                        text = strings.images.studioCreateFab,
+                        text = fabLabel,
                         color = Color.White,
                         fontSize = 13.5.sp,
                         fontWeight = FontWeight.SemiBold,

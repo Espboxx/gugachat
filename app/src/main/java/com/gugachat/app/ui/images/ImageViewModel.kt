@@ -16,6 +16,7 @@ import androidx.lifecycle.viewModelScope
 import com.gugachat.app.AppContainer
 import com.gugachat.app.AuthSessionState
 import com.gugachat.app.data.api.AppJson
+import com.gugachat.app.data.api.DirectProtocolCodec
 import com.gugachat.app.data.api.ImageBinaryUpload
 import com.gugachat.app.data.api.OnlineImageGenerationDto
 import com.gugachat.app.data.api.OnlineImageKeyDto
@@ -106,6 +107,8 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
     val ui: StateFlow<ImageUiState> = _ui.asStateFlow()
 
     private var pollJob: Job? = null
+    private var pendingPortraitCallback: (suspend (ByteArray) -> Unit)? = null
+    private var pendingPortraitGenId: String? = null
 
     init {
         viewModelScope.launch {
@@ -122,7 +125,13 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
             try {
                 val isDirectOnly = (container.authSession.value as? AuthSessionState.LoggedIn)?.isDirectApiOnly == true
                 val customKeys = container.apiProviderStore.enabledProviders()
-                    .filter { it.protocol.supportsImages }
+                    .filter {
+                        DirectProtocolCodec.supportsImageGeneration(
+                            protocol = it.protocol,
+                            baseUrl = it.baseUrl,
+                            customModels = it.customModels,
+                        )
+                    }
                     .map { p ->
                         OnlineImageKeyDto(
                             id = p.syntheticGroupId,
@@ -239,7 +248,12 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
         _ui.update { it.copy(novelaiParams = transform(it.novelaiParams)) }
     }
 
-    fun setShowCreateSheet(show: Boolean) { _ui.update { it.copy(showCreateSheet = show) } }
+    fun setShowCreateSheet(show: Boolean) {
+        if (!show && pendingPortraitGenId == null) {
+            pendingPortraitCallback = null
+        }
+        _ui.update { it.copy(showCreateSheet = show) }
+    }
     fun setShowPresetSheet(show: Boolean) { _ui.update { it.copy(showPresetSheet = show) } }
 
     fun addReferenceImageUri(uri: Uri, contentResolver: ContentResolver) {
@@ -293,6 +307,8 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
         styleAppend: Boolean = false,
         aspectRatio: String? = null,
     ) {
+        pendingPortraitCallback = null
+        pendingPortraitGenId = null
         _ui.update { state ->
             val nextPrompt = if (styleAppend && state.prompt.isNotBlank()) {
                 "${state.prompt.trim()}, $promptText"
@@ -301,6 +317,27 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
             }
             val nextRatio = aspectRatio?.takeIf { it.isNotBlank() && !styleAppend } ?: state.aspectRatio
             state.copy(prompt = nextPrompt, aspectRatio = nextRatio, showCreateSheet = true)
+        }
+    }
+
+    /**
+     * Opens the image generator sheet prefilled for a character card portrait and invokes
+     * [onCompleted] with the finished image bytes once generation finishes.
+     */
+    fun openCreateForCardPortrait(
+        promptText: String,
+        aspectRatio: String? = "2:3",
+        onCompleted: suspend (ByteArray) -> Unit,
+    ) {
+        pendingPortraitCallback = onCompleted
+        pendingPortraitGenId = null
+        _ui.update { state ->
+            state.copy(
+                prompt = promptText,
+                aspectRatio = aspectRatio?.takeIf { it.isNotBlank() } ?: state.aspectRatio,
+                count = 1,
+                showCreateSheet = true,
+            )
         }
     }
 
@@ -375,6 +412,13 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
                     )
                 }
                 container.updateImageWorksTotal(_ui.value.totalWorks)
+                if (pendingPortraitCallback != null) {
+                    if (isActiveStatus(created.status)) {
+                        pendingPortraitGenId = created.id
+                    } else {
+                        deliverPendingPortraitIfSucceeded(created)
+                    }
+                }
                 ensurePollingActive()
             } catch (e: Throwable) {
                 _ui.update { it.copy(isSubmitting = false) }
@@ -510,9 +554,12 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
                 val filter = _ui.value.activeFilter
                 val localHist = container.directImageStore.list(search = search, filter = filter)
 
+                val isFiltered = search != null || filter != "all"
                 if (isDirectOnly) {
                     val total = localHist.all_total ?: localHist.total
-                    container.updateImageWorksTotal(total)
+                    if (!isFiltered || localHist.all_total != null) {
+                        container.updateImageWorksTotal(total)
+                    }
                     _ui.update {
                         it.copy(
                             generations = localHist.items,
@@ -534,7 +581,9 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
                 )
                 val merged = (localHist.items + res.items).distinctBy { it.id }
                 val total = (res.all_total ?: res.total) + (localHist.all_total ?: localHist.total)
-                container.updateImageWorksTotal(total)
+                if (!isFiltered || res.all_total != null) {
+                    container.updateImageWorksTotal(total)
+                }
                 _ui.update {
                     it.copy(
                         generations = merged,
@@ -548,8 +597,27 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
                     ensurePollingActive()
                 }
             } catch (e: Throwable) {
-                _ui.update { it.copy(isLoadingGallery = false) }
-                container.toastController.show(e.message ?: "Failed to load gallery", isError = true)
+                val search = _ui.value.searchQuery.trim().ifBlank { null }
+                val filter = _ui.value.activeFilter
+                val fallbackLocal = runCatching {
+                    container.directImageStore.list(search = search, filter = filter)
+                }.getOrNull()
+                if (fallbackLocal != null && fallbackLocal.items.isNotEmpty()) {
+                    val localTotal = fallbackLocal.all_total ?: fallbackLocal.total
+                    container.updateImageWorksTotal(localTotal)
+                    _ui.update {
+                        it.copy(
+                            generations = fallbackLocal.items,
+                            hasMore = false,
+                            nextCursor = null,
+                            totalWorks = localTotal,
+                            isLoadingGallery = false,
+                        )
+                    }
+                } else {
+                    _ui.update { it.copy(isLoadingGallery = false) }
+                    container.toastController.show(e.message ?: "Failed to load gallery", isError = true)
+                }
             }
         }
     }
@@ -884,10 +952,26 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
                                 selectedDetail = if (cur.selectedDetail?.id == id) fresh else cur.selectedDetail,
                             )
                         }
+                        if (id == pendingPortraitGenId && !isActiveStatus(fresh.status)) {
+                            deliverPendingPortraitIfSucceeded(fresh)
+                        }
                     }
                 }
             }
         }
+    }
+
+    private suspend fun deliverPendingPortraitIfSucceeded(generation: OnlineImageGenerationDto) {
+        val callback = pendingPortraitCallback
+        pendingPortraitCallback = null
+        pendingPortraitGenId = null
+        if (callback == null) return
+        val status = generation.status.lowercase()
+        if (status != "completed" && status != "succeeded") return
+        val bytes = runCatching {
+            container.onlineImagesApi.contentBytes(generation.id, 0, variant = "original")
+        }.getOrNull() ?: return
+        callback(bytes)
     }
 
     private fun isActiveStatus(status: String): Boolean {
