@@ -1,14 +1,14 @@
 {
-  "tag_name": "v0.3.6",
-  "version_name": "0.3.6",
-  "name": "GuGuChat v0.3.6",
-  "published_at": "2026-11-26T18:19:34Z",
-  "html_url": "https://github.com/Espboxx/gugachat/releases/tag/v0.3.6",
+  "tag_name": "v0.3.7",
+  "version_name": "0.3.7",
+  "name": "GuGuChat v0.3.7",
+  "published_at": "2026-11-27T09:55:14Z",
+  "html_url": "https://github.com/Espboxx/gugachat/releases/tag/v0.3.7",
   "cn_download_page": "",
-  "apk_name": "GuGuChat-v0.3.6-android.apk",
-  "apk_size": 66413921,
-  "apk_sha256": "c0d3e09639bdfdd776a43111c221db45f09c4ebbb979f12f25474393d02447b2",
-  "apk_url": "https://github.com/Espboxx/gugachat/releases/download/v0.3.6/GuGuChat-v0.3.6-android.apk",
+  "apk_name": "GuGuChat-v0.3.7-arm64-v8a.apk",
+  "apk_size": 25276895,
+  "apk_sha256": "dccaa277c1425072842a847386b59aecfe1885660719f516604c8ea4e69cc597",
+  "apk_url": "https://github.com/Espboxx/gugachat/releases/download/v0.3.7/GuGuChat-v0.3.7-arm64-v8a.apk",
   "cn_apk_urls": [],
   "cn_proxies": [
     "https://gh-proxy.com/",
@@ -17,5 +17,5 @@
     "https://gh-proxy.org/",
     "https://ghfast.top/"
   ],
-  "body": "## GuGuChat v0.3.6\n\n### 重点新特性与升级\n\n#### 1. 本地极小向量模型（零 Key 离线语义检索）\n- **按需下载、不膨胀安装包**：支持在「我的 → 语义检索与向量模型」中按需下载轻量化中文 ONNX INT8 模型（`gte-small-zh-int8` 约 29 MB / `bge-small-zh-v1.5-int8` 约 23 MB），不打入 APK 安装包。\n- **移动端专项优化**：集成 ONNX Runtime 2 线程温控策略与超 512 字重叠分片池化（Chunk Pooling），长文本语义表征完整；空闲 3 分钟自动卸载模型释放至 0 MB 内存，并提供国内镜像断点续传与完整性校验。\n\n#### 2. 可配置云端 / 局域网向量模型 API + 可选精排（Rerank）\n- **多生态无缝接入**：支持硅基流动免费 `BAAI/bge-m3` 与 `BAAI/bge-reranker-v2-m3` 精排、Gemini `gemini-embedding-001`、阿里云百炼、智谱 AI、OpenAI、Jina，以及局域网 Ollama / LM Studio / `llama-server` 免 Key 直连。\n- **Room INT8 量化向量缓存**：本地与云端统一写入 Room INT8 量化向量索引，单会话千级条目实现 `<1.5 ms` 毫秒级离线混合检索，并支持一键重建索引与缓存管理。\n\n#### 3. 词法召回、双指标水位与上下文压缩全面升级与修复\n- **高精度中文分词与词法召回**：引入停用词断句与 Android 原生 ICU 分词，彻底消除 `的何 / 半的 / 的顶` 等跨词伪命中及超长对话全量误召回问题。\n- **模型家族 Token 先验 + 实时 EMA 校准**：按模型家族内置中文 Token 换算先验并结合真实 API 用量跨会话实时 EMA 校准（DeepSeek 等长存档估算不再高估约 2.2 倍）。\n- **双指标上下文水位与升级版召回透视**：拆清「本轮召回预算」与「实际发送 / 完整历史」双指标进度条（滑动窗口温和提示，仅硬超限时红色告警）；召回透视新增单卡 Token 消耗显示与本轮静音 / 置顶 / 停用快捷控制。\n- **压缩归档与导入核心修复**：修复上下文压缩归档未过滤已摘要历史、重试发送误覆盖及外部导入缺少默认模型等问题。\n\n#### 4. 外置浏览器跳转修复\n- 修复「我的 → 前往下载页」跳转行为，严格唤起系统默认外置浏览器打开下载页面，避免应用内拦截异常。"
+  "body": "## GuGuChat v0.3.7\n\n### 下载包选择说明\n- **`GuGuChat-v0.3.7-arm64-v8a.apk`（约 24.1 MB，推荐主包）**：适用绝大多数安卓真机，内置应用内自动更新默认匹配此安装包。\n- **`GuGuChat-v0.3.7-x86_64.apk`（约 26.7 MB）**：适用部分电脑安卓模拟器（如 x86_64 架构实例）及 x86 平板设备。\n\n### 重点新特性与全面升级\n\n#### 1. 全站 UI/UX 与沉浸式页面重构\n- **零边框轻层次设计系统**：引入 `canvas -> surface -> surfaceSoft -> surfaceElevated` 四层表面阶梯、6 级字重体系、悬浮滑块 `GuSegmentedControl` 与清晰字母/图形模型徽章 `GuModelAvatar`。\n- **登录配网一屏化与「我的」分组中枢**：直连 API 合并为 `48.dp` 单行顶栏，头部 `[导入配置]` + 渐变羽化预设条与底部 `imePadding` 吸底 `[测通 / 保存]` 免滚屏直达；「我的」收拢为 ~640dp 一屏三大无框分组并支持行内一键明暗切换。\n- **对话流、统一输入坞与无穿帮抽屉**：支持历史消息轻触渐显微操作条、打开左侧抽屉自动隐藏底部全球导航并支持列表原地 `BasicTextField` 重命名（零弹窗）、`ChatParamsSheet` 改为 3-Tab 滑块与 400ms 防抖即改自动保存、`ChatMemorySheet` 采用 2 行高密度高亮召回透视卡。\n- **创作流与双沉浸阅读/剧场引擎**：创作页合并 `48.dp` 单行顶栏并升级原生比例双列瀑布流 + 一键画同款；长篇小说阅读器支持暗色模式自动随动夜读纸面、防撞字渐变页脚与零 `AlertDialog` 手账；RP 文游收拢为 `42.dp` 单行 HUD + 高不透明顶部浮层速控 + Z 轴全屏剧场与零套娃 4 板块手账。\n\n#### 2. R8 压缩与 ABI 分包极限瘦身（63.3 MB -> 24.1 MB，降幅 ~62%）\n- 启用 R8 代码/资源压缩与 `arm64-v8a` / `x86_64` ABI 分包，剔除无用 `org/bouncycastle/pqc/**` 依赖并将重复 Logo 资源合并为轻量 WebP，真机安装包体积直降约 39.2 MB。\n- 移除 Room 破坏性迁移隐患并开启 Schema v3 导出；将 `ChatStrings` / `RpStrings` 改为 `@Immutable class` 彻底解除 255 槽位编译限制。\n\n#### 3. Prompt Caching 全协议省钱闭环\n- 纯化 RP 系统前缀（动态状态移出稳定前缀防缓存击穿），为 Anthropic 协议自动注入 `cache_control` 断点（可开关）并透传 OpenAI `prompt_cache_key`。\n- 归一化解析 DeepSeek `prompt_cache_hit_tokens` 与 OpenAI `cached_tokens`，在消息底栏实时展示缓存命中率与节省提示。\n\n#### 4. 酒馆级采样参数与长文阅读体验升级\n- 新增 `min_p`、`repetition_penalty`、`frequency_penalty`、`presence_penalty`、`Assistant Prefill`、仅发送前正则清洗（`promptOnly`）与作者注插入深度（`authorNoteDepth`）。\n- 修复思考过程真实毫秒计时与正文输出时强折跳屏，新增流式生成防抢滚、多变体左右滑卡切换，以及登录页「先逛逛」体验模式与 DeepSeek / 硅基流动 / 火山方舟 / Ollama 等一键预设。"
 }
