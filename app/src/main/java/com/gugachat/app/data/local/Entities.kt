@@ -26,8 +26,10 @@ import com.gugachat.app.domain.chat.RpDiceRoll
 import com.gugachat.app.domain.chat.RpInputKind
 import com.gugachat.app.domain.chat.RpSaveSlot
 import com.gugachat.app.domain.chat.UserMemory
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 
+@Serializable
 @Entity(tableName = "conversations")
 data class ConversationEntity(
     @PrimaryKey val id: String,
@@ -45,8 +47,13 @@ data class ConversationEntity(
     val createdAt: Long,
     val updatedAt: Long,
     val pinned: Boolean,
+    val characterCardId: String? = null,
+    val personaId: String? = null,
+    val presetId: String? = null,
+    val loreTimedStatesJson: String = "{}",
 )
 
+@Serializable
 @Entity(
     tableName = "messages",
     indices = [Index("conversationId"), Index("conversationId", "seq")],
@@ -77,6 +84,7 @@ data class MessageEntity(
     val deletedAt: Long?,
 )
 
+@Serializable
 @Entity(tableName = "user_memories")
 data class UserMemoryEntity(
     @PrimaryKey val id: String,
@@ -90,6 +98,7 @@ data class UserMemoryEntity(
     val estimatedTokens: Int,
 )
 
+@Serializable
 @Entity(
     tableName = "novel_chapters",
     indices = [Index("conversationId")],
@@ -109,6 +118,7 @@ data class NovelChapterEntity(
     val updatedAt: Long,
 )
 
+@Serializable
 @Entity(
     tableName = "novel_lore",
     indices = [Index("conversationId")],
@@ -133,6 +143,7 @@ data class NovelLoreEntity(
     val estimatedTokens: Int,
 )
 
+@Serializable
 @Entity(
     tableName = "memory_ledger",
     indices = [Index("conversationId")],
@@ -162,6 +173,7 @@ data class MemoryLedgerEntity(
     val estimatedTokens: Int,
 )
 
+@Serializable
 @Entity(
     tableName = "memory_episodes",
     indices = [Index("conversationId")],
@@ -182,6 +194,7 @@ data class MemoryEpisodeEntity(
     val estimatedTokens: Int,
 )
 
+@Serializable
 @Entity(
     tableName = "rp_save_slots",
     indices = [Index("conversationId")],
@@ -199,6 +212,7 @@ data class RpSaveSlotEntity(
     val activeMessagesSnapshotJson: String,
 )
 
+@Serializable
 @Entity(tableName = "attachment_meta")
 data class AttachmentMetaEntity(
     @PrimaryKey val id: String,
@@ -244,6 +258,10 @@ fun ConversationEntity.toDomain(): ChatConversation = ChatConversation(
     createdAt = createdAt,
     updatedAt = updatedAt,
     pinned = pinned,
+    characterCardId = characterCardId,
+    personaId = personaId,
+    presetId = presetId,
+    loreTimedStatesJson = loreTimedStatesJson,
 )
 
 fun ChatConversation.toEntity(): ConversationEntity = ConversationEntity(
@@ -262,6 +280,10 @@ fun ChatConversation.toEntity(): ConversationEntity = ConversationEntity(
     createdAt = createdAt,
     updatedAt = updatedAt,
     pinned = pinned,
+    characterCardId = characterCardId,
+    personaId = personaId,
+    presetId = presetId,
+    loreTimedStatesJson = loreTimedStatesJson,
 )
 
 fun MessageEntity.toDomain(): ChatMessage = ChatMessage(

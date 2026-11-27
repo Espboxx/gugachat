@@ -22,10 +22,23 @@ import com.gugachat.app.domain.chat.RetrievalSettings
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
 
 private val Context.settingsDataStore: DataStore<Preferences> by preferencesDataStore(name = "gugachat_settings")
+
+@Serializable
+data class WebDavSyncConfig(
+    val url: String = "",
+    val username: String = "",
+    val syncDirectImages: Boolean = false,
+    val autoSyncOnBackground: Boolean = false,
+    val lastSyncAt: Long = 0L,
+)
+
+fun RetrievalSettings.sanitizedForPlaintextStorage(): RetrievalSettings =
+    SettingsStore.sanitizeRetrievalSettingsForPlaintextStorage(this)
 
 data class AppSettings(
     val serverUrl: String = "",
@@ -53,6 +66,8 @@ data class AppSettings(
     val defaultMaxOutputTokens: Int? = null,
     val retrievalSettings: RetrievalSettings = RetrievalSettings(),
     val tokenCalibrationMap: Map<String, Double> = emptyMap(),
+    val lastStudioSubtab: Int? = null,
+    val webDavConfig: WebDavSyncConfig = WebDavSyncConfig(),
 )
 
 class SettingsStore(private val context: Context) {
@@ -82,6 +97,8 @@ class SettingsStore(private val context: Context) {
         val DEFAULT_MAX_OUTPUT_TOKENS = intPreferencesKey("default_max_output_tokens")
         val RETRIEVAL_SETTINGS_JSON = stringPreferencesKey("retrieval_settings_json")
         val TOKEN_CALIBRATION_MAP_JSON = stringPreferencesKey("token_calibration_map_json")
+        val LAST_STUDIO_SUBTAB = intPreferencesKey("last_studio_subtab")
+        val WEBDAV_CONFIG_JSON = stringPreferencesKey("webdav_config_json")
     }
 
     val settingsFlow: Flow<AppSettings> = context.settingsDataStore.data.map { prefs ->
@@ -113,6 +130,8 @@ class SettingsStore(private val context: Context) {
             defaultMaxOutputTokens = prefs[Keys.DEFAULT_MAX_OUTPUT_TOKENS]?.takeIf { it >= 256 },
             retrievalSettings = decodeRetrievalSettings(prefs[Keys.RETRIEVAL_SETTINGS_JSON]),
             tokenCalibrationMap = decodeTokenCalibrationMap(prefs[Keys.TOKEN_CALIBRATION_MAP_JSON]),
+            lastStudioSubtab = prefs[Keys.LAST_STUDIO_SUBTAB]?.takeIf { it >= 0 },
+            webDavConfig = decodeWebDavConfig(prefs[Keys.WEBDAV_CONFIG_JSON]),
         )
     }
 
@@ -209,10 +228,58 @@ class SettingsStore(private val context: Context) {
         }
     }
 
-    suspend fun setRetrievalSettings(settings: RetrievalSettings) {
-        val encoded = AppJson.encodeToString(RetrievalSettings.serializer(), settings)
+    suspend fun setRetrievalSettings(
+        settings: RetrievalSettings,
+        secretVaultStore: SecretVaultStore? = null,
+    ) {
+        val toPersist = if (secretVaultStore != null) {
+            secretVaultStore.setRemoteEmbeddingApiKey(settings.remoteEmbedding.customApiKey)
+            secretVaultStore.setRemoteRerankApiKey(settings.remoteRerank.customApiKey)
+            settings.sanitizedForPlaintextStorage()
+        } else {
+            settings
+        }
+        val encoded = AppJson.encodeToString(RetrievalSettings.serializer(), toPersist)
         context.settingsDataStore.edit { prefs ->
             prefs[Keys.RETRIEVAL_SETTINGS_JSON] = encoded
+        }
+    }
+
+    suspend fun setLastStudioSubtab(index: Int) {
+        context.settingsDataStore.edit { prefs ->
+            if (index < 0) {
+                prefs.remove(Keys.LAST_STUDIO_SUBTAB)
+            } else {
+                prefs[Keys.LAST_STUDIO_SUBTAB] = index
+            }
+        }
+    }
+
+    suspend fun setWebDavConfig(config: WebDavSyncConfig) {
+        val encoded = AppJson.encodeToString(WebDavSyncConfig.serializer(), config)
+        context.settingsDataStore.edit { prefs ->
+            prefs[Keys.WEBDAV_CONFIG_JSON] = encoded
+        }
+    }
+
+    suspend fun migratePlaintextRetrievalKeysIfNeeded(secretVaultStore: SecretVaultStore) {
+        context.settingsDataStore.edit { prefs ->
+            val raw = prefs[Keys.RETRIEVAL_SETTINGS_JSON]?.trim().orEmpty()
+            if (raw.isEmpty()) return@edit
+            val decoded = decodeRetrievalSettings(raw)
+            val embedKey = decoded.remoteEmbedding.customApiKey
+            val rerankKey = decoded.remoteRerank.customApiKey
+            if (embedKey.isEmpty() && rerankKey.isEmpty()) return@edit
+            if (embedKey.isNotBlank() && secretVaultStore.getRemoteEmbeddingApiKey().isBlank()) {
+                secretVaultStore.setRemoteEmbeddingApiKey(embedKey)
+            }
+            if (rerankKey.isNotBlank() && secretVaultStore.getRemoteRerankApiKey().isBlank()) {
+                secretVaultStore.setRemoteRerankApiKey(rerankKey)
+            }
+            prefs[Keys.RETRIEVAL_SETTINGS_JSON] = AppJson.encodeToString(
+                RetrievalSettings.serializer(),
+                decoded.sanitizedForPlaintextStorage(),
+            )
         }
     }
 
@@ -242,12 +309,26 @@ class SettingsStore(private val context: Context) {
             else -> "4K"
         }
 
+        fun sanitizeRetrievalSettingsForPlaintextStorage(settings: RetrievalSettings): RetrievalSettings =
+            settings.copy(
+                remoteEmbedding = settings.remoteEmbedding.copy(customApiKey = ""),
+                remoteRerank = settings.remoteRerank.copy(customApiKey = ""),
+            )
+
         internal fun decodeRetrievalSettings(raw: String?): RetrievalSettings {
             val clean = raw?.trim().orEmpty()
             if (clean.isEmpty()) return RetrievalSettings()
             return runCatching {
                 AppJson.decodeFromString(RetrievalSettings.serializer(), clean)
             }.getOrDefault(RetrievalSettings())
+        }
+
+        internal fun decodeWebDavConfig(raw: String?): WebDavSyncConfig {
+            val clean = raw?.trim().orEmpty()
+            if (clean.isEmpty()) return WebDavSyncConfig()
+            return runCatching {
+                AppJson.decodeFromString(WebDavSyncConfig.serializer(), clean)
+            }.getOrDefault(WebDavSyncConfig())
         }
 
         internal fun decodeTokenCalibrationMap(raw: String?): Map<String, Double> {

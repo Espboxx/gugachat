@@ -15,6 +15,9 @@ interface ChatDao {
     @Query("SELECT * FROM conversations ORDER BY pinned DESC, updatedAt DESC")
     suspend fun getAllConversations(): List<ConversationEntity>
 
+    @Query("SELECT * FROM conversations ORDER BY id ASC LIMIT :limit OFFSET :offset")
+    suspend fun getConversationsPaged(limit: Int, offset: Int): List<ConversationEntity>
+
     @Query("SELECT * FROM conversations WHERE id = :id LIMIT 1")
     suspend fun getConversationById(id: String): ConversationEntity?
 
@@ -36,11 +39,17 @@ interface ChatDao {
     @Query("SELECT * FROM messages ORDER BY conversationId, seq ASC")
     suspend fun getAllMessages(): List<MessageEntity>
 
+    @Query("SELECT * FROM messages ORDER BY conversationId ASC, seq ASC, id ASC LIMIT :limit OFFSET :offset")
+    suspend fun getMessagesPaged(limit: Int, offset: Int): List<MessageEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertMessage(entity: MessageEntity)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertMessages(entities: List<MessageEntity>)
+
+    @Query("UPDATE messages SET status = 'aborted' WHERE status = 'streaming'")
+    suspend fun abortOrphanStreamingMessages()
 
     @Query("DELETE FROM messages WHERE conversationId = :convId")
     suspend fun deleteMessagesForConversation(convId: String)
@@ -53,6 +62,9 @@ interface ChatDao {
 
     @Query("SELECT * FROM novel_chapters ORDER BY conversationId, sortOrder ASC")
     suspend fun getAllNovelChapters(): List<NovelChapterEntity>
+
+    @Query("SELECT * FROM novel_chapters ORDER BY conversationId ASC, sortOrder ASC, id ASC LIMIT :limit OFFSET :offset")
+    suspend fun getNovelChaptersPaged(limit: Int, offset: Int): List<NovelChapterEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertNovelChapter(entity: NovelChapterEntity)
@@ -75,6 +87,9 @@ interface ChatDao {
     @Query("SELECT * FROM novel_lore")
     suspend fun getAllNovelLore(): List<NovelLoreEntity>
 
+    @Query("SELECT * FROM novel_lore ORDER BY id ASC LIMIT :limit OFFSET :offset")
+    suspend fun getNovelLorePaged(limit: Int, offset: Int): List<NovelLoreEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertNovelLore(entity: NovelLoreEntity)
 
@@ -95,6 +110,9 @@ interface ChatDao {
 
     @Query("SELECT * FROM memory_ledger")
     suspend fun getAllMemoryLedger(): List<MemoryLedgerEntity>
+
+    @Query("SELECT * FROM memory_ledger ORDER BY id ASC LIMIT :limit OFFSET :offset")
+    suspend fun getMemoryLedgerPaged(limit: Int, offset: Int): List<MemoryLedgerEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertMemoryLedger(entity: MemoryLedgerEntity)
@@ -117,6 +135,9 @@ interface ChatDao {
     @Query("SELECT * FROM memory_episodes")
     suspend fun getAllMemoryEpisodes(): List<MemoryEpisodeEntity>
 
+    @Query("SELECT * FROM memory_episodes ORDER BY id ASC LIMIT :limit OFFSET :offset")
+    suspend fun getMemoryEpisodesPaged(limit: Int, offset: Int): List<MemoryEpisodeEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertMemoryEpisode(entity: MemoryEpisodeEntity)
 
@@ -138,6 +159,9 @@ interface ChatDao {
     @Query("SELECT * FROM rp_save_slots")
     suspend fun getAllRpSaveSlots(): List<RpSaveSlotEntity>
 
+    @Query("SELECT * FROM rp_save_slots ORDER BY id ASC LIMIT :limit OFFSET :offset")
+    suspend fun getRpSaveSlotsPaged(limit: Int, offset: Int): List<RpSaveSlotEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertRpSaveSlot(entity: RpSaveSlotEntity)
 
@@ -150,6 +174,12 @@ interface ChatDao {
     @Query("DELETE FROM rp_save_slots WHERE conversationId = :convId")
     suspend fun deleteRpSaveSlotsForConversation(convId: String)
 
+    @Query("DELETE FROM conversation_worldbooks WHERE conversationId = :convId")
+    suspend fun deleteConversationWorldbooksForConversation(convId: String)
+
+    @Query("DELETE FROM memory_embeddings WHERE conversationId = :convId")
+    suspend fun deleteMemoryEmbeddingsForConversation(convId: String)
+
     @Transaction
     suspend fun deleteConversationCascade(convId: String) {
         deleteMessagesForConversation(convId)
@@ -158,6 +188,8 @@ interface ChatDao {
         deleteMemoryLedgerForConversation(convId)
         deleteMemoryEpisodesForConversation(convId)
         deleteRpSaveSlotsForConversation(convId)
+        deleteConversationWorldbooksForConversation(convId)
+        deleteMemoryEmbeddingsForConversation(convId)
         deleteConversation(convId)
     }
 
@@ -191,6 +223,9 @@ interface UserMemoryDao {
     @Query("SELECT * FROM user_memories ORDER BY pinned DESC, updatedAt DESC")
     suspend fun getAll(): List<UserMemoryEntity>
 
+    @Query("SELECT * FROM user_memories ORDER BY id ASC LIMIT :limit OFFSET :offset")
+    suspend fun getPaged(limit: Int, offset: Int): List<UserMemoryEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(entity: UserMemoryEntity)
 
@@ -212,12 +247,21 @@ interface AttachmentDao {
     @Query("SELECT * FROM attachment_meta WHERE id IN (:ids)")
     suspend fun getByIds(ids: List<String>): List<AttachmentMetaEntity>
 
+    @Query("SELECT * FROM attachment_meta ORDER BY id ASC LIMIT :limit OFFSET :offset")
+    suspend fun getPaged(limit: Int, offset: Int): List<AttachmentMetaEntity>
+
     @Query("UPDATE attachment_meta SET injectMode = :injectMode WHERE id = :id")
     suspend fun updateInjectMode(id: String, injectMode: String)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(entity: AttachmentMetaEntity)
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertAll(entities: List<AttachmentMetaEntity>)
+
     @Query("DELETE FROM attachment_meta WHERE id = :id")
     suspend fun deleteById(id: String)
+
+    @Query("DELETE FROM attachment_meta")
+    suspend fun clearAll()
 }

@@ -19,12 +19,20 @@
 -keepclassmembers class com.gugachat.app.data.local.** {
     *** Companion;
 }
+-keep,includedescriptorclasses class com.gugachat.app.data.sync.**$$serializer { *; }
+-keepclassmembers class com.gugachat.app.data.sync.** {
+    *** Companion;
+}
 -keep,includedescriptorclasses class com.gugachat.app.domain.**$$serializer { *; }
 -keepclassmembers class com.gugachat.app.domain.** {
     *** Companion;
 }
 -keep,includedescriptorclasses class com.gugachat.app.ui.providers.**$$serializer { *; }
 -keepclassmembers class com.gugachat.app.ui.providers.** {
+    *** Companion;
+}
+-keep,includedescriptorclasses class com.gugachat.app.ui.studio.**$$serializer { *; }
+-keepclassmembers class com.gugachat.app.ui.studio.** {
     *** Companion;
 }
 
