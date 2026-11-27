@@ -33,6 +33,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -51,6 +53,7 @@ import com.gugachat.app.core.i18n.LocalAppStrings
 import com.gugachat.app.core.i18n.fmt
 import com.gugachat.app.core.theme.GuConfirmDialog
 import com.gugachat.app.core.theme.GuPopupMenu
+import com.gugachat.app.core.theme.LocalAppShellController
 import com.gugachat.app.core.theme.LocalAppTheme
 import com.gugachat.app.data.api.DirectProtocolCodec
 import com.gugachat.app.data.local.AttachmentFileStore
@@ -72,6 +75,17 @@ fun ChatWorkspaceScreen(
     val ctx = LocalContext.current
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+    val shell = LocalAppShellController.current
+
+    LaunchedEffect(drawerState.isOpen) {
+        shell.setChatDrawerOpen(drawerState.isOpen)
+    }
+    DisposableEffect(Unit) {
+        onDispose {
+            shell.setChatDrawerOpen(false)
+            shell.setScrollHideBottomBar(false)
+        }
+    }
 
     var showModelSheet by remember { mutableStateOf(false) }
     var showNewSessionSheet by remember { mutableStateOf(false) }
@@ -156,6 +170,10 @@ fun ChatWorkspaceScreen(
     val enableReasoning = activeConv?.params?.enableReasoning ?: true
     val enableAutoMemory = activeConv?.params?.enableAutoMemory ?: true
     val supportsVision = activeModel?.supports_vision ?: true
+
+    LaunchedEffect(activeConv?.id, mode) {
+        shell.setScrollHideBottomBar(false)
+    }
 
     if (state.pureReadingMode && novelConfig != null) {
         PureReadingOverlay(
@@ -757,6 +775,7 @@ fun ChatWorkspaceScreen(
                 onRenameConversation = viewModel::renameConversation,
                 onDeleteConversation = viewModel::deleteConversation,
                 onCloseDrawer = { scope.launch { drawerState.close() } },
+                onSwitchMainTab = shell.selectMainTab,
             )
         },
     ) {
@@ -951,6 +970,10 @@ fun ChatWorkspaceScreen(
                     onSend = { viewModel.sendMessage() },
                     onStop = viewModel::stopStreaming,
                     onToast = { container.toastController.show(it) },
+                    conversationTitle = activeConv?.title.orEmpty(),
+                    onScrollHideBottomBarChanged = shell.setScrollHideBottomBar,
+                    onOpenRpWizard = { showRpWizard = true },
+                    onOpenNovelWizard = { showNovelWizard = true },
                 )
             }
         }

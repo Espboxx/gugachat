@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -27,10 +28,8 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.WrapText
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.ExpandLess
-import androidx.compose.material.icons.filled.ExpandMore
-import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -45,6 +44,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
@@ -57,7 +57,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withLink
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
@@ -118,17 +117,16 @@ fun ReasoningCard(
             }
         }
     }
-    val collapsedPreview = remember(reasoning) {
-        reasoning.trim()
-            .replace(Regex("\\s+"), " ")
-            .take(120)
-    }
+
+    val chevronRotation by animateFloatAsState(
+        targetValue = if (expanded) 90f else 0f,
+        label = "reasoning_chevron",
+    )
 
     Column(
         modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(5.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        val showInlinePreview = !expanded && !isStreaming && collapsedPreview.isNotEmpty()
         val labelText = when {
             isStreaming && liveElapsedSec > 0 -> "${strings.chat.thinkingRunning} · ${liveElapsedSec}s"
             isStreaming -> strings.chat.thinkingRunning
@@ -140,51 +138,41 @@ fun ReasoningCard(
         }
         Row(
             modifier = Modifier
-                .heightIn(min = 32.dp)
-                .clip(RoundedCornerShape(999.dp))
-                .background(c.surfaceSoft)
-                .border(theme.borderWidth, c.border, RoundedCornerShape(999.dp))
+                .heightIn(min = 28.dp)
+                .clip(RoundedCornerShape(8.dp))
                 .clickable { expanded = !expanded }
-                .padding(horizontal = 10.dp, vertical = 4.dp),
+                .padding(horizontal = 2.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(5.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             if (isStreaming) {
                 CircularProgressIndicator(
                     modifier = Modifier.size(12.dp),
-                    strokeWidth = 1.8.dp,
+                    strokeWidth = 1.6.dp,
                     color = c.primary,
                 )
             } else {
-                Icon(
-                    imageVector = Icons.Default.Psychology,
-                    contentDescription = null,
-                    modifier = Modifier.size(13.5.dp),
-                    tint = c.primary,
+                Text(
+                    text = "✦",
+                    color = c.primary.copy(alpha = 0.85f),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
                 )
             }
             Text(
                 text = labelText,
-                color = c.ink,
-                fontSize = 11.5.sp,
-                fontWeight = FontWeight.SemiBold,
+                color = if (isStreaming) c.ink.copy(alpha = 0.85f) else c.muted,
+                fontSize = 12.5.sp,
+                fontWeight = FontWeight.Medium,
                 maxLines = 1,
             )
-            if (showInlinePreview) {
-                Text(
-                    text = "· $collapsedPreview",
-                    color = c.muted.copy(alpha = 0.85f),
-                    fontSize = 11.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false),
-                )
-            }
             Icon(
-                imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                imageVector = Icons.Default.ChevronRight,
                 contentDescription = null,
-                tint = c.muted,
-                modifier = Modifier.size(14.5.dp),
+                tint = c.muted.copy(alpha = 0.78f),
+                modifier = Modifier
+                    .size(15.dp)
+                    .rotate(chevronRotation),
             )
         }
 
@@ -193,7 +181,7 @@ fun ReasoningCard(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(IntrinsicSize.Min)
-                    .padding(start = 6.dp),
+                    .padding(start = 5.dp, top = 2.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Box(
@@ -201,14 +189,14 @@ fun ReasoningCard(
                         .width(2.dp)
                         .fillMaxHeight()
                         .clip(RoundedCornerShape(2.dp))
-                        .background(c.primary.copy(alpha = 0.45f)),
+                        .background(c.primary.copy(alpha = 0.4f)),
                 )
                 SelectionContainer {
                     Text(
                         text = reasoning.trim(),
                         color = c.muted,
                         fontSize = 13.sp,
-                        lineHeight = 20.5.sp,
+                        lineHeight = 21.sp,
                         modifier = Modifier.padding(bottom = 4.dp),
                     )
                 }
@@ -272,7 +260,7 @@ fun MarkdownMessageText(
     SelectionContainer {
         Column(
             modifier = modifier,
-            verticalArrangement = Arrangement.spacedBy(9.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             blocks.forEachIndexed { index, block ->
                 when (block) {
@@ -520,9 +508,9 @@ private fun CodeFenceBlock(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
+            .clip(RoundedCornerShape(12.dp))
             .background(palette.codeBg)
-            .border(theme.borderWidth, palette.border, RoundedCornerShape(14.dp)),
+            .border(theme.borderWidth, palette.border.copy(alpha = 0.65f), RoundedCornerShape(12.dp)),
     ) {
         Row(
             modifier = Modifier
@@ -537,7 +525,7 @@ private fun CodeFenceBlock(
                 color = palette.codeMeta,
                 fontSize = 11.sp,
                 fontFamily = FontFamily.Monospace,
-                fontWeight = FontWeight.Bold,
+                fontWeight = FontWeight.SemiBold,
                 letterSpacing = 0.3.sp,
             )
             Row(
@@ -546,18 +534,13 @@ private fun CodeFenceBlock(
             ) {
                 Row(
                     modifier = Modifier
-                        .heightIn(min = 32.dp)
-                        .clip(RoundedCornerShape(999.dp))
+                        .heightIn(min = 28.dp)
+                        .clip(RoundedCornerShape(8.dp))
                         .background(
                             if (wrapLines) palette.accent.copy(alpha = 0.14f) else palette.codeBg.copy(alpha = 0.72f),
                         )
-                        .border(
-                            theme.borderWidth,
-                            if (wrapLines) palette.accent.copy(alpha = 0.45f) else palette.border.copy(alpha = 0.8f),
-                            RoundedCornerShape(999.dp),
-                        )
                         .clickable { wrapLines = !wrapLines }
-                        .padding(horizontal = 8.dp, vertical = 5.dp),
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
@@ -575,20 +558,19 @@ private fun CodeFenceBlock(
                         },
                         color = if (wrapLines) palette.accent else palette.codeMeta,
                         fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
+                        fontWeight = FontWeight.Medium,
                     )
                 }
                 Row(
                     modifier = Modifier
-                        .heightIn(min = 32.dp)
-                        .clip(RoundedCornerShape(999.dp))
+                        .heightIn(min = 28.dp)
+                        .clip(RoundedCornerShape(8.dp))
                         .background(palette.codeBg.copy(alpha = 0.72f))
-                        .border(theme.borderWidth, palette.border.copy(alpha = 0.8f), RoundedCornerShape(999.dp))
                         .clickable {
                             onCopy()
                             justCopied = true
                         }
-                        .padding(horizontal = 9.dp, vertical = 5.dp),
+                        .padding(horizontal = 9.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
@@ -602,7 +584,7 @@ private fun CodeFenceBlock(
                         text = if (justCopied) copiedLabel else copyLabel,
                         color = palette.accent,
                         fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
+                        fontWeight = FontWeight.Medium,
                     )
                 }
             }

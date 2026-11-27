@@ -2,8 +2,6 @@ package com.gugachat.app.ui.chat
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -32,10 +30,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.i18n.LocalAppStrings
-import com.gugachat.app.core.theme.GuBadge
-import com.gugachat.app.core.theme.GuBadgeVariant
 import com.gugachat.app.core.theme.GuCard
 import com.gugachat.app.core.theme.GuIconTile
+import com.gugachat.app.core.theme.GuMetaText
 import com.gugachat.app.core.theme.GuModalDragHandle
 import com.gugachat.app.core.theme.GuSheetHeader
 import com.gugachat.app.core.theme.LocalAppTheme
@@ -82,7 +79,6 @@ fun NewSessionChooserSheet(
                     icon = Icons.AutoMirrored.Filled.Chat,
                     iconBg = c.primarySoft,
                     iconTint = c.primarySoftInk,
-                    borderTint = c.primary.copy(alpha = 0.28f),
                     title = strings.chat.modeChatTitle,
                     description = strings.chat.modeChatDesc,
                     features = if (isZh) {
@@ -90,7 +86,6 @@ fun NewSessionChooserSheet(
                     } else {
                         listOf("DeepThink", "Vision", "Long Memory")
                     },
-                    chipVariant = GuBadgeVariant.BLUE,
                     onClick = onSelectChat,
                 )
 
@@ -98,7 +93,6 @@ fun NewSessionChooserSheet(
                     icon = Icons.Default.Casino,
                     iconBg = c.successBg,
                     iconTint = c.success,
-                    borderTint = c.success.copy(alpha = 0.32f),
                     title = strings.chat.modeRpTitle,
                     description = strings.chat.modeRpDesc,
                     features = if (isZh) {
@@ -106,7 +100,6 @@ fun NewSessionChooserSheet(
                     } else {
                         listOf("VN Theater", "Tavern Cards", "Branches & Dice")
                     },
-                    chipVariant = GuBadgeVariant.EMERALD,
                     onClick = onSelectRp,
                 )
 
@@ -114,7 +107,6 @@ fun NewSessionChooserSheet(
                     icon = Icons.Default.AutoStories,
                     iconBg = c.tag,
                     iconTint = c.tagInk,
-                    borderTint = c.accent.copy(alpha = 0.35f),
                     title = strings.chat.modeNovelTitle,
                     description = strings.chat.modeNovelDesc,
                     features = if (isZh) {
@@ -122,7 +114,6 @@ fun NewSessionChooserSheet(
                     } else {
                         listOf("Chapters", "Lorebook", "Pure Reader")
                     },
-                    chipVariant = GuBadgeVariant.HONEY,
                     onClick = onSelectNovel,
                 )
 
@@ -132,24 +123,20 @@ fun NewSessionChooserSheet(
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun SessionModeOptionCard(
     icon: ImageVector,
     iconBg: Color,
     iconTint: Color,
-    borderTint: Color,
     title: String,
     description: String,
     features: List<String>,
-    chipVariant: GuBadgeVariant,
     onClick: () -> Unit,
 ) {
     val c = LocalAppTheme.current.colors
 
     GuCard(
         modifier = Modifier.fillMaxWidth(),
-        borderColor = borderTint,
         onClick = onClick,
     ) {
         Row(
@@ -167,36 +154,33 @@ private fun SessionModeOptionCard(
             )
             Column(
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(5.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 Text(
                     text = title,
                     color = c.ink,
                     fontSize = 15.5.sp,
-                    fontWeight = FontWeight.ExtraBold,
+                    fontWeight = FontWeight.SemiBold,
                 )
                 Text(
                     text = description,
                     color = c.muted,
-                    fontSize = 12.sp,
-                    lineHeight = 17.5.sp,
+                    fontSize = 12.5.sp,
+                    lineHeight = 18.sp,
                 )
                 if (features.isNotEmpty()) {
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        features.forEach { feat ->
-                            GuBadge(text = feat, variant = chipVariant)
-                        }
-                    }
+                    GuMetaText(
+                        text = features.joinToString(" · "),
+                        color = c.muted.copy(alpha = 0.85f),
+                        maxLines = 2,
+                    )
                 }
             }
             Icon(
                 imageVector = Icons.Default.ChevronRight,
                 contentDescription = null,
-                tint = c.muted.copy(alpha = 0.75f),
-                modifier = Modifier.size(20.dp),
+                tint = c.muted.copy(alpha = 0.65f),
+                modifier = Modifier.size(19.dp),
             )
         }
     }

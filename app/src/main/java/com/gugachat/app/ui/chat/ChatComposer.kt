@@ -41,6 +41,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material3.CircularProgressIndicator
@@ -58,6 +59,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -124,6 +127,7 @@ fun ChatComposerBar(
     onOpenNovelStudio: (Int) -> Unit = {},
     onEnterPureReading: () -> Unit = {},
     modifier: Modifier = Modifier,
+    inputFocusRequester: FocusRequester? = null,
 ) {
     val strings = LocalAppStrings.current
     val theme = LocalAppTheme.current
@@ -172,23 +176,76 @@ fun ChatComposerBar(
         showToolsPanel = false
     }
 
-    val containerColor = if (theme.isDark) c.surfaceElevated else c.surface
-    val elevation = when {
-        containerColor.alpha < 0.99f -> 0.dp
-        theme.isDark -> 2.dp
-        else -> 3.dp
-    }
+    val containerColor = if (theme.isDark) c.surfaceElevated.copy(alpha = 0.94f) else c.surface
+    val elevation = if (!theme.isDark && containerColor.alpha >= 0.99f) 1.dp else 0.dp
+    val borderStroke = BorderStroke(
+        width = 0.5.dp,
+        color = if (theme.isDark) c.border.copy(alpha = 0.55f) else c.outline.copy(alpha = 0.25f),
+    )
 
-    Surface(
-        color = containerColor,
-        shape = RoundedCornerShape(24.dp),
-        border = BorderStroke(theme.borderWidth, c.border),
-        shadowElevation = elevation,
+    val showWaterlineStrip = waterline.hardOverflow || waterline.isSliding || waterline.sentPercentage >= 80
+    val showRecallStrip = waterline.retrievedMemoryCount > 0
+
+    Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 10.dp, vertical = 4.dp)
             .imePadding(),
     ) {
+        if (showRecallStrip || showWaterlineStrip) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(22.dp)
+                    .padding(horizontal = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                if (showRecallStrip) {
+                    Text(
+                        text = "✦ ${strings.chat.retrievedMemoryCountPill.fmt("count" to waterline.retrievedMemoryCount)}",
+                        color = c.primarySoftInk,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .clickable(onClick = onOpenRecallInspector)
+                            .padding(horizontal = 2.dp),
+                    )
+                }
+                Box(modifier = Modifier.weight(1f))
+                if (showWaterlineStrip) {
+                    val sentShort = FileContextBudgeter.formatShortTokens(waterline.sentTokens)
+                    val limitShort = FileContextBudgeter.formatShortTokens(waterline.effectiveLimitTokens)
+                    val statusColor = if (waterline.hardOverflow) c.danger else c.warning
+                    val prefix = if (waterline.hardOverflow) "⚠ " else ""
+                    Text(
+                        text = "$prefix${strings.contextUi.sentShortPrefix} ${waterline.sentPercentage}% · $sentShort / $limitShort",
+                        color = statusColor,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        style = TextStyle(fontFeatureSettings = "tnum"),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .clickable(onClick = onOpenContextSettings)
+                            .padding(horizontal = 2.dp),
+                    )
+                }
+            }
+        }
+
+        Surface(
+            color = containerColor,
+            shape = RoundedCornerShape(22.dp),
+            border = borderStroke,
+            shadowElevation = elevation,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 4.dp),
+        ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -580,11 +637,6 @@ fun ChatComposerBar(
                             .size(32.dp)
                             .clip(CircleShape)
                             .background(if (showToolsPanel) c.primarySoft else c.surfaceSoft)
-                            .border(
-                                width = theme.borderWidth,
-                                color = if (showToolsPanel) c.primary.copy(alpha = 0.55f) else c.border,
-                                shape = CircleShape,
-                            )
                             .clickable { showToolsPanel = !showToolsPanel },
                         contentAlignment = Alignment.Center,
                     ) {
@@ -736,11 +788,13 @@ fun ChatComposerBar(
                     maxLines = 5,
                     textStyle = TextStyle(
                         color = c.ink,
-                        fontSize = 14.sp,
-                        lineHeight = 19.5.sp,
+                        fontSize = 14.5.sp,
+                        lineHeight = 20.sp,
                     ),
                     cursorBrush = SolidColor(c.primary),
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .then(inputFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier),
                     decorationBox = { innerTextField ->
                         Box(
                             modifier = Modifier
@@ -753,8 +807,8 @@ fun ChatComposerBar(
                                 Text(
                                     text = placeholder,
                                     color = c.muted,
-                                    fontSize = 14.sp,
-                                    lineHeight = 19.5.sp,
+                                    fontSize = 14.5.sp,
+                                    lineHeight = 20.sp,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                 )
@@ -764,38 +818,61 @@ fun ChatComposerBar(
                     },
                 )
 
-                // Right: 30dp compact DeepThink icon toggle
+                // Right: lightweight DeepThink toggle (frameless muted brain when off; soft primarySoft capsule when on)
                 val thinkBg by animateColorAsState(
-                    targetValue = if (enableReasoning) c.primary else c.surfaceSoft,
+                    targetValue = if (enableReasoning) c.primarySoft else Color.Transparent,
                     label = "composer_think_bg",
                 )
                 val thinkFg by animateColorAsState(
-                    targetValue = if (enableReasoning) Color.White else c.muted,
+                    targetValue = if (enableReasoning) c.primarySoftInk else c.muted,
                     label = "composer_think_fg",
                 )
-                Box(
-                    modifier = Modifier
-                        .padding(bottom = 1.dp)
-                        .size(30.dp)
-                        .clip(CircleShape)
-                        .background(thinkBg)
-                        .border(
-                            width = theme.borderWidth,
-                            color = if (enableReasoning) c.primary else c.border,
-                            shape = CircleShape,
+                if (enableReasoning) {
+                    val thinkShortLabel = if (strings.language == AppLanguage.ZH) "深度" else "Think"
+                    Row(
+                        modifier = Modifier
+                            .padding(bottom = 1.dp)
+                            .height(30.dp)
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(thinkBg)
+                            .clickable(onClick = onToggleReasoning)
+                            .padding(horizontal = 9.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(3.dp),
+                    ) {
+                        Text(
+                            text = "✦",
+                            color = thinkFg,
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.SemiBold,
                         )
-                        .clickable(onClick = onToggleReasoning),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.AutoAwesome,
-                        contentDescription = strings.chat.deepThinkToggle,
-                        tint = thinkFg,
-                        modifier = Modifier.size(15.dp),
-                    )
+                        Text(
+                            text = thinkShortLabel,
+                            color = thinkFg,
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                        )
+                    }
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .padding(bottom = 1.dp)
+                            .size(30.dp)
+                            .clip(CircleShape)
+                            .clickable(onClick = onToggleReasoning),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Psychology,
+                            contentDescription = strings.chat.deepThinkToggle,
+                            tint = thinkFg,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
                 }
 
-                // Right: 32dp Send / Stop button
+                // Right: sole solid primary circle Send / Stop button
                 if (isStreaming) {
                     Box(
                         modifier = Modifier
@@ -823,11 +900,6 @@ fun ChatComposerBar(
                             .size(32.dp)
                             .clip(CircleShape)
                             .background(sendBg)
-                            .border(
-                                width = theme.borderWidth,
-                                color = if (canSend) c.primary else c.border,
-                                shape = CircleShape,
-                            )
                             .clickable(enabled = canSend, onClick = onSend),
                         contentAlignment = Alignment.Center,
                     ) {
@@ -841,6 +913,7 @@ fun ChatComposerBar(
                 }
             }
         }
+        }
     }
 }
 
@@ -853,14 +926,13 @@ private fun ComposerAttachmentActionTile(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val theme = LocalAppTheme.current
-    val c = theme.colors
+    val c = LocalAppTheme.current.colors
     Surface(
         onClick = onClick,
         shape = RoundedCornerShape(14.dp),
         color = c.surfaceSoft,
-        border = BorderStroke(theme.borderWidth, c.border),
-        modifier = modifier.height(54.dp),
+        border = null,
+        modifier = modifier.height(52.dp),
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
@@ -885,7 +957,7 @@ private fun ComposerAttachmentActionTile(
                 text = label,
                 color = c.ink,
                 fontSize = 11.5.sp,
-                fontWeight = FontWeight.Bold,
+                fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -899,14 +971,13 @@ private fun DeepThinkTogglePill(
     active: Boolean,
     onClick: () -> Unit,
 ) {
-    val theme = LocalAppTheme.current
-    val c = theme.colors
+    val c = LocalAppTheme.current.colors
     val bg by animateColorAsState(
-        targetValue = if (active) c.primary else c.surfaceSoft,
+        targetValue = if (active) c.primarySoft else c.surfaceSoft,
         label = "deep_think_bg",
     )
     val fg by animateColorAsState(
-        targetValue = if (active) Color.White else c.muted,
+        targetValue = if (active) c.primarySoftInk else c.muted,
         label = "deep_think_fg",
     )
     Row(
@@ -914,27 +985,22 @@ private fun DeepThinkTogglePill(
             .height(30.dp)
             .clip(RoundedCornerShape(999.dp))
             .background(bg)
-            .border(
-                width = theme.borderWidth,
-                color = if (active) c.primary else c.border,
-                shape = RoundedCornerShape(999.dp),
-            )
             .clickable(onClick = onClick)
-            .padding(horizontal = 9.dp),
+            .padding(horizontal = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         Icon(
-            imageVector = Icons.Default.AutoAwesome,
+            imageVector = Icons.Default.Psychology,
             contentDescription = null,
             tint = fg,
-            modifier = Modifier.size(13.dp),
+            modifier = Modifier.size(14.dp),
         )
         Text(
             text = label,
             color = fg,
             fontSize = 11.5.sp,
-            fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
+            fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
@@ -959,8 +1025,7 @@ private fun ComposerChip(
     enabled: Boolean = true,
     loading: Boolean = false,
 ) {
-    val theme = LocalAppTheme.current
-    val c = theme.colors
+    val c = LocalAppTheme.current.colors
     val bg = when {
         tone == ComposerChipTone.DANGER -> c.dangerBg
         tone == ComposerChipTone.WARNING -> c.warningBg
@@ -975,13 +1040,6 @@ private fun ComposerChip(
         active && tone == ComposerChipTone.PRIMARY -> c.primarySoftInk
         else -> c.muted
     }
-    val border = when {
-        tone == ComposerChipTone.DANGER -> c.danger.copy(alpha = 0.45f)
-        tone == ComposerChipTone.WARNING -> c.warning.copy(alpha = 0.45f)
-        active && tone == ComposerChipTone.ACCENT -> c.accent.copy(alpha = 0.48f)
-        active && tone == ComposerChipTone.PRIMARY -> c.primary.copy(alpha = 0.42f)
-        else -> c.border
-    }
 
     Row(
         modifier = Modifier
@@ -989,9 +1047,8 @@ private fun ComposerChip(
             .alpha(if (enabled || loading) 1f else 0.48f)
             .clip(RoundedCornerShape(999.dp))
             .background(bg)
-            .border(theme.borderWidth, border, RoundedCornerShape(999.dp))
             .clickable(enabled = enabled && !loading, onClick = onClick)
-            .padding(horizontal = 9.dp),
+            .padding(horizontal = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
@@ -1008,7 +1065,7 @@ private fun ComposerChip(
             text = label,
             color = fg,
             fontSize = 11.5.sp,
-            fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
+            fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
