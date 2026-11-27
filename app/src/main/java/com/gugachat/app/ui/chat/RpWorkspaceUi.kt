@@ -2,8 +2,10 @@ package com.gugachat.app.ui.chat
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
@@ -550,7 +552,7 @@ fun RpWorkspaceScreen(
                             ) {
                                 Surface(
                                     shape = RoundedCornerShape(16.dp),
-                                    color = Color(0xEC0E1422),
+                                    color = Color(0xFA0E1422),
                                     border = BorderStroke(0.6.dp, stageAccent.copy(alpha = 0.45f)),
                                     shadowElevation = 8.dp,
                                     modifier = Modifier.fillMaxWidth(),
@@ -583,106 +585,95 @@ fun RpWorkspaceScreen(
                                 }
                             }
                         }
+                    }
 
-                        // Layer 4: On-Demand Theater Mode Composer Overlay (collapsed by default!)
-                        androidx.compose.animation.AnimatedVisibility(
-                            visible = rp.theaterMode && showTheaterComposer,
-                            enter = fadeIn() + slideInVertically { it },
-                            exit = fadeOut() + slideOutVertically { it },
+                    // On-Demand Theater Mode Composer (shifts stage upward cleanly with zero overlap)
+                    AnimatedVisibility(
+                        visible = rp.theaterMode && showTheaterComposer,
+                        enter = fadeIn() + expandVertically(expandFrom = Alignment.Top) + slideInVertically { it / 3 },
+                        exit = fadeOut() + shrinkVertically(shrinkTowards = Alignment.Top) + slideOutVertically { it / 3 },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(
                             modifier = Modifier
-                                .align(Alignment.BottomCenter)
                                 .fillMaxWidth()
-                                .zIndex(9f),
+                                .background(Color(0xFA090D16))
+                                .padding(top = 6.dp),
                         ) {
-                            Column(
+                            Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .background(
-                                        Brush.verticalGradient(
-                                            listOf(
-                                                Color.Transparent,
-                                                Color(0xD9070B14),
-                                                Color(0xF5070B14),
-                                            ),
-                                        ),
-                                    )
-                                    .padding(top = 10.dp),
+                                    .padding(horizontal = 14.dp, vertical = 2.dp),
+                                horizontalArrangement = Arrangement.End,
                             ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 14.dp, vertical = 2.dp),
-                                    horizontalArrangement = Arrangement.End,
+                                Surface(
+                                    onClick = { showTheaterComposer = false },
+                                    shape = RoundedCornerShape(999.dp),
+                                    color = Color(0xCC131928),
+                                    border = BorderStroke(0.5.dp, Color(0x44CBD5E1)),
                                 ) {
-                                    Surface(
-                                        onClick = { showTheaterComposer = false },
-                                        shape = RoundedCornerShape(999.dp),
-                                        color = Color(0xCC131928),
-                                        border = BorderStroke(0.5.dp, Color(0x44CBD5E1)),
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.5.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(3.dp),
                                     ) {
-                                        Row(
-                                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.5.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(3.dp),
-                                        ) {
-                                            Icon(
-                                                Icons.Default.KeyboardArrowDown,
-                                                contentDescription = null,
-                                                tint = Color(0xFFDCE4F5),
-                                                modifier = Modifier.size(13.dp),
-                                            )
-                                            Text(
-                                                text = if (isZh) "收起" else "Hide",
-                                                color = Color(0xFFDCE4F5),
-                                                fontSize = 10.5.sp,
-                                                fontWeight = FontWeight.Medium,
-                                            )
-                                        }
+                                        Icon(
+                                            Icons.Default.KeyboardArrowDown,
+                                            contentDescription = null,
+                                            tint = Color(0xFFDCE4F5),
+                                            modifier = Modifier.size(13.dp),
+                                        )
+                                        Text(
+                                            text = if (isZh) "收起" else "Hide",
+                                            color = Color(0xFFDCE4F5),
+                                            fontSize = 10.5.sp,
+                                            fontWeight = FontWeight.Medium,
+                                        )
                                     }
                                 }
-                                ChatComposerBar(
-                                    mode = ConversationMode.rp,
-                                    draftText = draftText,
-                                    draftAttachments = draftAttachments,
-                                    draftNovelKind = NovelInputKind.director,
-                                    draftRpKind = draftRpKind,
-                                    draftDiceRoll = draftDiceRoll,
-                                    waterline = waterline,
-                                    enableReasoning = enableReasoning,
-                                    enableAutoMemory = memoryEnabled,
-                                    isStreaming = isStreaming,
-                                    supportsVision = supportsVision,
-                                    isImportingAttachment = isImportingAttachment,
-                                    onDraftChange = onDraftChange,
-                                    onSelectNovelKind = {},
-                                    onSelectRpKind = onSelectRpKind,
-                                    onToggleReasoning = onToggleReasoning,
-                                    onToggleMemory = onToggleMemory,
-                                    onPickImage = onPickImage,
-                                    onTakePhoto = onTakePhoto,
-                                    onPickFile = onPickFile,
-                                    onRemoveAttachment = onRemoveAttachment,
-                                    onUpdateAttachmentInjectMode = onUpdateAttachmentInjectMode,
-                                    onReadAttachmentText = onReadAttachmentText,
-                                    onOpenModelSheet = onOpenModelSheet,
-                                    onToast = onToast,
-                                    onOpenDiceDialog = onOpenDiceDialog,
-                                    onClearDiceRoll = onClearDiceRoll,
-                                    onOpenRecallInspector = onOpenRecallInspector,
-                                    onOpenContextSettings = onOpenContextSettings,
-                                    onSend = {
-                                        showTheaterComposer = false
-                                        onSend()
-                                    },
-                                    onStop = onStop,
-                                    isImpersonating = isImpersonating,
-                                    onImpersonate = onImpersonate,
-                                    onContinueRp = {
-                                        showTheaterComposer = false
-                                        onContinue()
-                                    },
-                                )
                             }
+                            ChatComposerBar(
+                                mode = ConversationMode.rp,
+                                draftText = draftText,
+                                draftAttachments = draftAttachments,
+                                draftNovelKind = NovelInputKind.director,
+                                draftRpKind = draftRpKind,
+                                draftDiceRoll = draftDiceRoll,
+                                waterline = waterline,
+                                enableReasoning = enableReasoning,
+                                enableAutoMemory = memoryEnabled,
+                                isStreaming = isStreaming,
+                                supportsVision = supportsVision,
+                                isImportingAttachment = isImportingAttachment,
+                                onDraftChange = onDraftChange,
+                                onSelectNovelKind = {},
+                                onSelectRpKind = onSelectRpKind,
+                                onToggleReasoning = onToggleReasoning,
+                                onToggleMemory = onToggleMemory,
+                                onPickImage = onPickImage,
+                                onTakePhoto = onTakePhoto,
+                                onPickFile = onPickFile,
+                                onRemoveAttachment = onRemoveAttachment,
+                                onUpdateAttachmentInjectMode = onUpdateAttachmentInjectMode,
+                                onReadAttachmentText = onReadAttachmentText,
+                                onOpenModelSheet = onOpenModelSheet,
+                                onToast = onToast,
+                                onOpenDiceDialog = onOpenDiceDialog,
+                                onClearDiceRoll = onClearDiceRoll,
+                                onOpenRecallInspector = onOpenRecallInspector,
+                                onOpenContextSettings = onOpenContextSettings,
+                                onSend = {
+                                    showTheaterComposer = false
+                                    onSend()
+                                },
+                                onStop = onStop,
+                                isImpersonating = isImpersonating,
+                                onImpersonate = onImpersonate,
+                                onContinueRp = {
+                                    showTheaterComposer = false
+                                    onContinue()
+                                },
+                            )
                         }
                     }
 
@@ -732,7 +723,7 @@ fun RpWorkspaceScreen(
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .background(Color(0x6604070E))
+                            .background(Color(0x8A04070E))
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
                                 indication = null,
@@ -975,7 +966,7 @@ private fun RpQuickControlOverlayPopover(
 
     Surface(
         shape = RoundedCornerShape(20.dp),
-        color = Color(0xF2101624),
+        color = Color(0xFC101624),
         border = BorderStroke(0.6.dp, stageAccent.copy(alpha = 0.42f)),
         shadowElevation = 10.dp,
         modifier = Modifier

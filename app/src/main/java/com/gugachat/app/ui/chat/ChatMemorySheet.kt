@@ -884,7 +884,7 @@ fun ChatMemorySheet(
                         RetrievalMode.LOCAL_SMALL_MODEL -> GuBadgeVariant.EMERALD
                         RetrievalMode.REMOTE_API -> if (isRerankActive) GuBadgeVariant.BLUE else GuBadgeVariant.EMERALD
                     }
-                    val recallBudgetText = "${FileContextBudgeter.formatShortTokens(recallUsed)} / ${FileContextBudgeter.formatShortTokens(recallBudget)} tok"
+                    val recallBudgetText = "${FileContextBudgeter.formatShortTokens(recallUsed)} / ${FileContextBudgeter.formatShortTokens(recallBudget)}"
                     val showCalmStrip = waterline.isSliding || waterline.hardOverflow || waterline.trimmedMessageCount > 0
 
                     val groupedRecall = remember(waterline.recalledItems) {

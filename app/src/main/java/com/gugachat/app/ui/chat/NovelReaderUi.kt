@@ -62,8 +62,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
@@ -574,33 +574,45 @@ fun PureReadingOverlay(
                 exit = fadeOut(),
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .navigationBarsPadding(),
+                    .fillMaxWidth(),
             ) {
-                Row(
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 24.dp, vertical = 10.dp)
-                        .alpha(0.45f),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        .background(
+                            Brush.verticalGradient(
+                                0f to Color.Transparent,
+                                0.38f to readerColors.bg.copy(alpha = 0.92f),
+                                1f to readerColors.bg,
+                            ),
+                        )
+                        .navigationBarsPadding(),
                 ) {
-                    Text(
-                        text = formattedFooterChapter,
-                        color = readerColors.muted,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Text(
-                        text = if (isZh) "$readingProgressPct% · 约 $formattedTotalWords 字" else "$readingProgressPct% · ~$formattedTotalWords w",
-                        color = readerColors.muted,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Medium,
-                        style = TextStyle(fontFeatureSettings = "tnum"),
-                        maxLines = 1,
-                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 24.dp, end = 24.dp, top = 18.dp, bottom = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Text(
+                            text = formattedFooterChapter,
+                            color = readerColors.muted.copy(alpha = 0.65f),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Text(
+                            text = if (isZh) "$readingProgressPct% · 约 $formattedTotalWords 字" else "$readingProgressPct% · ~$formattedTotalWords w",
+                            color = readerColors.muted.copy(alpha = 0.65f),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium,
+                            style = TextStyle(fontFeatureSettings = "tnum"),
+                            maxLines = 1,
+                        )
+                    }
                 }
             }
 
@@ -752,7 +764,7 @@ fun PureReadingOverlay(
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
                             Text(
-                                text = strings.novel.fontSizeLabel,
+                                text = if (isZh) "字号" else "Size",
                                 color = readerColors.muted,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.SemiBold,
