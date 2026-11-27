@@ -450,6 +450,10 @@ private fun AuthenticatedShell(
                             container = container,
                             imageViewModel = imageVm,
                             onOpenProfile = { activeTabOrdinal = MainTab.MINE.ordinal },
+                            onOpenConversation = { convId ->
+                                chatVm.selectConversation(convId)
+                                activeTabOrdinal = MainTab.CHAT.ordinal
+                            },
                         )
                         MainTab.MINE -> ProfileScreen(
                             container = container,

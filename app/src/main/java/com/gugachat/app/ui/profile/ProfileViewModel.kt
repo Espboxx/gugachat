@@ -13,7 +13,6 @@ import com.gugachat.app.core.i18n.fmt
 import com.gugachat.app.core.storage.ApiProtocol
 import com.gugachat.app.core.storage.ApiProviderConfig
 import com.gugachat.app.core.storage.AppSettings
-import com.gugachat.app.core.storage.SecretVaultStore
 import com.gugachat.app.core.storage.SettingsStore
 import com.gugachat.app.core.storage.WebDavSyncConfig
 import com.gugachat.app.core.theme.ColorMode
@@ -29,18 +28,17 @@ import com.gugachat.app.data.local.LocalModelSpec
 import com.gugachat.app.data.sync.BackupArchiveEngine
 import com.gugachat.app.data.sync.BackupExportOptions
 import com.gugachat.app.data.sync.BackupPassphraseRequiredException
-import com.gugachat.app.data.sync.BackupVaultAdapter
-import com.gugachat.app.data.sync.WebDavClient
 import com.gugachat.app.data.sync.WebDavException
 import com.gugachat.app.data.sync.WebDavPassphraseMismatchException
-import com.gugachat.app.data.sync.WebDavSyncManager
 import com.gugachat.app.domain.chat.RemoteEmbeddingConfig
 import com.gugachat.app.domain.chat.RemoteRerankConfig
 import com.gugachat.app.domain.chat.RetrievalMode
 import com.gugachat.app.domain.chat.RetrievalSettings
 import com.gugachat.app.domain.chat.VectorIndexProgress
 import com.gugachat.app.ui.providers.ApiProviderDraft
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -86,25 +84,6 @@ data class ProfileUiState(
 )
 
 class ProfileViewModel(private val container: AppContainer) : ViewModel() {
-    private val secretVaultStore: SecretVaultStore by lazy {
-        SecretVaultStore(container.appContext)
-    }
-    private val backupVaultAdapter: BackupVaultAdapter by lazy {
-        BackupVaultAdapter.fromStores(
-            apiProviderStore = container.apiProviderStore,
-            secretVaultStore = secretVaultStore,
-            settingsStore = container.settingsStore,
-        )
-    }
-    private val webDavSyncManager: WebDavSyncManager by lazy {
-        WebDavSyncManager(
-            webDavClient = WebDavClient(container.apiClient.standardClient),
-            db = container.database,
-            filesDir = container.appContext.filesDir,
-            vaultAdapter = backupVaultAdapter,
-        )
-    }
-
     private val _ui = MutableStateFlow(
         ProfileUiState(
             user = (container.authSession.value as? AuthSessionState.LoggedIn)?.user,
@@ -125,23 +104,23 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
     init {
         viewModelScope.launch {
             withContext(Dispatchers.IO) {
-                container.settingsStore.migratePlaintextRetrievalKeysIfNeeded(secretVaultStore)
+                container.settingsStore.migratePlaintextRetrievalKeysIfNeeded(container.secretVaultStore)
             }
             _ui.update { cur ->
                 cur.copy(
                     retrievalSettings = hydrateRetrievalSettings(cur.settings.retrievalSettings),
-                    webDavPassword = secretVaultStore.getWebDavPassword(),
-                    webDavPassphrase = secretVaultStore.getWebDavSyncPassphrase(),
+                    webDavPassword = container.secretVaultStore.getWebDavPassword(),
+                    webDavPassphrase = container.secretVaultStore.getWebDavSyncPassphrase(),
                 )
             }
         }
         viewModelScope.launch {
-            secretVaultStore.secretsFlow.collect {
+            container.secretVaultStore.secretsFlow.collect {
                 _ui.update { cur ->
                     cur.copy(
                         retrievalSettings = hydrateRetrievalSettings(cur.settings.retrievalSettings),
-                        webDavPassword = secretVaultStore.getWebDavPassword(),
-                        webDavPassphrase = secretVaultStore.getWebDavSyncPassphrase(),
+                        webDavPassword = container.secretVaultStore.getWebDavPassword(),
+                        webDavPassphrase = container.secretVaultStore.getWebDavSyncPassphrase(),
                     )
                 }
             }
@@ -318,9 +297,9 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
     // ==================== Hybrid Semantic Retrieval Settings & Actions ====================
 
     private fun hydrateRetrievalSettings(base: RetrievalSettings): RetrievalSettings {
-        val embedKey = secretVaultStore.getRemoteEmbeddingApiKey()
+        val embedKey = container.secretVaultStore.getRemoteEmbeddingApiKey()
             .ifBlank { base.remoteEmbedding.customApiKey }
-        val rerankKey = secretVaultStore.getRemoteRerankApiKey()
+        val rerankKey = container.secretVaultStore.getRemoteRerankApiKey()
             .ifBlank { base.remoteRerank.customApiKey }
         return base.copy(
             remoteEmbedding = base.remoteEmbedding.copy(customApiKey = embedKey),
@@ -331,7 +310,7 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
     fun setRetrievalMode(mode: RetrievalMode) {
         viewModelScope.launch {
             val updated = _ui.value.retrievalSettings.copy(mode = mode)
-            container.settingsStore.setRetrievalSettings(updated, secretVaultStore)
+            container.settingsStore.setRetrievalSettings(updated, container.secretVaultStore)
             if (mode != RetrievalMode.LOCAL_SMALL_MODEL && container.retrievalCoordinator.isLocalSessionLoaded()) {
                 container.retrievalCoordinator.unloadLocalModelNow()
             }
@@ -354,7 +333,7 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
                 container.retrievalCoordinator.unloadLocalModelNow()
             }
             val updated = prev.copy(localModelId = clean)
-            container.settingsStore.setRetrievalSettings(updated, secretVaultStore)
+            container.settingsStore.setRetrievalSettings(updated, container.secretVaultStore)
             _ui.update {
                 it.copy(
                     retrievalSettings = updated,
@@ -402,7 +381,7 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
     fun updateRemoteEmbeddingConfig(config: RemoteEmbeddingConfig) {
         viewModelScope.launch {
             val updated = _ui.value.retrievalSettings.copy(remoteEmbedding = config)
-            container.settingsStore.setRetrievalSettings(updated, secretVaultStore)
+            container.settingsStore.setRetrievalSettings(updated, container.secretVaultStore)
             _ui.update {
                 it.copy(
                     retrievalSettings = updated,
@@ -416,7 +395,7 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
     fun updateRemoteRerankConfig(config: RemoteRerankConfig) {
         viewModelScope.launch {
             val updated = _ui.value.retrievalSettings.copy(remoteRerank = config)
-            container.settingsStore.setRetrievalSettings(updated, secretVaultStore)
+            container.settingsStore.setRetrievalSettings(updated, container.secretVaultStore)
             _ui.update { it.copy(retrievalSettings = updated) }
         }
     }
@@ -548,7 +527,7 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
                             db = container.database,
                             filesDir = container.appContext.filesDir,
                             output = os,
-                            vaultAdapter = if (includeVault) backupVaultAdapter else null,
+                            vaultAdapter = if (includeVault) container.backupVaultAdapter else null,
                             options = options,
                         )
                     } ?: error("Cannot open output stream")
@@ -592,7 +571,7 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
                             input = ins,
                             replaceExisting = replaceExisting,
                             passphrase = passphrase?.ifBlank { null },
-                            vaultAdapter = backupVaultAdapter,
+                            vaultAdapter = container.backupVaultAdapter,
                             includeDirectImages = true,
                         )
                     } ?: error("Cannot read file")
@@ -694,8 +673,8 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
         }
         viewModelScope.launch {
             container.settingsStore.setWebDavConfig(config)
-            secretVaultStore.setWebDavPassword(password)
-            secretVaultStore.setWebDavSyncPassphrase(passphrase)
+            container.secretVaultStore.setWebDavPassword(password)
+            container.secretVaultStore.setWebDavSyncPassphrase(passphrase)
         }
     }
 
@@ -724,7 +703,7 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
             _ui.update { it.copy(isTestingWebDav = true, webDavTestStatus = null) }
             try {
                 val res = withContext(Dispatchers.IO) {
-                    webDavSyncManager.testConnection(cleanCfg, password)
+                    container.webDavSyncManager.testConnection(cleanCfg, password)
                 }
                 val status = if (res.hasRemoteManifest) {
                     if (isZh) "连接成功 · 已发现云端加密档案" else "Connected · Remote encrypted archive found"
@@ -750,6 +729,24 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
+    private suspend fun withWebDavKeepAlive(
+        label: String,
+        block: suspend () -> Unit,
+    ) {
+        val job = kotlin.coroutines.coroutineContext[Job]
+        container.keepAliveController.acquireWork(
+            taskId = "sync:webdav",
+            label = label,
+            onStopRequested = { job?.cancel() },
+        )
+        try {
+            block()
+        } finally {
+            _ui.update { it.copy(isWebDavSyncBusy = false) }
+            container.keepAliveController.releaseWork("sync:webdav")
+        }
+    }
+
     fun syncWebDavNow(
         config: WebDavSyncConfig,
         password: String,
@@ -769,67 +766,68 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
         updateWebDavSettings(cleanCfg, password, passphrase)
         viewModelScope.launch {
             _ui.update { it.copy(isWebDavSyncBusy = true) }
-            try {
-                val result = withContext(Dispatchers.IO) {
-                    webDavSyncManager.syncNow(
-                        config = cleanCfg,
-                        password = password,
-                        passphrase = passphrase,
-                    )
-                }
-                val syncedCfg = cleanCfg.copy(lastSyncAt = result.syncedAt)
-                container.settingsStore.setWebDavConfig(syncedCfg)
-
-                val summary = buildString {
-                    if (result.remotePulled && result.restoreResult != null) {
-                        append(
-                            if (isZh) "已合并云端数据(${result.restoreResult.conversationsCount}会话)"
-                            else "Pulled ${result.restoreResult.conversationsCount} chats",
-                        )
-                        append(" · ")
-                    }
-                    val up = result.backupResult
-                    when {
-                        up == null -> Unit
-                        up.skippedNoChanges -> append(if (isZh) "云端与本地一致" else "Already up to date")
-                        else -> append(
-                            if (isZh) {
-                                "新增上传 ${up.uploadedBlobs} 个媒体块（复用 ${up.skippedExistingBlobs}）"
-                            } else {
-                                "Uploaded ${up.uploadedBlobs} blobs (${up.skippedExistingBlobs} deduplicated)"
-                            },
+            withWebDavKeepAlive(if (isZh) "WebDAV 云端同步中" else "Syncing with WebDAV") {
+                try {
+                    val result = withContext(Dispatchers.IO) {
+                        container.webDavSyncManager.syncNow(
+                            config = cleanCfg,
+                            password = password,
+                            passphrase = passphrase,
                         )
                     }
-                }.ifBlank { if (isZh) "同步完成" else "Sync complete" }
+                    val syncedCfg = cleanCfg.copy(lastSyncAt = result.syncedAt)
+                    container.settingsStore.setWebDavConfig(syncedCfg)
 
-                _ui.update {
-                    it.copy(
-                        isWebDavSyncBusy = false,
-                        webDavConfig = syncedCfg,
-                        webDavRemoteUpdatedAt = result.syncedAt,
-                        lastWebDavSyncSummary = summary,
+                    val summary = buildString {
+                        if (result.remotePulled && result.restoreResult != null) {
+                            append(
+                                if (isZh) "已合并云端数据(${result.restoreResult.conversationsCount}会话)"
+                                else "Pulled ${result.restoreResult.conversationsCount} chats",
+                            )
+                            append(" · ")
+                        }
+                        val up = result.backupResult
+                        when {
+                            up == null -> Unit
+                            up.skippedNoChanges -> append(if (isZh) "云端与本地一致" else "Already up to date")
+                            else -> append(
+                                if (isZh) {
+                                    "新增上传 ${up.uploadedBlobs} 个媒体块（复用 ${up.skippedExistingBlobs}）"
+                                } else {
+                                    "Uploaded ${up.uploadedBlobs} blobs (${up.skippedExistingBlobs} deduplicated)"
+                                },
+                            )
+                        }
+                    }.ifBlank { if (isZh) "同步完成" else "Sync complete" }
+
+                    _ui.update {
+                        it.copy(
+                            isWebDavSyncBusy = false,
+                            webDavConfig = syncedCfg,
+                            webDavRemoteUpdatedAt = result.syncedAt,
+                            lastWebDavSyncSummary = summary,
+                        )
+                    }
+                    container.toastController.show(summary)
+                } catch (_: WebDavPassphraseMismatchException) {
+                    container.toastController.show(
+                        if (isZh) "加密口令与云端已有档案不匹配，请核对后重试"
+                        else "Passphrase mismatch with remote WebDAV archive",
+                        isError = true,
+                    )
+                } catch (_: AEADBadTagException) {
+                    container.toastController.show(
+                        if (isZh) "云端加密口令校验失败" else "Wrong cloud encryption passphrase",
+                        isError = true,
+                    )
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Throwable) {
+                    container.toastController.show(
+                        e.message ?: if (isZh) "WebDAV 同步失败" else "WebDAV sync failed",
+                        isError = true,
                     )
                 }
-                container.toastController.show(summary)
-            } catch (_: WebDavPassphraseMismatchException) {
-                _ui.update { it.copy(isWebDavSyncBusy = false) }
-                container.toastController.show(
-                    if (isZh) "加密口令与云端已有档案不匹配，请核对后重试"
-                    else "Passphrase mismatch with remote WebDAV archive",
-                    isError = true,
-                )
-            } catch (_: AEADBadTagException) {
-                _ui.update { it.copy(isWebDavSyncBusy = false) }
-                container.toastController.show(
-                    if (isZh) "云端加密口令校验失败" else "Wrong cloud encryption passphrase",
-                    isError = true,
-                )
-            } catch (e: Throwable) {
-                _ui.update { it.copy(isWebDavSyncBusy = false) }
-                container.toastController.show(
-                    e.message ?: if (isZh) "WebDAV 同步失败" else "WebDAV sync failed",
-                    isError = true,
-                )
             }
         }
     }
@@ -852,51 +850,52 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
         updateWebDavSettings(cleanCfg, password, passphrase)
         viewModelScope.launch {
             _ui.update { it.copy(isWebDavSyncBusy = true) }
-            try {
-                val res = withContext(Dispatchers.IO) {
-                    webDavSyncManager.restoreFromWebDav(
-                        config = cleanCfg,
-                        password = password,
-                        passphrase = passphrase,
-                        replaceExisting = false,
-                        restoreVault = true,
-                        restoreDirectImages = cleanCfg.syncDirectImages,
+            withWebDavKeepAlive(if (isZh) "WebDAV 云端恢复中" else "Restoring from WebDAV") {
+                try {
+                    val res = withContext(Dispatchers.IO) {
+                        container.webDavSyncManager.restoreFromWebDav(
+                            config = cleanCfg,
+                            password = password,
+                            passphrase = passphrase,
+                            replaceExisting = false,
+                            restoreVault = true,
+                            restoreDirectImages = cleanCfg.syncDirectImages,
+                        )
+                    }
+                    val now = System.currentTimeMillis()
+                    val syncedCfg = cleanCfg.copy(lastSyncAt = now)
+                    container.settingsStore.setWebDavConfig(syncedCfg)
+                    val summary = if (isZh) {
+                        "已从云端恢复 ${res.conversationsCount} 会话 · ${res.characterCardsCount} 角色卡 · ${res.worldbooksCount} 世界书"
+                    } else {
+                        "Restored ${res.conversationsCount} chats · ${res.characterCardsCount} cards · ${res.worldbooksCount} books"
+                    }
+                    _ui.update {
+                        it.copy(
+                            isWebDavSyncBusy = false,
+                            webDavConfig = syncedCfg,
+                            lastWebDavSyncSummary = summary,
+                        )
+                    }
+                    container.toastController.show(summary)
+                } catch (_: WebDavPassphraseMismatchException) {
+                    container.toastController.show(
+                        if (isZh) "云端加密口令错误，无法解密云端备份" else "Incorrect cloud passphrase",
+                        isError = true,
+                    )
+                } catch (_: AEADBadTagException) {
+                    container.toastController.show(
+                        if (isZh) "云端档案解密失败，请核对加密口令" else "Failed to decrypt remote archive",
+                        isError = true,
+                    )
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Throwable) {
+                    container.toastController.show(
+                        e.message ?: if (isZh) "云端恢复失败" else "Cloud restore failed",
+                        isError = true,
                     )
                 }
-                val now = System.currentTimeMillis()
-                val syncedCfg = cleanCfg.copy(lastSyncAt = now)
-                container.settingsStore.setWebDavConfig(syncedCfg)
-                val summary = if (isZh) {
-                    "已从云端恢复 ${res.conversationsCount} 会话 · ${res.characterCardsCount} 角色卡 · ${res.worldbooksCount} 世界书"
-                } else {
-                    "Restored ${res.conversationsCount} chats · ${res.characterCardsCount} cards · ${res.worldbooksCount} books"
-                }
-                _ui.update {
-                    it.copy(
-                        isWebDavSyncBusy = false,
-                        webDavConfig = syncedCfg,
-                        lastWebDavSyncSummary = summary,
-                    )
-                }
-                container.toastController.show(summary)
-            } catch (_: WebDavPassphraseMismatchException) {
-                _ui.update { it.copy(isWebDavSyncBusy = false) }
-                container.toastController.show(
-                    if (isZh) "云端加密口令错误，无法解密云端备份" else "Incorrect cloud passphrase",
-                    isError = true,
-                )
-            } catch (_: AEADBadTagException) {
-                _ui.update { it.copy(isWebDavSyncBusy = false) }
-                container.toastController.show(
-                    if (isZh) "云端档案解密失败，请核对加密口令" else "Failed to decrypt remote archive",
-                    isError = true,
-                )
-            } catch (e: Throwable) {
-                _ui.update { it.copy(isWebDavSyncBusy = false) }
-                container.toastController.show(
-                    e.message ?: if (isZh) "云端恢复失败" else "Cloud restore failed",
-                    isError = true,
-                )
             }
         }
     }
