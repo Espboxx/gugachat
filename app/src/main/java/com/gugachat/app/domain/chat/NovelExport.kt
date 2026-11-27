@@ -32,39 +32,11 @@ object NovelExport {
         "<choices>", "</choices>",
     )
 
-    fun stripInternalTags(prose: String): String {
-        if (prose.isEmpty()) return ""
-        var s = COMPLETE_TAG_RE.replace(prose, "")
-        s = UNCLOSED_TAG_RE.replace(s, "")
-        val lastLt = s.lastIndexOf('<')
-        if (lastLt >= 0) {
-            val tail = s.substring(lastLt).lowercase()
-            if (tail.length <= 16) {
-                val matchesPrefix = if (tail == "<") {
-                    lastLt == 0 || s[lastLt - 1].isWhitespace()
-                } else {
-                    KNOWN_NOVEL_TAG_TOKENS.any { it.startsWith(tail) }
-                }
-                if (matchesPrefix) {
-                    s = s.substring(0, lastLt)
-                }
-            }
-        }
-        return s.trim()
-    }
+    fun stripInternalTags(prose: String): String =
+        StreamingTagStripper.strip(prose, COMPLETE_TAG_RE, UNCLOSED_TAG_RE, KNOWN_NOVEL_TAG_TOKENS)
 
-    fun isStreamingInternalMeta(raw: String): Boolean {
-        if (raw.isEmpty()) return false
-        if (UNCLOSED_TAG_RE.containsMatchIn(raw)) return true
-        val lastLt = raw.lastIndexOf('<')
-        if (lastLt >= 0) {
-            val tail = raw.substring(lastLt).lowercase()
-            if (tail.length in 2..16 && KNOWN_NOVEL_TAG_TOKENS.any { it.startsWith(tail) }) {
-                return true
-            }
-        }
-        return false
-    }
+    fun isStreamingInternalMeta(raw: String): Boolean =
+        StreamingTagStripper.isStreamingPartialMeta(raw, UNCLOSED_TAG_RE, KNOWN_NOVEL_TAG_TOKENS)
 
     fun countProseWords(prose: String): Int {
         val clean = stripInternalTags(prose)

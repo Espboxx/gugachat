@@ -104,7 +104,6 @@ import com.gugachat.app.data.api.OnlineImageGenerationDto
 import com.gugachat.app.domain.images.OnlineImageStudioUtils
 import kotlinx.coroutines.delay
 
-private val ACTIVE_STATUSES = setOf("pending", "queued", "processing", "running")
 private val FAILED_STATUSES = setOf("failed", "interrupted", "error", "cancelled", "canceled")
 private const val EXPIRING_WINDOW_MS = 12L * 3600_000L
 
@@ -208,7 +207,7 @@ fun GalleryTabContent(
 
     val nowMs = System.currentTimeMillis()
     val liveProcessing = remember(state.generations) {
-        state.generations.count { it.status.lowercase() in ACTIVE_STATUSES }
+        state.generations.count { OnlineImageStudioUtils.isActiveJobStatus(it.status) }
     }
     val liveExpiring = remember(state.generations, nowMs) {
         state.generations.count { isGenerationExpiringSoon(it, nowMs) }
@@ -875,7 +874,7 @@ private fun GalleryWorkCard(
     val theme = LocalAppTheme.current
     val c = theme.colors
     val statusLower = generation.status.lowercase()
-    val isPending = statusLower in ACTIVE_STATUSES
+    val isPending = OnlineImageStudioUtils.isActiveJobStatus(statusLower)
     val isFailed = statusLower in FAILED_STATUSES
     val shape = RoundedCornerShape(14.dp)
     val actionLabel = generation.action

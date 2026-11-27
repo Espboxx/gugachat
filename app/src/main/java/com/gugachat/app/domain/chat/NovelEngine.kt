@@ -519,53 +519,25 @@ object NovelEngine {
         val existingByTitle = existingLore.associateBy { it.title.trim().lowercase() }.toMutableMap()
         val now = System.currentTimeMillis()
         LORE_SYNC_RE.findAll(rawText).forEach { m ->
-            val body = m.groupValues[1].trim()
-            val arrStart = body.indexOf('[')
-            val arrEnd = body.lastIndexOf(']')
-            if (arrStart >= 0 && arrEnd > arrStart) {
-                try {
-                    val dtos = CoreAppJson.decodeFromString<List<NovelLoreSyncDto>>(body.substring(arrStart, arrEnd + 1))
-                    dtos.forEach { dto ->
-                        val title = dto.title.trim()
-                        val content = dto.content.trim()
-                        if (title.isNotEmpty() && content.isNotEmpty() && !dto.action.equals("delete", ignoreCase = true)) {
-                            val key = title.lowercase()
-                            val prior = existingByTitle[key]
-                            val mergedKeywords = (dto.keywords + prior?.keywords.orEmpty())
-                                .map { it.trim() }
-                                .filter { it.isNotEmpty() }
-                                .distinct()
-                                .ifEmpty { listOf(title) }
-                            val mergedAliases = (dto.aliases + prior?.aliases.orEmpty())
-                                .map { it.trim() }
-                                .filter { it.isNotEmpty() }
-                                .distinct()
-                            val entry = NovelLoreEntry(
-                                id = prior?.id ?: UUID.randomUUID().toString(),
-                                conversationId = conversationId,
-                                category = dto.category.trim().lowercase().ifBlank { prior?.category ?: "other" },
-                                title = title,
-                                content = content,
-                                keywords = mergedKeywords,
-                                aliases = mergedAliases,
-                                alwaysActive = dto.alwaysActive ?: prior?.alwaysActive ?: false,
-                                priority = prior?.priority ?: 50,
-                                enabled = prior?.enabled ?: true,
-                                validFromSeq = prior?.validFromSeq ?: turnSeq,
-                                createdAt = prior?.createdAt ?: now,
-                                updatedAt = now,
-                            )
-                            val finalized = entry.copy(estimatedTokens = estimateLoreTokens(entry))
-                            existingByTitle[key] = finalized
-                            val existingIdx = loreUpserts.indexOfFirst { it.id == finalized.id }
-                            if (existingIdx >= 0) {
-                                loreUpserts[existingIdx] = finalized
-                            } else {
-                                loreUpserts.add(finalized)
-                            }
-                        }
-                    }
-                } catch (_: Exception) {
+            val arrJson = LlmJsonExtractor.extractFirstJsonArray(m.groupValues[1]) ?: return@forEach
+            val dtos = try {
+                CoreAppJson.decodeFromString<List<NovelLoreSyncDto>>(arrJson)
+            } catch (_: Exception) {
+                return@forEach
+            }
+            mergeLoreSyncDtos(
+                dtos = dtos,
+                conversationId = conversationId,
+                turnSeq = turnSeq,
+                existingByTitle = existingByTitle,
+                now = now,
+                ignoreDeleteAction = true,
+            ).forEach { finalized ->
+                val existingIdx = loreUpserts.indexOfFirst { it.id == finalized.id }
+                if (existingIdx >= 0) {
+                    loreUpserts[existingIdx] = finalized
+                } else {
+                    loreUpserts.add(finalized)
                 }
             }
         }
@@ -574,7 +546,7 @@ object NovelEngine {
         var nextChapterTitle: String? = null
         CHAPTER_END_RE.findAll(rawText).lastOrNull()?.let { m ->
             val inner = m.groupValues[1].trim()
-            val jsonObj = EpisodeConsolidator.extractFirstJsonObject(inner)
+            val jsonObj = LlmJsonExtractor.extractFirstJsonObject(inner)
             if (jsonObj != null) {
                 try {
                     val dto = CoreAppJson.decodeFromString(NovelChapterEndDto.serializer(), jsonObj)
@@ -739,42 +711,59 @@ object NovelEngine {
         return listOf(WireChatMessageDto.text("system", sys), WireChatMessageDto.text("user", usr))
     }
 
+    private fun mergeLoreSyncDtos(
+        dtos: List<NovelLoreSyncDto>,
+        conversationId: String,
+        turnSeq: Int,
+        existingByTitle: MutableMap<String, NovelLoreEntry>,
+        now: Long,
+        ignoreDeleteAction: Boolean,
+    ): List<NovelLoreEntry> = dtos.mapNotNull { dto ->
+        val title = dto.title.trim()
+        val content = dto.content.trim()
+        if (title.isEmpty() || content.isEmpty()) return@mapNotNull null
+        if (ignoreDeleteAction && dto.action.equals("delete", ignoreCase = true)) return@mapNotNull null
+        val key = title.lowercase()
+        val prior = existingByTitle[key]
+        val entry = NovelLoreEntry(
+            id = prior?.id ?: UUID.randomUUID().toString(),
+            conversationId = conversationId,
+            category = dto.category.trim().lowercase().ifBlank { prior?.category ?: "other" },
+            title = title,
+            content = content,
+            keywords = (dto.keywords + prior?.keywords.orEmpty()).map { it.trim() }.filter { it.isNotEmpty() }.distinct().ifEmpty { listOf(title) },
+            aliases = (dto.aliases + prior?.aliases.orEmpty()).map { it.trim() }.filter { it.isNotEmpty() }.distinct(),
+            alwaysActive = dto.alwaysActive ?: prior?.alwaysActive ?: false,
+            priority = prior?.priority ?: 50,
+            enabled = prior?.enabled ?: true,
+            validFromSeq = prior?.validFromSeq ?: turnSeq,
+            createdAt = prior?.createdAt ?: now,
+            updatedAt = now,
+        )
+        val finalized = entry.copy(estimatedTokens = estimateLoreTokens(entry))
+        existingByTitle[key] = finalized
+        finalized
+    }
+
     fun parseLoreExtractResponse(
         raw: String,
         conversationId: String,
         turnSeq: Int,
         existingLore: List<NovelLoreEntry>,
     ): List<NovelLoreEntry> {
-        val trimmed = raw.trim()
-        val arrStart = trimmed.indexOf('[')
-        val arrEnd = trimmed.lastIndexOf(']')
-        if (arrStart < 0 || arrEnd <= arrStart) return emptyList()
+        val arrJson = LlmJsonExtractor.extractFirstJsonArray(raw) ?: return emptyList()
         return try {
-            val dtos = CoreAppJson.decodeFromString<List<NovelLoreSyncDto>>(trimmed.substring(arrStart, arrEnd + 1))
+            val dtos = CoreAppJson.decodeFromString<List<NovelLoreSyncDto>>(arrJson)
             val now = System.currentTimeMillis()
-            val existingByTitle = existingLore.associateBy { it.title.trim().lowercase() }
-            dtos.mapNotNull { dto ->
-                val title = dto.title.trim()
-                val content = dto.content.trim()
-                if (title.isEmpty() || content.isEmpty()) return@mapNotNull null
-                val prior = existingByTitle[title.lowercase()]
-                val entry = NovelLoreEntry(
-                    id = prior?.id ?: UUID.randomUUID().toString(),
-                    conversationId = conversationId,
-                    category = dto.category.trim().lowercase().ifBlank { prior?.category ?: "other" },
-                    title = title,
-                    content = content,
-                    keywords = (dto.keywords + prior?.keywords.orEmpty()).map { it.trim() }.filter { it.isNotEmpty() }.distinct().ifEmpty { listOf(title) },
-                    aliases = (dto.aliases + prior?.aliases.orEmpty()).map { it.trim() }.filter { it.isNotEmpty() }.distinct(),
-                    alwaysActive = dto.alwaysActive ?: prior?.alwaysActive ?: false,
-                    priority = prior?.priority ?: 50,
-                    enabled = prior?.enabled ?: true,
-                    validFromSeq = prior?.validFromSeq ?: turnSeq,
-                    createdAt = prior?.createdAt ?: now,
-                    updatedAt = now,
-                )
-                entry.copy(estimatedTokens = estimateLoreTokens(entry))
-            }
+            val existingByTitle = existingLore.associateBy { it.title.trim().lowercase() }.toMutableMap()
+            mergeLoreSyncDtos(
+                dtos = dtos,
+                conversationId = conversationId,
+                turnSeq = turnSeq,
+                existingByTitle = existingByTitle,
+                now = now,
+                ignoreDeleteAction = false,
+            )
         } catch (_: Exception) {
             emptyList()
         }
@@ -814,12 +803,9 @@ object NovelEngine {
     }
 
     fun parseSuggestedChapters(raw: String): List<SuggestedChapterOutline> {
-        val trimmed = raw.trim()
-        val arrStart = trimmed.indexOf('[')
-        val arrEnd = trimmed.lastIndexOf(']')
-        if (arrStart < 0 || arrEnd <= arrStart) return emptyList()
+        val arrJson = LlmJsonExtractor.extractFirstJsonArray(raw) ?: return emptyList()
         return try {
-            CoreAppJson.decodeFromString<List<SuggestedChapterDto>>(trimmed.substring(arrStart, arrEnd + 1))
+            CoreAppJson.decodeFromString<List<SuggestedChapterDto>>(arrJson)
                 .mapNotNull { dto ->
                     val title = dto.title.trim()
                     val outline = dto.outline.trim()
@@ -907,12 +893,9 @@ object NovelEngine {
     }
 
     fun parseThreePathDrafts(raw: String): List<NovelDraftOption> {
-        val trimmed = raw.trim()
-        val arrStart = trimmed.indexOf('[')
-        val arrEnd = trimmed.lastIndexOf(']')
-        if (arrStart < 0 || arrEnd <= arrStart) return emptyList()
+        val arrJson = LlmJsonExtractor.extractFirstJsonArray(raw) ?: return emptyList()
         return try {
-            CoreAppJson.decodeFromString<List<ThreePathDraftDto>>(trimmed.substring(arrStart, arrEnd + 1))
+            CoreAppJson.decodeFromString<List<ThreePathDraftDto>>(arrJson)
                 .mapNotNull { dto ->
                     if (dto.title.isBlank() && dto.summary.isBlank()) null
                     else NovelDraftOption(
@@ -928,12 +911,9 @@ object NovelEngine {
     }
 
     private fun parseStringArrayJson(raw: String): List<String> {
-        val body = raw.trim()
-        val arrStart = body.indexOf('[')
-        val arrEnd = body.lastIndexOf(']')
-        if (arrStart < 0 || arrEnd <= arrStart) return emptyList()
+        val arrJson = LlmJsonExtractor.extractFirstJsonArray(raw) ?: return emptyList()
         return try {
-            CoreAppJson.decodeFromString<List<String>>(body.substring(arrStart, arrEnd + 1))
+            CoreAppJson.decodeFromString<List<String>>(arrJson)
                 .map { it.trim() }
                 .filter { it.isNotEmpty() }
                 .distinct()

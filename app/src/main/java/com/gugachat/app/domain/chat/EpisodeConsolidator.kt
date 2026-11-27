@@ -144,14 +144,6 @@ object EpisodeConsolidator {
         )
     }
 
-    internal fun extractFirstJsonObject(raw: String): String? {
-        val stripped = raw.trim()
-            .removePrefix("```json")
-            .removePrefix("```")
-            .removeSuffix("```")
-            .trim()
-        val start = stripped.indexOf('{')
-        val end = stripped.lastIndexOf('}')
-        return if (start >= 0 && end > start) stripped.substring(start, end + 1) else null
-    }
+    internal fun extractFirstJsonObject(raw: String): String? =
+        LlmJsonExtractor.extractFirstJsonObject(raw)
 }

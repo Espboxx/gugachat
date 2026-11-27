@@ -8,10 +8,12 @@ import com.gugachat.app.data.api.OnlineImageGenerationDto
 import com.gugachat.app.data.api.OnlineImageHistoryDto
 import com.gugachat.app.data.api.OnlineImagePresetDto
 import com.gugachat.app.data.api.OnlineImagePresetInputDto
+import com.gugachat.app.domain.images.OnlineImageStudioUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.builtins.ListSerializer
 import java.io.File
 import java.util.UUID
@@ -76,7 +78,7 @@ class DirectImageStore internal constructor(
                     "", "all" -> true
                     "generate" -> item.action.isNullOrBlank() || item.action.equals("generate", ignoreCase = true)
                     "edited" -> !item.action.isNullOrBlank() && !item.action.equals("generate", ignoreCase = true)
-                    "processing" -> item.status in setOf("pending", "queued", "processing", "running")
+                    "processing" -> OnlineImageStudioUtils.isActiveJobStatus(item.status)
                     "expiring" -> false
                     else -> item.status.equals(f, ignoreCase = true)
                 }
@@ -171,37 +173,32 @@ class DirectImageStore internal constructor(
         }
     }
 
-    private fun readGenerationsLocked(): List<OnlineImageGenerationDto> {
-        if (!indexFile.exists()) return emptyList()
+    private fun readGenerationsLocked(): List<OnlineImageGenerationDto> =
+        readJsonListLocked(indexFile, ListSerializer(OnlineImageGenerationDto.serializer()))
+
+    private fun writeGenerationsLocked(items: List<OnlineImageGenerationDto>) =
+        writeJsonListLocked(indexFile, ListSerializer(OnlineImageGenerationDto.serializer()), items)
+
+    private fun readPresetsLocked(): List<OnlineImagePresetDto> =
+        readJsonListLocked(presetsFile, ListSerializer(OnlineImagePresetDto.serializer()))
+
+    private fun writePresetsLocked(items: List<OnlineImagePresetDto>) =
+        writeJsonListLocked(presetsFile, ListSerializer(OnlineImagePresetDto.serializer()), items)
+
+    private fun <T> readJsonListLocked(file: File, serializer: KSerializer<List<T>>): List<T> {
+        if (!file.exists()) return emptyList()
         return runCatching {
-            AppJson.decodeFromString(
-                ListSerializer(OnlineImageGenerationDto.serializer()),
-                indexFile.readText(Charsets.UTF_8),
-            )
+            AppJson.decodeFromString(serializer, file.readText(Charsets.UTF_8))
         }.getOrDefault(emptyList())
     }
 
-    private fun writeGenerationsLocked(items: List<OnlineImageGenerationDto>) {
-        indexFile.writeText(
-            AppJson.encodeToString(ListSerializer(OnlineImageGenerationDto.serializer()), items),
-            Charsets.UTF_8,
-        )
-    }
-
-    private fun readPresetsLocked(): List<OnlineImagePresetDto> {
-        if (!presetsFile.exists()) return emptyList()
-        return runCatching {
-            AppJson.decodeFromString(
-                ListSerializer(OnlineImagePresetDto.serializer()),
-                presetsFile.readText(Charsets.UTF_8),
-            )
-        }.getOrDefault(emptyList())
-    }
-
-    private fun writePresetsLocked(items: List<OnlineImagePresetDto>) {
-        presetsFile.writeText(
-            AppJson.encodeToString(ListSerializer(OnlineImagePresetDto.serializer()), items),
-            Charsets.UTF_8,
-        )
+    private fun <T> writeJsonListLocked(file: File, serializer: KSerializer<List<T>>, items: List<T>) {
+        file.parentFile?.mkdirs()
+        val tmpFile = File(file.parentFile, "${file.name}.tmp")
+        tmpFile.writeText(AppJson.encodeToString(serializer, items), Charsets.UTF_8)
+        if (!tmpFile.renameTo(file)) {
+            tmpFile.copyTo(file, overwrite = true)
+            tmpFile.delete()
+        }
     }
 }

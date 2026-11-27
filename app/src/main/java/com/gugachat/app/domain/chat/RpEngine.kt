@@ -246,27 +246,8 @@ object RpEngine {
         }
     }
 
-    fun stripRpInternalTags(raw: String): String {
-        if (raw.isEmpty()) return ""
-        var s = COMPLETE_RP_TAGS_RE.replace(raw, "")
-        s = UNCLOSED_RP_TAG_RE.replace(s, "")
-        // Strip streaming partial tag prefix right at end-of-string (e.g., "<rp_", "<rp_st", "</rp_ch")
-        val lastLt = s.lastIndexOf('<')
-        if (lastLt >= 0) {
-            val tail = s.substring(lastLt).lowercase()
-            if (tail.length <= 16) {
-                val matchesPrefix = if (tail == "<") {
-                    lastLt == 0 || s[lastLt - 1].isWhitespace()
-                } else {
-                    KNOWN_RP_TAG_TOKENS.any { it.startsWith(tail) }
-                }
-                if (matchesPrefix) {
-                    s = s.substring(0, lastLt)
-                }
-            }
-        }
-        return s.trim()
-    }
+    fun stripRpInternalTags(raw: String): String =
+        StreamingTagStripper.strip(raw, COMPLETE_RP_TAGS_RE, UNCLOSED_RP_TAG_RE, KNOWN_RP_TAG_TOKENS)
 
     fun rollDice(
         expression: String,
@@ -404,17 +385,37 @@ object RpEngine {
         }
     }
 
+    internal fun playStyleTitle(playStyle: RpPlayStyle): String = when (playStyle) {
+        RpPlayStyle.chengguang -> "沉浸式互动剧场 / 视觉小说（橙光风格）"
+        RpPlayStyle.tavern -> "深度角色沉浸互动（SillyTavern 酒馆风格）"
+        RpPlayStyle.trpg -> "桌面角色扮演跑团（TRPG / GM 主持风格）"
+    }
+
+    internal fun appendStaticCastSection(
+        sb: StringBuilder,
+        cast: List<RpCharacter>,
+        heading: String = "【主要登场人物表（静态人设）】",
+    ) {
+        if (cast.isEmpty()) return
+        sb.appendLine("\n$heading")
+        cast.forEach { c ->
+            sb.append("- ${c.name}（${c.role}）")
+            if (c.personality.isNotBlank()) sb.append("；性格：${c.personality}")
+            if (c.speakingStyle.isNotBlank()) sb.append("；口吻：${c.speakingStyle}")
+            if (c.appearance.isNotBlank()) sb.append("；外貌：${c.appearance}")
+            if (c.relationship.isNotBlank()) sb.append("；关系：${c.relationship}")
+            if (c.secret.isNotBlank()) sb.append("；暗线秘密（仅GM掌握，切勿直白泄密）：${c.secret}")
+            sb.appendLine()
+        }
+    }
+
     fun buildRpSystemPrompt(
         rp: RpConfig,
         constantLore: List<NovelLoreEntry> = emptyList(),
         chronicleSummary: String = "",
     ): String {
         val sb = StringBuilder()
-        val styleTitle = when (rp.playStyle) {
-            RpPlayStyle.chengguang -> "沉浸式互动剧场 / 视觉小说（橙光风格）"
-            RpPlayStyle.tavern -> "深度角色沉浸互动（SillyTavern 酒馆风格）"
-            RpPlayStyle.trpg -> "桌面角色扮演跑团（TRPG / GM 主持风格）"
-        }
+        val styleTitle = playStyleTitle(rp.playStyle)
         sb.appendLine("你正在主持$styleTitle《${rp.title}》。")
         sb.appendLine("玩家扮演角色：【${rp.playerName}】${if (rp.playerPersona.isNotBlank()) "—— ${rp.playerPersona}" else ""}")
         if (rp.worldview.isNotBlank()) sb.appendLine("\n【世界观设定】\n${rp.worldview.trim()}")
@@ -430,18 +431,7 @@ object RpEngine {
             sb.appendLine("\n【角色对话风格示例 (Example Dialogue)】\n${rp.mesExample.trim()}")
         }
         if (chronicleSummary.isNotBlank()) sb.appendLine("\n【前期历程】\n$chronicleSummary")
-        if (rp.cast.isNotEmpty()) {
-            sb.appendLine("\n【主要登场人物表（静态人设）】")
-            rp.cast.forEach { c ->
-                sb.append("- ${c.name}（${c.role}）")
-                if (c.personality.isNotBlank()) sb.append("；性格：${c.personality}")
-                if (c.speakingStyle.isNotBlank()) sb.append("；口吻：${c.speakingStyle}")
-                if (c.appearance.isNotBlank()) sb.append("；外貌：${c.appearance}")
-                if (c.relationship.isNotBlank()) sb.append("；关系：${c.relationship}")
-                if (c.secret.isNotBlank()) sb.append("；暗线秘密（仅GM掌握，切勿直白泄密）：${c.secret}")
-                sb.appendLine()
-            }
-        }
+        appendStaticCastSection(sb, rp.cast)
 
         sb.appendLine("\n【演出与主持原则】")
         sb.appendLine("1. 严格尊重玩家主权：禁止代替【${rp.playerName}】说出对白、决定内心想法或擅自代做重大抉择。")
@@ -622,7 +612,7 @@ object RpEngine {
 
         STATE_TAG_RE.find(rawText)?.let { m ->
             cleaned = cleaned.replace(m.value, "")
-            val jsonObj = EpisodeConsolidator.extractFirstJsonObject(m.groupValues[1])
+            val jsonObj = LlmJsonExtractor.extractFirstJsonObject(m.groupValues[1])
             if (jsonObj != null) {
                 try {
                     val patch = CoreAppJson.decodeFromString(RpStatePatchDto.serializer(), jsonObj)
@@ -831,12 +821,10 @@ object RpEngine {
         val ledgerUpserts = ArrayList<MemoryLedgerItem>()
         LEDGER_TAG_RE.find(rawText)?.let { m ->
             cleaned = cleaned.replace(m.value, "")
-            val body = m.groupValues[1].trim()
-            val arrStart = body.indexOf('[')
-            val arrEnd = body.lastIndexOf(']')
-            if (arrStart >= 0 && arrEnd > arrStart) {
+            val arrJson = LlmJsonExtractor.extractFirstJsonArray(m.groupValues[1])
+            if (arrJson != null) {
                 try {
-                    val dtos = CoreAppJson.decodeFromString<List<RpLedgerSyncDto>>(body.substring(arrStart, arrEnd + 1))
+                    val dtos = CoreAppJson.decodeFromString<List<RpLedgerSyncDto>>(arrJson)
                     val now = System.currentTimeMillis()
                     dtos.forEach { dto ->
                         val title = dto.title.trim()
@@ -1205,12 +1193,9 @@ object RpEngine {
     }
 
     private fun parseChoicesJsonBody(rawBody: String): List<RpChoice> {
-        val body = rawBody.trim()
-        val arrStart = body.indexOf('[')
-        val arrEnd = body.lastIndexOf(']')
-        if (arrStart < 0 || arrEnd <= arrStart) return emptyList()
+        val arrJson = LlmJsonExtractor.extractFirstJsonArray(rawBody) ?: return emptyList()
         return try {
-            val dtos = CoreAppJson.decodeFromString<List<RpChoiceDto>>(body.substring(arrStart, arrEnd + 1))
+            val dtos = CoreAppJson.decodeFromString<List<RpChoiceDto>>(arrJson)
             dtos.take(4).mapNotNull { dto ->
                 if (dto.label.isBlank() && dto.actionText.isBlank()) return@mapNotNull null
                 RpChoice(

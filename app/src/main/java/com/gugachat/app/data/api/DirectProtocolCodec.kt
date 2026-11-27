@@ -19,8 +19,6 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
 import java.net.URI
-import java.net.URLEncoder
-import java.nio.charset.StandardCharsets
 import java.util.Base64
 
 data class DecodedDirectImage(
@@ -62,21 +60,15 @@ object DirectProtocolCodec {
 
     fun normalizeBaseOrigin(raw: String, fallback: String = ""): String {
         val trimmed = raw.trim().ifBlank { fallback }.trim()
-        if (trimmed.isEmpty()) return ""
-        val withScheme = if (Regex("^[a-zA-Z][a-zA-Z0-9+.-]*://").containsMatchIn(trimmed)) trimmed else "https://$trimmed"
-        val uri = runCatching { URI(withScheme) }.getOrNull() ?: return ""
-        val scheme = uri.scheme?.lowercase() ?: return ""
-        if (scheme != "http" && scheme != "https") return ""
-        val host = uri.host ?: return ""
-        val portPart = if (uri.port != -1) ":${uri.port}" else ""
-        var path = (uri.rawPath ?: "").trimEnd('/')
+        val parsed = com.gugachat.app.core.util.ServerUrlUtils.parseHttpOriginAndPath(trimmed) ?: return ""
+        var path = parsed.rawPath
         for (tail in ENDPOINT_TAILS) {
             if (path.lowercase().endsWith(tail)) {
                 path = path.substring(0, path.length - tail.length).trimEnd('/')
                 break
             }
         }
-        return "$scheme://$host$portPart$path"
+        return "${parsed.scheme}://${parsed.host}${parsed.portPart}$path"
     }
 
     private fun openAiOrAnthropicRoot(rawBase: String, defaultBase: String): String {
@@ -111,33 +103,28 @@ object DirectProtocolCodec {
     fun anthropicModelsUrl(baseUrl: String): String = "${openAiOrAnthropicRoot(baseUrl, ApiProtocol.ANTHROPIC.defaultBaseUrl)}/models"
 
     fun geminiModelsUrl(baseUrl: String): String = "${geminiRoot(baseUrl)}/models"
-    fun geminiChatUrl(baseUrl: String, model: String, stream: Boolean): String {
+
+    private fun geminiModelActionUrl(baseUrl: String, model: String, action: String): String {
         val cleanModel = model.trim().removePrefix("models/")
-        val encoded = URLEncoder.encode(cleanModel, StandardCharsets.UTF_8.name()).replace("+", "%20")
-        return if (stream) {
-            "${geminiRoot(baseUrl)}/models/$encoded:streamGenerateContent?alt=sse"
+        val encoded = com.gugachat.app.core.util.ServerUrlUtils.encodePathSegment(cleanModel)
+        return "${geminiRoot(baseUrl)}/models/$encoded:$action"
+    }
+
+    fun geminiChatUrl(baseUrl: String, model: String, stream: Boolean): String =
+        if (stream) {
+            geminiModelActionUrl(baseUrl, model, "streamGenerateContent?alt=sse")
         } else {
-            "${geminiRoot(baseUrl)}/models/$encoded:generateContent"
+            geminiModelActionUrl(baseUrl, model, "generateContent")
         }
-    }
 
-    fun geminiImagenPredictUrl(baseUrl: String, model: String): String {
-        val cleanModel = model.trim().removePrefix("models/")
-        val encoded = URLEncoder.encode(cleanModel, StandardCharsets.UTF_8.name()).replace("+", "%20")
-        return "${geminiRoot(baseUrl)}/models/$encoded:predict"
-    }
+    fun geminiImagenPredictUrl(baseUrl: String, model: String): String =
+        geminiModelActionUrl(baseUrl, model, "predict")
 
-    fun geminiEmbedContentUrl(baseUrl: String, modelId: String): String {
-        val cleanModel = modelId.trim().removePrefix("models/")
-        val encoded = URLEncoder.encode(cleanModel, StandardCharsets.UTF_8.name()).replace("+", "%20")
-        return "${geminiRoot(baseUrl)}/models/$encoded:embedContent"
-    }
+    fun geminiEmbedContentUrl(baseUrl: String, modelId: String): String =
+        geminiModelActionUrl(baseUrl, modelId, "embedContent")
 
-    fun geminiBatchEmbedContentsUrl(baseUrl: String, modelId: String): String {
-        val cleanModel = modelId.trim().removePrefix("models/")
-        val encoded = URLEncoder.encode(cleanModel, StandardCharsets.UTF_8.name()).replace("+", "%20")
-        return "${geminiRoot(baseUrl)}/models/$encoded:batchEmbedContents"
-    }
+    fun geminiBatchEmbedContentsUrl(baseUrl: String, modelId: String): String =
+        geminiModelActionUrl(baseUrl, modelId, "batchEmbedContents")
 
     // ==================== Chat Request Builders ====================
 

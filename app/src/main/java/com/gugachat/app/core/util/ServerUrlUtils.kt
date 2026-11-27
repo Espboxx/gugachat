@@ -1,34 +1,52 @@
 package com.gugachat.app.core.util
 
 import java.net.URI
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
+
+data class ParsedHttpOrigin(
+    val scheme: String,
+    val host: String,
+    val portPart: String,
+    val rawPath: String,
+)
 
 object ServerUrlUtils {
     private val ANY_SCHEME_RE = Regex("^[a-zA-Z][a-zA-Z0-9+.-]*://")
     private val DATA_IMG_RE = Regex("^data:image/[a-z0-9.+-]+;base64,", RegexOption.IGNORE_CASE)
+
+    fun parseHttpOriginAndPath(raw: String): ParsedHttpOrigin? {
+        val trimmed = raw.trim()
+        if (trimmed.isEmpty()) return null
+        val withScheme = if (ANY_SCHEME_RE.containsMatchIn(trimmed)) trimmed else "https://$trimmed"
+        val uri = runCatching { URI(withScheme) }.getOrNull() ?: return null
+        val scheme = uri.scheme?.lowercase() ?: return null
+        if (scheme != "http" && scheme != "https") return null
+        val host = uri.host ?: return null
+        val portPart = if (uri.port != -1) ":${uri.port}" else ""
+        return ParsedHttpOrigin(
+            scheme = scheme,
+            host = host,
+            portPart = portPart,
+            rawPath = (uri.rawPath ?: "").trimEnd('/'),
+        )
+    }
+
+    fun encodePathSegment(segment: String): String =
+        URLEncoder.encode(segment, StandardCharsets.UTF_8.name()).replace("+", "%20")
 
     /**
      * Normalizes a user-supplied sub2api-auto server URL to its base origin/path
      * without trailing slashes or `/api/v1`.
      */
     fun normalizeServerUrl(raw: String): String {
-        val trimmed = raw.trim()
-        if (trimmed.isEmpty()) return ""
-        val withScheme = if (ANY_SCHEME_RE.containsMatchIn(trimmed)) trimmed else "https://$trimmed"
-        val uri = try {
-            URI(withScheme)
-        } catch (_: Exception) {
-            return ""
-        }
-        val scheme = uri.scheme?.lowercase() ?: return ""
-        if (scheme != "http" && scheme != "https") return ""
-        val host = uri.host ?: return ""
-        val portPart = if (uri.port != -1) ":${uri.port}" else ""
-        var path = (uri.rawPath ?: "").trimEnd('/')
+        val parsed = parseHttpOriginAndPath(raw) ?: return ""
+        var path = parsed.rawPath
         val apiIdx = path.indexOf("/api/v1")
         if (apiIdx >= 0 && (apiIdx + "/api/v1".length == path.length || path[apiIdx + "/api/v1".length] == '/')) {
             path = path.substring(0, apiIdx)
         }
-        return "$scheme://$host$portPart$path"
+        return "${parsed.scheme}://${parsed.host}${parsed.portPart}$path"
     }
 
     /**

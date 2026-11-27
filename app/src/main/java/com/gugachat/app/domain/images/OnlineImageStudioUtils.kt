@@ -13,8 +13,12 @@ data class ImageCostEstimate(
 )
 
 object OnlineImageStudioUtils {
+    val ACTIVE_JOB_STATUSES = setOf("pending", "queued", "processing", "running")
     val PRESET_ASPECT_RATIOS = listOf("auto", "1:1", "4:3", "3:4", "16:9", "9:16", "3:2", "2:3", "21:9")
     val PRESET_RESOLUTIONS = listOf("auto", "1K", "2K", "4K")
+
+    fun isActiveJobStatus(status: String?): Boolean =
+        status?.trim()?.lowercase() in ACTIVE_JOB_STATUSES
 
     fun isNovelAIModel(model: OnlineImageModelDto?): Boolean =
         model?.provider.equals("novelai", ignoreCase = true) ||

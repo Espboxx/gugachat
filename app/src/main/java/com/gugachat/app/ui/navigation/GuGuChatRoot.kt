@@ -253,7 +253,7 @@ private fun AuthenticatedShell(
     val imageState by imageVm.ui.collectAsStateWithLifecycle()
     val activeImageTasks = remember(imageState.generations) {
         imageState.generations.count {
-            it.status.lowercase() in setOf("pending", "queued", "processing", "running")
+            com.gugachat.app.domain.images.OnlineImageStudioUtils.isActiveJobStatus(it.status)
         }
     }
     val resolvedImageGroupsCount = if (!imageState.isLoadingCapabilities || imageState.keys.isNotEmpty()) {

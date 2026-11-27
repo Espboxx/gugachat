@@ -146,7 +146,7 @@ class StudioImageGenerationUseCase(
         )
 
         val deadline = System.currentTimeMillis() + 60_000L
-        while (current.status.lowercase() in setOf("pending", "queued", "processing", "running") &&
+        while (OnlineImageStudioUtils.isActiveJobStatus(current.status) &&
             System.currentTimeMillis() < deadline
         ) {
             delay(1500L)

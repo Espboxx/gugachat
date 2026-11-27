@@ -871,40 +871,7 @@ object BackupArchiveEngine {
         val chatDao = gateway.chatDao
         val memDao = gateway.userMemoryDao
         gateway.withTransaction {
-            if (replaceExisting) {
-                chatDao.clearAllRpSaveSlots()
-                chatDao.clearAllMemoryEpisodes()
-                chatDao.clearAllMemoryLedger()
-                chatDao.clearAllNovelLore()
-                chatDao.clearAllNovelChapters()
-                chatDao.clearAllMessages()
-                chatDao.clearAllConversations()
-                memDao.clearAll()
-            }
-            if (payload.conversations.isNotEmpty()) {
-                chatDao.upsertConversations(payload.conversations.map { it.toEntity() })
-            }
-            if (payload.messages.isNotEmpty()) {
-                chatDao.upsertMessages(payload.messages.map { it.toEntity() })
-            }
-            if (payload.userMemories.isNotEmpty()) {
-                memDao.upsertAll(payload.userMemories.map { it.toEntity() })
-            }
-            if (payload.novelChapters.isNotEmpty()) {
-                chatDao.upsertNovelChapters(payload.novelChapters.map { it.toEntity() })
-            }
-            if (payload.novelLore.isNotEmpty()) {
-                chatDao.upsertNovelLoreList(payload.novelLore.map { it.toEntity() })
-            }
-            if (payload.memoryLedger.isNotEmpty()) {
-                chatDao.upsertMemoryLedgerList(payload.memoryLedger.map { it.toEntity() })
-            }
-            if (payload.memoryEpisodes.isNotEmpty()) {
-                chatDao.upsertMemoryEpisodes(payload.memoryEpisodes.map { it.toEntity() })
-            }
-            if (payload.rpSaveSlots.isNotEmpty()) {
-                chatDao.upsertRpSaveSlots(payload.rpSaveSlots.map { it.toEntity() })
-            }
+            ChatBackupCodec.restorePayloadInTransaction(chatDao, memDao, payload, replaceExisting)
         }
         return BackupRestoreResult(
             formatVersion = 1,

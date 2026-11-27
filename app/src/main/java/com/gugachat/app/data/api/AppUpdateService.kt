@@ -30,9 +30,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.io.FileInputStream
-import java.io.FileOutputStream
 import java.net.URI
-import java.security.MessageDigest
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
@@ -745,94 +743,32 @@ object AppUpdateService {
         connectTimeoutSec: Long = 20L,
         readTimeoutSec: Long = 120L,
         onProgress: (downloadedBytes: Long, totalBytes: Long) -> Unit = { _, _ -> },
-    ): File {
-        val dlClient = httpClient.newBuilder()
-            .followRedirects(true)
-            .followSslRedirects(true)
-            .connectTimeout(connectTimeoutSec, TimeUnit.SECONDS)
-            .readTimeout(readTimeoutSec, TimeUnit.SECONDS)
-            .build()
-
-        val req = Request.Builder()
-            .url(url)
-            .get()
-            .header("Accept", "application/vnd.android.package-archive, application/octet-stream, */*")
-            .header("User-Agent", "GuGuChat-Android/${BuildConfig.VERSION_NAME}")
-            .build()
-
-        val normalizedExpectedSha = normalizeSha256(expectedSha256)
-        val resp = dlClient.awaitCall(req)
-        return withContext(Dispatchers.IO) {
-            val parent = destFile.parentFile
-            if (parent != null && !parent.exists()) parent.mkdirs()
-            val tempFile = File(destFile.parentFile, "${destFile.name}.part")
-            try {
-                resp.use { r ->
-                    if (!r.isSuccessful) {
-                        throw IllegalStateException("HTTP ${r.code}")
-                    }
-                    val contentType = r.header("Content-Type").orEmpty().lowercase(Locale.ROOT)
-                    if (contentType.contains("text/html")) {
-                        throw IllegalStateException("Unexpected HTML response")
-                    }
-                    val body = r.body ?: throw IllegalStateException("Empty download body")
-                    val total = body.contentLength().takeIf { it > 0L } ?: expectedSizeBytes
-                    val buf = ByteArray(16 * 1024)
-                    val digest = if (normalizedExpectedSha != null) MessageDigest.getInstance("SHA-256") else null
-                    var downloaded = 0L
-                    var lastEmit = 0L
-                    var verifiedMagic = false
-
-                    body.byteStream().use { ins ->
-                        FileOutputStream(tempFile).use { fos ->
-                            while (true) {
-                                currentCoroutineContext().ensureActive()
-                                val n = ins.read(buf)
-                                if (n <= 0) break
-                                if (!verifiedMagic) {
-                                    if (n < 4 || buf[0] != 0x50.toByte() || buf[1] != 0x4B.toByte() || buf[2] != 0x03.toByte() || buf[3] != 0x04.toByte()) {
-                                        throw IllegalStateException("Invalid APK file header")
-                                    }
-                                    verifiedMagic = true
-                                }
-                                downloaded += n
-                                if (downloaded > MAX_APK_BYTES) {
-                                    throw IllegalStateException("APK exceeds size limit")
-                                }
-                                digest?.update(buf, 0, n)
-                                fos.write(buf, 0, n)
-                                val now = System.currentTimeMillis()
-                                if (now - lastEmit >= 80L || (total > 0L && downloaded >= total)) {
-                                    lastEmit = now
-                                    onProgress(downloaded, total)
-                                }
-                            }
-                        }
-                    }
-                    if (!verifiedMagic || downloaded <= 0L) {
-                        throw IllegalStateException("Empty APK file")
-                    }
-                    if (digest != null && normalizedExpectedSha != null) {
-                        val actualSha = com.gugachat.app.core.util.HashUtils.toHex(digest.digest())
-                        if (!actualSha.equals(normalizedExpectedSha, ignoreCase = true)) {
-                            throw IllegalStateException("APK SHA-256 mismatch")
-                        }
-                    }
-                    onProgress(downloaded, if (total > 0L) total else downloaded)
+    ): File = ResumableFileDownloader.downloadFile(
+        httpClient = httpClient,
+        url = url,
+        destFile = destFile,
+        options = ResumableFileDownloader.DownloadOptions(
+            resumable = false,
+            expectedSizeBytes = expectedSizeBytes,
+            expectedSha256 = expectedSha256,
+            maxBytes = MAX_APK_BYTES,
+            acceptHeader = "application/vnd.android.package-archive, application/octet-stream, */*",
+            userAgent = "GuGuChat-Android/${BuildConfig.VERSION_NAME}",
+            connectTimeoutSec = connectTimeoutSec,
+            readTimeoutSec = readTimeoutSec,
+            bufferSizeBytes = 16 * 1024,
+            emptyFileErrorMessage = "Empty APK file",
+            sizeLimitErrorMessage = "APK exceeds size limit",
+            shaMismatchErrorMessage = "APK SHA-256 mismatch",
+            keepPartOnTruncatedOrFailure = false,
+            verifyFirstChunk = { buf, n ->
+                if (n < 4 || buf[0] != 0x50.toByte() || buf[1] != 0x4B.toByte() || buf[2] != 0x03.toByte() || buf[3] != 0x04.toByte()) {
+                    throw IllegalStateException("Invalid APK file header")
                 }
-
-                if (destFile.exists()) destFile.delete()
-                if (!tempFile.renameTo(destFile)) {
-                    tempFile.copyTo(destFile, overwrite = true)
-                    tempFile.delete()
-                }
-                destFile
-            } catch (t: Throwable) {
-                runCatching { tempFile.delete() }
-                throw t
-            }
-        }
-    }
+            },
+        ),
+        onProgress = onProgress,
+    )
 
     suspend fun downloadApkWithFallback(
         httpClient: OkHttpClient,
@@ -842,35 +778,24 @@ object AppUpdateService {
         expectedSha256: String? = null,
         onCandidateAttempt: (candidate: ApkDownloadCandidate, attemptIndex: Int, totalCandidates: Int) -> Unit = { _, _, _ -> },
         onProgress: (candidate: ApkDownloadCandidate, downloadedBytes: Long, totalBytes: Long) -> Unit = { _, _, _ -> },
-    ): Pair<File, ApkDownloadCandidate> {
-        if (candidates.isEmpty()) {
-            throw IllegalStateException("No downloadable APK URL available")
+    ): Pair<File, ApkDownloadCandidate> = ResumableFileDownloader.downloadWithFallback(
+        candidates = candidates,
+        labelOf = { it.label },
+        emptyCandidatesError = "No downloadable APK URL available",
+        joinErrors = false,
+        onCandidateAttempt = onCandidateAttempt,
+    ) { candidate ->
+        downloadApk(
+            httpClient = httpClient,
+            url = candidate.url,
+            destFile = destFile,
+            expectedSizeBytes = expectedSizeBytes,
+            expectedSha256 = expectedSha256,
+            connectTimeoutSec = 12L,
+            readTimeoutSec = 60L,
+        ) { downloaded, total ->
+            onProgress(candidate, downloaded, total)
         }
-        val errors = ArrayList<String>()
-        candidates.forEachIndexed { idx, candidate ->
-            currentCoroutineContext().ensureActive()
-            onCandidateAttempt(candidate, idx + 1, candidates.size)
-            try {
-                val file = downloadApk(
-                    httpClient = httpClient,
-                    url = candidate.url,
-                    destFile = destFile,
-                    expectedSizeBytes = expectedSizeBytes,
-                    expectedSha256 = expectedSha256,
-                    connectTimeoutSec = 12L,
-                    readTimeoutSec = 60L,
-                ) { downloaded, total ->
-                    onProgress(candidate, downloaded, total)
-                }
-                return file to candidate
-            } catch (ce: CancellationException) {
-                throw ce
-            } catch (t: Throwable) {
-                val msg = t.message?.takeIf { it.isNotBlank() } ?: "Download failed"
-                errors.add("${candidate.label}: $msg")
-            }
-        }
-        throw IllegalStateException(errors.lastOrNull() ?: "All download sources failed")
     }
 
     fun computeFileSha256(file: File): String? =

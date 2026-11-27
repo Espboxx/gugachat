@@ -10,15 +10,7 @@ private data class StreamErrorPayload(
 )
 
 @Serializable
-private data class StreamDeltaPayload(
-    val content: String? = null,
-    val reasoning_content: String? = null,
-    val reasoning: String? = null,
-    val thinking: String? = null,
-)
-
-@Serializable
-private data class StreamMessagePayload(
+private data class StreamTextPayload(
     val content: String? = null,
     val reasoning_content: String? = null,
     val reasoning: String? = null,
@@ -27,8 +19,8 @@ private data class StreamMessagePayload(
 
 @Serializable
 private data class StreamChoicePayload(
-    val delta: StreamDeltaPayload? = null,
-    val message: StreamMessagePayload? = null,
+    val delta: StreamTextPayload? = null,
+    val message: StreamTextPayload? = null,
     val finish_reason: String? = null,
 )
 

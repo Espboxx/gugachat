@@ -7,19 +7,13 @@ import com.gugachat.app.domain.chat.RemoteEmbeddingConfig
 import com.gugachat.app.domain.chat.RemoteRerankConfig
 import com.gugachat.app.domain.chat.RerankEngine
 import com.gugachat.app.domain.chat.recommendedMinCosineForRemoteModel
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.job
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import java.io.InterruptedIOException
-import java.net.SocketTimeoutException
 import java.net.URI
 import java.util.concurrent.TimeUnit
 
@@ -91,6 +85,33 @@ class DirectApiClient(
             customModels = provider.customModels,
         )
 
+    private suspend fun <T> postDirectJson(
+        provider: ApiProviderConfig,
+        url: String,
+        payloadJson: String,
+        client: OkHttpClient = streamingClient,
+        parser: (raw: String, code: Int) -> T,
+    ): T {
+        val req = applyAuthHeaders(
+            Request.Builder()
+                .url(url)
+                .post(payloadJson.toRequestBody(ApiClient.JSON_MEDIA_TYPE)),
+            provider,
+        ).header("Accept", "application/json")
+            .header("Content-Type", "application/json")
+            .build()
+        val resp = client.awaitCall(req)
+        return withContext(Dispatchers.IO) {
+            resp.use { r ->
+                val raw = r.body?.string().orEmpty()
+                if (!r.isSuccessful) {
+                    throw parseHttpError(r.code, raw)
+                }
+                parser(raw, r.code)
+            }
+        }
+    }
+
     suspend fun streamChat(
         provider: ApiProviderConfig,
         request: OnlineChatCompletionRequestDto,
@@ -100,120 +121,41 @@ class DirectApiClient(
     ): CompletionResult {
         validateProvider(provider)
         val (url, payload) = buildChatUrlAndPayload(provider, request, stream = true)
-        val reqBuilder = applyAuthHeaders(
+        val req = applyAuthHeaders(
             Request.Builder().url(url).post(payload.toRequestBody(ApiClient.JSON_MEDIA_TYPE)),
             provider,
         ).header("Accept", "text/event-stream")
             .header("Accept-Encoding", "identity")
             .header("Cache-Control", "no-cache")
             .header("Content-Type", "application/json")
+            .build()
 
-        val response = sseStreamingClient.awaitCall(reqBuilder.build())
-        return withContext(Dispatchers.IO) {
-            response.use { resp ->
-                if (!resp.isSuccessful) {
-                    throw parseHttpError(resp.code, resp.body?.string().orEmpty())
+        val response = sseStreamingClient.awaitCall(req)
+        return SseStreamConsumer.consumeResponse(
+            response = response,
+            parseHttpError = parseHttpError,
+            parseSingleJson = { raw, code -> parseSingleResponse(provider.protocol, raw, code) },
+            parseSseLine = { currentEvent, rawData ->
+                when (provider.protocol) {
+                    ApiProtocol.OPENAI_CHAT -> SseParser.parseDataPayload(rawData)
+                    ApiProtocol.OPENAI_RESPONSES -> DirectProtocolCodec.parseOpenAIResponsesSse(currentEvent, rawData)
+                    ApiProtocol.ANTHROPIC -> DirectProtocolCodec.parseAnthropicSse(currentEvent, rawData)
+                    ApiProtocol.GEMINI -> DirectProtocolCodec.parseGeminiSseData(rawData)
                 }
-                val contentType = resp.header("Content-Type").orEmpty().lowercase()
-                val body = resp.body ?: throw ApiException(resp.code, "EMPTY_BODY", "Streaming response body unavailable")
-
-                if (contentType.contains("application/json")) {
-                    val raw = body.string()
-                    val single = parseSingleResponse(provider.protocol, raw, resp.code)
-                    if (single.reasoning.isNotEmpty()) onReasoning(single.reasoning)
-                    if (single.content.isNotEmpty()) onDelta(single.content)
-                    if (single.usage != null) onUsage(single.usage)
-                    return@use single
-                }
-
-                val source = body.source()
-                val contentBuf = StringBuilder()
-                val reasoningBuf = StringBuilder()
-                var lastUsage: ChatTokenUsageDto? = null
-                var currentEvent: String? = null
-                var sawDone = false
-                var sawFinishReason = false
-                val ctx = currentCoroutineContext()
-                val cancelHandle = ctx.job.invokeOnCompletion { cause ->
-                    if (cause != null) runCatching { resp.close() }
-                }
-
-                try {
-                    while (true) {
-                        ctx.ensureActive()
-                        val line = source.readUtf8Line() ?: break
-                        if (line.isBlank()) {
-                            currentEvent = null
-                            continue
-                        }
-                        if (line.startsWith("event:")) {
-                            currentEvent = line.removePrefix("event:").trim()
-                            continue
-                        }
-                        if (line.startsWith("data:")) {
-                            val rawData = line.removePrefix("data:")
-                            val outcome = when (provider.protocol) {
-                                ApiProtocol.OPENAI_CHAT -> SseParser.parseDataPayload(rawData)
-                                ApiProtocol.OPENAI_RESPONSES -> DirectProtocolCodec.parseOpenAIResponsesSse(currentEvent, rawData)
-                                ApiProtocol.ANTHROPIC -> DirectProtocolCodec.parseAnthropicSse(currentEvent, rawData)
-                                ApiProtocol.GEMINI -> DirectProtocolCodec.parseGeminiSseData(rawData)
-                            } ?: continue
-
-                            if (!outcome.finishReason.isNullOrBlank()) {
-                                sawFinishReason = true
-                            }
-                            if (outcome.usage != null) {
-                                lastUsage = mergeUsageForProtocol(provider.protocol, lastUsage, outcome.usage)
-                                lastUsage?.let(onUsage)
-                            }
-                            if (outcome.deltaReasoning.isNotEmpty()) {
-                                reasoningBuf.append(outcome.deltaReasoning)
-                                onReasoning(outcome.deltaReasoning)
-                            }
-                            if (outcome.deltaText.isNotEmpty()) {
-                                contentBuf.append(outcome.deltaText)
-                                onDelta(outcome.deltaText)
-                            }
-                            if (outcome.done) {
-                                sawDone = true
-                                break
-                            }
-                        }
-                    }
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: ApiException) {
-                    throw e
-                } catch (e: SocketTimeoutException) {
-                    ctx.ensureActive()
-                    throw ApiException(504, "STREAM_TIMEOUT", e.message ?: "SSE stream timed out")
-                } catch (e: InterruptedIOException) {
-                    ctx.ensureActive()
-                    throw ApiException(504, "STREAM_TIMEOUT", e.message ?: "SSE stream timed out")
-                } catch (e: Exception) {
-                    ctx.ensureActive()
-                    throw ApiException(502, "STREAM_READ_ERROR", e.message ?: "Failed to read stream")
-                } finally {
-                    cancelHandle.dispose()
-                }
-
-                val isPrematureEof = when (provider.protocol) {
-                    ApiProtocol.GEMINI -> !sawDone && !sawFinishReason && contentBuf.isEmpty() && reasoningBuf.isEmpty()
+            },
+            mergeUsage = { prev, inc -> mergeUsageForProtocol(provider.protocol, prev, inc) },
+            isPrematureEof = { sawDone, sawFinishReason, content, reasoning ->
+                when (provider.protocol) {
+                    ApiProtocol.GEMINI -> !sawDone && !sawFinishReason && content.isEmpty() && reasoning.isEmpty()
                     ApiProtocol.OPENAI_CHAT,
                     ApiProtocol.OPENAI_RESPONSES,
                     ApiProtocol.ANTHROPIC -> !sawDone && !sawFinishReason
                 }
-                if (isPrematureEof) {
-                    throw ApiException(502, "STREAM_UNEXPECTED_EOF", "SSE stream interrupted: unexpected EOF")
-                }
-
-                CompletionResult(
-                    content = contentBuf.toString(),
-                    reasoning = reasoningBuf.toString(),
-                    usage = lastUsage,
-                )
-            }
-        }
+            },
+            onDelta = onDelta,
+            onReasoning = onReasoning,
+            onUsage = onUsage,
+        )
     }
 
     suspend fun completeChatOnce(
@@ -222,21 +164,8 @@ class DirectApiClient(
     ): CompletionResult {
         validateProvider(provider)
         val (url, payload) = buildChatUrlAndPayload(provider, request, stream = false)
-        val reqBuilder = applyAuthHeaders(
-            Request.Builder().url(url).post(payload.toRequestBody(ApiClient.JSON_MEDIA_TYPE)),
-            provider,
-        ).header("Accept", "application/json")
-            .header("Content-Type", "application/json")
-
-        val resp = streamingClient.awaitCall(reqBuilder.build())
-        return withContext(Dispatchers.IO) {
-            resp.use { r ->
-                val raw = r.body?.string().orEmpty()
-                if (!r.isSuccessful) {
-                    throw parseHttpError(r.code, raw)
-                }
-                parseSingleResponse(provider.protocol, raw, r.code)
-            }
+        return postDirectJson(provider, url, payload) { raw, code ->
+            parseSingleResponse(provider.protocol, raw, code)
         }
     }
 
@@ -280,19 +209,12 @@ class DirectApiClient(
                         count = input.count,
                         aspectRatio = input.aspectRatio,
                     )
-                    val req = applyAuthHeaders(
-                        Request.Builder()
-                            .url(DirectProtocolCodec.openaiImagesGenUrl(provider.baseUrl))
-                            .post(payload.toRequestBody(ApiClient.JSON_MEDIA_TYPE)),
-                        provider,
-                    ).header("Accept", "application/json")
-                        .header("Content-Type", "application/json")
-                        .build()
-                    streamingClient.awaitCall(req).use { r ->
-                        val raw = r.body?.string().orEmpty()
-                        if (!r.isSuccessful) throw parseHttpError(r.code, raw)
-                        DirectProtocolCodec.parseOpenAIImagesJson(raw, r.code)
-                    }
+                    postDirectJson(
+                        provider = provider,
+                        url = DirectProtocolCodec.openaiImagesGenUrl(provider.baseUrl),
+                        payloadJson = payload,
+                        parser = DirectProtocolCodec::parseOpenAIImagesJson,
+                    )
                 }
             }
 
@@ -303,19 +225,12 @@ class DirectApiClient(
                         count = input.count,
                         aspectRatio = input.aspectRatio,
                     )
-                    val req = applyAuthHeaders(
-                        Request.Builder()
-                            .url(DirectProtocolCodec.geminiImagenPredictUrl(provider.baseUrl, input.model))
-                            .post(payload.toRequestBody(ApiClient.JSON_MEDIA_TYPE)),
-                        provider,
-                    ).header("Accept", "application/json")
-                        .header("Content-Type", "application/json")
-                        .build()
-                    streamingClient.awaitCall(req).use { r ->
-                        val raw = r.body?.string().orEmpty()
-                        if (!r.isSuccessful) throw parseHttpError(r.code, raw)
-                        DirectProtocolCodec.parseGeminiImagesJson(raw, r.code)
-                    }
+                    postDirectJson(
+                        provider = provider,
+                        url = DirectProtocolCodec.geminiImagenPredictUrl(provider.baseUrl, input.model),
+                        payloadJson = payload,
+                        parser = DirectProtocolCodec::parseGeminiImagesJson,
+                    )
                 } else {
                     val inlineImages = buildList {
                         if (sourceImageBytes != null) add(DirectInlineImage("image/png", sourceImageBytes))
@@ -327,19 +242,12 @@ class DirectApiClient(
                         aspectRatio = input.aspectRatio,
                         inlineImages = inlineImages,
                     )
-                    val req = applyAuthHeaders(
-                        Request.Builder()
-                            .url(DirectProtocolCodec.geminiChatUrl(provider.baseUrl, input.model, stream = false))
-                            .post(payload.toRequestBody(ApiClient.JSON_MEDIA_TYPE)),
-                        provider,
-                    ).header("Accept", "application/json")
-                        .header("Content-Type", "application/json")
-                        .build()
-                    streamingClient.awaitCall(req).use { r ->
-                        val raw = r.body?.string().orEmpty()
-                        if (!r.isSuccessful) throw parseHttpError(r.code, raw)
-                        DirectProtocolCodec.parseGeminiImagesJson(raw, r.code)
-                    }
+                    postDirectJson(
+                        provider = provider,
+                        url = DirectProtocolCodec.geminiChatUrl(provider.baseUrl, input.model, stream = false),
+                        payloadJson = payload,
+                        parser = DirectProtocolCodec::parseGeminiImagesJson,
+                    )
                 }
             }
 
@@ -417,29 +325,17 @@ class DirectApiClient(
             )
         }
 
-        val req = applyAuthHeaders(
-            Request.Builder()
-                .url(url)
-                .post(payload.toRequestBody(ApiClient.JSON_MEDIA_TYPE)),
-            provider,
-        ).header("Accept", "application/json")
-            .header("Content-Type", "application/json")
-            .build()
-
-        val client = clientWithTimeout(timeoutMs)
-        val resp = client.awaitCall(req)
-        val vectors = withContext(Dispatchers.IO) {
-            resp.use { r ->
-                val raw = r.body?.string().orEmpty()
-                if (!r.isSuccessful) {
-                    throw parseHttpError(r.code, raw)
-                }
-                when (provider.protocol) {
-                    ApiProtocol.GEMINI -> DirectProtocolCodec.parseGeminiEmbeddingsJson(raw, r.code)
-                    ApiProtocol.OPENAI_CHAT,
-                    ApiProtocol.OPENAI_RESPONSES,
-                    ApiProtocol.ANTHROPIC -> DirectProtocolCodec.parseOpenAIEmbeddingsJson(raw, r.code)
-                }
+        val vectors = postDirectJson(
+            provider = provider,
+            url = url,
+            payloadJson = payload,
+            client = clientWithTimeout(timeoutMs),
+        ) { raw, code ->
+            when (provider.protocol) {
+                ApiProtocol.GEMINI -> DirectProtocolCodec.parseGeminiEmbeddingsJson(raw, code)
+                ApiProtocol.OPENAI_CHAT,
+                ApiProtocol.OPENAI_RESPONSES,
+                ApiProtocol.ANTHROPIC -> DirectProtocolCodec.parseOpenAIEmbeddingsJson(raw, code)
             }
         }
         if (vectors.size != texts.size) {
@@ -510,26 +406,13 @@ class DirectApiClient(
             topN = topN,
             useTeiSchema = useTeiSchema,
         )
-        val req = applyAuthHeaders(
-            Request.Builder()
-                .url(url)
-                .post(payload.toRequestBody(ApiClient.JSON_MEDIA_TYPE)),
-            provider,
-        ).header("Accept", "application/json")
-            .header("Content-Type", "application/json")
-            .build()
-
-        val client = clientWithTimeout(timeoutMs)
-        val resp = client.awaitCall(req)
-        val parsed = withContext(Dispatchers.IO) {
-            resp.use { r ->
-                val raw = r.body?.string().orEmpty()
-                if (!r.isSuccessful) {
-                    throw parseHttpError(r.code, raw)
-                }
-                DirectProtocolCodec.parseRerankResponseJson(raw, r.code)
-            }
-        }
+        val parsed = postDirectJson(
+            provider = provider,
+            url = url,
+            payloadJson = payload,
+            client = clientWithTimeout(timeoutMs),
+            parser = DirectProtocolCodec::parseRerankResponseJson,
+        )
         val filtered = parsed.entries
             .filter { it.key in documents.indices }
             .sortedByDescending { it.value }
@@ -672,37 +555,49 @@ class DirectApiClient(
             return false
         }
 
+        private fun resolveConfiguredProvider(
+            providerId: String,
+            customBaseUrl: String,
+            customApiKey: String,
+            protocol: ApiProtocol,
+            fallbackId: String,
+            providerLookup: (String) -> ApiProviderConfig?,
+        ): ApiProviderConfig? {
+            val saved = providerId.trim().takeIf { it.isNotEmpty() }?.let(providerLookup)
+            if (saved != null) return saved
+            val baseUrl = customBaseUrl.trim()
+            if (baseUrl.isEmpty()) return null
+            return ApiProviderConfig(
+                id = providerId.ifBlank { fallbackId },
+                protocol = protocol,
+                baseUrl = baseUrl,
+                apiKey = customApiKey.trim(),
+            )
+        }
+
         fun resolveRemoteEmbeddingProvider(
             config: RemoteEmbeddingConfig,
             providerLookup: (String) -> ApiProviderConfig? = { null },
-        ): ApiProviderConfig? {
-            val saved = config.providerId.trim().takeIf { it.isNotEmpty() }?.let(providerLookup)
-            if (saved != null) return saved
-            val baseUrl = config.customBaseUrl.trim()
-            if (baseUrl.isEmpty()) return null
-            return ApiProviderConfig(
-                id = config.providerId.ifBlank { "custom_embed" },
-                protocol = config.protocol,
-                baseUrl = baseUrl,
-                apiKey = config.customApiKey.trim(),
-            )
-        }
+        ): ApiProviderConfig? = resolveConfiguredProvider(
+            providerId = config.providerId,
+            customBaseUrl = config.customBaseUrl,
+            customApiKey = config.customApiKey,
+            protocol = config.protocol,
+            fallbackId = "custom_embed",
+            providerLookup = providerLookup,
+        )
 
         fun resolveRemoteRerankProvider(
             config: RemoteRerankConfig,
             providerLookup: (String) -> ApiProviderConfig? = { null },
-        ): ApiProviderConfig? {
-            val saved = config.providerId.trim().takeIf { it.isNotEmpty() }?.let(providerLookup)
-            if (saved != null) return saved
-            val baseUrl = config.customBaseUrl.trim()
-            if (baseUrl.isEmpty()) return null
-            return ApiProviderConfig(
-                id = config.providerId.ifBlank { "custom_rerank" },
-                protocol = ApiProtocol.OPENAI_CHAT,
-                baseUrl = baseUrl,
-                apiKey = config.customApiKey.trim(),
-            )
-        }
+        ): ApiProviderConfig? = resolveConfiguredProvider(
+            providerId = config.providerId,
+            customBaseUrl = config.customBaseUrl,
+            customApiKey = config.customApiKey,
+            protocol = ApiProtocol.OPENAI_CHAT,
+            fallbackId = "custom_rerank",
+            providerLookup = providerLookup,
+        )
     }
 }
 

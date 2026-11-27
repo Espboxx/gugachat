@@ -192,7 +192,7 @@ fun CreativeStudioScreen(
     }
 
     val processingCount = state.generations.count {
-        it.status.lowercase() in setOf("pending", "queued", "processing", "running")
+        com.gugachat.app.domain.images.OnlineImageStudioUtils.isActiveJobStatus(it.status)
     }
 
     val isCurrentScrolled = when (pagerState.currentPage) {

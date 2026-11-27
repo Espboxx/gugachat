@@ -15,7 +15,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.concurrent.TimeUnit
 
@@ -31,11 +30,12 @@ data class ExternalPersistSummary(
 object ExternalImportService {
     private const val MAX_DOWNLOAD_BYTES = 100 * 1024 * 1024
 
-    suspend fun downloadAndParseLink(
+    internal suspend fun downloadExportBytes(
         httpClient: OkHttpClient,
         rawLinkInput: String,
-        hintSource: ExternalImportSource = ExternalImportSource.DEEPSEEK,
-    ): ExternalImportBundle {
+        acceptHeader: String,
+        maxSizeErrorMessage: String,
+    ): Pair<ByteArray, String?> {
         val url = DeepSeekImportCodec.extractDownloadUrl(rawLinkInput)
             ?: throw IllegalArgumentException("INVALID_LINK")
 
@@ -49,12 +49,12 @@ object ExternalImportService {
         val req = Request.Builder()
             .url(url)
             .get()
-            .header("Accept", "application/zip, application/octet-stream, application/json, text/plain, */*")
+            .header("Accept", acceptHeader)
             .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/126.0 Mobile Safari/537.36")
             .build()
 
         val resp = downloadClient.awaitCall(req)
-        val (bytes, fileName) = withContext(Dispatchers.IO) {
+        return withContext(Dispatchers.IO) {
             resp.use { r ->
                 if (r.code == 401 || r.code == 403 || r.code == 404 || r.code == 410) {
                     throw DeepSeekLinkAuthRequiredException("HTTP ${r.code}")
@@ -70,23 +70,35 @@ object ExternalImportService {
                     ?.let { Regex("""filename="?([^";]+)"?""", RegexOption.IGNORE_CASE).find(it)?.groupValues?.get(1) }
                     ?: url.substringBefore('?').substringAfterLast('/').takeIf { it.contains('.') }
                 val body = r.body ?: throw IllegalStateException("空响应内容")
-                val out = ByteArrayOutputStream()
-                val buf = ByteArray(16384)
-                var total = 0
-                body.byteStream().use { ins ->
-                    while (true) {
-                        val n = ins.read(buf)
-                        if (n <= 0) break
-                        total += n
-                        if (total > MAX_DOWNLOAD_BYTES) {
-                            throw IllegalStateException("导出文件超过 100MB 限制")
+                val bytes = try {
+                    body.byteStream().use { ins ->
+                        com.gugachat.app.core.util.StreamZipUtils.run {
+                            ins.readBoundedBytesOrThrow(
+                                maxBytes = MAX_DOWNLOAD_BYTES.toLong(),
+                                errorMessage = maxSizeErrorMessage,
+                                bufSize = 16384,
+                            )
                         }
-                        out.write(buf, 0, n)
                     }
+                } catch (e: IllegalArgumentException) {
+                    throw IllegalStateException(e.message ?: maxSizeErrorMessage, e)
                 }
-                out.toByteArray() to dispName
+                bytes to dispName
             }
         }
+    }
+
+    suspend fun downloadAndParseLink(
+        httpClient: OkHttpClient,
+        rawLinkInput: String,
+        hintSource: ExternalImportSource = ExternalImportSource.DEEPSEEK,
+    ): ExternalImportBundle {
+        val (bytes, fileName) = downloadExportBytes(
+            httpClient = httpClient,
+            rawLinkInput = rawLinkInput,
+            acceptHeader = "application/zip, application/octet-stream, application/json, text/plain, */*",
+            maxSizeErrorMessage = "导出文件超过 100MB 限制",
+        )
 
         return withContext(Dispatchers.Default) {
             try {

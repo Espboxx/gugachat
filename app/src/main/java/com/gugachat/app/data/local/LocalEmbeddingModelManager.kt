@@ -2,13 +2,12 @@ package com.gugachat.app.data.local
 
 import android.content.Context
 import com.gugachat.app.BuildConfig
-import com.gugachat.app.data.api.awaitCall
+import com.gugachat.app.data.api.ResumableFileDownloader
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -19,12 +18,8 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
-import okhttp3.Request
 import java.io.File
-import java.io.FileInputStream
-import java.io.FileOutputStream
 import java.net.URI
-import java.security.MessageDigest
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
@@ -282,32 +277,24 @@ class LocalEmbeddingModelManager internal constructor(
         isBinaryModel: Boolean,
         onProgress: (bytesRead: Long, totalBytes: Long, mirrorLabel: String) -> Unit,
     ) {
-        if (urls.isEmpty()) {
-            throw IllegalStateException("No download mirrors configured for ${destFile.name}")
-        }
-        val errors = ArrayList<String>(urls.size)
-        for (url in urls) {
-            currentCoroutineContext().ensureActive()
+        ResumableFileDownloader.downloadWithFallback(
+            candidates = urls,
+            labelOf = ::mirrorLabelOf,
+            emptyCandidatesError = "No download mirrors configured for ${destFile.name}",
+            joinErrors = true,
+        ) { url ->
             val label = mirrorLabelOf(url)
-            try {
-                downloadResumableFile(
-                    url = url,
-                    mirrorLabel = label,
-                    destFile = destFile,
-                    expectedSha256 = expectedSha256,
-                    maxBytes = maxBytes,
-                    isBinaryModel = isBinaryModel,
-                    onProgress = onProgress,
-                )
-                return
-            } catch (ce: CancellationException) {
-                throw ce
-            } catch (t: Throwable) {
-                val detail = t.message?.takeIf { it.isNotBlank() } ?: t::class.java.simpleName
-                errors.add("$label: $detail")
-            }
+            downloadResumableFile(
+                url = url,
+                mirrorLabel = label,
+                destFile = destFile,
+                expectedSha256 = expectedSha256,
+                maxBytes = maxBytes,
+                isBinaryModel = isBinaryModel,
+                onProgress = onProgress,
+            )
+            destFile
         }
-        throw IllegalStateException(errors.joinToString(" | ").ifBlank { "All mirrors failed" })
     }
 
     private suspend fun downloadResumableFile(
@@ -319,176 +306,31 @@ class LocalEmbeddingModelManager internal constructor(
         isBinaryModel: Boolean,
         onProgress: (bytesRead: Long, totalBytes: Long, mirrorLabel: String) -> Unit,
     ) {
-        val partFile = File(destFile.parentFile, "${destFile.name}.part")
-        val normalizedExpectedSha = normalizeSha256(expectedSha256)
-
-        val dlClient = httpClient.newBuilder()
-            .followRedirects(true)
-            .followSslRedirects(true)
-            .connectTimeout(CONNECT_TIMEOUT_SEC, TimeUnit.SECONDS)
-            .readTimeout(READ_TIMEOUT_SEC, TimeUnit.SECONDS)
-            .build()
-
-        // Allow one internal retry when resuming encounters HTTP 416, mismatched Content-Range,
-        // or a poisoned `.part` prefix failing SHA-256 after resume.
-        var attempt = 0
-        while (attempt < 2) {
-            attempt++
-            currentCoroutineContext().ensureActive()
-            val existingBytes = if (partFile.isFile) partFile.length().coerceAtLeast(0L) else 0L
-            onProgress(existingBytes, existingBytes, mirrorLabel)
-
-            val reqBuilder = Request.Builder()
-                .url(url)
-                .get()
-                .header("Accept", "*/*")
-                .header("User-Agent", USER_AGENT)
-            if (existingBytes > 0L) {
-                reqBuilder.header("Range", "bytes=$existingBytes-")
-            }
-
-            val response = dlClient.awaitCall(reqBuilder.build())
-            var resumedThisAttempt = false
-            val needsFreshRestart = withContext(Dispatchers.IO) {
-                response.use { resp ->
-                    if (resp.code == 416) {
-                        val rangeTotal = parseTotalFromContentRange(resp.header("Content-Range"))
-                        if (rangeTotal != null && rangeTotal == existingBytes && existingBytes > 0L) {
-                            resumedThisAttempt = true
-                            // Already downloaded every byte into `.part` — verify integrity below
-                            return@withContext false
-                        }
-                        partFile.delete()
-                        return@withContext true
+        ResumableFileDownloader.downloadFile(
+            httpClient = httpClient,
+            url = url,
+            destFile = destFile,
+            options = ResumableFileDownloader.DownloadOptions(
+                resumable = true,
+                expectedSha256 = expectedSha256,
+                maxBytes = maxBytes,
+                acceptHeader = "*/*",
+                userAgent = USER_AGENT,
+                connectTimeoutSec = CONNECT_TIMEOUT_SEC,
+                readTimeoutSec = READ_TIMEOUT_SEC,
+                bufferSizeBytes = STREAM_BUFFER_BYTES,
+                progressIntervalMs = PROGRESS_EMIT_INTERVAL_MS,
+                keepPartOnTruncatedOrFailure = true,
+                verifyFirstChunk = { buf, n ->
+                    if (ResumableFileDownloader.looksLikeHtmlPayload(buf, n)) {
+                        throw IllegalStateException("Mirror returned HTML error page")
                     }
-
-                    if (resp.code != 200 && resp.code != 206) {
-                        throw IllegalStateException("HTTP ${resp.code}")
-                    }
-
-                    val contentType = resp.header("Content-Type").orEmpty().lowercase(Locale.ROOT)
-                    if (contentType.contains("text/html")) {
-                        partFile.delete()
-                        throw IllegalStateException("Unexpected HTML response")
-                    }
-
-                    val isPartial = resp.code == 206
-                    val appendMode: Boolean
-                    val startOffset: Long
-                    val totalBytes: Long
-
-                    if (isPartial) {
-                        val contentRange = resp.header("Content-Range")
-                        val parsedRange = parseContentRange(contentRange)
-                        if (parsedRange != null && parsedRange.start != existingBytes) {
-                            // Server returned an unexpected byte range; reset and retry cleanly from 0
-                            partFile.delete()
-                            return@withContext true
-                        }
-                        appendMode = existingBytes > 0L
-                        resumedThisAttempt = appendMode
-                        startOffset = existingBytes
-                        val bodyLen = resp.body?.contentLength()?.takeIf { it > 0L } ?: -1L
-                        totalBytes = parsedRange?.total
-                            ?: if (bodyLen > 0L) existingBytes + bodyLen else 0L
-                    } else {
-                        // Server ignored Range header (or fresh download): overwrite from byte 0
-                        appendMode = false
-                        startOffset = 0L
-                        totalBytes = resp.body?.contentLength()?.takeIf { it > 0L } ?: 0L
-                    }
-
-                    val body = resp.body ?: throw IllegalStateException("Empty download body")
-                    val buf = ByteArray(STREAM_BUFFER_BYTES)
-                    var downloaded = startOffset
-                    var lastEmitMs = 0L
-                    var checkedPrefix = startOffset > 0L
-
-                    body.byteStream().use { input ->
-                        FileOutputStream(partFile, appendMode).use { output ->
-                            while (true) {
-                                currentCoroutineContext().ensureActive()
-                                val n = input.read(buf)
-                                if (n <= 0) break
-
-                                if (!checkedPrefix) {
-                                    checkedPrefix = true
-                                    if (looksLikeHtmlPayload(buf, n)) {
-                                        output.close()
-                                        partFile.delete()
-                                        throw IllegalStateException("Mirror returned HTML error page")
-                                    }
-                                }
-
-                                downloaded += n
-                                if (downloaded > maxBytes) {
-                                    output.close()
-                                    partFile.delete()
-                                    throw IllegalStateException("Downloaded file exceeds size limit")
-                                }
-                                output.write(buf, 0, n)
-
-                                val now = System.currentTimeMillis()
-                                if (now - lastEmitMs >= PROGRESS_EMIT_INTERVAL_MS || (totalBytes > 0L && downloaded >= totalBytes)) {
-                                    lastEmitMs = now
-                                    onProgress(downloaded, if (totalBytes > 0L) totalBytes else downloaded, mirrorLabel)
-                                }
-                            }
-                            output.flush()
-                        }
-                    }
-
-                    if (totalBytes > 0L && downloaded < totalBytes) {
-                        // Keep `.part` file intact so next mirror/retry can resume from `downloaded`
-                        throw IllegalStateException("Truncated stream ($downloaded/$totalBytes bytes)")
-                    }
-                    onProgress(downloaded, if (totalBytes > 0L) totalBytes else downloaded, mirrorLabel)
-                    false
-                }
-            }
-
-            if (needsFreshRestart) {
-                if (attempt >= 2) {
-                    throw IllegalStateException("Unable to synchronize download byte range")
-                }
-                continue
-            }
-
-            // Post-download integrity checks & atomic promote
-            val retryFromZero = withContext(Dispatchers.IO) {
-                if (!partFile.isFile || partFile.length() <= 0L) {
-                    partFile.delete()
-                    throw IllegalStateException("Downloaded file is empty")
-                }
-
-                if (isBinaryModel && looksLikeHtmlFile(partFile)) {
-                    partFile.delete()
-                    if (resumedThisAttempt && attempt < 2) return@withContext true
-                    throw IllegalStateException("Downloaded ONNX file appears to be HTML")
-                }
-
-                if (normalizedExpectedSha != null) {
-                    val actualSha = computeFileSha256(partFile)
-                    if (actualSha == null || !actualSha.equals(normalizedExpectedSha, ignoreCase = true)) {
-                        partFile.delete()
-                        if (resumedThisAttempt && attempt < 2) return@withContext true
-                        throw IllegalStateException("SHA-256 verification failed")
-                    }
-                }
-
-                if (destFile.exists()) {
-                    destFile.delete()
-                }
-                if (!partFile.renameTo(destFile)) {
-                    partFile.copyTo(destFile, overwrite = true)
-                    partFile.delete()
-                }
-                false
-            }
-            if (!retryFromZero) {
-                return
-            }
-        }
+                },
+                rejectHtmlFile = isBinaryModel,
+                htmlFileErrorMessage = "Downloaded ONNX file appears to be HTML",
+            ),
+            onProgress = { read, total -> onProgress(read, total, mirrorLabel) },
+        )
     }
 
     private fun setModelState(modelId: String, state: LocalModelDownloadState) {
@@ -498,8 +340,6 @@ class LocalEmbeddingModelManager internal constructor(
             updated
         }
     }
-
-    private data class ParsedContentRange(val start: Long, val end: Long, val total: Long?)
 
     companion object {
         const val MODELS_DIR_NAME = "embedding_models"
@@ -604,42 +444,7 @@ class LocalEmbeddingModelManager internal constructor(
         internal fun computeFileSha256(file: File): String? =
             com.gugachat.app.core.util.HashUtils.sha256HexOrNull(file)
 
-        private val CONTENT_RANGE_REGEX = Regex("""bytes\s+(\d+)-(\d+)/(\d+|\*)""", RegexOption.IGNORE_CASE)
-        private val CONTENT_RANGE_TOTAL_REGEX = Regex("""bytes\s+\*/(\d+)""", RegexOption.IGNORE_CASE)
-
-        private fun parseContentRange(header: String?): ParsedContentRange? {
-            if (header.isNullOrBlank()) return null
-            val match = CONTENT_RANGE_REGEX.find(header.trim()) ?: return null
-            val start = match.groupValues[1].toLongOrNull() ?: return null
-            val end = match.groupValues[2].toLongOrNull() ?: return null
-            val total = match.groupValues[3].takeIf { it != "*" }?.toLongOrNull()
-            return ParsedContentRange(start = start, end = end, total = total)
-        }
-
-        private fun parseTotalFromContentRange(header: String?): Long? {
-            if (header.isNullOrBlank()) return null
-            val m = CONTENT_RANGE_TOTAL_REGEX.find(header.trim()) ?: return null
-            return m.groupValues[1].toLongOrNull()
-        }
-
         private fun sanitizeModelId(modelId: String): String =
             modelId.trim().replace(Regex("""[^a-zA-Z0-9._-]"""), "_").ifBlank { "default" }
-
-        private fun looksLikeHtmlPayload(buf: ByteArray, length: Int): Boolean {
-            val prefix = String(buf, 0, minOf(length, 64), Charsets.UTF_8).trimStart().lowercase(Locale.ROOT)
-            return prefix.startsWith("<!doctype html") ||
-                prefix.startsWith("<html") ||
-                prefix.startsWith("<head")
-        }
-
-        private fun looksLikeHtmlFile(file: File): Boolean {
-            return runCatching {
-                val buf = ByteArray(64)
-                FileInputStream(file).use { fis ->
-                    val n = fis.read(buf)
-                    n > 0 && looksLikeHtmlPayload(buf, n)
-                }
-            }.getOrDefault(false)
-        }
     }
 }

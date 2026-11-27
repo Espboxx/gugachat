@@ -51,15 +51,7 @@ object MemoryExtractor {
     }
 
     fun parseExtractedMemories(raw: String): List<UserMemory> {
-        val stripped = raw.trim()
-            .removePrefix("```json")
-            .removePrefix("```")
-            .removeSuffix("```")
-            .trim()
-        val start = stripped.indexOf('[')
-        val end = stripped.lastIndexOf(']')
-        if (start < 0 || end <= start) return emptyList()
-        val jsonArr = stripped.substring(start, end + 1)
+        val jsonArr = LlmJsonExtractor.extractFirstJsonArray(raw) ?: return emptyList()
         val dtos = try {
             CoreAppJson.decodeFromString<List<ExtractedMemoryDto>>(jsonArr)
         } catch (_: Exception) {

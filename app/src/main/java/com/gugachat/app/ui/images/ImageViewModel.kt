@@ -961,10 +961,8 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
         callback(bytes)
     }
 
-    private fun isActiveStatus(status: String): Boolean {
-        val s = status.lowercase()
-        return s == "pending" || s == "queued" || s == "processing" || s == "running"
-    }
+    private fun isActiveStatus(status: String): Boolean =
+        OnlineImageStudioUtils.isActiveJobStatus(status)
 
     private fun compressRefBytes(raw: ByteArray): ByteArray? {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }

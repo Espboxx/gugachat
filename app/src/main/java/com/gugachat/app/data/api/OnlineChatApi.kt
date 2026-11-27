@@ -1,15 +1,9 @@
 package com.gugachat.app.data.api
 
 import com.gugachat.app.core.storage.ApiProviderConfig
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.job
 import kotlinx.coroutines.withContext
 import okhttp3.RequestBody.Companion.toRequestBody
-import java.io.InterruptedIOException
-import java.net.SocketTimeoutException
 import java.util.concurrent.TimeUnit
 
 class OnlineChatApi(
@@ -24,14 +18,19 @@ class OnlineChatApi(
         .readTimeout(sseReadTimeoutMs.coerceAtLeast(100L), TimeUnit.MILLISECONDS)
         .build()
 
+    private fun resolveCustomProvider(groupId: Long): Pair<ApiProviderConfig, DirectApiClient>? {
+        if (!ApiProviderConfig.isCustomProviderId(groupId)) return null
+        val provider = providerLookup?.invoke(groupId)
+            ?: throw ApiException(404, "PROVIDER_NOT_FOUND", "Custom API provider not found")
+        val direct = directClient ?: throw IllegalStateException("DirectApiClient not configured")
+        return provider to direct
+    }
+
     suspend fun capabilities(): OnlineChatCapabilitiesDto =
         client.get("/online-chat/capabilities", OnlineChatCapabilitiesDto.serializer())
 
     suspend fun models(groupId: Long): List<OnlineChatModelDto> {
-        if (ApiProviderConfig.isCustomProviderId(groupId)) {
-            val provider = providerLookup?.invoke(groupId)
-                ?: throw ApiException(404, "PROVIDER_NOT_FOUND", "Custom API provider not found")
-            val direct = directClient ?: throw IllegalStateException("DirectApiClient not configured")
+        resolveCustomProvider(groupId)?.let { (provider, direct) ->
             return direct.listChatModels(provider)
         }
         return client.get(
@@ -72,10 +71,7 @@ class OnlineChatApi(
         onReasoning: (String) -> Unit,
         onUsage: (ChatTokenUsageDto) -> Unit,
     ): CompletionResult {
-        if (ApiProviderConfig.isCustomProviderId(request.group_id)) {
-            val provider = providerLookup?.invoke(request.group_id)
-                ?: throw ApiException(404, "PROVIDER_NOT_FOUND", "Custom API provider not found")
-            val direct = directClient ?: throw IllegalStateException("DirectApiClient not configured")
+        resolveCustomProvider(request.group_id)?.let { (provider, direct) ->
             return direct.streamChat(provider, request, onDelta, onReasoning, onUsage)
         }
         val payloadJson = AppJson.encodeToString(
@@ -94,98 +90,19 @@ class OnlineChatApi(
             client = sseStreamingClient,
         )
 
-        return withContext(Dispatchers.IO) {
-            response.use { resp ->
-                if (!resp.isSuccessful) {
-                    val errBody = resp.body?.string().orEmpty()
-                    throw client.parseHttpError(resp.code, errBody)
-                }
-
-                val contentType = resp.header("Content-Type").orEmpty().lowercase()
-                val body = resp.body ?: throw ApiException(resp.code, "EMPTY_BODY", "Streaming response body unavailable")
-
-                if (contentType.contains("application/json")) {
-                    val raw = body.string()
-                    val single = SseParser.parseSingleCompletionJson(raw, resp.code)
-                    if (single.reasoning.isNotEmpty()) onReasoning(single.reasoning)
-                    if (single.content.isNotEmpty()) onDelta(single.content)
-                    if (single.usage != null) onUsage(single.usage)
-                    return@use single
-                }
-
-                val source = body.source()
-                val contentBuf = StringBuilder()
-                val reasoningBuf = StringBuilder()
-                var lastUsage: ChatTokenUsageDto? = null
-                var sawDone = false
-                var sawFinishReason = false
-                val ctx = currentCoroutineContext()
-                val cancelHandle = ctx.job.invokeOnCompletion { cause ->
-                    if (cause != null) runCatching { resp.close() }
-                }
-
-                try {
-                    while (true) {
-                        ctx.ensureActive()
-                        val line = source.readUtf8Line() ?: break
-                        if (line.startsWith("data:")) {
-                            val outcome = SseParser.parseDataPayload(line.removePrefix("data:")) ?: continue
-                            if (outcome.done) {
-                                sawDone = true
-                                break
-                            }
-                            if (!outcome.finishReason.isNullOrBlank()) {
-                                sawFinishReason = true
-                            }
-                            if (outcome.usage != null) {
-                                lastUsage = SseParser.mergeUsage(lastUsage, outcome.usage)
-                                lastUsage?.let(onUsage)
-                            }
-                            if (outcome.deltaReasoning.isNotEmpty()) {
-                                reasoningBuf.append(outcome.deltaReasoning)
-                                onReasoning(outcome.deltaReasoning)
-                            }
-                            if (outcome.deltaText.isNotEmpty()) {
-                                contentBuf.append(outcome.deltaText)
-                                onDelta(outcome.deltaText)
-                            }
-                        }
-                    }
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: ApiException) {
-                    throw e
-                } catch (e: SocketTimeoutException) {
-                    ctx.ensureActive()
-                    throw ApiException(504, "STREAM_TIMEOUT", e.message ?: "SSE stream timed out")
-                } catch (e: InterruptedIOException) {
-                    ctx.ensureActive()
-                    throw ApiException(504, "STREAM_TIMEOUT", e.message ?: "SSE stream timed out")
-                } catch (e: Exception) {
-                    ctx.ensureActive()
-                    throw ApiException(502, "STREAM_READ_ERROR", e.message ?: "Failed to read stream")
-                } finally {
-                    cancelHandle.dispose()
-                }
-
-                if (!sawDone && !sawFinishReason) {
-                    throw ApiException(502, "STREAM_UNEXPECTED_EOF", "SSE stream interrupted: unexpected EOF")
-                }
-
-                CompletionResult(
-                    content = contentBuf.toString(),
-                    reasoning = reasoningBuf.toString(),
-                    usage = lastUsage,
-                )
-            }
-        }
+        return SseStreamConsumer.consumeResponse(
+            response = response,
+            parseHttpError = client::parseHttpError,
+            parseSingleJson = SseParser::parseSingleCompletionJson,
+            parseSseLine = { _, rawData -> SseParser.parseDataPayload(rawData) },
+            onDelta = onDelta,
+            onReasoning = onReasoning,
+            onUsage = onUsage,
+        )
     }
 
     suspend fun completeOnce(request: OnlineChatCompletionRequestDto): CompletionResult {
-        if (ApiProviderConfig.isCustomProviderId(request.group_id)) {
-            val provider = providerLookup?.invoke(request.group_id)
-                ?: throw ApiException(404, "PROVIDER_NOT_FOUND", "Custom API provider not found")
-            val direct = directClient ?: throw IllegalStateException("DirectApiClient not configured")
+        resolveCustomProvider(request.group_id)?.let { (provider, direct) ->
             return direct.completeChatOnce(provider, request)
         }
         val payloadJson = AppJson.encodeToString(

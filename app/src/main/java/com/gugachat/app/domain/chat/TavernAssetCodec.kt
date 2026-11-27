@@ -286,67 +286,22 @@ object TavernAssetCodec {
             ?: stripExtension(fileName).ifBlank { "酒馆世界书" }
         val desc = obj?.strOrNull("description").orEmpty().trim()
 
-        val rawEntries: List<JsonObject> = when (root) {
-            is JsonArray -> root.mapNotNull { it as? JsonObject }
-            is JsonObject -> when (val e = root["entries"]) {
-                is JsonObject -> e.values.mapNotNull { it as? JsonObject }
-                is JsonArray -> e.mapNotNull { it as? JsonObject }
-                else -> emptyList()
-            }
-            else -> emptyList()
-        }
+        val rawEntries = extractRawWorldbookEntries(root)
 
         val isTavernHelper = rawEntries.any { it["strategy"] is JsonObject }
         val loreEntries = rawEntries.mapIndexedNotNull { idx, entry ->
-            val content = entry.strOrNull("content").orEmpty().trim()
-            if (content.isEmpty()) return@mapIndexedNotNull null
-
-            val strategyObj = entry.objOrNull("strategy")
-            val secondaryObj = strategyObj?.objOrNull("keys_secondary")
-            val posObj = entry.objOrNull("position")
-            val extObj = entry.objOrNull("extensions")
-
-            val keywords = (
-                entry.strListOrEmpty("key") +
-                    entry.strListOrEmpty("keys") +
-                    entry.strListOrEmpty("keywords") +
-                    strategyObj?.strListOrEmpty("keys").orEmpty()
-                ).distinct()
-            val secondaryKeys = (
-                entry.strListOrEmpty("keysecondary") +
-                    entry.strListOrEmpty("secondary_keys") +
-                    entry.strListOrEmpty("secondaryKeys") +
-                    secondaryObj?.strListOrEmpty("keys").orEmpty()
-                ).distinct()
-            val entryTitle = (
-                entry.strOrNull("comment")?.takeIf { it.isNotBlank() }
-                    ?: entry.strOrNull("name")?.takeIf { it.isNotBlank() }
-                    ?: keywords.firstOrNull()
-                    ?: "条目 #${idx + 1}"
-                ).trim()
-            val disabled = entry.boolOrNull("disable") == true
-            val enabled = entry.boolOrNull("enabled") ?: !disabled
-            val constant = entry.boolOrNull("constant")
-                ?: entry.boolOrNull("constantActive")
-                ?: strategyObj?.strOrNull("type").equals("constant", ignoreCase = true)
-            val priority = entry.intOrNull("order")
-                ?: entry.intOrNull("insertion_order")
-                ?: entry.intOrNull("priority")
-                ?: posObj?.intOrNull("order")
-                ?: extObj?.intOrNull("order")
-                ?: 50
-
+            val core = extractLoreCoreFields(idx, entry, fallbackOrder = 50) ?: return@mapIndexedNotNull null
             val lore = NovelLoreEntry(
                 id = UUID.randomUUID().toString(),
                 conversationId = conversationId,
                 category = "concept",
-                title = entryTitle,
-                content = content,
-                keywords = keywords.ifEmpty { listOf(entryTitle) },
-                aliases = secondaryKeys,
-                alwaysActive = constant,
-                priority = priority,
-                enabled = enabled,
+                title = core.title,
+                content = core.content,
+                keywords = core.keywords.ifEmpty { listOf(core.title) },
+                aliases = core.secondaryKeys,
+                alwaysActive = core.constant,
+                priority = core.priority,
+                enabled = core.enabled,
                 validFromSeq = 0,
                 createdAt = now,
                 updatedAt = now,
@@ -412,8 +367,8 @@ object TavernAssetCodec {
         val embeddedRegex = RpCardCodec.parseRegexScriptsFromElement(
             obj.objOrNull("extensions")?.get("regex_scripts"),
         )
-        val temp = (obj["temperature"] as? JsonPrimitive)?.takeUnless { it is JsonNull }?.doubleOrNull
-        val topP = (obj["top_p"] as? JsonPrimitive)?.takeUnless { it is JsonNull }?.doubleOrNull
+        val temp = obj.nullableDouble("temperature")
+        val topP = obj.nullableDouble("top_p")
         val maxTokens = obj.intOrNull("openai_max_tokens") ?: obj.intOrNull("max_tokens")
 
         val promptsArr = obj.arrOrNull("prompts")
@@ -432,43 +387,12 @@ object TavernAssetCodec {
                     injectionDepth = p.intOrNull("injection_depth"),
                 )
             }
-            val byId = parsedPrompts.associateBy { it.identifier }
-
-            // Align with RikkaHub: prefer prompt_order with character_id == 100001, else longest list
-            val orderGroups = obj.arrOrNull("prompt_order").orEmpty().mapNotNull { it as? JsonObject }
-            val chosenOrderArr: JsonArray? = orderGroups
-                .firstOrNull { g ->
-                    val cid = (g["character_id"] as? JsonPrimitive)?.takeUnless { it is JsonNull }?.longOrNull
-                        ?: g.strOrNull("character_id")?.toLongOrNull()
-                    cid == 100001L
-                }
-                ?.arrOrNull("order")
-                ?: orderGroups
-                    .maxByOrNull { it.arrOrNull("order")?.size ?: 0 }
-                    ?.arrOrNull("order")
-
-            val resolvedEntries = ArrayList<Pair<RawPresetPrompt, Boolean>>()
-            val seenIds = LinkedHashSet<String>()
-
-            if (chosenOrderArr != null && chosenOrderArr.isNotEmpty()) {
-                chosenOrderArr.forEach { el ->
-                    val o = el as? JsonObject ?: return@forEach
-                    val id = o.strOrNull("identifier")?.trim() ?: return@forEach
-                    val prompt = byId[id] ?: return@forEach
-                    seenIds.add(id)
-                    if (prompt.marker) return@forEach
-                    // Align with RikkaHub: missing enabled in prompt_order defaults to true
-                    val orderEnabled = o.boolOrNull("enabled") ?: true
-                    val effectiveEnabled = orderEnabled && prompt.enabled
-                    if (prompt.content.isBlank()) return@forEach
-                    resolvedEntries.add(prompt to effectiveEnabled)
-                }
-            }
-            // Append prompts not listed in prompt_order so alternate/disabled entries are preserved
-            parsedPrompts.forEach { prompt ->
-                if (prompt.identifier in seenIds || prompt.marker || prompt.content.isBlank()) return@forEach
-                resolvedEntries.add(prompt to prompt.enabled)
-            }
+            val resolvedEntries = resolveOrderedPresetPrompts(
+                obj = obj,
+                parsedPrompts = parsedPrompts,
+                deduplicateOrderIds = false,
+                includeMarkersAndBlank = false,
+            )
 
             var mainRules = ""
             var postHistory = ""
@@ -703,15 +627,7 @@ object TavernAssetCodec {
         val title = obj?.strOrNull("name")?.trim()?.takeIf { it.isNotEmpty() }
             ?: stripExtension(fileName).ifBlank { "酒馆世界书" }
         val desc = obj?.strOrNull("description").orEmpty().trim()
-        val rawEntries: List<JsonObject> = when (root) {
-            is JsonArray -> root.mapNotNull { it as? JsonObject }
-            is JsonObject -> when (val e = root["entries"]) {
-                is JsonObject -> e.values.mapNotNull { it as? JsonObject }
-                is JsonArray -> e.mapNotNull { it as? JsonObject }
-                else -> emptyList()
-            }
-            else -> emptyList()
-        }
+        val rawEntries = extractRawWorldbookEntries(root)
         val isTavernHelper = rawEntries.any { it["strategy"] is JsonObject }
         return buildWorldbookV4FromRawEntries(
             worldbookId = worldbookId,
@@ -729,11 +645,7 @@ object TavernAssetCodec {
         fallbackName: String = "角色卡世界书",
         worldbookId: String = UUID.randomUUID().toString(),
     ): ParsedWorldbookV4? {
-        val rawEntries = when (val e = charBookObj["entries"]) {
-            is JsonObject -> e.values.mapNotNull { it as? JsonObject }
-            is JsonArray -> e.mapNotNull { it as? JsonObject }
-            else -> emptyList()
-        }
+        val rawEntries = extractRawWorldbookEntries(charBookObj)
         if (rawEntries.isEmpty()) return null
         val name = charBookObj.strOrNull("name")?.trim()?.takeIf { it.isNotEmpty() } ?: fallbackName
         val desc = charBookObj.strOrNull("description").orEmpty().trim()
@@ -762,47 +674,14 @@ object TavernAssetCodec {
         val recursiveScanning = bookObj?.boolOrNull("recursive_scanning") ?: bookObj?.boolOrNull("recursiveScanning") ?: true
 
         val entries = rawEntries.mapIndexedNotNull { idx, entry ->
-            val content = entry.strOrNull("content").orEmpty().trim()
-            if (content.isEmpty()) return@mapIndexedNotNull null
-
-            val strategyObj = entry.objOrNull("strategy")
-            val secondaryObj = strategyObj?.objOrNull("keys_secondary")
-            val posObj = entry.objOrNull("position")
-            val extObj = entry.objOrNull("extensions")
-
-            // CRITICAL: NEVER fall back to entryTitle when keys is empty (comment-only entries stay keys = [])
-            val keys = (
-                entry.strListOrEmpty("keys") +
-                    entry.strListOrEmpty("key") +
-                    entry.strListOrEmpty("keywords") +
-                    strategyObj?.strListOrEmpty("keys").orEmpty()
-                ).distinct()
-
-            // CRITICAL: NEVER stuff secondary_keys into aliases OR-matching
-            val secondaryKeys = (
-                entry.strListOrEmpty("secondary_keys") +
-                    entry.strListOrEmpty("keysecondary") +
-                    entry.strListOrEmpty("secondaryKeys") +
-                    secondaryObj?.strListOrEmpty("keys").orEmpty()
-                ).distinct()
-
+            val core = extractLoreCoreFields(idx, entry, fallbackOrder = 100) ?: return@mapIndexedNotNull null
+            val extObj = core.extObj
+            val posObj = core.posObj
+            val secondaryObj = core.secondaryObj
             val uid = entry.intOrNull("uid") ?: entry.intOrNull("id") ?: idx
-            val title = (
-                entry.strOrNull("comment")?.takeIf { it.isNotBlank() }
-                    ?: entry.strOrNull("name")?.takeIf { it.isNotBlank() }
-                    ?: keys.firstOrNull()
-                    ?: "条目 #${idx + 1}"
-                ).trim()
-
             val selectiveLogic = parseSelectiveLogic(
                 entry["selectiveLogic"] ?: entry["selective_logic"] ?: secondaryObj?.get("logic"),
             )
-            val constant = entry.boolOrNull("constant")
-                ?: entry.boolOrNull("constantActive")
-                ?: strategyObj?.strOrNull("type")?.equals("constant", ignoreCase = true)
-                ?: false
-            val disabled = entry.boolOrNull("disable") == true
-            val enabled = entry.boolOrNull("enabled") ?: !disabled
             val caseSensitive = entry.boolOrNull("case_sensitive")
                 ?: entry.boolOrNull("caseSensitive")
                 ?: extObj?.boolOrNull("case_sensitive")
@@ -816,12 +695,6 @@ object TavernAssetCodec {
                 ?: entry.boolOrNull("useRegexKey")
                 ?: false
             val probability = (entry.intOrNull("probability") ?: extObj?.intOrNull("probability") ?: 100).coerceIn(0, 100)
-            val insertionOrder = entry.intOrNull("insertion_order")
-                ?: entry.intOrNull("order")
-                ?: entry.intOrNull("priority")
-                ?: posObj?.intOrNull("order")
-                ?: extObj?.intOrNull("order")
-                ?: 100
             val position = parseWorldbookPosition(entry["position"] ?: extObj?.get("position"))
             val depth = (entry.intOrNull("depth")
                 ?: posObj?.intOrNull("depth")
@@ -846,25 +719,25 @@ object TavernAssetCodec {
                 ?: false
             val groupName = (entry.strOrNull("group") ?: entry.strOrNull("groupName") ?: extObj?.strOrNull("group")).orEmpty().trim()
             val groupWeight = (entry.intOrNull("groupWeight") ?: entry.intOrNull("group_weight") ?: extObj?.intOrNull("groupWeight") ?: 100).coerceAtLeast(1)
-            val estTokens = TokenEstimator.estimateItem(title, content, overhead = 8, minTokens = 8)
+            val estTokens = TokenEstimator.estimateItem(core.title, core.content, overhead = 8, minTokens = 8)
 
             WorldbookEntryEntity(
                 id = UUID.randomUUID().toString(),
                 worldbookId = worldbookId,
                 uid = uid,
-                title = title,
-                content = content,
+                title = core.title,
+                content = core.content,
                 category = entry.strOrNull("category")?.trim()?.takeIf { it.isNotEmpty() } ?: "concept",
-                keysJson = CoreAppJson.encodeToString(keys),
-                secondaryKeysJson = CoreAppJson.encodeToString(secondaryKeys),
+                keysJson = CoreAppJson.encodeToString(core.keywords),
+                secondaryKeysJson = CoreAppJson.encodeToString(core.secondaryKeys),
                 selectiveLogic = selectiveLogic,
-                constant = constant,
-                enabled = enabled,
+                constant = core.constant,
+                enabled = core.enabled,
                 caseSensitive = caseSensitive,
                 matchWholeWords = matchWholeWords,
                 useRegexKey = useRegexKey,
                 probability = probability,
-                insertionOrder = insertionOrder,
+                insertionOrder = core.priority,
                 position = position,
                 depth = depth,
                 outletRole = outletRole,
@@ -968,15 +841,14 @@ object TavernAssetCodec {
         val embeddedRegex = RpCardCodec.parseRegexScriptsFromElement(
             obj.objOrNull("extensions")?.get("regex_scripts"),
         )
-        val temp = (obj["temperature"] as? JsonPrimitive)?.takeUnless { it is JsonNull }?.doubleOrNull
-            ?: (obj["temp"] as? JsonPrimitive)?.takeUnless { it is JsonNull }?.doubleOrNull
-        val topP = (obj["top_p"] as? JsonPrimitive)?.takeUnless { it is JsonNull }?.doubleOrNull
+        val temp = obj.nullableDouble("temperature") ?: obj.nullableDouble("temp")
+        val topP = obj.nullableDouble("top_p")
         val maxTokens = obj.intOrNull("openai_max_tokens") ?: obj.intOrNull("max_tokens")
         val topK = obj.intOrNull("top_k")
-        val minP = (obj["min_p"] as? JsonPrimitive)?.takeUnless { it is JsonNull }?.doubleOrNull
-        val freqPen = (obj["frequency_penalty"] as? JsonPrimitive)?.takeUnless { it is JsonNull }?.doubleOrNull
-        val presPen = (obj["presence_penalty"] as? JsonPrimitive)?.takeUnless { it is JsonNull }?.doubleOrNull
-        val repPen = (obj["repetition_penalty"] as? JsonPrimitive)?.takeUnless { it is JsonNull }?.doubleOrNull
+        val minP = obj.nullableDouble("min_p")
+        val freqPen = obj.nullableDouble("frequency_penalty")
+        val presPen = obj.nullableDouble("presence_penalty")
+        val repPen = obj.nullableDouble("repetition_penalty")
 
         val samplingJson = buildJsonObject {
             temp?.let { put("temperature", it) }
@@ -1005,57 +877,21 @@ object TavernAssetCodec {
                     injectionDepth = p.intOrNull("injection_depth") ?: p.intOrNull("injectionDepth") ?: 4,
                 )
             }
-            val byId = parsedPrompts.associateBy { it.identifier }
-            val orderGroups = obj.arrOrNull("prompt_order").orEmpty().mapNotNull { it as? JsonObject }
-            val chosenOrderArr: JsonArray? = orderGroups
-                .firstOrNull { g ->
-                    val cid = (g["character_id"] as? JsonPrimitive)?.takeUnless { it is JsonNull }?.longOrNull
-                        ?: g.strOrNull("character_id")?.toLongOrNull()
-                    cid == 100001L
-                }
-                ?.arrOrNull("order")
-                ?: orderGroups
-                    .maxByOrNull { it.arrOrNull("order")?.size ?: 0 }
-                    ?.arrOrNull("order")
-
-            val blocks = ArrayList<PromptPresetBlock>()
-            val seenIds = LinkedHashSet<String>()
-
-            if (chosenOrderArr != null && chosenOrderArr.isNotEmpty()) {
-                chosenOrderArr.forEach { el ->
-                    val o = el as? JsonObject ?: return@forEach
-                    val id = o.strOrNull("identifier")?.trim() ?: return@forEach
-                    val prompt = byId[id] ?: return@forEach
-                    if (!seenIds.add(id)) return@forEach
-                    val orderEnabled = o.boolOrNull("enabled") ?: true
-                    val effectiveEnabled = orderEnabled && prompt.enabled
-                    blocks.add(
-                        PromptPresetBlock(
-                            identifier = prompt.identifier,
-                            name = prompt.name,
-                            role = prompt.role,
-                            content = prompt.content,
-                            marker = prompt.marker,
-                            enabled = effectiveEnabled,
-                            injectionPosition = prompt.injectionPosition ?: 0,
-                            injectionDepth = prompt.injectionDepth ?: 4,
-                        ),
-                    )
-                }
-            }
-            parsedPrompts.forEach { prompt ->
-                if (prompt.identifier in seenIds) return@forEach
-                blocks.add(
-                    PromptPresetBlock(
-                        identifier = prompt.identifier,
-                        name = prompt.name,
-                        role = prompt.role,
-                        content = prompt.content,
-                        marker = prompt.marker,
-                        enabled = prompt.enabled,
-                        injectionPosition = prompt.injectionPosition ?: 0,
-                        injectionDepth = prompt.injectionDepth ?: 4,
-                    ),
+            val blocks = resolveOrderedPresetPrompts(
+                obj = obj,
+                parsedPrompts = parsedPrompts,
+                deduplicateOrderIds = true,
+                includeMarkersAndBlank = true,
+            ).map { (prompt, effectiveEnabled) ->
+                PromptPresetBlock(
+                    identifier = prompt.identifier,
+                    name = prompt.name,
+                    role = prompt.role,
+                    content = prompt.content,
+                    marker = prompt.marker,
+                    enabled = effectiveEnabled,
+                    injectionPosition = prompt.injectionPosition ?: 0,
+                    injectionDepth = prompt.injectionDepth ?: 4,
                 )
             }
 
@@ -1106,6 +942,138 @@ object TavernAssetCodec {
             createdAt = now,
             updatedAt = now,
         )
+    }
+
+    private data class ExtractedLoreFields(
+        val content: String,
+        val keywords: List<String>,
+        val secondaryKeys: List<String>,
+        val title: String,
+        val enabled: Boolean,
+        val constant: Boolean,
+        val priority: Int,
+        val strategyObj: JsonObject?,
+        val secondaryObj: JsonObject?,
+        val posObj: JsonObject?,
+        val extObj: JsonObject?,
+    )
+
+    private fun extractRawWorldbookEntries(root: JsonElement): List<JsonObject> = when (root) {
+        is JsonArray -> root.mapNotNull { it as? JsonObject }
+        is JsonObject -> when (val e = root["entries"]) {
+            is JsonObject -> e.values.mapNotNull { it as? JsonObject }
+            is JsonArray -> e.mapNotNull { it as? JsonObject }
+            else -> emptyList()
+        }
+        else -> emptyList()
+    }
+
+    private fun extractLoreCoreFields(
+        idx: Int,
+        entry: JsonObject,
+        fallbackOrder: Int,
+    ): ExtractedLoreFields? {
+        val content = entry.strOrNull("content").orEmpty().trim()
+        if (content.isEmpty()) return null
+
+        val strategyObj = entry.objOrNull("strategy")
+        val secondaryObj = strategyObj?.objOrNull("keys_secondary")
+        val posObj = entry.objOrNull("position")
+        val extObj = entry.objOrNull("extensions")
+
+        val keywords = (
+            entry.strListOrEmpty("keys") +
+                entry.strListOrEmpty("key") +
+                entry.strListOrEmpty("keywords") +
+                strategyObj?.strListOrEmpty("keys").orEmpty()
+            ).distinct()
+        val secondaryKeys = (
+            entry.strListOrEmpty("secondary_keys") +
+                entry.strListOrEmpty("keysecondary") +
+                entry.strListOrEmpty("secondaryKeys") +
+                secondaryObj?.strListOrEmpty("keys").orEmpty()
+            ).distinct()
+        val title = (
+            entry.strOrNull("comment")?.takeIf { it.isNotBlank() }
+                ?: entry.strOrNull("name")?.takeIf { it.isNotBlank() }
+                ?: keywords.firstOrNull()
+                ?: "条目 #${idx + 1}"
+            ).trim()
+        val disabled = entry.boolOrNull("disable") == true
+        val enabled = entry.boolOrNull("enabled") ?: !disabled
+        val constant = entry.boolOrNull("constant")
+            ?: entry.boolOrNull("constantActive")
+            ?: strategyObj?.strOrNull("type")?.equals("constant", ignoreCase = true)
+            ?: false
+        val priority = entry.intOrNull("insertion_order")
+            ?: entry.intOrNull("order")
+            ?: entry.intOrNull("priority")
+            ?: posObj?.intOrNull("order")
+            ?: extObj?.intOrNull("order")
+            ?: fallbackOrder
+
+        return ExtractedLoreFields(
+            content = content,
+            keywords = keywords,
+            secondaryKeys = secondaryKeys,
+            title = title,
+            enabled = enabled,
+            constant = constant,
+            priority = priority,
+            strategyObj = strategyObj,
+            secondaryObj = secondaryObj,
+            posObj = posObj,
+            extObj = extObj,
+        )
+    }
+
+    private fun JsonObject.nullableDouble(key: String): Double? =
+        (this[key] as? JsonPrimitive)?.takeUnless { it is JsonNull }?.doubleOrNull
+
+    private fun resolveChosenPromptOrder(obj: JsonObject): JsonArray? {
+        val orderGroups = obj.arrOrNull("prompt_order").orEmpty().mapNotNull { it as? JsonObject }
+        return orderGroups
+            .firstOrNull { g ->
+                val cid = (g["character_id"] as? JsonPrimitive)?.takeUnless { it is JsonNull }?.longOrNull
+                    ?: g.strOrNull("character_id")?.toLongOrNull()
+                cid == 100001L
+            }
+            ?.arrOrNull("order")
+            ?: orderGroups
+                .maxByOrNull { it.arrOrNull("order")?.size ?: 0 }
+                ?.arrOrNull("order")
+    }
+
+    private fun resolveOrderedPresetPrompts(
+        obj: JsonObject,
+        parsedPrompts: List<RawPresetPrompt>,
+        deduplicateOrderIds: Boolean,
+        includeMarkersAndBlank: Boolean,
+    ): List<Pair<RawPresetPrompt, Boolean>> {
+        val byId = parsedPrompts.associateBy { it.identifier }
+        val chosenOrderArr = resolveChosenPromptOrder(obj)
+        val out = ArrayList<Pair<RawPresetPrompt, Boolean>>()
+        val seenIds = LinkedHashSet<String>()
+
+        if (chosenOrderArr != null && chosenOrderArr.isNotEmpty()) {
+            chosenOrderArr.forEach { el ->
+                val o = el as? JsonObject ?: return@forEach
+                val id = o.strOrNull("identifier")?.trim() ?: return@forEach
+                val prompt = byId[id] ?: return@forEach
+                val added = seenIds.add(id)
+                if (deduplicateOrderIds && !added) return@forEach
+                val orderEnabled = o.boolOrNull("enabled") ?: true
+                val effectiveEnabled = orderEnabled && prompt.enabled
+                if (!includeMarkersAndBlank && (prompt.marker || prompt.content.isBlank())) return@forEach
+                out.add(prompt to effectiveEnabled)
+            }
+        }
+        parsedPrompts.forEach { prompt ->
+            if (prompt.identifier in seenIds) return@forEach
+            if (!includeMarkersAndBlank && (prompt.marker || prompt.content.isBlank())) return@forEach
+            out.add(prompt to prompt.enabled)
+        }
+        return out
     }
 
     private fun parseSelectiveLogic(elem: JsonElement?): Int {

@@ -1317,29 +1317,25 @@ object ExternalImportCodec {
         is ParsedTavernAsset.Settings -> buildTavernSettingsBundle(asset.asset, fileName)
     }
 
-    private fun buildLorebookBundle(
-        loreAsset: ParsedLorebookAsset,
+    private fun buildSingleTavernItemBundle(
+        source: ExternalImportSource,
+        sourceFormat: String,
         convId: String,
         baseId: String,
-        source: ExternalImportSource,
+        title: String,
+        summary: String,
+        rp: RpConfig,
+        systemPrompt: String = "",
+        params: ChatParams = ChatParams(),
+        loreEntries: List<NovelLoreEntry> = emptyList(),
     ): ExternalImportBundle {
         val now = System.currentTimeMillis()
-        val title = loreAsset.name
-        val summary = "已导入世界书《$title》，包含 ${loreAsset.entries.size} 条设定（可在右上角文游台「世界书」或记忆库中查看与触发）。"
-        val rp = RpConfig(
-            title = title,
-            worldview = loreAsset.description.ifBlank {
-                loreAsset.entries.take(3).joinToString("\n\n") { "【${it.title}】${it.content.take(180)}" }
-            },
-            cast = listOf(RpCharacter(id = "${convId}_gm", name = title, role = "narrator", affinity = 20)),
-            greeting = summary,
-            cardSource = loreAsset.sourceFormat,
-            playStyle = RpPlayStyle.tavern,
-        )
         val conv = ChatConversation(
             id = convId,
             title = title,
             mode = ConversationMode.rp,
+            systemPrompt = systemPrompt,
+            params = params,
             rp = rp,
             createdAt = now,
             updatedAt = now,
@@ -1356,16 +1352,46 @@ object ExternalImportCodec {
         )
         return ExternalImportBundle(
             source = source,
-            sourceFormat = loreAsset.sourceFormat,
+            sourceFormat = sourceFormat,
             items = listOf(
                 ExternalImportedItem(
                     source = source,
                     sourceId = baseId,
                     conversation = conv,
                     messages = listOf(greetingMsg),
-                    loreEntries = loreAsset.entries,
+                    loreEntries = loreEntries,
                 ),
             ),
+        )
+    }
+
+    private fun buildLorebookBundle(
+        loreAsset: ParsedLorebookAsset,
+        convId: String,
+        baseId: String,
+        source: ExternalImportSource,
+    ): ExternalImportBundle {
+        val title = loreAsset.name
+        val summary = "已导入世界书《$title》，包含 ${loreAsset.entries.size} 条设定（可在右上角文游台「世界书」或记忆库中查看与触发）。"
+        val rp = RpConfig(
+            title = title,
+            worldview = loreAsset.description.ifBlank {
+                loreAsset.entries.take(3).joinToString("\n\n") { "【${it.title}】${it.content.take(180)}" }
+            },
+            cast = listOf(RpCharacter(id = "${convId}_gm", name = title, role = "narrator", affinity = 20)),
+            greeting = summary,
+            cardSource = loreAsset.sourceFormat,
+            playStyle = RpPlayStyle.tavern,
+        )
+        return buildSingleTavernItemBundle(
+            source = source,
+            sourceFormat = loreAsset.sourceFormat,
+            convId = convId,
+            baseId = baseId,
+            title = title,
+            summary = summary,
+            rp = rp,
+            loreEntries = loreAsset.entries,
         )
     }
 
@@ -1375,7 +1401,6 @@ object ExternalImportCodec {
         baseId: String,
         source: ExternalImportSource,
     ): ExternalImportBundle {
-        val now = System.currentTimeMillis()
         val title = preset.name
         val details = buildList {
             if (preset.systemRules.isNotBlank()) add("主系统提示词")
@@ -1403,38 +1428,17 @@ object ExternalImportCodec {
         } else {
             ChatParams()
         }
-        val conv = ChatConversation(
-            id = convId,
-            title = title,
-            mode = ConversationMode.rp,
-            systemPrompt = preset.systemRules,
-            params = params,
-            rp = rp,
-            createdAt = now,
-            updatedAt = now,
-        )
-        val greetingMsg = ChatMessage(
-            id = "${convId}_m1",
-            conversationId = convId,
-            role = "assistant",
-            content = summary,
-            createdAt = now,
-            seq = 1,
-            status = "done",
-            tokenEstimate = ContextBuilder.estimateMessageTokens(summary),
-        )
-        return ExternalImportBundle(
+        return buildSingleTavernItemBundle(
             source = source,
             sourceFormat = preset.sourceFormat,
-            items = listOf(
-                ExternalImportedItem(
-                    source = source,
-                    sourceId = baseId,
-                    conversation = conv,
-                    messages = listOf(greetingMsg),
-                    loreEntries = preset.loreEntries,
-                ),
-            ),
+            convId = convId,
+            baseId = baseId,
+            title = title,
+            summary = summary,
+            rp = rp,
+            systemPrompt = preset.systemRules,
+            params = params,
+            loreEntries = preset.loreEntries,
         )
     }
 
@@ -1443,7 +1447,6 @@ object ExternalImportCodec {
         fileName: String?,
         sourceFormat: String,
     ): ExternalImportBundle {
-        val now = System.currentTimeMillis()
         val title = fileName?.substringAfterLast('/')?.substringBeforeLast('.')?.trim().orEmpty()
             .ifBlank { scripts.firstOrNull()?.name?.takeIf { it.isNotBlank() } ?: "酒馆正则脚本" }
         val baseId = (title + scripts.size).hashCode().toUInt().toString(16)
@@ -1458,35 +1461,14 @@ object ExternalImportCodec {
             playStyle = RpPlayStyle.tavern,
             regexScripts = scripts,
         )
-        val conv = ChatConversation(
-            id = convId,
-            title = title,
-            mode = ConversationMode.rp,
-            rp = rp,
-            createdAt = now,
-            updatedAt = now,
-        )
-        val greetingMsg = ChatMessage(
-            id = "${convId}_m1",
-            conversationId = convId,
-            role = "assistant",
-            content = summary,
-            createdAt = now,
-            seq = 1,
-            status = "done",
-            tokenEstimate = ContextBuilder.estimateMessageTokens(summary),
-        )
-        return ExternalImportBundle(
+        return buildSingleTavernItemBundle(
             source = ExternalImportSource.SILLYTAVERN,
             sourceFormat = sourceFormat,
-            items = listOf(
-                ExternalImportedItem(
-                    source = ExternalImportSource.SILLYTAVERN,
-                    sourceId = baseId,
-                    conversation = conv,
-                    messages = listOf(greetingMsg),
-                ),
-            ),
+            convId = convId,
+            baseId = baseId,
+            title = title,
+            summary = summary,
+            rp = rp,
         )
     }
 
@@ -1494,7 +1476,6 @@ object ExternalImportCodec {
         qr: ParsedQuickRepliesAsset,
         fileName: String?,
     ): ExternalImportBundle {
-        val now = System.currentTimeMillis()
         val title = qr.name.ifBlank { fileName?.substringAfterLast('/')?.substringBeforeLast('.').orEmpty().ifBlank { "酒馆快速回复" } }
         val baseId = (title + qr.actions.size).hashCode().toUInt().toString(16)
         val convId = "st_qr_$baseId"
@@ -1507,35 +1488,14 @@ object ExternalImportCodec {
             playStyle = RpPlayStyle.tavern,
             quickActions = qr.actions,
         )
-        val conv = ChatConversation(
-            id = convId,
-            title = title,
-            mode = ConversationMode.rp,
-            rp = rp,
-            createdAt = now,
-            updatedAt = now,
-        )
-        val greetingMsg = ChatMessage(
-            id = "${convId}_m1",
-            conversationId = convId,
-            role = "assistant",
-            content = summary,
-            createdAt = now,
-            seq = 1,
-            status = "done",
-            tokenEstimate = ContextBuilder.estimateMessageTokens(summary),
-        )
-        return ExternalImportBundle(
+        return buildSingleTavernItemBundle(
             source = ExternalImportSource.SILLYTAVERN,
             sourceFormat = qr.sourceFormat,
-            items = listOf(
-                ExternalImportedItem(
-                    source = ExternalImportSource.SILLYTAVERN,
-                    sourceId = baseId,
-                    conversation = conv,
-                    messages = listOf(greetingMsg),
-                ),
-            ),
+            convId = convId,
+            baseId = baseId,
+            title = title,
+            summary = summary,
+            rp = rp,
         )
     }
 
@@ -1543,7 +1503,6 @@ object ExternalImportCodec {
         settings: ParsedTavernSettingsAsset,
         fileName: String?,
     ): ExternalImportBundle {
-        val now = System.currentTimeMillis()
         val title = fileName?.substringAfterLast('/')?.substringBeforeLast('.')?.trim().orEmpty().ifBlank { "酒馆全局设置" }
         val baseId = (title + settings.regexScripts.size).hashCode().toUInt().toString(16)
         val convId = "st_cfg_$baseId"
@@ -1561,35 +1520,14 @@ object ExternalImportCodec {
             playStyle = RpPlayStyle.tavern,
             regexScripts = settings.regexScripts,
         )
-        val conv = ChatConversation(
-            id = convId,
-            title = title,
-            mode = ConversationMode.rp,
-            rp = rp,
-            createdAt = now,
-            updatedAt = now,
-        )
-        val greetingMsg = ChatMessage(
-            id = "${convId}_m1",
-            conversationId = convId,
-            role = "assistant",
-            content = summary,
-            createdAt = now,
-            seq = 1,
-            status = "done",
-            tokenEstimate = ContextBuilder.estimateMessageTokens(summary),
-        )
-        return ExternalImportBundle(
+        return buildSingleTavernItemBundle(
             source = ExternalImportSource.SILLYTAVERN,
             sourceFormat = settings.sourceFormat,
-            items = listOf(
-                ExternalImportedItem(
-                    source = ExternalImportSource.SILLYTAVERN,
-                    sourceId = baseId,
-                    conversation = conv,
-                    messages = listOf(greetingMsg),
-                ),
-            ),
+            convId = convId,
+            baseId = baseId,
+            title = title,
+            summary = summary,
+            rp = rp,
         )
     }
 
