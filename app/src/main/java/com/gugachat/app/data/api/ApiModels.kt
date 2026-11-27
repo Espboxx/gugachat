@@ -501,13 +501,6 @@ data class OnlineImageVersionsResponseDto(
 )
 
 @Serializable
-data class OnlineImageContentUrlDto(
-    val url: String = "",
-    val content_type: String = "",
-    val expires_in: Int = 0,
-)
-
-@Serializable
 data class OnlineImagePresetDto(
     val id: String,
     val name: String,
@@ -544,11 +537,6 @@ data class OnlineImagePresetInputDto(
 data class OnlineImagePresetListDto(
     val items: List<OnlineImagePresetDto> = emptyList(),
     val total: Int = 0,
-)
-
-@Serializable
-data class OnlineImagePresetRenameDto(
-    val name: String,
 )
 
 @Serializable

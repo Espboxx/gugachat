@@ -911,19 +911,6 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
         container.toastController.show(toastText)
     }
 
-    fun renamePreset(id: String, name: String, toastText: String) {
-        if (name.isBlank()) return
-        viewModelScope.launch {
-            try {
-                val upd = container.onlineImagesApi.renamePreset(id, name.trim())
-                _ui.update { cur -> cur.copy(presets = cur.presets.map { if (it.id == id) upd else it }) }
-                container.toastController.show(toastText)
-            } catch (e: Throwable) {
-                container.toastController.show(e.message ?: "Rename failed", isError = true)
-            }
-        }
-    }
-
     fun deletePreset(id: String, toastText: String) {
         viewModelScope.launch {
             try {

@@ -84,7 +84,6 @@ data class AppColors(
     val warningBg: Color,
     val danger: Color,
     val dangerBg: Color,
-    val shadowColor: Color,
 )
 
 @Immutable
@@ -124,7 +123,6 @@ val GUGUGA_LIGHT = AppColors(
     warningBg = Color(0xFFFEF3C7),
     danger = Color(0xFFDC2626),
     dangerBg = Color(0xFFFEE2E2),
-    shadowColor = Color(0x10141821),
 )
 
 val GUGUGA_DARK = AppColors(
@@ -153,7 +151,6 @@ val GUGUGA_DARK = AppColors(
     warningBg = Color(0xFF2D210F),
     danger = Color(0xFFF87171),
     dangerBg = Color(0xFF33151B),
-    shadowColor = Color(0x66000000),
 )
 
 val CLASSIC_LIGHT = AppColors(
@@ -182,7 +179,6 @@ val CLASSIC_LIGHT = AppColors(
     warningBg = Color(0xFFFEF3C7),
     danger = Color(0xFFDC2626),
     dangerBg = Color(0xFFFEE2E2),
-    shadowColor = Color(0x10111318),
 )
 
 val CLASSIC_DARK = AppColors(
@@ -211,7 +207,6 @@ val CLASSIC_DARK = AppColors(
     warningBg = Color(0xFF2B1E0C),
     danger = Color(0xFFF87171),
     dangerBg = Color(0xFF311317),
-    shadowColor = Color(0x73000000),
 )
 
 fun resolveAppTheme(style: ThemeStyle, isDark: Boolean): AppThemeSpec {

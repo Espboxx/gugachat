@@ -1774,7 +1774,6 @@ private fun AssistantMessageBlock(
                             isRefreshing = isRefreshingChoices,
                             onSelectChoice = onSelectRpChoice,
                             onRefreshChoices = onRefreshRpChoices,
-                            onDarkStage = true,
                             enabled = !isStreaming,
                             accentColor = stageAccent,
                         )

@@ -16,8 +16,15 @@ import kotlinx.serialization.builtins.ListSerializer
 import java.io.File
 import java.util.UUID
 
-class DirectImageStore(context: Context) {
-    private val dir = File(context.applicationContext.filesDir, "direct_images").apply { mkdirs() }
+class DirectImageStore internal constructor(
+    private val dir: File,
+) {
+    constructor(context: Context) : this(File(context.applicationContext.filesDir, "direct_images"))
+
+    init {
+        dir.mkdirs()
+    }
+
     private val indexFile = File(dir, "generations.json")
     private val presetsFile = File(dir, "presets.json")
     private val mutex = Mutex()
@@ -67,8 +74,10 @@ class DirectImageStore(context: Context) {
                     item.model.lowercase().contains(q)
                 val matchesFilter = when (f) {
                     "", "all" -> true
+                    "generate" -> item.action.isNullOrBlank() || item.action.equals("generate", ignoreCase = true)
+                    "edited" -> !item.action.isNullOrBlank() && !item.action.equals("generate", ignoreCase = true)
                     "processing" -> item.status in setOf("pending", "queued", "processing", "running")
-                    "edited" -> !item.action.isNullOrBlank() && item.action != "generate"
+                    "expiring" -> false
                     else -> item.status.equals(f, ignoreCase = true)
                 }
                 matchesSearch && matchesFilter
@@ -150,16 +159,6 @@ class DirectImageStore(context: Context) {
             val next = listOf(created) + readPresetsLocked()
             writePresetsLocked(next)
             created
-        }
-    }
-
-    suspend fun renamePreset(id: String, name: String): OnlineImagePresetDto? = mutex.withLock {
-        withContext(Dispatchers.IO) {
-            val list = readPresetsLocked()
-            val target = list.firstOrNull { it.id == id } ?: return@withContext null
-            val updated = target.copy(name = name, updated_at = System.currentTimeMillis())
-            writePresetsLocked(list.map { if (it.id == id) updated else it })
-            updated
         }
     }
 

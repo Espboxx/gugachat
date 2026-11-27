@@ -4,7 +4,6 @@ import com.gugachat.app.core.storage.ApiProtocol
 import com.gugachat.app.core.storage.ApiProviderConfig
 import com.gugachat.app.core.storage.ApiProviderStore
 import com.gugachat.app.core.storage.AppSettings
-import com.gugachat.app.core.storage.SettingsStore
 import com.gugachat.app.data.api.DirectApiClient
 import com.gugachat.app.data.api.DiscoveredRetrievalModel
 import com.gugachat.app.data.api.EmbeddingConnectionTestResult
@@ -70,7 +69,6 @@ class RetrievalCoordinator internal constructor(
     private val vectorMemoryIndex: VectorMemoryIndex,
 ) {
     constructor(
-        settingsStore: SettingsStore,
         settingsState: StateFlow<AppSettings>,
         apiProviderStore: ApiProviderStore,
         directApiClient: DirectApiClient,
@@ -84,11 +82,7 @@ class RetrievalCoordinator internal constructor(
         localModelManager = localModelManager,
         localOnnxEngine = localOnnxEngine,
         vectorMemoryIndex = vectorMemoryIndex,
-    ) {
-        // Keep SettingsStore reference available for future async settings queries if needed
-        @Suppress("UNUSED_EXPRESSION")
-        settingsStore
-    }
+    )
 
     private val _indexProgress = MutableStateFlow(VectorIndexProgress())
     val indexProgress: StateFlow<VectorIndexProgress> = _indexProgress.asStateFlow()
@@ -303,40 +297,6 @@ class RetrievalCoordinator internal constructor(
         return launchScopedIndexing(
             scope = scope,
             scopeKey = scopeKey,
-            targets = targets,
-            engine = engine,
-            batchSize = batchSize,
-            pruneStale = true,
-        )
-    }
-
-    /**
-     * Schedules background indexing strictly for global [UserMemory] records under [SCOPE_GLOBAL].
-     */
-    fun scheduleGlobalMemoriesIndexing(
-        scope: CoroutineScope,
-        userMemories: List<UserMemory>,
-        batchSize: Int = DEFAULT_INDEX_BATCH_SIZE,
-    ): Job? {
-        val settings = currentRetrievalSettings()
-        val engine = resolveActiveEmbeddingEngine(settings)
-        if (engine == null) {
-            activeIndexJobs.remove(SCOPE_GLOBAL)?.cancel()
-            if (activeIndexJobs.isEmpty() && _indexProgress.value.running) {
-                _indexProgress.value = VectorIndexProgress()
-            }
-            return null
-        }
-        val targets = buildIndexTargets(
-            conversationId = "",
-            lore = emptyList(),
-            ledger = emptyList(),
-            episodes = emptyList(),
-            userMemories = userMemories,
-        )
-        return launchScopedIndexing(
-            scope = scope,
-            scopeKey = SCOPE_GLOBAL,
             targets = targets,
             engine = engine,
             batchSize = batchSize,

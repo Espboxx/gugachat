@@ -189,20 +189,12 @@ class LocalOnnxEmbeddingEngine internal constructor(
     private var pendingUnload: Boolean = false
 
     @Volatile
-    private var overrideActiveModelId: String? = null
-
-    @Volatile
     var isSessionLoaded: Boolean = false
         private set
 
     val activeModelId: String
-        get() = overrideActiveModelId?.takeIf { it.isNotBlank() }
-            ?: activeModelIdProvider().takeIf { it.isNotBlank() }
+        get() = activeModelIdProvider().takeIf { it.isNotBlank() }
             ?: LocalEmbeddingModelManager.DEFAULT_MODEL_ID
-
-    fun setActiveModelId(modelId: String) {
-        overrideActiveModelId = modelId.trim().takeIf { it.isNotEmpty() }
-    }
 
     fun profileKey(modelId: String = activeModelId): String {
         val dim = modelManager.getSpec(modelId)?.dimension ?: DEFAULT_DIMENSION

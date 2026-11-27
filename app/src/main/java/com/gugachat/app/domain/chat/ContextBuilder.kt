@@ -703,6 +703,7 @@ object ContextBuilder {
                     maxTokens = remForEps,
                     semanticScores = semanticScores,
                     semanticScorer = if (semanticScores == null) semanticScorer else null,
+                    minSemanticCosine = minSemanticCosine,
                     maxResults = topKCap,
                     modelId = modelId,
                     mutedIds = mutedEpisodes,
@@ -1670,34 +1671,49 @@ object ContextBuilder {
             active
         }
 
-        fun calcTotal(): Int {
-            var tok = pipe.prefix.systemTokens + pipe.dynamicOverhead
-            for (msg in candidateWindow) {
-                tok += resolveMsgTokenCost(
-                    msg = msg,
-                    imageDecayed = msg.id in decayedImages,
-                    fileDecayed = msg.id in decayedFiles,
-                    attachmentsById = input.attachmentsById,
-                    perTurnFileBudget = fileTurnBudget,
-                    modelId = pipe.effectiveModelId,
-                    conversation = conv,
-                )
-            }
-            return (tok * pipe.calibration).roundToInt()
+        val msgCosts = IntArray(candidateWindow.size) { idx ->
+            val msg = candidateWindow[idx]
+            resolveMsgTokenCost(
+                msg = msg,
+                imageDecayed = msg.id in decayedImages,
+                fileDecayed = msg.id in decayedFiles,
+                attachmentsById = input.attachmentsById,
+                perTurnFileBudget = fileTurnBudget,
+                modelId = pipe.effectiveModelId,
+                conversation = conv,
+            )
+        }
+        var runningRawTokens = pipe.prefix.systemTokens + pipe.dynamicOverhead + msgCosts.sum()
+        fun totalCalibratedTokens(): Int = (runningRawTokens * pipe.calibration).roundToInt()
+        fun refreshMsgCost(idx: Int) {
+            val msg = candidateWindow[idx]
+            val newCost = resolveMsgTokenCost(
+                msg = msg,
+                imageDecayed = msg.id in decayedImages,
+                fileDecayed = msg.id in decayedFiles,
+                attachmentsById = input.attachmentsById,
+                perTurnFileBudget = fileTurnBudget,
+                modelId = pipe.effectiveModelId,
+                conversation = conv,
+            )
+            runningRawTokens += newCost - msgCosts[idx]
+            msgCosts[idx] = newCost
         }
 
-        if (calcTotal() > pipe.effectiveLimitTokens) {
+        if (totalCalibratedTokens() > pipe.effectiveLimitTokens) {
             for (i in 0 until max(0, candidateWindow.size - 1)) {
                 val msg = candidateWindow[i]
                 val hasFiles = msg.attachmentIds.any { input.attachmentsById[it]?.isFile == true }
                 val hasImgs = msg.attachmentIds.any { input.attachmentsById[it]?.isFile != true }
                 if (hasFiles && msg.id !in decayedFiles) {
                     decayedFiles.add(msg.id)
-                    if (calcTotal() <= pipe.effectiveLimitTokens) break
+                    refreshMsgCost(i)
+                    if (totalCalibratedTokens() <= pipe.effectiveLimitTokens) break
                 }
                 if (hasImgs && msg.id !in decayedImages) {
                     decayedImages.add(msg.id)
-                    if (calcTotal() <= pipe.effectiveLimitTokens) break
+                    refreshMsgCost(i)
+                    if (totalCalibratedTokens() <= pipe.effectiveLimitTokens) break
                 }
             }
         }

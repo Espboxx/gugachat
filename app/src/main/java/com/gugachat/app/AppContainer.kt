@@ -138,7 +138,6 @@ class AppContainer(context: Context) {
     )
     val vectorMemoryIndex = VectorMemoryIndex(dao = database.memoryEmbeddingDao())
     val retrievalCoordinator = RetrievalCoordinator(
-        settingsStore = settingsStore,
         settingsState = settingsState,
         apiProviderStore = apiProviderStore,
         directApiClient = directApiClient,
@@ -175,7 +174,6 @@ class AppContainer(context: Context) {
         database = database,
         settingsStore = settingsStore,
         settingsState = settingsState,
-        apiProviderStore = apiProviderStore,
         onlineChatApi = onlineChatApi,
         contextAssembler = chatContextAssembler,
         retrievalCoordinator = retrievalCoordinator,

@@ -35,24 +35,6 @@ data class BackupImportResult(
 )
 
 object ChatBackupCodec {
-    suspend fun exportAll(db: AppDatabase): String {
-        val chatDao = db.chatDao()
-        val memDao = db.userMemoryDao()
-        val payload = GuGuChatBackupPayload(
-            version = 1,
-            exportedAt = System.currentTimeMillis(),
-            conversations = chatDao.getAllConversations().map { it.toDomain() },
-            messages = chatDao.getAllMessages().map { it.toDomain() },
-            userMemories = memDao.getAll().map { it.toDomain() },
-            novelChapters = chatDao.getAllNovelChapters().map { it.toDomain() },
-            novelLore = chatDao.getAllNovelLore().map { it.toDomain() },
-            memoryLedger = chatDao.getAllMemoryLedger().map { it.toDomain() },
-            memoryEpisodes = chatDao.getAllMemoryEpisodes().map { it.toDomain() },
-            rpSaveSlots = chatDao.getAllRpSaveSlots().map { it.toDomain() },
-        )
-        return AppJson.encodeToString(payload)
-    }
-
     fun decodePayload(rawJson: String): GuGuChatBackupPayload {
         val cleaned = rawJson.removePrefix("\uFEFF").trim()
         val rootObj = runCatching { AppJson.parseToJsonElement(cleaned) as? JsonObject }.getOrNull()

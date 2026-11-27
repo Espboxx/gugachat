@@ -52,6 +52,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FolderZip
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Landscape
@@ -183,6 +184,7 @@ private fun resolvePresetGradient(presetId: String): CardGradientSpec = when (pr
     "wuxia" -> CardGradientSpec(Color(0xFF2F3D52), Color(0xFF141B28), Color(0xFFE2E8F0), Icons.Default.Landscape)
     "steampunk_coc" -> CardGradientSpec(Color(0xFF453224), Color(0xFF1C1612), Color(0xFFD9B27C), Icons.Default.Search)
     "space_mercenary" -> CardGradientSpec(Color(0xFF1B3A63), Color(0xFF0B1830), Color(0xFF7DD3FC), Icons.Default.Public)
+    "modern_romance" -> CardGradientSpec(Color(0xFF832E55), Color(0xFF3A162D), Color(0xFFFBCFE8), Icons.Default.Favorite)
     else -> resolveCardGradient(presetId)
 }
 

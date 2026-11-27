@@ -9,7 +9,6 @@ import com.gugachat.app.core.i18n.fmt
 import com.gugachat.app.core.runtime.AppForegroundTracker
 import com.gugachat.app.core.runtime.RuntimeKeepAliveController
 import com.gugachat.app.core.runtime.RuntimeKeepAliveService
-import com.gugachat.app.core.storage.ApiProviderStore
 import com.gugachat.app.core.storage.AppSettings
 import com.gugachat.app.core.storage.SettingsStore
 import com.gugachat.app.core.theme.ToastController
@@ -173,7 +172,6 @@ class ChatStreamManager internal constructor(
         database: AppDatabase,
         settingsStore: SettingsStore,
         settingsState: StateFlow<AppSettings>,
-        apiProviderStore: ApiProviderStore,
         onlineChatApi: OnlineChatApi,
         contextAssembler: ChatContextAssembler,
         retrievalCoordinator: RetrievalCoordinator,

@@ -139,7 +139,6 @@ fun RpWorkspaceScreen(
     onToggleTheaterMode: () -> Unit,
     onSetTheaterMode: (Boolean) -> Unit,
     onOpenStudio: () -> Unit,
-    onOpenFrontendEditor: () -> Unit,
     onQuickSave: () -> Unit,
     onUpdateAuthorNote: (String) -> Unit,
     onStarterPrompt: (String) -> Unit,
@@ -407,12 +406,10 @@ fun RpWorkspaceScreen(
                                 isGeneratingArt = isGeneratingArt,
                                 artStatusLabel = artStatusLabel,
                                 onOpenModelSheet = onOpenModelSheet,
-                                onExitTheater = { onSetTheaterMode(false) },
                                 onOpenStudio = {
                                     RpStudioNavBridge.oneShotInitialTab = null
                                     onOpenStudio()
                                 },
-                                onOpenFrontendEditor = onOpenFrontendEditor,
                                 onQuickSave = onQuickSave,
                                 onStarterPrompt = onStarterPrompt,
                                 onSelectChoice = onSelectChoice,
@@ -426,8 +423,6 @@ fun RpWorkspaceScreen(
                                 onFrontendSetFlag = onFrontendSetFlag,
                                 onFrontendAdjustAffinity = onFrontendAdjustAffinity,
                                 onToast = onToast,
-                                drawOwnBackdrop = false,
-                                showInternalTopBar = false,
                                 externalHideUi = hideUi,
                                 onExternalHideUiChange = { hideUi = it },
                                 externalShowHistory = showHistory,

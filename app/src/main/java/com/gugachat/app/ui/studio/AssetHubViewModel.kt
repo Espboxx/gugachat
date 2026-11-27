@@ -248,9 +248,6 @@ class AssetHubViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    fun resolveMediaFile(storedPath: String?): File? =
-        LocalMediaPathResolver.resolveFile(container.appContext, storedPath)
-
     // ==================== Character Card Import & CRUD ====================
 
     fun importCharacterCardUri(uri: Uri, contentResolver: ContentResolver) {

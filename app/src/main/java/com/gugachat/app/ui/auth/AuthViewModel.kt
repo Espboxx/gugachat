@@ -179,8 +179,6 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    fun setEntryMode(mode: LoginEntryMode) = chooseEntryMode(mode)
-
     fun probePresetHosts(autoSelectFastest: Boolean = true) {
         hostProbeJob?.cancel()
         hostProbeJob = viewModelScope.launch {

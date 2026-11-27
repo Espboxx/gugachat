@@ -2,7 +2,6 @@ package com.gugachat.app.ui.chat
 
 import android.content.ContentResolver
 import android.net.Uri
-import android.provider.OpenableColumns
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -21,7 +20,6 @@ import com.gugachat.app.data.api.OnlineChatCompletionRequestDto
 import com.gugachat.app.data.api.OnlineChatGroupDto
 import com.gugachat.app.data.api.OnlineChatModelDto
 import com.gugachat.app.data.api.WireChatMessageDto
-import com.gugachat.app.data.chat.ActiveStreamSession
 import com.gugachat.app.data.chat.AssetImportResult
 import com.gugachat.app.data.chat.ChatContextAssembler
 import com.gugachat.app.data.chat.RetrievalCoordinator
@@ -84,7 +82,6 @@ import com.gugachat.app.domain.chat.TimelineReconciler
 import com.gugachat.app.domain.chat.UserMemory
 import com.gugachat.app.domain.chat.UuSaveCodec
 import com.gugachat.app.domain.chat.VectorIndexProgress
-import com.gugachat.app.domain.chat.WireChatMessage
 import com.gugachat.app.domain.chat.activeVariant
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -117,8 +114,6 @@ data class PendingScannedPdf(
 )
 
 data class ChatUiState(
-    val enabled: Boolean = true,
-    val isLoadingCapabilities: Boolean = false,
     val groups: List<OnlineChatGroupDto> = emptyList(),
     val models: List<OnlineChatModelDto> = emptyList(),
     val selectedGroupId: Long? = null,
@@ -171,7 +166,6 @@ data class ChatUiState(
     val activeRetrievalMode: RetrievalMode = RetrievalMode.LEXICAL_ONLY,
     val compactingProgressText: String? = null,
     val streamingConversationIds: Set<String> = emptySet(),
-    val activeStreamingSession: ActiveStreamSession? = null,
     val characterCards: List<CharacterCardEntity> = emptyList(),
     val worldbooks: List<WorldbookEntity> = emptyList(),
     val personas: List<PersonaEntity> = emptyList(),
@@ -188,22 +182,8 @@ data class ChatUiState(
     val boundCharacterCard: CharacterCardEntity?
         get() = activeConversation?.characterCardId?.let { id -> characterCards.firstOrNull { it.id == id } }
 
-    val boundPersona: PersonaEntity?
-        get() = activeConversation?.personaId?.let { id -> personas.firstOrNull { it.id == id } }
-
     val boundPromptPreset: PromptPresetEntity?
         get() = activeConversation?.presetId?.let { id -> promptPresets.firstOrNull { it.id == id } }
-
-    val mountedWorldbooks: List<WorldbookEntity>
-        get() {
-            val byId = worldbooks.associateBy { it.id }
-            return mountedWorldbookRefs
-                .sortedBy { it.sortOrder }
-                .mapNotNull { ref -> byId[ref.worldbookId] }
-        }
-
-    val activeUserTurnCount: Int
-        get() = TimelineReconciler.activeMessages(messages).count { it.role == "user" }
 
     val activeGreetingVariants: List<String>
         get() {
@@ -265,7 +245,6 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                         conversations = domainList,
                         activeConversation = active,
                         characterCards = cards,
-                        activeStreamingSession = activeSession,
                         isStreaming = activeSession?.isStreaming == true,
                         streamingStatusHint = activeSession?.statusHint,
                     )
@@ -324,7 +303,6 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                 _ui.update {
                     it.copy(
                         streamingConversationIds = streamingIds,
-                        activeStreamingSession = activeSession,
                         isStreaming = activeSession?.isStreaming == true,
                         streamingStatusHint = activeSession?.statusHint,
                     )
@@ -497,7 +475,6 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
 
     fun loadCapabilities() {
         viewModelScope.launch {
-            _ui.update { it.copy(isLoadingCapabilities = true) }
             try {
                 val isDirectOnly = (container.authSession.value as? AuthSessionState.LoggedIn)?.isDirectApiOnly == true
                 val customGroups = container.apiProviderStore.enabledProviders().map { p ->
@@ -519,17 +496,14 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
 
                 _ui.update {
                     it.copy(
-                        enabled = (cap?.enabled ?: false) || sortedGroups.isNotEmpty(),
                         groups = sortedGroups,
                         selectedGroupId = pickedGroupId,
-                        isLoadingCapabilities = false,
                     )
                 }
                 if (pickedGroupId != null) {
                     loadModels(pickedGroupId)
                 }
             } catch (e: Throwable) {
-                _ui.update { it.copy(isLoadingCapabilities = false) }
                 container.toastController.show(e.message ?: "Failed to load chat groups", isError = true)
             }
         }
@@ -603,10 +577,6 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
 
     fun setDraftRpKind(kind: RpInputKind) {
         _ui.update { it.copy(draftRpKind = kind) }
-    }
-
-    fun addAttachmentUri(uri: Uri) {
-        addImageUris(listOf(uri))
     }
 
     fun addImageUris(uris: List<Uri>) {
@@ -798,7 +768,6 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         _ui.update {
             it.copy(
                 activeConversation = conv ?: it.activeConversation,
-                activeStreamingSession = activeSession,
                 isStreaming = activeSession?.isStreaming == true,
                 streamingStatusHint = activeSession?.statusHint,
                 draftDiceRoll = null,
@@ -2802,12 +2771,6 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    private fun resolveUriDisplayName(contentResolver: ContentResolver, uri: Uri): String? = runCatching {
-        contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
-            if (c.moveToFirst()) c.getString(0) else null
-        }
-    }.getOrNull() ?: uri.lastPathSegment?.substringAfterLast('/')
-
     private fun mergeTextSection(existing: String, incoming: String): String {
         val cleanIncoming = incoming.trim()
         if (cleanIncoming.isEmpty()) return existing
@@ -3666,18 +3629,6 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                 },
             )
         }
-    }
-
-    fun addRpNpc(name: String, role: String, personality: String) {
-        if (name.isBlank()) return
-        upsertRpNpc(
-            RpCharacter(
-                id = UUID.randomUUID().toString(),
-                name = name.trim(),
-                role = role.ifBlank { "ally" },
-                personality = personality.trim(),
-            ),
-        )
     }
 
     fun upsertRpNpc(character: RpCharacter) {

@@ -513,26 +513,24 @@ fun RpChoiceDeck(
     onSelectChoice: (RpChoice, bypassLock: Boolean) -> Unit,
     onRefreshChoices: () -> Unit,
     modifier: Modifier = Modifier,
-    onDarkStage: Boolean = false,
     enabled: Boolean = true,
     accentColor: Color? = null,
 ) {
     val strings = LocalAppStrings.current
-    val c = LocalAppTheme.current.colors
     val isZh = strings.language == AppLanguage.ZH
     val stageHighlight = accentColor ?: Color(0xFFE8B95B)
     var forceConfirmTarget by remember { mutableStateOf<Pair<RpChoice, String>?>(null) }
 
     Column(
         modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(if (onDarkStage) 5.dp else 6.dp),
+        verticalArrangement = Arrangement.spacedBy(5.dp),
     ) {
         // Inline non-modal lock bypass confirm bar (no AlertDialog)
         forceConfirmTarget?.let { (choice, reason) ->
             Surface(
                 shape = RoundedCornerShape(12.dp),
-                color = if (onDarkStage) Color(0xE826161C) else c.dangerBg,
-                border = BorderStroke(0.6.dp, if (onDarkStage) Color(0x99F87171) else c.danger.copy(alpha = 0.45f)),
+                color = Color(0xE826161C),
+                border = BorderStroke(0.6.dp, Color(0x99F87171)),
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Row(
@@ -544,7 +542,7 @@ fun RpChoiceDeck(
                 ) {
                     Text(
                         text = strings.rp.choiceForceConfirmMsg.fmt("reason" to reason),
-                        color = if (onDarkStage) Color(0xFFFECACA) else c.danger,
+                        color = Color(0xFFFECACA),
                         fontSize = 11.5.sp,
                         lineHeight = 15.5.sp,
                         maxLines = 2,
@@ -557,7 +555,7 @@ fun RpChoiceDeck(
                     ) {
                         Text(
                             text = strings.common.cancel,
-                            color = if (onDarkStage) Color(0xFFCBD5E1) else c.muted,
+                            color = Color(0xFFCBD5E1),
                             fontSize = 11.5.sp,
                             fontWeight = FontWeight.Medium,
                         )
@@ -568,7 +566,7 @@ fun RpChoiceDeck(
                             onSelectChoice(choice, true)
                         },
                         shape = RoundedCornerShape(999.dp),
-                        color = if (onDarkStage) Color(0xFFDC2626) else c.danger,
+                        color = Color(0xFFDC2626),
                     ) {
                         Text(
                             text = strings.rp.choiceForceProceed,
@@ -599,33 +597,16 @@ fun RpChoiceDeck(
             val toneAccent = resolveChoiceToneAccent(
                 tone = choice.tone,
                 unlocked = eval.unlocked,
-                onDarkStage = onDarkStage,
-                fallback = if (onDarkStage) stageHighlight else c.primary,
+                onDarkStage = true,
+                fallback = stageHighlight,
             )
-            val cardBgBrush = when {
-                onDarkStage && !eval.unlocked -> Brush.horizontalGradient(
-                    listOf(Color(0xBD151926), Color(0xAD111420)),
-                )
-                onDarkStage -> Brush.horizontalGradient(
-                    listOf(Color(0xE0192034), Color(0xD4121828)),
-                )
-                !eval.unlocked -> Brush.horizontalGradient(
-                    listOf(c.surfaceSoft.copy(alpha = 0.72f), c.surfaceSoft.copy(alpha = 0.55f)),
-                )
-                else -> Brush.horizontalGradient(
-                    listOf(c.surface, c.surfaceSoft.copy(alpha = 0.65f)),
-                )
+            val cardBgBrush = if (!eval.unlocked) {
+                Brush.horizontalGradient(listOf(Color(0xBD151926), Color(0xAD111420)))
+            } else {
+                Brush.horizontalGradient(listOf(Color(0xE0192034), Color(0xD4121828)))
             }
-            val titleColor = when {
-                onDarkStage && !eval.unlocked -> Color(0xFFB3BDCE)
-                onDarkStage -> Color(0xFFF6F8FD)
-                !eval.unlocked -> c.muted
-                else -> c.ink
-            }
-            val subtitleColor = when {
-                onDarkStage -> Color(0xFFAAB4CA)
-                else -> c.muted
-            }
+            val titleColor = if (!eval.unlocked) Color(0xFFB3BDCE) else Color(0xFFF6F8FD)
+            val subtitleColor = Color(0xFFAAB4CA)
 
             Surface(
                 onClick = {
@@ -641,11 +622,7 @@ fun RpChoiceDeck(
                 color = Color.Transparent,
                 border = BorderStroke(
                     width = 0.5.dp,
-                    color = when {
-                        !eval.unlocked -> if (onDarkStage) Color(0x4094A3B8) else c.outline.copy(alpha = 0.45f)
-                        onDarkStage -> toneAccent.copy(alpha = 0.42f)
-                        else -> toneAccent.copy(alpha = 0.28f)
-                    },
+                    color = if (!eval.unlocked) Color(0x4094A3B8) else toneAccent.copy(alpha = 0.42f),
                 ),
                 modifier = Modifier
                     .fillMaxWidth()
@@ -663,26 +640,15 @@ fun RpChoiceDeck(
                                 size = Size(stripW, size.height),
                             )
                         }
-                        .padding(
-                            start = if (onDarkStage) 10.dp else 12.dp,
-                            end = if (onDarkStage) 10.dp else 11.dp,
-                            top = if (onDarkStage) 6.dp else 7.5.dp,
-                            bottom = if (onDarkStage) 6.dp else 7.5.dp,
-                        ),
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(if (onDarkStage) 8.dp else 9.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(if (onDarkStage) 20.dp else 22.dp)
+                            .size(20.dp)
                             .clip(CircleShape)
-                            .background(
-                                if (!eval.unlocked) {
-                                    if (onDarkStage) Color(0xFF363F56) else c.outline
-                                } else {
-                                    toneAccent
-                                },
-                            ),
+                            .background(if (!eval.unlocked) Color(0xFF363F56) else toneAccent),
                         contentAlignment = Alignment.Center,
                     ) {
                         if (!eval.unlocked) {
@@ -719,10 +685,10 @@ fun RpChoiceDeck(
                             Text(
                                 text = choice.label,
                                 color = titleColor,
-                                fontSize = if (onDarkStage) 13.sp else 13.5.sp,
+                                fontSize = 13.sp,
                                 lineHeight = 17.5.sp,
                                 fontWeight = FontWeight.SemiBold,
-                                maxLines = if (onDarkStage) 1 else 2,
+                                maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.weight(1f),
                             )
@@ -731,13 +697,13 @@ fun RpChoiceDeck(
                                 ChoiceMetaChip(
                                     text = "🎲${choice.skillCheck}$dcSuffix",
                                     variant = GuBadgeVariant.HONEY,
-                                    onDarkStage = onDarkStage,
+                                    onDarkStage = true,
                                 )
                             } else if (toneMeta != null) {
                                 ChoiceMetaChip(
                                     text = toneMeta.first,
                                     variant = toneMeta.second,
-                                    onDarkStage = onDarkStage,
+                                    onDarkStage = true,
                                 )
                             }
                         }
@@ -762,21 +728,21 @@ fun RpChoiceDeck(
                                     ChoiceMetaChip(
                                         text = toneMeta.first,
                                         variant = toneMeta.second,
-                                        onDarkStage = onDarkStage,
+                                        onDarkStage = true,
                                     )
                                 }
                                 if (hasCost) {
                                     ChoiceMetaChip(
                                         text = "🪙 ${choice.costGold}",
                                         variant = GuBadgeVariant.AMBER,
-                                        onDarkStage = onDarkStage,
+                                        onDarkStage = true,
                                     )
                                 }
                                 if (!eval.unlocked) {
                                     ChoiceMetaChip(
                                         text = "🔒 $reasonText",
                                         variant = GuBadgeVariant.DANGER,
-                                        onDarkStage = onDarkStage,
+                                        onDarkStage = true,
                                     )
                                 } else if (hasExplicitCondition) {
                                     val metLabel = choice.conditionText?.takeIf { it.isNotBlank() }
@@ -784,7 +750,7 @@ fun RpChoiceDeck(
                                     ChoiceMetaChip(
                                         text = "✓ $metLabel",
                                         variant = GuBadgeVariant.EMERALD,
-                                        onDarkStage = onDarkStage,
+                                        onDarkStage = true,
                                     )
                                 }
                             }
@@ -799,9 +765,9 @@ fun RpChoiceDeck(
             horizontalArrangement = Arrangement.End,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            val ghostBg = if (onDarkStage) Color(0x99101522) else Color.Transparent
-            val ghostBorder = if (onDarkStage) Color(0x40B8C7E0) else c.border
-            val ghostFg = if (onDarkStage) Color(0xFFDCE4F5) else c.muted
+            val ghostBg = Color(0x99101522)
+            val ghostBorder = Color(0x40B8C7E0)
+            val ghostFg = Color(0xFFDCE4F5)
 
             Surface(
                 onClick = onRefreshChoices,
@@ -819,7 +785,7 @@ fun RpChoiceDeck(
                         CircularProgressIndicator(
                             modifier = Modifier.size(12.dp),
                             strokeWidth = 1.8.dp,
-                            color = if (onDarkStage) stageHighlight else c.primary,
+                            color = stageHighlight,
                         )
                     } else {
                         Icon(
@@ -1184,9 +1150,7 @@ fun RpTheaterStageView(
     isGeneratingArt: Boolean = false,
     artStatusLabel: String = "",
     onOpenModelSheet: () -> Unit,
-    onExitTheater: () -> Unit,
     onOpenStudio: () -> Unit,
-    onOpenFrontendEditor: () -> Unit = onOpenStudio,
     onQuickSave: () -> Unit,
     onStarterPrompt: (String) -> Unit,
     onSelectChoice: (RpChoice, Boolean) -> Unit,
@@ -1200,8 +1164,6 @@ fun RpTheaterStageView(
     onFrontendSetFlag: (String, String) -> Unit = { _, _ -> },
     onFrontendAdjustAffinity: (String, Int) -> Unit = { _, _ -> },
     onToast: (String) -> Unit,
-    drawOwnBackdrop: Boolean = true,
-    showInternalTopBar: Boolean = true,
     externalHideUi: Boolean? = null,
     onExternalHideUiChange: ((Boolean) -> Unit)? = null,
     externalShowHistory: Boolean? = null,
@@ -1267,10 +1229,6 @@ fun RpTheaterStageView(
 
     var internalHideUi by remember { mutableStateOf(false) }
     val hideUi = externalHideUi ?: internalHideUi
-    val setHideUi: (Boolean) -> Unit = { next ->
-        internalHideUi = next
-        onExternalHideUiChange?.invoke(next)
-    }
 
     var internalShowHistory by remember { mutableStateOf(false) }
     val showHistorySheet = externalShowHistory ?: internalShowHistory
@@ -1307,9 +1265,6 @@ fun RpTheaterStageView(
     val activeHighlightId = focusedNpcId
         ?: resolvedSpeakerNpc?.id
         ?: stageCharacters.firstOrNull()?.second?.id
-    val activeSpeakerSlot = remember(stageCharacters, activeHighlightId) {
-        stageCharacters.firstOrNull { it.second.id == activeHighlightId }?.first
-    }
 
     val (parsedReasoning, cleanBody) = remember(latestAssistant?.content, latestAssistant?.reasoning) {
         if (latestAssistant != null) {
@@ -1341,43 +1296,7 @@ fun RpTheaterStageView(
         )
     }
 
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .clickable(enabled = hideUi && showInternalTopBar) { setHideUi(false) },
-    ) {
-        // Layer 0: Fullscreen Scene CG + Atmospheric Depth Vignette
-        if (drawOwnBackdrop) {
-            TheaterStageBackdrop(
-                rp = rp,
-                stageAccent = stageAccent,
-                activeSlot = activeSpeakerSlot,
-                backdropDim = theme.backdropDim,
-                dimForReading = !hideUi,
-                modifier = Modifier.fillMaxSize(),
-            )
-        }
-
-        // Pure CG Appreciation Show-UI Floating Pill (when standalone)
-        if (showInternalTopBar) {
-            AnimatedVisibility(
-                visible = hideUi,
-                enter = fadeIn(),
-                exit = fadeOut(),
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(12.dp),
-            ) {
-                StageGlassPill(
-                    label = strings.rp.theaterShowUi,
-                    icon = Icons.Default.Visibility,
-                    accent = true,
-                    accentColor = stageAccent,
-                    onClick = { setHideUi(false) },
-                )
-            }
-        }
-
+    Box(modifier = modifier.fillMaxSize()) {
         if (!hideUi) {
             CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
                 BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
@@ -1386,19 +1305,6 @@ fun RpTheaterStageView(
 
                     if (activeMessages.isEmpty()) {
                         Column(modifier = Modifier.fillMaxSize()) {
-                            if (showInternalTopBar) {
-                                TheaterTopStageBar(
-                                    rp = rp,
-                                    isZh = isZh,
-                                    stageAccent = stageAccent,
-                                    hideSecondaryEnvRow = true,
-                                    onExitTheater = onExitTheater,
-                                    onOpenHistory = { setShowHistorySheet(true) },
-                                    onOpenFrontendEditor = onOpenFrontendEditor,
-                                    onHideUi = { setHideUi(true) },
-                                    onOpenStudio = onOpenStudio,
-                                )
-                            }
                             TheaterOpeningCurtain(
                                 rp = rp,
                                 hasModelSelected = hasModelSelected,
@@ -1432,7 +1338,7 @@ fun RpTheaterStageView(
                                                 .align(Alignment.TopCenter)
                                                 .fillMaxWidth()
                                                 .padding(
-                                                    top = if (showInternalTopBar) 54.dp else 12.dp,
+                                                    top = 12.dp,
                                                     start = 14.dp,
                                                     end = 14.dp,
                                                 ),
@@ -1456,7 +1362,7 @@ fun RpTheaterStageView(
                                     }
                                     if (spritesWithFiles.isNotEmpty()) {
                                         // Anchor full half-body stage below top HUD so character faces stay clear above choice buttons
-                                        val spriteTopClearance = if (showInternalTopBar) 92.dp else 44.dp
+                                        val spriteTopClearance = 44.dp
                                         val spriteHeightFraction = (theme.spriteHeightRatio + 0.50f).coerceIn(0.84f, 1.0f)
                                         val stageActors = remember(spritesWithFiles) {
                                             if (spritesWithFiles.size <= 2) spritesWithFiles
@@ -1528,7 +1434,7 @@ fun RpTheaterStageView(
                                                 modifier = Modifier
                                                     .align(Alignment.TopCenter)
                                                     .padding(
-                                                        top = if (showInternalTopBar) 56.dp else 12.dp,
+                                                        top = 12.dp,
                                                         start = 14.dp,
                                                         end = 14.dp,
                                                     ),
@@ -1539,26 +1445,13 @@ fun RpTheaterStageView(
                             }
                         }
 
-                        // Top-bar (when standalone) + Floating Cast Switcher + Turn Deltas + Endings
+                        // Floating Cast Switcher + Turn Deltas + Endings
                         Column(
                             modifier = Modifier
                                 .align(Alignment.TopCenter)
                                 .fillMaxWidth(),
                             verticalArrangement = Arrangement.spacedBy(5.dp),
                         ) {
-                            if (showInternalTopBar) {
-                                TheaterTopStageBar(
-                                    rp = rp,
-                                    isZh = isZh,
-                                    stageAccent = stageAccent,
-                                    hideSecondaryEnvRow = true,
-                                    onExitTheater = onExitTheater,
-                                    onOpenHistory = { setShowHistorySheet(true) },
-                                    onOpenFrontendEditor = onOpenFrontendEditor,
-                                    onHideUi = { setHideUi(true) },
-                                    onOpenStudio = onOpenStudio,
-                                )
-                            }
 
                             if (isGeneratingArt) {
                                 Box(
@@ -2829,118 +2722,6 @@ private fun formatRpRoleLabel(role: String, isZh: Boolean): String {
         "mystery" -> if (isZh) "神秘人" else "Mystery"
         "passerby", "minor", "extra", "npc" -> if (isZh) "路人" else "Passerby"
         else -> trimmed
-    }
-}
-
-@Composable
-private fun TheaterTopStageBar(
-    rp: RpConfig,
-    isZh: Boolean,
-    stageAccent: Color,
-    hideSecondaryEnvRow: Boolean,
-    onExitTheater: () -> Unit,
-    onOpenHistory: () -> Unit,
-    onOpenFrontendEditor: () -> Unit,
-    onHideUi: () -> Unit,
-    onOpenStudio: () -> Unit,
-) {
-    val strings = LocalAppStrings.current
-    val actLabel = formatRpActHeader(rp.state.actNumber, rp.state.chapterTitle, isZh)
-    val envParts = listOf(rp.state.scene, rp.state.time, rp.state.weather)
-        .map { it.trim() }
-        .filter { it.isNotEmpty() }
-    val envText = envParts.joinToString(" · ")
-
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 10.dp, vertical = 4.dp),
-        verticalArrangement = Arrangement.spacedBy(3.dp),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            Box(
-                modifier = Modifier.weight(1f),
-                contentAlignment = Alignment.CenterStart,
-            ) {
-                Surface(
-                    onClick = onOpenStudio,
-                    shape = RoundedCornerShape(999.dp),
-                    color = Color(0xC4131928),
-                    border = BorderStroke(0.6.dp, stageAccent.copy(alpha = 0.56f)),
-                    modifier = Modifier.heightIn(min = 28.dp),
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.AutoAwesome,
-                            contentDescription = null,
-                            tint = stageAccent,
-                            modifier = Modifier.size(12.5.dp),
-                        )
-                        Text(
-                            text = actLabel,
-                            color = Color(0xFFFFF4DC),
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                }
-            }
-
-            StageGlassPill(
-                label = strings.rp.chatModeBtn,
-                icon = Icons.Default.Forum,
-                accentColor = stageAccent,
-                onClick = onExitTheater,
-            )
-            StageGlassIconPill(
-                icon = Icons.Default.History,
-                contentDescription = strings.rp.theaterLogBtn,
-                accentColor = stageAccent,
-                onClick = onOpenHistory,
-            )
-            StageGlassIconPill(
-                icon = Icons.Default.VisibilityOff,
-                contentDescription = strings.rp.theaterHideUi,
-                accentColor = stageAccent,
-                onClick = onHideUi,
-            )
-            StageGlassIconPill(
-                icon = Icons.Default.Tune,
-                contentDescription = strings.rp.studioBtn,
-                accent = true,
-                accentColor = stageAccent,
-                onClick = onOpenStudio,
-            )
-        }
-
-        if (!hideSecondaryEnvRow && envText.isNotBlank()) {
-            Surface(
-                onClick = onOpenStudio,
-                shape = RoundedCornerShape(999.dp),
-                color = Color(0xA60D121F),
-                border = BorderStroke(0.5.dp, Color(0x40CBD5E1)),
-            ) {
-                Text(
-                    text = "📍 $envText",
-                    color = Color(0xFFDDE5F5),
-                    fontSize = 10.5.sp,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-                )
-            }
-        }
     }
 }
 

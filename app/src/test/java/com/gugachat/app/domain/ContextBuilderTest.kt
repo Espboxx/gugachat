@@ -815,4 +815,149 @@ class ContextBuilderTest {
         assertTrue("Tail of long turn must be preserved, not truncated at 1400 chars", joinedAll.contains("TAIL_MARKER_1"))
         assertTrue(joinedAll.contains("TAIL_MARKER_6"))
     }
+
+    @Test
+    fun overflowEpisodes_respectsMinSemanticCosineThreshold() = runBlocking {
+        val conv = ChatConversation(
+            id = "conv-ep-sem",
+            title = "测试",
+            mode = ConversationMode.chat,
+            systemPrompt = "你是一个助手。",
+            summarizedUntilSeq = 4,
+            createdAt = 1L,
+            updatedAt = 2L,
+        )
+        val fillerEpisodes = (1..8).map { idx ->
+            MemoryEpisode(
+                id = "ep-filler-$idx",
+                conversationId = conv.id,
+                level = 2,
+                fromSeq = 1,
+                toSeq = 1,
+                title = "总览归档$idx",
+                summary = "第${idx}章前情背景宏观脉络记录。".repeat(10),
+                createdAt = idx.toLong(),
+            )
+        }
+        val episodes = fillerEpisodes + listOf(
+            MemoryEpisode(
+                id = "ep-high-sem",
+                conversationId = conv.id,
+                level = 1,
+                fromSeq = 2,
+                toSeq = 3,
+                title = "高语义关联片段",
+                summary = "我们在海边灯塔讨论了密室钥匙。".repeat(16),
+                keyEntities = listOf("灯塔", "密室"),
+                createdAt = 10L,
+            ),
+            MemoryEpisode(
+                id = "ep-low-sem",
+                conversationId = conv.id,
+                level = 1,
+                fromSeq = 4,
+                toSeq = 4,
+                title = "低于自定义阈值的噪音片段",
+                summary = "街角咖啡馆偶遇旧同事寒暄。".repeat(16),
+                keyEntities = listOf("咖啡馆", "同事"),
+                createdAt = 11L,
+            ),
+        )
+        val msgs = listOf(
+            ChatMessage(
+                id = "u5",
+                conversationId = conv.id,
+                role = "user",
+                content = "重新理一下线索吧",
+                createdAt = 5L,
+                seq = 5,
+            ),
+        )
+        val built = ContextBuilder.buildChatContext(
+            ContextBuildInput(
+                conversation = conv,
+                messages = msgs,
+                memoryEpisodes = episodes,
+                memoryBudget = MemoryBudget.standard,
+                modelContextWindow = 4_096,
+                modelId = "deepseek-chat",
+                precomputedSemanticScores = mapOf(
+                    "ep-high-sem" to 0.68,
+                    "ep-low-sem" to 0.58,
+                ),
+                minSemanticCosine = 0.64,
+            ),
+        )
+        val recalledIds = built.summary.recalledItems.map { it.id }.toSet()
+        assertTrue(recalledIds.contains("ep-high-sem"))
+        assertFalse(recalledIds.contains("ep-low-sem"))
+    }
+
+    @Test
+    fun buildChatContextV4_incrementalAttachmentDecayReducesWithinBudget() = runBlocking {
+        val conv = ChatConversation(
+            id = "conv-v4-decay",
+            title = "多附件渐进衰减",
+            mode = ConversationMode.chat,
+            systemPrompt = "Assistant.",
+            params = ChatParams(maxTokens = 256, maxImageTurns = 3, maxFileTurns = 3),
+            createdAt = 1L,
+            updatedAt = 5L,
+        )
+        val bigFileText = "Detailed protocol trace line with payload data.\n".repeat(180)
+        val atts = (1..3).associate { idx ->
+            val id = "att-f$idx"
+            id to ChatAttachmentMeta(
+                id = id,
+                mimeType = "text/plain",
+                sizeBytes = bigFileText.length.toLong(),
+                localPath = "/tmp/$id.txt",
+                kind = AttachmentKind.file,
+                fileName = "trace_$idx.txt",
+                textPath = "/tmp/$id.txt",
+                charCount = bigFileText.length,
+                estimatedTokens = ContextBuilder.estimateTextTokens(bigFileText),
+            )
+        }
+        val messages = (1..3).flatMap { turn ->
+            listOf(
+                ChatMessage(
+                    id = "u$turn",
+                    conversationId = conv.id,
+                    role = "user",
+                    content = "Check turn $turn",
+                    createdAt = turn * 2L - 1,
+                    seq = turn * 2 - 1,
+                    attachmentIds = listOf("att-f$turn"),
+                ),
+                ChatMessage(
+                    id = "a$turn",
+                    conversationId = conv.id,
+                    role = "assistant",
+                    content = "Checked $turn.",
+                    createdAt = turn * 2L,
+                    seq = turn * 2,
+                ),
+            )
+        } + ChatMessage(
+            id = "u4",
+            conversationId = conv.id,
+            role = "user",
+            content = "Summarize all findings concisely.",
+            createdAt = 10L,
+            seq = 7,
+        )
+
+        val v4 = ContextBuilder.buildChatContextV4(
+            ContextBuildInput(
+                conversation = conv,
+                messages = messages,
+                modelContextWindow = 2_400,
+                attachmentsById = atts,
+                resolveAttachmentText = { bigFileText },
+            ),
+        )
+        assertTrue(v4.built.summary.sentTokens <= v4.built.summary.effectiveLimitTokens)
+        assertFalse(v4.built.summary.hardOverflow)
+    }
 }

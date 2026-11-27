@@ -224,15 +224,6 @@ class OnlineImagesApi(
         return client.get("$base/generations/${encodeSegment(id)}/versions", OnlineImageVersionsResponseDto.serializer()).items
     }
 
-    suspend fun contentUrl(id: String, index: Int, variant: String = "original"): OnlineImageContentUrlDto {
-        val qp = if (variant == "thumb") mapOf("variant" to "thumb") else emptyMap()
-        return client.get(
-            path = "$base/generations/${encodeSegment(id)}/images/$index/url",
-            deserializer = OnlineImageContentUrlDto.serializer(),
-            queryParams = qp,
-        )
-    }
-
     suspend fun contentBytes(
         id: String,
         index: Int,
@@ -250,9 +241,6 @@ class OnlineImagesApi(
             attachAuth = true,
         )
     }
-
-    suspend fun downloadAllZip(id: String): ByteArray =
-        client.getBytesAbsoluteOrApi("$base/generations/${encodeSegment(id)}/download", attachAuth = true)
 
     suspend fun batchDownloadZip(ids: List<String>): ByteArray {
         val body = AppJson.encodeToString(
@@ -292,24 +280,6 @@ class OnlineImagesApi(
         return client.postJson(
             path = "$base/presets",
             body = AppJson.encodeToString(OnlineImagePresetInputDto.serializer(), input),
-            deserializer = OnlineImagePresetDto.serializer(),
-        )
-    }
-
-    suspend fun updatePreset(id: String, input: OnlineImagePresetInputDto): OnlineImagePresetDto =
-        client.putJson(
-            path = "$base/presets/${encodeSegment(id)}",
-            body = AppJson.encodeToString(OnlineImagePresetInputDto.serializer(), input),
-            deserializer = OnlineImagePresetDto.serializer(),
-        )
-
-    suspend fun renamePreset(id: String, name: String): OnlineImagePresetDto {
-        if (id.startsWith("local_") || isDirectOnlyProvider()) {
-            directImageStore?.renamePreset(id, name)?.let { return it }
-        }
-        return client.patchJson(
-            path = "$base/presets/${encodeSegment(id)}",
-            body = AppJson.encodeToString(OnlineImagePresetRenameDto.serializer(), OnlineImagePresetRenameDto(name)),
             deserializer = OnlineImagePresetDto.serializer(),
         )
     }

@@ -49,10 +49,6 @@ sealed interface AssetImportResult {
         val loreEntries: List<NovelLoreEntry> = emptyList(),
     ) : AssetImportResult
 
-    data class PersonaImported(
-        val persona: PersonaEntity,
-    ) : AssetImportResult
-
     data class QuickRepliesImported(
         val quickReplies: ParsedQuickRepliesAsset,
     ) : AssetImportResult

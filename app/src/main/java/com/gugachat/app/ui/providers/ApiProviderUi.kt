@@ -224,7 +224,6 @@ data class ApiProviderQuickPreset(
     val displayName: String,
     val protocol: ApiProtocol,
     val baseUrl: String,
-    val allowsBlankKey: Boolean = false,
 )
 
 val API_PROVIDER_QUICK_PRESETS: List<ApiProviderQuickPreset> = listOf(
@@ -235,7 +234,7 @@ val API_PROVIDER_QUICK_PRESETS: List<ApiProviderQuickPreset> = listOf(
     ApiProviderQuickPreset("zhipu", "智谱 GLM", "Zhipu GLM", "Zhipu GLM", ApiProtocol.OPENAI_CHAT, "https://open.bigmodel.cn/api/paas/v4"),
     ApiProviderQuickPreset("kimi", "Kimi", "Kimi", "Moonshot Kimi", ApiProtocol.OPENAI_CHAT, "https://api.moonshot.cn/v1"),
     ApiProviderQuickPreset("claude", "Claude", "Claude", "Anthropic Claude", ApiProtocol.ANTHROPIC, "https://api.anthropic.com/v1"),
-    ApiProviderQuickPreset("ollama", "Ollama 局域网", "Ollama LAN", "Ollama LAN", ApiProtocol.OPENAI_CHAT, "http://192.168.1.10:11434/v1", allowsBlankKey = true),
+    ApiProviderQuickPreset("ollama", "Ollama 局域网", "Ollama LAN", "Ollama LAN", ApiProtocol.OPENAI_CHAT, "http://192.168.1.10:11434/v1"),
 )
 
 fun canSubmitProviderDraft(draft: ApiProviderDraft): Boolean =

@@ -199,9 +199,6 @@ class StudioImageGenerationUseCase(
             ?: "rp_media/${outFile.name}"
     }
 
-    fun resolveMediaFile(storedPath: String?): File? =
-        LocalMediaPathResolver.resolveFile(filesDir.absolutePath, storedPath)?.takeIf { it.isFile }
-
     fun transcodeToPngBytes(rawBytes: ByteArray): ByteArray? = runCatching {
         val decoded = BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size) ?: return@runCatching null
         val maxSide = 1024

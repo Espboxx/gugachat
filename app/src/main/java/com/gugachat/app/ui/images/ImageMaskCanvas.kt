@@ -135,8 +135,11 @@ fun InpaintMaskCanvas(
         ) {
             fun drawOneStroke(stroke: MaskStroke) {
                 if (stroke.points.isEmpty()) return
-                val baseDim = min(size.width, size.height)
-                val strokeWidthPx = (stroke.brushRadiusNormalized * baseDim * 2f).coerceAtLeast(6f)
+                val strokeWidthPx = OnlineImageCanvasMath.toPixelRadius(
+                    radiusNormalized = stroke.brushRadiusNormalized,
+                    width = size.width.toInt().coerceAtLeast(1),
+                    height = size.height.toInt().coerceAtLeast(1),
+                ) * 2f
                 val color = Color(0x99EF4444)
                 val blend = if (stroke.isEraser) BlendMode.Clear else BlendMode.Src
 

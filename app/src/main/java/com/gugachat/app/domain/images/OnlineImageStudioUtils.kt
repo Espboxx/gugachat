@@ -1,10 +1,9 @@
 package com.gugachat.app.domain.images
 
-import com.gugachat.app.data.api.OnlineImageCanvasSizeDto
 import com.gugachat.app.data.api.OnlineImageKeyDto
 import com.gugachat.app.data.api.OnlineImageModelDto
 import com.gugachat.app.domain.chat.FreeQuotaUtils
-import kotlin.math.abs
+import java.util.Locale
 import kotlin.math.roundToLong
 
 data class ImageCostEstimate(
@@ -15,23 +14,8 @@ data class ImageCostEstimate(
 )
 
 object OnlineImageStudioUtils {
-    val ALL_FILTERS = listOf("all", "completed", "pending", "failed", "text2img", "edit", "outpaint")
-
     val PRESET_ASPECT_RATIOS = listOf("auto", "1:1", "4:3", "3:4", "16:9", "9:16", "3:2", "2:3", "21:9")
     val PRESET_RESOLUTIONS = listOf("auto", "1K", "2K", "4K")
-
-    fun findDefaultKeyAndModel(
-        keys: List<OnlineImageKeyDto>,
-        preferredKeyId: Long?,
-        preferredModelId: String?,
-    ): Pair<OnlineImageKeyDto?, OnlineImageModelDto?> {
-        if (keys.isEmpty()) return null to null
-        val sortedKeys = FreeQuotaUtils.sortImageKeysByFreeQuota(keys)
-        val key = sortedKeys.firstOrNull { it.id == preferredKeyId } ?: sortedKeys.first()
-        val sortedModels = FreeQuotaUtils.sortImageModelsByFreeQuota(key.models)
-        val model = sortedModels.firstOrNull { it.id == preferredModelId } ?: sortedModels.firstOrNull()
-        return key to model
-    }
 
     fun isNovelAIModel(model: OnlineImageModelDto?): Boolean =
         model?.provider.equals("novelai", ignoreCase = true) ||
@@ -87,24 +71,6 @@ object OnlineImageStudioUtils {
             if (w != null && h != null && w > 0 && h > 0) return w to h
         }
         return 1.0 to 1.0
-    }
-
-    fun findClosestAspectRatioLabel(width: Int, height: Int, candidates: List<String> = PRESET_ASPECT_RATIOS): String {
-        if (width <= 0 || height <= 0) return "auto"
-        val target = width.toDouble() / height.toDouble()
-        var best = "1:1"
-        var bestDiff = Double.MAX_VALUE
-        for (cand in candidates) {
-            if (cand == "auto") continue
-            val (rw, rh) = parseAspectRatio(cand)
-            val ratio = rw / rh
-            val diff = abs(ratio - target)
-            if (diff < bestDiff) {
-                bestDiff = diff
-                best = cand
-            }
-        }
-        return best
     }
 
     fun estimateGenerationCost(
@@ -205,7 +171,7 @@ object OnlineImageStudioUtils {
 
     private fun formatUsdEstimate(value: Double): String {
         val rounded = (value * 10000.0).roundToLong() / 10000.0
-        return "~$" + String.format("%.4f", rounded).trimEnd('0').trimEnd('.')
+        return "~$" + String.format(Locale.US, "%.4f", rounded).trimEnd('0').trimEnd('.')
     }
 }
 

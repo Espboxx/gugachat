@@ -70,4 +70,22 @@ class OnlineImageStudioTest {
         assertEquals(0, fallback.second % 64)
         assertTrue(fallback.first > fallback.second)
     }
+
+    @Test
+    fun estimateCost_formatsUsdWithDotDecimalUnderNonUsLocale() {
+        val prevLocale = java.util.Locale.getDefault()
+        try {
+            java.util.Locale.setDefault(java.util.Locale.GERMANY)
+            val paidKey = OnlineImageKeyDto(
+                id = -7L,
+                name = "Image Group",
+                pricing = OnlineImageKeyPricingDto(rate_multiplier = 1.5, image_price_2k = 0.04),
+            )
+            val paidModel = OnlineImageModelDto(id = "gemini-image", provider = "gemini", transport = "generateContent")
+            val paidEst = OnlineImageStudioUtils.estimateGenerationCost(paidKey, paidModel, "16:9", "2K", 2)
+            assertEquals("~$0.12", paidEst.label)
+        } finally {
+            java.util.Locale.setDefault(prevLocale)
+        }
+    }
 }

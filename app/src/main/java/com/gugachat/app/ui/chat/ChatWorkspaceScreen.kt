@@ -880,10 +880,6 @@ fun ChatWorkspaceScreen(
                         rpStudioInitialTab = 0
                         showRpStudio = true
                     },
-                    onOpenFrontendEditor = {
-                        rpStudioInitialTab = 3
-                        showRpStudio = true
-                    },
                     onQuickSave = { viewModel.createRpSaveSlot(strings.rp.quickSaveBtn) },
                     onUpdateAuthorNote = { note -> viewModel.updateRpConfig { it.copy(authorNote = note) } },
                     onStarterPrompt = viewModel::applyStarterPrompt,
