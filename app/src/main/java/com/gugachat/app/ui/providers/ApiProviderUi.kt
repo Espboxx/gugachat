@@ -5,6 +5,8 @@ import android.content.Context
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -14,7 +16,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -27,19 +31,24 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.AccountTree
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CheckBox
 import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.FolderZip
 import androidx.compose.material.icons.filled.Forum
 import androidx.compose.material.icons.filled.Key
@@ -48,8 +57,8 @@ import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalBottomSheet
@@ -69,9 +78,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -89,7 +102,6 @@ import com.gugachat.app.core.storage.ApiProviderConfig
 import com.gugachat.app.core.storage.ApiProviderImportBundle
 import com.gugachat.app.core.storage.ApiProviderImportCodec
 import com.gugachat.app.core.theme.AppThemeSpec
-import com.gugachat.app.data.api.DirectApiClient
 import com.gugachat.app.core.theme.GuBadge
 import com.gugachat.app.core.theme.GuBadgeVariant
 import com.gugachat.app.core.theme.GuButton
@@ -97,12 +109,14 @@ import com.gugachat.app.core.theme.GuButtonVariant
 import com.gugachat.app.core.theme.GuConfirmDialog
 import com.gugachat.app.core.theme.GuGroupedCard
 import com.gugachat.app.core.theme.GuIconTile
+import com.gugachat.app.core.theme.GuMetaText
 import com.gugachat.app.core.theme.GuModalDragHandle
 import com.gugachat.app.core.theme.GuSectionHeader
 import com.gugachat.app.core.theme.GuSegmentedControl
 import com.gugachat.app.core.theme.GuSheetHeader
 import com.gugachat.app.core.theme.GuTextField
 import com.gugachat.app.core.theme.LocalAppTheme
+import com.gugachat.app.data.api.DirectApiClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -144,7 +158,6 @@ private data class ProtocolVisual(
     val icon: ImageVector,
     val tint: Color,
     val bg: Color,
-    val border: Color,
 )
 
 private fun resolveProtocolVisual(protocol: ApiProtocol, theme: AppThemeSpec): ProtocolVisual {
@@ -154,19 +167,16 @@ private fun resolveProtocolVisual(protocol: ApiProtocol, theme: AppThemeSpec): P
             icon = Icons.Default.Forum,
             tint = c.success,
             bg = c.successBg,
-            border = c.success.copy(alpha = 0.36f),
         )
         ApiProtocol.OPENAI_RESPONSES -> ProtocolVisual(
             icon = Icons.Default.AccountTree,
             tint = c.primarySoftInk,
             bg = c.primarySoft,
-            border = c.primary.copy(alpha = 0.34f),
         )
         ApiProtocol.ANTHROPIC -> ProtocolVisual(
             icon = Icons.Default.Psychology,
             tint = c.tagInk,
             bg = c.tag,
-            border = c.accent.copy(alpha = 0.42f),
         )
         ApiProtocol.GEMINI -> {
             val indigoTint = if (theme.isDark) Color(0xFFA5B4FC) else Color(0xFF4F46E5)
@@ -175,7 +185,6 @@ private fun resolveProtocolVisual(protocol: ApiProtocol, theme: AppThemeSpec): P
                 icon = Icons.Default.AutoAwesome,
                 tint = indigoTint,
                 bg = indigoBg,
-                border = indigoTint.copy(alpha = 0.38f),
             )
         }
     }
@@ -191,19 +200,19 @@ private fun ProtocolBadge(
     val visual = resolveProtocolVisual(protocol, theme)
     Surface(
         modifier = modifier,
-        shape = RoundedCornerShape(theme.pillRadius),
+        shape = RoundedCornerShape(6.dp),
         color = visual.bg,
-        border = BorderStroke(theme.borderWidth, visual.border),
+        border = null,
     ) {
         Text(
             text = label,
             color = visual.tint,
             fontSize = 10.5.sp,
             lineHeight = 13.sp,
-            fontWeight = FontWeight.Bold,
+            fontWeight = FontWeight.SemiBold,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(horizontal = 7.5.dp, vertical = 2.5.dp),
+            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.5.dp),
         )
     }
 }
@@ -245,255 +254,567 @@ fun ApiProviderFormContent(
     onCustomModelsChange: (String) -> Unit,
     onTestConnection: () -> Unit,
     onApplyPreset: ((ApiProviderQuickPreset) -> Unit)? = null,
+    onOpenImport: (() -> Unit)? = null,
+    showInlineTestBar: Boolean = true,
+    fadeEndColor: Color = LocalAppTheme.current.colors.page,
 ) {
     val strings = LocalAppStrings.current
     val theme = LocalAppTheme.current
     val c = theme.colors
+    val ctx = LocalContext.current
     val isZh = strings.language == AppLanguage.ZH
     var keyVisible by remember { mutableStateOf(false) }
+    var showOptionalFields by remember(draft.editingId) { mutableStateOf(false) }
     val isLanEndpoint = remember(draft.baseUrl) { DirectApiClient.isLocalOrLanHost(draft.baseUrl) }
     val canTest = canSubmitProviderDraft(draft) && !isTesting
 
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        if (onApplyPreset != null) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        if (onApplyPreset != null || onOpenImport != null) {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(
                     text = if (isZh) "一键速配主流服务商" else "Quick Provider Presets",
-                    color = c.ink,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
+                    color = c.muted,
+                    fontSize = 11.5.sp,
+                    fontWeight = FontWeight.SemiBold,
                 )
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(7.dp),
-                ) {
-                    API_PROVIDER_QUICK_PRESETS.forEach { preset ->
-                        val active = draft.baseUrl.trim().trimEnd('/').equals(preset.baseUrl.trimEnd('/'), ignoreCase = true)
-                        Surface(
-                            onClick = { onApplyPreset(preset) },
-                            shape = RoundedCornerShape(999.dp),
-                            color = if (active) c.primarySoft else c.surfaceSoft,
-                            border = BorderStroke(
-                                width = if (active) 1.2.dp else theme.borderWidth,
-                                color = if (active) c.primary.copy(alpha = 0.65f) else c.border,
-                            ),
-                            modifier = Modifier.heightIn(min = 32.dp),
-                        ) {
-                            Text(
-                                text = if (isZh) preset.zhLabel else preset.enLabel,
-                                color = if (active) c.primarySoftInk else c.ink,
-                                fontSize = 11.5.sp,
-                                fontWeight = if (active) FontWeight.Bold else FontWeight.SemiBold,
-                                maxLines = 1,
-                                modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp),
-                            )
-                        }
-                    }
-                }
-            }
-        }
-        // Protocol Selector (clean 2x2 pill grid with semantic protocol dot)
-        Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
-            Text(
-                text = strings.providers.protocolLabel,
-                color = c.ink,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-            )
-            val rows = ApiProtocol.entries.chunked(2)
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                rows.forEach { rowItems ->
+                Box(modifier = Modifier.fillMaxWidth()) {
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .padding(end = 16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(7.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        rowItems.forEach { proto ->
-                            val selected = draft.protocol == proto
-                            val visual = resolveProtocolVisual(proto, theme)
-                            val label = strings.providers.protocolShortNames[proto.wireValue] ?: proto.displayName
-                            val pillShape = RoundedCornerShape(12.dp)
+                        if (onOpenImport != null) {
                             Surface(
-                                onClick = { onProtocolChange(proto) },
-                                shape = pillShape,
-                                color = if (selected) visual.bg else c.surfaceSoft.copy(alpha = if (theme.isDark) 0.72f else 0.55f),
-                                border = BorderStroke(
-                                    width = if (selected) 1.2.dp else theme.borderWidth,
-                                    color = if (selected) visual.tint.copy(alpha = 0.65f) else c.border,
-                                ),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .heightIn(min = 40.dp),
+                                onClick = onOpenImport,
+                                shape = RoundedCornerShape(theme.pillRadius),
+                                color = c.tag,
+                                border = null,
+                                modifier = Modifier.heightIn(min = 31.dp),
                             ) {
                                 Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 11.dp, vertical = 9.dp),
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
                                 ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(7.dp)
-                                            .clip(CircleShape)
-                                            .background(if (selected) visual.tint else visual.tint.copy(alpha = 0.55f)),
+                                    Icon(
+                                        imageVector = Icons.Default.Download,
+                                        contentDescription = null,
+                                        tint = c.tagInk,
+                                        modifier = Modifier.size(14.dp),
                                     )
                                     Text(
-                                        text = label,
-                                        color = if (selected) visual.tint else c.ink,
-                                        fontSize = 12.5.sp,
-                                        fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold,
+                                        text = if (isZh) "导入配置" else "Import",
+                                        color = c.tagInk,
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.SemiBold,
                                         maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                            }
+                        }
+                        if (onApplyPreset != null) {
+                            API_PROVIDER_QUICK_PRESETS.forEach { preset ->
+                                val active = draft.baseUrl.trim().trimEnd('/').equals(preset.baseUrl.trimEnd('/'), ignoreCase = true)
+                                Surface(
+                                    onClick = { onApplyPreset(preset) },
+                                    shape = RoundedCornerShape(theme.pillRadius),
+                                    color = if (active) c.primarySoft else c.surfaceSoft,
+                                    border = if (active) {
+                                        BorderStroke(0.5.dp, c.primary.copy(alpha = 0.45f))
+                                    } else {
+                                        null
+                                    },
+                                    modifier = Modifier.heightIn(min = 31.dp),
+                                ) {
+                                    Text(
+                                        text = if (isZh) preset.zhLabel else preset.enLabel,
+                                        color = if (active) c.primarySoftInk else c.ink,
+                                        fontSize = 11.5.sp,
+                                        fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
+                                        maxLines = 1,
+                                        modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp),
                                     )
                                 }
                             }
                         }
                     }
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.CenterEnd)
+                            .width(16.dp)
+                            .height(32.dp)
+                            .background(
+                                Brush.horizontalGradient(
+                                    colors = listOf(Color.Transparent, fadeEndColor),
+                                ),
+                            ),
+                    )
                 }
             }
         }
 
-        GuTextField(
-            value = draft.name,
-            onValueChange = onNameChange,
-            label = strings.providers.nameLabel,
-            placeholder = strings.providers.namePlaceholder,
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
-        )
+        // Compact 1-row 4-protocol capsule switcher (34.dp)
+        Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            Text(
+                text = strings.providers.protocolLabel,
+                color = c.muted,
+                fontSize = 11.5.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+            ProtocolCompactBar(
+                selected = draft.protocol,
+                onSelect = onProtocolChange,
+            )
+        }
 
-        GuTextField(
-            value = draft.baseUrl,
-            onValueChange = onBaseUrlChange,
-            label = strings.providers.baseUrlLabel,
-            placeholder = draft.protocol.defaultBaseUrl,
-            leadingIcon = { Icon(Icons.Default.Public, contentDescription = null, tint = c.muted, modifier = Modifier.size(18.dp)) },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Next),
-        )
+        // Required 2-row zero-border grouped card: Base URL + API Key
+        GuGroupedCard(modifier = Modifier.fillMaxWidth()) {
+            // Row 1: Base URL with clear button
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 52.dp)
+                    .padding(start = 12.dp, end = 6.dp, top = 8.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(9.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Public,
+                    contentDescription = null,
+                    tint = c.muted,
+                    modifier = Modifier.size(17.dp),
+                )
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    Text(
+                        text = strings.providers.baseUrlLabel,
+                        color = c.muted,
+                        fontSize = 10.5.sp,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    Box(contentAlignment = Alignment.CenterStart) {
+                        if (draft.baseUrl.isEmpty()) {
+                            Text(
+                                text = draft.protocol.defaultBaseUrl,
+                                color = c.muted.copy(alpha = 0.65f),
+                                fontSize = 13.5.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        BasicTextField(
+                            value = draft.baseUrl,
+                            onValueChange = onBaseUrlChange,
+                            singleLine = true,
+                            textStyle = TextStyle(
+                                color = c.ink,
+                                fontSize = 13.5.sp,
+                                fontWeight = FontWeight.Medium,
+                            ),
+                            cursorBrush = SolidColor(c.primary),
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Uri,
+                                imeAction = ImeAction.Next,
+                            ),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
+                if (draft.baseUrl.isNotEmpty()) {
+                    IconButton(
+                        onClick = { onBaseUrlChange("") },
+                        modifier = Modifier.size(34.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = strings.common.clear,
+                            tint = c.muted,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                }
+            }
 
-        GuTextField(
-            value = draft.apiKey,
-            onValueChange = onApiKeyChange,
-            label = if (isLanEndpoint) {
-                if (isZh) "${strings.providers.apiKeyLabel}（局域网可留空）" else "${strings.providers.apiKeyLabel} (optional for LAN)"
-            } else {
-                strings.providers.apiKeyLabel
-            },
-            placeholder = if (isLanEndpoint) {
-                if (isZh) "本地 Ollama / LM Studio 可直接留空" else "Leave empty for local Ollama / LAN"
-            } else {
-                strings.providers.apiKeyPlaceholder
-            },
-            leadingIcon = { Icon(Icons.Default.Key, contentDescription = null, tint = c.muted, modifier = Modifier.size(18.dp)) },
-            visualTransformation = if (keyVisible) VisualTransformation.None else PasswordVisualTransformation(),
-            trailingIcon = {
-                IconButton(onClick = { keyVisible = !keyVisible }) {
+            HorizontalDivider(
+                modifier = Modifier.padding(start = 38.dp),
+                thickness = 0.5.dp,
+                color = c.border.copy(alpha = 0.68f),
+            )
+
+            // Row 2: API Key with [Paste] + [Eye]
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 52.dp)
+                    .padding(start = 12.dp, end = 6.dp, top = 8.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(9.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Key,
+                    contentDescription = null,
+                    tint = c.muted,
+                    modifier = Modifier.size(17.dp),
+                )
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    Text(
+                        text = if (isLanEndpoint) {
+                            if (isZh) "${strings.providers.apiKeyLabel}（局域网可留空）" else "${strings.providers.apiKeyLabel} (optional for LAN)"
+                        } else {
+                            strings.providers.apiKeyLabel
+                        },
+                        color = c.muted,
+                        fontSize = 10.5.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Box(contentAlignment = Alignment.CenterStart) {
+                        if (draft.apiKey.isEmpty()) {
+                            Text(
+                                text = if (isLanEndpoint) {
+                                    if (isZh) "本地 Ollama 可留空" else "Optional for local LAN"
+                                } else {
+                                    strings.providers.apiKeyPlaceholder
+                                },
+                                color = c.muted.copy(alpha = 0.65f),
+                                fontSize = 13.5.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        BasicTextField(
+                            value = draft.apiKey,
+                            onValueChange = onApiKeyChange,
+                            singleLine = true,
+                            textStyle = TextStyle(
+                                color = c.ink,
+                                fontSize = 13.5.sp,
+                                fontWeight = FontWeight.Medium,
+                            ),
+                            cursorBrush = SolidColor(c.primary),
+                            visualTransformation = if (keyVisible) {
+                                VisualTransformation.None
+                            } else {
+                                PasswordVisualTransformation()
+                            },
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Password,
+                                imeAction = if (showOptionalFields) ImeAction.Next else ImeAction.Done,
+                            ),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
+                Surface(
+                    onClick = {
+                        val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                        val clip = cm?.primaryClip?.takeIf { it.itemCount > 0 }
+                            ?.getItemAt(0)
+                            ?.coerceToText(ctx)
+                            ?.toString()
+                            ?.trim()
+                            .orEmpty()
+                        if (clip.isNotBlank()) {
+                            onApiKeyChange(clip)
+                        }
+                    },
+                    shape = RoundedCornerShape(7.dp),
+                    color = c.surfaceSoft,
+                    border = null,
+                    modifier = Modifier.heightIn(min = 28.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(3.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ContentPaste,
+                            contentDescription = null,
+                            tint = c.primarySoftInk,
+                            modifier = Modifier.size(13.dp),
+                        )
+                        Text(
+                            text = if (isZh) "粘贴" else "Paste",
+                            color = c.primarySoftInk,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                }
+                IconButton(
+                    onClick = { keyVisible = !keyVisible },
+                    modifier = Modifier.size(34.dp),
+                ) {
                     Icon(
                         imageVector = if (keyVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
                         contentDescription = null,
                         tint = c.muted,
-                        modifier = Modifier.size(19.dp),
+                        modifier = Modifier.size(18.dp),
                     )
                 }
-            },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Next),
-        )
+            }
+        }
 
-        GuTextField(
-            value = draft.customModelsText,
-            onValueChange = onCustomModelsChange,
-            label = strings.providers.customModelsLabel,
-            placeholder = strings.providers.customModelsPlaceholder,
-            singleLine = false,
-            minLines = 1,
-            maxLines = 3,
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-        )
-
-        // Sleek Inline Connection Test Bar
+        // Collapsible Optional Section (Display Name & Custom Models)
+        val optionalSummary = remember(draft.name, draft.customModelsText, isZh) {
+            val parts = buildList {
+                if (draft.name.isNotBlank()) add(draft.name.trim())
+                val count = draft.customModelsText.split(',', '，', '\n').count { it.trim().isNotEmpty() }
+                if (count > 0) add(if (isZh) "$count 模型" else "$count models")
+            }
+            parts.joinToString(" · ")
+        }
         Surface(
-            shape = RoundedCornerShape(14.dp),
-            color = c.surfaceSoft.copy(alpha = if (theme.isDark) 0.72f else 0.75f),
-            border = BorderStroke(theme.borderWidth, c.border),
+            onClick = { showOptionalFields = !showOptionalFields },
+            shape = RoundedCornerShape(10.dp),
+            color = c.surfaceSoft.copy(alpha = if (theme.isDark) 0.65f else 0.78f),
+            border = null,
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Column(
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                    .heightIn(min = 38.dp)
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    GuButton(
-                        onClick = onTestConnection,
-                        enabled = canTest,
-                        loading = isTesting,
-                        compact = true,
-                        variant = GuButtonVariant.SECONDARY,
-                    ) {
-                        Icon(Icons.Default.CloudDone, contentDescription = null, modifier = Modifier.size(15.dp))
-                        Spacer(Modifier.width(5.dp))
-                        Text(
-                            text = if (isTesting) strings.providers.testingBtn else strings.providers.testBtn,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                        )
-                    }
-                    if (testSuccessCount != null) {
-                        GuBadge(
-                            text = strings.providers.testOkFormat.fmt("count" to testSuccessCount),
-                            variant = GuBadgeVariant.EMERALD,
-                        )
-                    } else if (testError.isNullOrBlank()) {
-                        Text(
-                            text = if (isZh) "校验连通并拉取模型列表" else "Verify endpoint & fetch models",
-                            color = c.muted,
-                            fontSize = 11.5.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f),
-                        )
-                    }
+                Icon(
+                    imageVector = if (showOptionalFields) Icons.Default.ExpandMore else Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    contentDescription = null,
+                    tint = c.muted,
+                    modifier = Modifier.size(17.dp),
+                )
+                Text(
+                    text = if (isZh) "高级选填（名称与手动模型）" else "Optional (Name & Custom Models)",
+                    color = c.muted,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                if (!showOptionalFields && optionalSummary.isNotBlank()) {
+                    GuMetaText(
+                        text = optionalSummary,
+                        color = c.primarySoftInk,
+                    )
                 }
+            }
+        }
 
-                if (!testError.isNullOrBlank()) {
-                    Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = c.dangerBg,
-                        border = BorderStroke(theme.borderWidth, c.danger.copy(alpha = 0.4f)),
+        AnimatedVisibility(visible = showOptionalFields) {
+            GuGroupedCard(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    GuTextField(
+                        value = draft.name,
+                        onValueChange = onNameChange,
+                        label = strings.providers.nameLabel,
+                        placeholder = strings.providers.namePlaceholder,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                    )
+                    GuTextField(
+                        value = draft.customModelsText,
+                        onValueChange = onCustomModelsChange,
+                        label = strings.providers.customModelsLabel,
+                        placeholder = strings.providers.customModelsPlaceholder,
+                        singleLine = false,
+                        minLines = 1,
+                        maxLines = 3,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    )
+                }
+            }
+        }
+
+        if (showInlineTestBar) {
+            // Sleek Inline Connection Test Bar (used in Editor Sheet)
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = c.surfaceSoft.copy(alpha = if (theme.isDark) 0.72f else 0.78f),
+                border = null,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 9.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Row(
                         modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 10.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.Top,
-                            horizontalArrangement = Arrangement.spacedBy(7.dp),
+                        GuButton(
+                            onClick = onTestConnection,
+                            enabled = canTest,
+                            loading = isTesting,
+                            compact = true,
+                            variant = GuButtonVariant.SECONDARY,
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.ErrorOutline,
-                                contentDescription = null,
-                                tint = c.danger,
-                                modifier = Modifier
-                                    .padding(top = 1.dp)
-                                    .size(15.dp),
-                            )
+                            Icon(Icons.Default.CloudDone, contentDescription = null, modifier = Modifier.size(15.dp))
+                            Spacer(Modifier.width(5.dp))
                             Text(
-                                text = testError,
-                                color = c.danger,
+                                text = if (isTesting) strings.providers.testingBtn else strings.providers.testBtn,
                                 fontSize = 12.sp,
-                                lineHeight = 17.sp,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                        if (testSuccessCount != null) {
+                            GuBadge(
+                                text = strings.providers.testOkFormat.fmt("count" to testSuccessCount),
+                                variant = GuBadgeVariant.EMERALD,
+                            )
+                        } else if (testError.isNullOrBlank()) {
+                            Text(
+                                text = if (isZh) "校验连通并拉取模型列表" else "Verify endpoint & fetch models",
+                                color = c.muted,
+                                fontSize = 11.5.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.weight(1f),
                             )
                         }
                     }
+
+                    if (!testError.isNullOrBlank()) {
+                        ProviderErrorBanner(message = testError)
+                    }
                 }
             }
+        } else if (!testError.isNullOrBlank()) {
+            ProviderErrorBanner(message = testError)
+        }
+    }
+}
+
+@Composable
+private fun ProtocolCompactBar(
+    selected: ApiProtocol,
+    onSelect: (ApiProtocol) -> Unit,
+) {
+    val theme = LocalAppTheme.current
+    val c = theme.colors
+    val trackShape = RoundedCornerShape(11.dp)
+    val thumbShape = RoundedCornerShape(8.5.dp)
+    val selectedThumbColor = if (theme.isDark) c.surfaceElevated else c.surface
+    val darkThumbBorder = if (theme.isDark) {
+        BorderStroke(0.5.dp, Color.White.copy(alpha = 0.08f))
+    } else {
+        null
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(34.dp)
+            .clip(trackShape)
+            .background(c.surfaceSoft)
+            .padding(3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        ApiProtocol.entries.forEach { proto ->
+            val isSelected = selected == proto
+            val visual = resolveProtocolVisual(proto, theme)
+            val shortLabel = when (proto) {
+                ApiProtocol.OPENAI_CHAT -> "OpenAI"
+                ApiProtocol.OPENAI_RESPONSES -> "Responses"
+                ApiProtocol.ANTHROPIC -> "Claude"
+                ApiProtocol.GEMINI -> "Gemini"
+            }
+            val bgColor by animateColorAsState(
+                targetValue = if (isSelected) selectedThumbColor else Color.Transparent,
+                label = "proto_bg_${proto.wireValue}",
+            )
+            val fgColor by animateColorAsState(
+                targetValue = if (isSelected) c.ink else c.muted,
+                label = "proto_fg_${proto.wireValue}",
+            )
+
+            Surface(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .clip(thumbShape)
+                    .clickable(role = Role.Tab) { onSelect(proto) },
+                shape = thumbShape,
+                color = bgColor,
+                shadowElevation = if (isSelected && !theme.isDark) 1.dp else 0.dp,
+                border = if (isSelected) darkThumbBorder else null,
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 3.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(5.5.dp)
+                            .clip(CircleShape)
+                            .background(if (isSelected) visual.tint else visual.tint.copy(alpha = 0.55f)),
+                    )
+                    Text(
+                        text = shortLabel,
+                        color = fgColor,
+                        fontSize = 11.sp,
+                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProviderErrorBanner(message: String) {
+    val c = LocalAppTheme.current.colors
+    Surface(
+        shape = RoundedCornerShape(10.dp),
+        color = c.dangerBg,
+        border = null,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.Top,
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
+        ) {
+            Icon(
+                imageVector = Icons.Default.ErrorOutline,
+                contentDescription = null,
+                tint = c.danger,
+                modifier = Modifier
+                    .padding(top = 1.dp)
+                    .size(15.dp),
+            )
+            Text(
+                text = message,
+                color = c.danger,
+                fontSize = 12.sp,
+                lineHeight = 17.sp,
+                modifier = Modifier.weight(1f),
+            )
         }
     }
 }
@@ -545,8 +866,8 @@ fun ApiProviderEditorSheet(
                     .fillMaxWidth()
                     .weight(1f, fill = false)
                     .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 16.dp, vertical = 14.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 ApiProviderFormContent(
                     draft = initialDraft,
@@ -577,12 +898,14 @@ fun ApiProviderEditorSheet(
                             ),
                         )
                     },
+                    showInlineTestBar = true,
+                    fadeEndColor = c.page,
                 )
             }
 
             HorizontalDivider(
-                thickness = theme.borderWidth,
-                color = c.border.copy(alpha = 0.85f),
+                thickness = 0.5.dp,
+                color = c.border.copy(alpha = 0.65f),
             )
             Box(
                 modifier = Modifier
@@ -596,7 +919,7 @@ fun ApiProviderEditorSheet(
                     enabled = canSubmitProviderDraft(initialDraft),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text(strings.common.save, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Text(strings.common.save, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
         }
@@ -650,7 +973,7 @@ fun ApiProviderManagerCard(
                     GuButton(onClick = onAddClick, compact = true, variant = GuButtonVariant.SUBTLE) {
                         Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(14.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text(strings.providers.addProviderBtn, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                        Text(strings.providers.addProviderBtn, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
                     }
                 },
             )
@@ -687,7 +1010,7 @@ fun ApiProviderManagerCard(
                     ) {
                         Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(15.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text(strings.providers.addProviderBtn, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Text(strings.providers.addProviderBtn, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
             } else {
@@ -713,7 +1036,6 @@ fun ApiProviderManagerCard(
                             .clickable { onEditClick(p) }
                             .padding(start = 14.dp, end = 6.dp, top = 11.dp, bottom = 6.dp),
                     ) {
-                        // Row 1: Protocol IconTile + Title + Protocol Badge + Switch
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
@@ -739,7 +1061,7 @@ fun ApiProviderManagerCard(
                                     text = p.displayTitle(),
                                     color = c.ink,
                                     fontSize = 14.sp,
-                                    fontWeight = FontWeight.Bold,
+                                    fontWeight = FontWeight.SemiBold,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.weight(1f, fill = false),
@@ -764,7 +1086,6 @@ fun ApiProviderManagerCard(
                             )
                         }
 
-                        // Row 2: Compact Endpoint / Key / Model Count meta + 44dp Edit & Delete buttons
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -823,8 +1144,8 @@ fun ApiProviderManagerCard(
                     if (index < providers.lastIndex) {
                         HorizontalDivider(
                             modifier = Modifier.padding(start = 58.dp),
-                            thickness = theme.borderWidth,
-                            color = c.border.copy(alpha = 0.78f),
+                            thickness = 0.5.dp,
+                            color = c.border.copy(alpha = 0.65f),
                         )
                     }
                 }
@@ -958,7 +1279,7 @@ fun ApiProviderImportSheet(
                                 ) {
                                     Icon(Icons.Default.FolderZip, contentDescription = null, modifier = Modifier.size(17.dp))
                                     Spacer(Modifier.width(6.dp))
-                                    Text(strings.providers.importProviderPickBtn, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                    Text(strings.providers.importProviderPickBtn, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                                 }
                             }
                         }
@@ -984,7 +1305,11 @@ fun ApiProviderImportSheet(
                                         IconButton(
                                             onClick = {
                                                 val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                                                val clip = cm?.primaryClip?.getItemAt(0)?.coerceToText(ctx)?.toString().orEmpty()
+                                                val clip = cm?.primaryClip?.takeIf { it.itemCount > 0 }
+                                                    ?.getItemAt(0)
+                                                    ?.coerceToText(ctx)
+                                                    ?.toString()
+                                                    .orEmpty()
                                                 if (clip.isNotBlank()) {
                                                     pasteInput = clip
                                                     errorMsg = null
@@ -1024,27 +1349,14 @@ fun ApiProviderImportSheet(
                                 ) {
                                     Icon(Icons.Default.UploadFile, contentDescription = null, modifier = Modifier.size(17.dp))
                                     Spacer(Modifier.width(6.dp))
-                                    Text(strings.providers.importProviderParseBtn, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                    Text(strings.providers.importProviderParseBtn, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                                 }
                             }
                         }
                     }
 
                     errorMsg?.let { err ->
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = c.dangerBg,
-                            border = BorderStroke(theme.borderWidth, c.danger.copy(alpha = 0.42f)),
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Text(
-                                text = err,
-                                color = c.danger,
-                                fontSize = 12.sp,
-                                lineHeight = 17.5.sp,
-                                modifier = Modifier.padding(11.dp),
-                            )
-                        }
+                        ProviderErrorBanner(message = err)
                     }
                 }
             } else {
@@ -1069,7 +1381,7 @@ fun ApiProviderImportSheet(
                             text = strings.chat.importDeepSeekReselect,
                             color = c.primarySoftInk,
                             fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.SemiBold,
                             modifier = Modifier
                                 .heightIn(min = 36.dp)
                                 .clickable {
@@ -1124,7 +1436,7 @@ fun ApiProviderImportSheet(
                                                     text = p.displayTitle(),
                                                     color = c.ink,
                                                     fontSize = 13.5.sp,
-                                                    fontWeight = FontWeight.Bold,
+                                                    fontWeight = FontWeight.SemiBold,
                                                     maxLines = 1,
                                                     overflow = TextOverflow.Ellipsis,
                                                     modifier = Modifier.weight(1f, fill = false),
@@ -1149,8 +1461,8 @@ fun ApiProviderImportSheet(
                                     if (idx < bundle.providers.lastIndex) {
                                         HorizontalDivider(
                                             modifier = Modifier.padding(start = 42.dp),
-                                            thickness = theme.borderWidth,
-                                            color = c.border.copy(alpha = 0.78f),
+                                            thickness = 0.5.dp,
+                                            color = c.border.copy(alpha = 0.65f),
                                         )
                                     }
                                 }
@@ -1160,8 +1472,8 @@ fun ApiProviderImportSheet(
                 }
 
                 HorizontalDivider(
-                    thickness = theme.borderWidth,
-                    color = c.border.copy(alpha = 0.8f),
+                    thickness = 0.5.dp,
+                    color = c.border.copy(alpha = 0.65f),
                 )
                 Box(
                     modifier = Modifier
@@ -1183,7 +1495,7 @@ fun ApiProviderImportSheet(
                         Text(
                             text = strings.providers.importProviderConfirmBtn.fmt("count" to selectedList.size),
                             fontSize = 13.5.sp,
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.SemiBold,
                         )
                     }
                 }
