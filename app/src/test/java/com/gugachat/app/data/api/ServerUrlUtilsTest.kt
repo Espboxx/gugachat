@@ -65,4 +65,18 @@ class ServerUrlUtilsTest {
         assertFalse(ServerUrlUtils.isUserTimingApiPath("https://example.com/api/v1/online-chat/completions"))
         assertFalse(ServerUrlUtils.isUserTimingApiPath("/online-images/generations"))
     }
+
+    @Test
+    fun isPrivateLanOrLocalhost_detectsLoopbackLanAndRejectsPublicHosts() {
+        assertTrue(ServerUrlUtils.isPrivateLanOrLocalhost("http://127.0.0.1:11434/v1"))
+        assertTrue(ServerUrlUtils.isPrivateLanOrLocalhost("http://localhost:8080/v1"))
+        assertTrue(ServerUrlUtils.isPrivateLanOrLocalhost("http://[::1]:11434/v1"))
+        assertTrue(ServerUrlUtils.isPrivateLanOrLocalhost("http://mac-mini.local:11434/v1"))
+        assertTrue(ServerUrlUtils.isPrivateLanOrLocalhost("http://192.168.1.50:11434/v1"))
+        assertTrue(ServerUrlUtils.isPrivateLanOrLocalhost("http://10.0.0.12:8000/v1"))
+        assertTrue(ServerUrlUtils.isPrivateLanOrLocalhost("http://172.16.4.2:8000/v1"))
+        assertFalse(ServerUrlUtils.isPrivateLanOrLocalhost("http://172.32.0.1:8000/v1"))
+        assertFalse(ServerUrlUtils.isPrivateLanOrLocalhost("https://api.openai.com/v1"))
+        assertFalse(ServerUrlUtils.isPrivateLanOrLocalhost(""))
+    }
 }

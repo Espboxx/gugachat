@@ -35,6 +35,30 @@ object ServerUrlUtils {
     fun encodePathSegment(segment: String): String =
         URLEncoder.encode(segment, StandardCharsets.UTF_8.name()).replace("+", "%20")
 
+    fun isPrivateLanOrLocalhost(rawUrl: String): Boolean {
+        val host = parseHttpOriginAndPath(rawUrl)
+            ?.host
+            ?.lowercase()
+            ?.trim('[', ']')
+            ?: return false
+        if (host.isEmpty()) return false
+        if (host == "localhost" || host == "::1" || host == "0:0:0:0:0:0:0:1" || host.endsWith(".local")) {
+            return true
+        }
+        val octets = host.split('.')
+        if (octets.size == 4 && octets.all { it.isNotEmpty() && it.all(Char::isDigit) }) {
+            val nums = octets.map { it.toIntOrNull() ?: return false }
+            if (nums.any { it !in 0..255 }) return false
+            val a = nums[0]
+            val b = nums[1]
+            return a == 127 ||
+                a == 10 ||
+                (a == 192 && b == 168) ||
+                (a == 172 && b in 16..31)
+        }
+        return false
+    }
+
     /**
      * Normalizes a user-supplied sub2api-auto server URL to its base origin/path
      * without trailing slashes or `/api/v1`.

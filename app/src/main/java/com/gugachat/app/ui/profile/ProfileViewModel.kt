@@ -187,23 +187,16 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
         refreshVectorStats()
     }
 
+    private val isZh: Boolean
+        get() = container.settingsState.value.language == AppLanguage.ZH
+
+    private fun strings() = if (container.settingsState.value.language == AppLanguage.EN) EnStrings else ZhStrings
+
     private fun refreshImageGroupsCount() {
         viewModelScope.launch {
-            val customImgCount = container.apiProviderStore.enabledProviders().count {
-                DirectProtocolCodec.supportsImageGeneration(
-                    protocol = it.protocol,
-                    baseUrl = it.baseUrl,
-                    customModels = it.customModels,
-                )
-            }
-            val isDirect = (container.authSession.value as? AuthSessionState.LoggedIn)?.isDirectApiOnly == true
-            if (isDirect) {
-                _ui.update { it.copy(imageGroupsCount = customImgCount) }
-                return@launch
-            }
-            val serverCount = runCatching { container.onlineImagesApi.capabilities().keys.size }.getOrNull()
-            if (serverCount != null) {
-                _ui.update { it.copy(imageGroupsCount = serverCount + customImgCount) }
+            val count = container.imageChannelResolver.countAvailableImageChannels()
+            if (count != null) {
+                _ui.update { it.copy(imageGroupsCount = count) }
             }
         }
     }
@@ -233,7 +226,6 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
     fun saveProvider(draft: ApiProviderDraft) {
         container.apiProviderStore.upsert(draft.toConfig())
         clearProviderTestState()
-        val isZh = container.settingsState.value.language == AppLanguage.ZH
         container.toastController.show(if (isZh) "已保存 API 接口配置" else "Saved API endpoint")
     }
 
@@ -258,7 +250,6 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun refreshProfile() {
-        val isZh = container.settingsState.value.language == AppLanguage.ZH
         if (_ui.value.isDirectApiOnly) {
             refreshImageGroupsCount()
             container.toastController.show(if (isZh) "已刷新本地接口状态" else "Local endpoints refreshed")
@@ -363,8 +354,7 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
                 container.localEmbeddingModelManager.deleteModel(modelId)
             }
             _ui.update { it.copy(isLocalEmbedLoaded = container.retrievalCoordinator.isLocalSessionLoaded()) }
-            val isZh = container.settingsState.value.language == AppLanguage.ZH
-            if (deleted) {
+                if (deleted) {
                 container.toastController.show(if (isZh) "已删除本地向量模型" else "Deleted local embedding model")
             }
             refreshVectorStats()
@@ -374,7 +364,6 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
     fun unloadLocalModelNow() {
         container.retrievalCoordinator.unloadLocalModelNow()
         _ui.update { it.copy(isLocalEmbedLoaded = container.retrievalCoordinator.isLocalSessionLoaded()) }
-        val isZh = container.settingsState.value.language == AppLanguage.ZH
         container.toastController.show(if (isZh) "已释放本地向量模型内存" else "Unloaded local embedding model from memory")
     }
 
@@ -407,7 +396,6 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
     fun testRemoteEmbedding() {
         if (_ui.value.isTestingEmbedding) return
         val cfg = _ui.value.retrievalSettings.remoteEmbedding
-        val isZh = container.settingsState.value.language == AppLanguage.ZH
         viewModelScope.launch {
             _ui.update { it.copy(isTestingEmbedding = true, embeddingTestStatus = null) }
             val result = container.retrievalCoordinator.testRemoteEmbedding(cfg)
@@ -436,7 +424,6 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
         protocol: ApiProtocol,
     ) {
         if (_ui.value.isFetchingRetrievalModels) return
-        val isZh = container.settingsState.value.language == AppLanguage.ZH
         viewModelScope.launch {
             _ui.update { it.copy(isFetchingRetrievalModels = true) }
             val result = container.retrievalCoordinator.fetchRemoteRetrievalModels(
@@ -471,7 +458,6 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun clearVectorCache() {
-        val isZh = container.settingsState.value.language == AppLanguage.ZH
         viewModelScope.launch {
             container.retrievalCoordinator.clearAllVectors()
             _ui.update {
@@ -504,7 +490,6 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
         includeDirectImages: Boolean = false,
         successMessage: String,
     ) {
-        val isZh = container.settingsState.value.language == AppLanguage.ZH
         val cleanPass = passphrase?.trim()?.takeIf { it.isNotEmpty() }
         if (includeVault && cleanPass == null) {
             container.toastController.show(
@@ -559,7 +544,6 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
         successMessage: String,
         failedMessage: String,
     ) {
-        val isZh = container.settingsState.value.language == AppLanguage.ZH
         viewModelScope.launch {
             _ui.update { it.copy(isBackupBusy = true) }
             try {
@@ -688,7 +672,6 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
         passphrase: String,
     ) {
         if (_ui.value.isTestingWebDav) return
-        val isZh = container.settingsState.value.language == AppLanguage.ZH
         val cleanCfg = config.copy(url = config.url.trim(), username = config.username.trim())
         if (cleanCfg.url.isEmpty() || cleanCfg.username.isEmpty() || password.isBlank()) {
             _ui.update {
@@ -753,7 +736,6 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
         passphrase: String,
     ) {
         if (_ui.value.isWebDavSyncBusy) return
-        val isZh = container.settingsState.value.language == AppLanguage.ZH
         val cleanCfg = config.copy(url = config.url.trim(), username = config.username.trim())
         if (cleanCfg.url.isEmpty() || cleanCfg.username.isEmpty() || password.isBlank() || passphrase.isBlank()) {
             container.toastController.show(
@@ -838,7 +820,6 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
         passphrase: String,
     ) {
         if (_ui.value.isWebDavSyncBusy) return
-        val isZh = container.settingsState.value.language == AppLanguage.ZH
         val cleanCfg = config.copy(url = config.url.trim(), username = config.username.trim())
         if (cleanCfg.url.isEmpty() || cleanCfg.username.isEmpty() || password.isBlank() || passphrase.isBlank()) {
             container.toastController.show(

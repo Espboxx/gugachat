@@ -115,7 +115,10 @@ class ApiProviderStore(context: Context) {
     }
 
     @Synchronized
-    fun upsertAllDeduped(imported: List<ApiProviderConfig>): Int {
+    fun upsertAllDeduped(
+        imported: List<ApiProviderConfig>,
+        allowBlankKeyForLan: Boolean = false,
+    ): Int {
         if (imported.isEmpty()) return 0
         val list = _providers.value.toMutableList()
         val existingKeys = list.map { ApiProviderImportCodec.dedupeKey(it) }.toHashSet()
@@ -124,12 +127,15 @@ class ApiProviderStore(context: Context) {
         var added = 0
         imported.forEach { raw ->
             val cleanKey = raw.apiKey.trim()
-            if (cleanKey.isEmpty()) return@forEach
+            val normalizedBaseUrl = raw.baseUrl.trim().ifBlank { raw.protocol.defaultBaseUrl }
+            val keyAllowed = cleanKey.isNotEmpty() ||
+                (allowBlankKeyForLan && com.gugachat.app.core.util.ServerUrlUtils.isPrivateLanOrLocalhost(normalizedBaseUrl))
+            if (!keyAllowed) return@forEach
             val normalized = raw.copy(
                 id = raw.id.ifBlank { UUID.randomUUID().toString() },
                 numericId = nextNumericId,
                 name = raw.name.trim(),
-                baseUrl = raw.baseUrl.trim().ifBlank { raw.protocol.defaultBaseUrl },
+                baseUrl = normalizedBaseUrl,
                 apiKey = cleanKey,
                 customModels = raw.customModels.map { it.trim() }.filter { it.isNotEmpty() }.distinct(),
                 createdAt = now,

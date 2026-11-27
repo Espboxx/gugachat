@@ -20,6 +20,7 @@ import com.gugachat.app.data.local.PromptPresetEntity
 import com.gugachat.app.data.local.WorldbookEntity
 import com.gugachat.app.data.local.toDomain
 import com.gugachat.app.domain.chat.BuiltChatContext
+import com.gugachat.app.domain.chat.BuiltChatContextV4
 import com.gugachat.app.domain.chat.ChatAttachmentMeta
 import com.gugachat.app.domain.chat.ChatConversation
 import com.gugachat.app.domain.chat.ChatMessage
@@ -225,77 +226,28 @@ class ChatContextAssembler(
         )
 
         var builtV4 = ContextBuilder.buildChatContextV4(baseInput)
-
-        if (retrievalCoordinator.isRerankEnabled(settings.retrievalSettings)) {
-            val dynamicItems = builtV4.built.summary.recalledItems.filter {
-                it.triggerKind != "constant" && it.triggerKind != "pinned_ledger"
-            }
-            if (dynamicItems.size > 2) {
-                val loreById = loreList.associateBy { it.id }
-                val wbEntryById = v4Assets.mountedWorldbooks
-                    .asSequence()
-                    .flatMap { it.entries.asSequence() }
-                    .associateBy { it.id }
-                val ledgerById = ledgerList.associateBy { it.id }
-                val epById = episodeList.associateBy { it.id }
-                val memById = userMemList.associateBy { it.id }
-                val rerankPairs = dynamicItems.map { item ->
-                    val key = "${item.source}:${item.id}"
-                    val docText = when (item.source) {
-                        "novel_lore" -> loreById[item.id]?.let { "${it.title}: ${it.content}" }
-                        RetrievalCoordinator.OWNER_WORLDBOOK_ENTRY -> wbEntryById[item.id]?.let { "${it.title}: ${it.content}" }
-                        "rp_ledger" -> ledgerById[item.id]?.let { "${it.title}: ${it.content}" }
-                        "episode_archived" -> epById[item.id]?.let { "${it.title}: ${it.summary}" }
-                        "user_memory_archival" -> memById[item.id]?.content
-                        else -> null
-                    }?.takeIf { it.isNotBlank() } ?: "${item.title}: ${item.contentPreview}"
-                    key to docText
-                }
-                val rerankScores = retrievalCoordinator.rerankCandidatesIfEnabled(queryText, rerankPairs)
-                if (rerankScores.isNotEmpty()) {
-                    val droppedNoiseKeys = HashSet<String>()
-                    val adjustedScores = HashMap<String, Double>(semanticScores)
-                    val floorBase = maxOf(minCosineFloor, 0.50)
-                    for (item in dynamicItems) {
-                        val key = "${item.source}:${item.id}"
-                        val rScore = rerankScores[key] ?: continue
-                        if (rScore < 0.15) {
-                            droppedNoiseKeys.add(key)
-                            adjustedScores.remove(item.id)
-                        } else {
-                            adjustedScores[item.id] = (floorBase + (1.0 - floorBase) * rScore).coerceIn(floorBase, 1.0)
-                        }
-                    }
-                    val refinedV4 = ContextBuilder.buildChatContextV4(
-                        baseInput.copy(
-                            precomputedSemanticScores = adjustedScores.ifEmpty { null },
-                            mutedRecallKeys = mutedRecallKeys + droppedNoiseKeys,
-                        ),
-                    )
-                    builtV4 = refinedV4.copy(
-                        built = refinedV4.built.copy(
-                            summary = refinedV4.built.summary.copy(
-                                retrievalModeUsed = RetrievalCoordinator.MODE_REMOTE_VECTOR_RERANK,
-                                droppedRecallCount = refinedV4.built.summary.droppedRecallCount + droppedNoiseKeys.size,
-                            ),
-                        ),
-                    )
-                }
-            }
-        }
+        builtV4 = applyRerankIfEnabled(
+            settings = settings,
+            baseInput = baseInput,
+            builtV4 = builtV4,
+            queryText = queryText,
+            semanticScores = semanticScores,
+            minCosineFloor = minCosineFloor,
+            mutedRecallKeys = mutedRecallKeys,
+            loreList = loreList,
+            ledgerList = ledgerList,
+            episodeList = episodeList,
+            userMemList = userMemList,
+            mountedWorldbooks = v4Assets.mountedWorldbooks,
+        )
 
         val protocol = resolveProtocolForGroup(groupId)
-        val rawResolvedPrefill = builtV4.resolvedAssistantPrefill?.takeIf { it.isNotBlank() }
-        val guardedPrefill = if (rawResolvedPrefill != null) {
-            val anthropicThinking = protocol == ApiProtocol.ANTHROPIC &&
-                conv.params.enableReasoning &&
-                !conv.params.reasoningEffort.isNullOrBlank()
-            val officialOpenAi = protocol == ApiProtocol.OPENAI_CHAT &&
-                DirectProtocolCodec.isOfficialOpenAiHost(apiProviderStore.findBySyntheticId(groupId)?.baseUrl.orEmpty())
-            if (anthropicThinking || officialOpenAi || protocol == ApiProtocol.OPENAI_RESPONSES) null else rawResolvedPrefill
-        } else {
-            null
-        }
+        val guardedPrefill = guardAssistantPrefill(
+            rawResolvedPrefill = builtV4.resolvedAssistantPrefill?.takeIf { it.isNotBlank() },
+            protocol = protocol,
+            conv = conv,
+            groupId = groupId,
+        )
 
         val built = builtV4.built
         val hasUndecayedImages = built.wireMessages.any { msg ->
@@ -416,6 +368,92 @@ class ChatContextAssembler(
             }
         }
         return ids
+    }
+
+    private suspend fun applyRerankIfEnabled(
+        settings: AppSettings,
+        baseInput: ContextBuildInput,
+        builtV4: com.gugachat.app.domain.chat.BuiltChatContextV4,
+        queryText: String,
+        semanticScores: Map<String, Double>,
+        minCosineFloor: Double,
+        mutedRecallKeys: Set<String>,
+        loreList: List<NovelLoreEntry>,
+        ledgerList: List<MemoryLedgerItem>,
+        episodeList: List<MemoryEpisode>,
+        userMemList: List<UserMemory>,
+        mountedWorldbooks: List<WorldbookMountedBook>,
+    ): com.gugachat.app.domain.chat.BuiltChatContextV4 {
+        if (!retrievalCoordinator.isRerankEnabled(settings.retrievalSettings)) return builtV4
+        val dynamicItems = builtV4.built.summary.recalledItems.filter {
+            it.triggerKind != "constant" && it.triggerKind != "pinned_ledger"
+        }
+        if (dynamicItems.size <= 2) return builtV4
+        val loreById = loreList.associateBy { it.id }
+        val wbEntryById = mountedWorldbooks
+            .asSequence()
+            .flatMap { it.entries.asSequence() }
+            .associateBy { it.id }
+        val ledgerById = ledgerList.associateBy { it.id }
+        val epById = episodeList.associateBy { it.id }
+        val memById = userMemList.associateBy { it.id }
+        val rerankPairs = dynamicItems.map { item ->
+            val key = "${item.source}:${item.id}"
+            val docText = when (item.source) {
+                "novel_lore" -> loreById[item.id]?.let { RetrievalCoordinator.formatCanonicalTargetText(it.title, it.content) }
+                RetrievalCoordinator.OWNER_WORLDBOOK_ENTRY -> wbEntryById[item.id]?.let { RetrievalCoordinator.formatCanonicalTargetText(it.title, it.content) }
+                "rp_ledger" -> ledgerById[item.id]?.let { RetrievalCoordinator.formatCanonicalTargetText(it.title, it.content) }
+                "episode_archived" -> epById[item.id]?.let { RetrievalCoordinator.formatCanonicalTargetText(it.title, it.summary) }
+                "user_memory_archival" -> memById[item.id]?.content
+                else -> null
+            }?.takeIf { it.isNotBlank() } ?: "${item.title}: ${item.contentPreview}"
+            key to docText
+        }
+        val rerankScores = retrievalCoordinator.rerankCandidatesIfEnabled(queryText, rerankPairs)
+        if (rerankScores.isEmpty()) return builtV4
+
+        val droppedNoiseKeys = HashSet<String>()
+        val adjustedScores = HashMap<String, Double>(semanticScores)
+        val floorBase = maxOf(minCosineFloor, 0.50)
+        for (item in dynamicItems) {
+            val key = "${item.source}:${item.id}"
+            val rScore = rerankScores[key] ?: continue
+            if (rScore < 0.15) {
+                droppedNoiseKeys.add(key)
+                adjustedScores.remove(item.id)
+            } else {
+                adjustedScores[item.id] = (floorBase + (1.0 - floorBase) * rScore).coerceIn(floorBase, 1.0)
+            }
+        }
+        val refinedV4 = ContextBuilder.buildChatContextV4(
+            baseInput.copy(
+                precomputedSemanticScores = adjustedScores.ifEmpty { null },
+                mutedRecallKeys = mutedRecallKeys + droppedNoiseKeys,
+            ),
+        )
+        return refinedV4.copy(
+            built = refinedV4.built.copy(
+                summary = refinedV4.built.summary.copy(
+                    retrievalModeUsed = RetrievalCoordinator.MODE_REMOTE_VECTOR_RERANK,
+                    droppedRecallCount = refinedV4.built.summary.droppedRecallCount + droppedNoiseKeys.size,
+                ),
+            ),
+        )
+    }
+
+    private fun guardAssistantPrefill(
+        rawResolvedPrefill: String?,
+        protocol: ApiProtocol,
+        conv: ChatConversation,
+        groupId: Long,
+    ): String? {
+        if (rawResolvedPrefill == null) return null
+        val anthropicThinking = protocol == ApiProtocol.ANTHROPIC &&
+            conv.params.enableReasoning &&
+            !conv.params.reasoningEffort.isNullOrBlank()
+        val officialOpenAi = protocol == ApiProtocol.OPENAI_CHAT &&
+            DirectProtocolCodec.isOfficialOpenAiHost(apiProviderStore.findBySyntheticId(groupId)?.baseUrl.orEmpty())
+        return if (anthropicThinking || officialOpenAi || protocol == ApiProtocol.OPENAI_RESPONSES) null else rawResolvedPrefill
     }
 
     fun buildSemanticQueryText(

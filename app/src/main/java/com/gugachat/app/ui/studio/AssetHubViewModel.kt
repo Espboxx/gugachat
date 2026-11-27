@@ -256,119 +256,14 @@ class AssetHubViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             _ui.update { it.copy(isBusy = true) }
             try {
-                val payload = withContext(Dispatchers.IO) {
-                    val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                        ?: error(if (isZh) "无法读取所选文件" else "Cannot read selected file")
-                    val fileName = resolveUriDisplayName(contentResolver, uri)
-                    val isPng = RpCardCodec.isPngBytes(bytes)
-                    val zipCard = if (!isPng) RpCardCodec.extractCardFromZipBytes(bytes) else null
-                    val rawJson = when {
-                        isPng -> RpCardCodec.extractCardJsonFromPng(bytes)
-                            ?: error(if (isZh) "PNG 图片中未检测到角色卡元数据" else "No card metadata found in PNG")
-                        zipCard != null -> zipCard.cardJson
-                        else -> bytes.toString(Charsets.UTF_8).removePrefix("\uFEFF")
-                    }
-                    ImportedCardFilePayload(bytes, fileName, isPng, zipCard, rawJson)
-                }
-
-                // Gracefully route standalone Tavern Worldbook / Preset / Regex JSONs when dropped here
-                if (!payload.isPng && payload.zipCard == null) {
-                    val elem = runCatching { AppJson.parseToJsonElement(payload.rawJson.trim()) }.getOrNull()
-                    if (elem != null && isStandaloneSettingElement(elem)) {
-                        val importedSummary = withContext(Dispatchers.IO) {
-                            importStandaloneSettingElement(elem, payload.fileName)
-                        }
-                        if (importedSummary != null) {
-                            container.toastController.show(importedSummary)
-                            return@launch
-                        }
-                    }
-                }
-
-                val savedResult = withContext(Dispatchers.IO) {
-                    val mediaRelAvatar = when {
-                        payload.isPng -> saveRpMediaRelative(payload.bytes, "card_avatar", "png")
-                        payload.zipCard?.avatarBytes != null -> saveRpMediaRelative(
-                            payload.zipCard.avatarBytes,
-                            "card_avatar",
-                            payload.zipCard.avatarExt,
-                        )
-                        else -> null
-                    }
-                    val mediaRelSprite = payload.zipCard?.spriteBytes?.let { sprite ->
-                        saveRpMediaRelative(sprite, "card_sprite", payload.zipCard.spriteExt)
-                    }
-                    val expressionRels = LinkedHashMap<String, String>()
-                    payload.zipCard?.expressionSprites?.forEach { (mood, pair) ->
-                        expressionRels[mood] = saveRpMediaRelative(pair.first, "card_expr", pair.second)
-                    }
-
-                    val candidateId = UUID.randomUUID().toString()
-                    val candidateWbId = UUID.randomUUID().toString()
-                    val parsed = RpCardCodec.parseCardToV4(
-                        rawJson = payload.rawJson,
-                        cardId = candidateId,
-                        worldbookId = candidateWbId,
-                        avatarPath = mediaRelAvatar,
-                        spritePath = mediaRelSprite ?: mediaRelAvatar,
-                        expressionSprites = expressionRels,
-                    )
-
-                    val existingByFp = parsed.card.contentFingerprint
-                        .takeIf { it.isNotBlank() }
-                        ?.let { assetDao.getCardByFingerprint(it) }
-
-                    var persistedWorldbook: ParsedWorldbookV4? = null
-                    val cardToSave = if (existingByFp != null) {
-                        val targetWbId = existingByFp.primaryWorldbookId ?: parsed.worldbook?.worldbook?.id
-                        parsed.worldbook?.let { wb ->
-                            persistedWorldbook = wb.copy(
-                                worldbook = wb.worldbook.copy(id = targetWbId ?: wb.worldbook.id),
-                                entries = wb.entries.map { it.copy(worldbookId = targetWbId ?: wb.worldbook.id) },
-                            )
-                        }
-                        parsed.card.copy(
-                            id = existingByFp.id,
-                            avatarPath = parsed.card.avatarPath ?: existingByFp.avatarPath,
-                            spritePath = parsed.card.spritePath ?: existingByFp.spritePath,
-                            primaryWorldbookId = targetWbId,
-                            favorite = existingByFp.favorite,
-                            createdAt = existingByFp.createdAt,
-                            updatedAt = System.currentTimeMillis(),
-                        )
-                    } else {
-                        persistedWorldbook = parsed.worldbook
-                        parsed.card
-                    }
-
-                    database.withTransaction {
-                        persistedWorldbook?.let { wb ->
-                            assetDao.upsertWorldbook(wb.worldbook)
-                            assetDao.replaceWorldbookEntries(wb.worldbook.id, wb.entries)
-                        }
-                        assetDao.upsertCharacterCard(cardToSave)
-                    }
-                    Triple(cardToSave, persistedWorldbook, existingByFp != null)
-                }
-
-                savedResult.second?.let { wb ->
-                    container.retrievalCoordinator.scheduleWorldbookIndexing(
-                        scope = viewModelScope,
-                        worldbookId = wb.worldbook.id,
-                        entries = wb.entries,
-                    )
-                }
-
-                val cardName = savedResult.first.name.ifBlank { if (isZh) "角色卡" else "Character Card" }
-                val wbSuffix = savedResult.second?.let { wb ->
-                    if (isZh) "（附带世界书 ${wb.entries.size} 条）" else " (${wb.entries.size} lore entries)"
-                }.orEmpty()
-                val msg = if (savedResult.third) {
-                    if (isZh) "已更新角色卡「$cardName」$wbSuffix" else "Updated \"$cardName\"$wbSuffix"
-                } else {
-                    if (isZh) "已导入角色卡「$cardName」$wbSuffix" else "Imported \"$cardName\"$wbSuffix"
-                }
-                container.toastController.show(msg)
+                val imported = container.assetImportCoordinator.importUri(
+                    uri = uri,
+                    contentResolver = contentResolver,
+                    persistRegexAsPreset = true,
+                )
+                val summary = container.assetImportCoordinator.formatSettingImportSummary(imported, isZh)
+                    ?: if (isZh) "已导入资产" else "Asset imported"
+                container.toastController.show(summary)
             } catch (e: Throwable) {
                 container.toastController.show(
                     e.message ?: if (isZh) "角色卡导入失败" else "Card import failed",
@@ -463,7 +358,13 @@ class AssetHubViewModel(private val container: AppContainer) : ViewModel() {
                 withContext(Dispatchers.IO) {
                     val card = assetDao.getCharacterCardById(cardId) ?: return@withContext
                     val ext = if (RpCardCodec.isPngBytes(imageBytes)) "png" else "jpg"
-                    val relPath = saveRpMediaRelative(imageBytes, "card_ai_portrait", ext)
+                    val relPath = LocalMediaPathResolver.saveRpMediaBytes(
+                        filesDir = filesDir,
+                        bytes = imageBytes,
+                        prefix = "card_ai_portrait",
+                        ext = ext,
+                        shortUuid = true,
+                    ).first
                     val existingCast = card.decodedCast()
                     val leadIdx = existingCast.indexOfFirst { !it.isPlayer }.takeIf { it >= 0 } ?: 0
                     val nextCast = if (existingCast.isNotEmpty()) {
@@ -515,7 +416,7 @@ class AssetHubViewModel(private val container: AppContainer) : ViewModel() {
                 return@launch
             }
             val normalizedBytes = withContext(Dispatchers.IO) {
-                if (RpCardCodec.isPngBytes(bytes)) bytes else transcodeToPngBytes(bytes) ?: bytes
+                if (RpCardCodec.isPngBytes(bytes)) bytes else RpCardCodec.transcodeToPngBytes(bytes, maxSide = 1024) ?: bytes
             }
             attachCardPortraitBytes(cardId, normalizedBytes)
         }
@@ -586,43 +487,9 @@ class AssetHubViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             _ui.update { it.copy(isBusy = true) }
             try {
-                val resultMsg = withContext(Dispatchers.IO) {
-                    val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                        ?: error(if (isZh) "文件为空" else "Empty file")
-                    val fileName = resolveUriDisplayName(contentResolver, uri)
-
-                    if (RpCardCodec.isPngBytes(bytes)) {
-                        val jsonText = RpCardCodec.extractCardJsonFromPng(bytes)
-                            ?: error(if (isZh) "PNG 未包含世界书元数据" else "No card metadata in PNG")
-                        val parsed = RpCardCodec.parseCardToV4(jsonText)
-                        val wb = parsed.worldbook
-                            ?: error(if (isZh) "该角色卡未附带内嵌世界书" else "This card has no embedded worldbook")
-                        saveWorldbookWithIndexing(wb.worldbook, wb.entries)
-                        return@withContext if (isZh) {
-                            "已提取世界书「${wb.worldbook.name}」(${wb.entries.size} 条)"
-                        } else {
-                            "Extracted worldbook \"${wb.worldbook.name}\" (${wb.entries.size} entries)"
-                        }
-                    }
-
-                    val zipCard = RpCardCodec.extractCardFromZipBytes(bytes)
-                    if (zipCard != null) {
-                        val parsed = RpCardCodec.parseCardToV4(zipCard.cardJson)
-                        val wb = parsed.worldbook
-                            ?: error(if (isZh) "该角色包未附带世界书" else "Archive contains no character_book")
-                        saveWorldbookWithIndexing(wb.worldbook, wb.entries)
-                        return@withContext if (isZh) {
-                            "已提取世界书「${wb.worldbook.name}」(${wb.entries.size} 条)"
-                        } else {
-                            "Extracted worldbook \"${wb.worldbook.name}\" (${wb.entries.size} entries)"
-                        }
-                    }
-
-                    val rawJson = bytes.toString(Charsets.UTF_8).removePrefix("\uFEFF").trim()
-                    val elem = AppJson.parseToJsonElement(rawJson)
-                    importStandaloneSettingElement(elem, fileName)
-                        ?: error(if (isZh) "未识别的世界书/预设/正则格式" else "Unrecognized setting JSON format")
-                }
+                val imported = container.assetImportCoordinator.importSettingAssetUri(uri, contentResolver)
+                val resultMsg = container.assetImportCoordinator.formatSettingImportSummary(imported, isZh)
+                    ?: error(if (isZh) "未识别的世界书/预设/正则格式" else "Unrecognized setting JSON format")
                 container.toastController.show(resultMsg)
             } catch (e: Throwable) {
                 container.toastController.show(
@@ -633,137 +500,6 @@ class AssetHubViewModel(private val container: AppContainer) : ViewModel() {
                 _ui.update { it.copy(isBusy = false) }
             }
         }
-    }
-
-    private fun isStandaloneSettingElement(elem: JsonElement): Boolean {
-        if (TavernAssetCodec.isLorebookJson(elem) || TavernAssetCodec.isRegexScriptJson(elem)) return true
-        val obj = elem as? JsonObject ?: return false
-        return TavernAssetCodec.isRikkaExportEnvelope(obj) ||
-            TavernAssetCodec.isChatPresetJson(obj) ||
-            TavernAssetCodec.isSillyTavernSettingsJson(obj)
-    }
-
-    private suspend fun importStandaloneSettingElement(elem: JsonElement, fileName: String?): String? {
-        val obj = elem as? JsonObject
-        val now = System.currentTimeMillis()
-        val cleanBaseName = fileName
-            ?.substringBeforeLast('.')
-            ?.trim()
-            ?.takeIf { it.isNotEmpty() }
-
-        // 1. RikkaHub ExportEnvelope (`lorebook` | `mode_injection`)
-        if (obj != null && TavernAssetCodec.isRikkaExportEnvelope(obj)) {
-            val type = obj["type"]?.jsonPrimitive?.contentOrNull?.trim()?.lowercase()
-            if (type == "mode_injection") {
-                val preset = TavernAssetCodec.parsePromptPresetV4(obj, fileName = fileName)
-                assetDao.upsertPromptPreset(preset)
-                return if (isZh) "已导入模式注入「${preset.name}」" else "Imported preset \"${preset.name}\""
-            }
-            if (type == "lorebook") {
-                val parsed = TavernAssetCodec.parseWorldbookV4(elem, fileName = fileName)
-                saveWorldbookWithIndexing(parsed.worldbook, parsed.entries)
-                return if (isZh) {
-                    "已导入世界书「${parsed.worldbook.name}」(${parsed.entries.size} 条)"
-                } else {
-                    "Imported worldbook \"${parsed.worldbook.name}\" (${parsed.entries.size} entries)"
-                }
-            }
-        }
-
-        // 2. SillyTavern / TavernHelper Worldbook
-        if (TavernAssetCodec.isLorebookJson(elem)) {
-            val parsed = TavernAssetCodec.parseWorldbookV4(elem, fileName = fileName)
-            saveWorldbookWithIndexing(parsed.worldbook, parsed.entries)
-            return if (isZh) {
-                "已导入世界书「${parsed.worldbook.name}」(${parsed.entries.size} 条)"
-            } else {
-                "Imported worldbook \"${parsed.worldbook.name}\" (${parsed.entries.size} entries)"
-            }
-        }
-
-        // 3. SillyTavern Chat Completion Preset
-        if (obj != null && TavernAssetCodec.isChatPresetJson(obj)) {
-            val preset = TavernAssetCodec.parsePromptPresetV4(obj, fileName = fileName)
-            assetDao.upsertPromptPreset(preset)
-            val blocksCount = decodeJsonOrDefault<List<PromptPresetBlock>>(preset.blocksJson, emptyList()).size
-            return if (isZh) {
-                "已导入提示词预设「${preset.name}」($blocksCount 个模块)"
-            } else {
-                "Imported preset \"${preset.name}\" ($blocksCount blocks)"
-            }
-        }
-
-        // 4. SillyTavern settings.json (`extension_settings.regex`)
-        if (obj != null && TavernAssetCodec.isSillyTavernSettingsJson(obj)) {
-            val parsed = TavernAssetCodec.parseSillyTavernSettingsJson(obj)
-            if (parsed.regexScripts.isEmpty() && parsed.authorNote.isBlank()) return null
-            val preset = PromptPresetEntity(
-                id = UUID.randomUUID().toString(),
-                name = cleanBaseName ?: if (isZh) "酒馆正则包" else "SillyTavern Regex Pack",
-                sourceFormat = "sillytavern_regex",
-                blocksJson = "[]",
-                regexScriptsJson = AppJson.encodeToString(parsed.regexScripts),
-                samplingPatchJson = "{}",
-                isDefaultRp = false,
-                createdAt = now,
-                updatedAt = now,
-            )
-            assetDao.upsertPromptPreset(preset)
-            return if (isZh) {
-                "已导入正则预设「${preset.name}」(${parsed.regexScripts.size} 条)"
-            } else {
-                "Imported regex pack \"${preset.name}\" (${parsed.regexScripts.size})"
-            }
-        }
-
-        // 5. Standalone Regex Script(s) JSON
-        if (TavernAssetCodec.isRegexScriptJson(elem)) {
-            val scripts = TavernAssetCodec.parseRegexScriptsJson(elem)
-            if (scripts.isEmpty()) return null
-            val defaultName = cleanBaseName
-                ?: scripts.firstOrNull()?.name?.takeIf { it.isNotBlank() }
-                ?: if (isZh) "自定义正则脚本" else "Regex Scripts"
-            val preset = PromptPresetEntity(
-                id = UUID.randomUUID().toString(),
-                name = defaultName,
-                sourceFormat = "sillytavern_regex",
-                blocksJson = "[]",
-                regexScriptsJson = AppJson.encodeToString(scripts),
-                samplingPatchJson = "{}",
-                isDefaultRp = false,
-                createdAt = now,
-                updatedAt = now,
-            )
-            assetDao.upsertPromptPreset(preset)
-            return if (isZh) {
-                "已导入正则「${preset.name}」(${scripts.size} 条)"
-            } else {
-                "Imported regex \"${preset.name}\" (${scripts.size})"
-            }
-        }
-
-        return null
-    }
-
-    private suspend fun saveWorldbookWithIndexing(
-        worldbook: WorldbookEntity,
-        entries: List<WorldbookEntryEntity>,
-    ) {
-        val totalTokens = entries.sumOf { it.estimatedTokens.coerceAtLeast(0) }
-        val normalizedBook = worldbook.copy(
-            entryCount = entries.size,
-            totalEstimatedTokens = totalTokens,
-            updatedAt = System.currentTimeMillis(),
-        )
-        database.withTransaction {
-            assetDao.upsertWorldbook(normalizedBook)
-            assetDao.replaceWorldbookEntries(normalizedBook.id, entries)
-        }
-        container.retrievalCoordinator.scheduleWorldbookIndexing(
-            scope = viewModelScope,
-            worldbookId = normalizedBook.id,
-            entries = entries,
-        )
     }
 
     fun openWorldbookDetail(worldbookId: String?) {
@@ -1043,7 +779,10 @@ class AssetHubViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             withContext(Dispatchers.IO) {
                 val preset = assetDao.getPromptPresetById(presetId) ?: return@withContext
-                val blocks = decodeJsonOrDefault<List<PromptPresetBlock>>(preset.blocksJson, emptyList())
+                val blocks = com.gugachat.app.core.util.JsonUtils.decodeOrDefault<List<PromptPresetBlock>>(
+                    preset.blocksJson,
+                    emptyList(),
+                )
                 val updated = blocks.map { b ->
                     if (b.identifier == identifier) b.copy(enabled = enabled) else b
                 }
@@ -1061,7 +800,10 @@ class AssetHubViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             withContext(Dispatchers.IO) {
                 val preset = assetDao.getPromptPresetById(presetId) ?: return@withContext
-                val scripts = decodeJsonOrDefault<List<RpRegexScript>>(preset.regexScriptsJson, emptyList())
+                val scripts = com.gugachat.app.core.util.JsonUtils.decodeOrDefault<List<RpRegexScript>>(
+                    preset.regexScriptsJson,
+                    emptyList(),
+                )
                 val updated = scripts.map { s ->
                     if (s.id == scriptId) s.copy(enabled = enabled) else s
                 }
@@ -1133,7 +875,7 @@ class AssetHubViewModel(private val container: AppContainer) : ViewModel() {
                             globalEnabled = false,
                             entryCount = entries.size,
                             totalEstimatedTokens = entries.sumOf { it.estimatedTokens },
-                            contentFingerprint = sha256Hex("legacy_lore_${conv.id}_${entries.size}"),
+                            contentFingerprint = com.gugachat.app.core.util.HashUtils.sha256Hex("legacy_lore_${conv.id}_${entries.size}"),
                             createdAt = now,
                             updatedAt = now,
                         )
@@ -1194,138 +936,14 @@ class AssetHubViewModel(private val container: AppContainer) : ViewModel() {
         _ui.update { it.copy(isLaunching = true) }
         try {
             val convId = withContext(Dispatchers.IO) {
-                val now = System.currentTimeMillis()
-                val newConvId = UUID.randomUUID().toString()
-                val filesDirPath = filesDir.absolutePath
-                val settings = container.settingsStore.currentSettings()
-                val persona = personaId?.takeIf { it.isNotBlank() }?.let { assetDao.getPersonaById(it) }
-                    ?: assetDao.getDefaultPersona()
-                val preset = presetId?.takeIf { it.isNotBlank() }?.let { assetDao.getPromptPresetById(it) }
-                    ?: assetDao.getDefaultRpPromptPreset()
-
-                val rawCast = card.decodedCast()
-                val cardAvatarRel = LocalMediaPathResolver.toRelativePath(filesDirPath, card.avatarPath)
-                val cardSpriteRel = LocalMediaPathResolver.toRelativePath(filesDirPath, card.spritePath) ?: cardAvatarRel
-                val cardExprRels = card.decodedExpressionSprites()
-                    .mapValuesNotNull { (_, v) -> LocalMediaPathResolver.toRelativePath(filesDirPath, v) }
-
-                val normalizedCast = if (rawCast.isNotEmpty()) {
-                    val leadIdx = rawCast.indexOfFirst { !it.isPlayer }.takeIf { it >= 0 } ?: 0
-                    rawCast.mapIndexed { idx, ch ->
-                        val relAvatar = LocalMediaPathResolver.toRelativePath(filesDirPath, ch.avatarPath)
-                            ?: if (idx == leadIdx) cardAvatarRel else null
-                        val relSprite = LocalMediaPathResolver.toRelativePath(filesDirPath, ch.spritePath)
-                            ?: if (idx == leadIdx) cardSpriteRel else null
-                        val relExpr = ch.expressionSprites
-                            .mapValuesNotNull { (_, p) -> LocalMediaPathResolver.toRelativePath(filesDirPath, p) }
-                            .ifEmpty { if (idx == leadIdx) cardExprRels else emptyMap() }
-                        if (ch.isPlayer && persona != null) {
-                            ch.copy(
-                                name = persona.name.ifBlank { ch.name },
-                                background = persona.description.ifBlank { ch.background },
-                                avatarPath = LocalMediaPathResolver.toRelativePath(filesDirPath, persona.avatarPath) ?: relAvatar,
-                                spritePath = relSprite,
-                                expressionSprites = relExpr,
-                            )
-                        } else {
-                            ch.copy(
-                                avatarPath = relAvatar,
-                                spritePath = relSprite,
-                                expressionSprites = relExpr,
-                            )
-                        }
-                    }
-                } else {
-                    listOf(
-                        RpCharacter(
-                            id = "npc_${card.id.take(8)}",
-                            name = card.name.ifBlank { "主角" },
-                            role = "companion",
-                            background = card.description,
-                            personality = card.personality,
-                            avatarPath = cardAvatarRel,
-                            spritePath = cardSpriteRel,
-                            expressionSprites = cardExprRels,
-                            inScene = true,
-                            stageSlot = "center",
-                        ),
-                    )
-                }
-
-                val style = RpPlayStyle.entries.firstOrNull { it.name == card.playStyle } ?: RpPlayStyle.chengguang
-                val altGreetings = card.decodedAltGreetings()
-                val regexScripts = card.decodedRegexScripts()
-                val visualTheme = card.decodedVisualTheme()
-                val resolvedPlayerName = persona?.name?.trim()?.takeIf { it.isNotEmpty() } ?: "旅人"
-                val resolvedPlayerPersona = persona?.description?.trim().orEmpty()
-
-                val baseRp = RpConfig(
-                    title = card.name.ifBlank { "未命名剧本" },
-                    worldview = card.scenario,
-                    systemRules = card.systemPrompt,
-                    narratorStyle = card.creatorNotes,
-                    playerName = resolvedPlayerName,
-                    playerPersona = resolvedPlayerPersona,
-                    authorNote = card.depthPromptText,
-                    authorNoteDepth = card.depthPromptDepth.coerceIn(0, 12),
-                    cast = normalizedCast,
-                    state = RpGameState(
-                        scene = card.scenario.lineSequence().firstOrNull()?.trim()?.take(48).orEmpty(),
-                    ),
-                    greeting = card.firstMes,
-                    alternateGreetings = altGreetings,
-                    mesExample = card.mesExample,
-                    postHistoryInstructions = card.postHistoryInstructions,
-                    cardSource = card.sourceSpec,
-                    playStyle = style,
-                    theaterMode = style == RpPlayStyle.chengguang,
-                    visualTheme = visualTheme,
-                    regexScripts = regexScripts,
-                )
-
-                val normalizedRp = expandRuntimeRpMacros(baseRp)
-                val greetingMsg = buildOpeningGreetingMessage(
-                    conversationId = newConvId,
-                    rp = normalizedRp,
-                    rawGreetings = (listOf(card.firstMes) + altGreetings),
+                container.campaignLaunchUseCase.launchFromCard(
+                    card = card,
                     selectedGreetingIndex = selectedGreetingIndex,
-                    now = now,
+                    personaId = personaId,
+                    worldbookIds = worldbookIds,
+                    presetId = presetId,
                 )
-
-                val conv = ChatConversation(
-                    id = newConvId,
-                    title = normalizedRp.title,
-                    mode = ConversationMode.rp,
-                    params = defaultChatParams(settings),
-                    rp = normalizedRp,
-                    characterCardId = card.id,
-                    personaId = persona?.id,
-                    presetId = preset?.id,
-                    createdAt = now,
-                    updatedAt = now,
-                )
-                val refs = worldbookIds.distinct().mapIndexed { idx, wbId ->
-                    ConversationWorldbookCrossRef(
-                        conversationId = newConvId,
-                        worldbookId = wbId,
-                        sortOrder = idx,
-                        enabled = true,
-                        updatedAt = now,
-                    )
-                }
-
-                database.withTransaction {
-                    chatDao.upsertConversation(conv.toEntity())
-                    if (greetingMsg != null) {
-                        chatDao.upsertMessage(greetingMsg.toEntity())
-                    }
-                    if (refs.isNotEmpty()) {
-                        assetDao.replaceMountedWorldbooks(newConvId, refs)
-                    }
-                }
-                newConvId
             }
-
             withContext(Dispatchers.Main) {
                 onOpenConversation(convId)
             }
@@ -1350,89 +968,14 @@ class AssetHubViewModel(private val container: AppContainer) : ViewModel() {
         _ui.update { it.copy(isLaunching = true) }
         try {
             val convId = withContext(Dispatchers.IO) {
-                val now = System.currentTimeMillis()
-                val newConvId = UUID.randomUUID().toString()
-                val filesDirPath = filesDir.absolutePath
-                val settings = container.settingsStore.currentSettings()
-                val persona = personaId?.takeIf { it.isNotBlank() }?.let { assetDao.getPersonaById(it) }
-                    ?: assetDao.getDefaultPersona()
-                val promptPreset = promptPresetId?.takeIf { it.isNotBlank() }?.let { assetDao.getPromptPresetById(it) }
-                    ?: assetDao.getDefaultRpPromptPreset()
-
-                val baseCfg = presetTemplate.config
-                val normalizedCast = baseCfg.cast.map { ch ->
-                    ch.copy(
-                        avatarPath = LocalMediaPathResolver.toRelativePath(filesDirPath, ch.avatarPath),
-                        spritePath = LocalMediaPathResolver.toRelativePath(filesDirPath, ch.spritePath),
-                    )
-                }
-                val baseRp = baseCfg.copy(
-                    playerName = persona?.name?.trim()?.takeIf { it.isNotEmpty() } ?: baseCfg.playerName,
-                    playerPersona = persona?.description?.trim()?.takeIf { it.isNotEmpty() } ?: baseCfg.playerPersona,
-                    cast = normalizedCast,
-                )
-                val normalizedRp = expandRuntimeRpMacros(baseRp)
-                val rawGreetings = listOf(normalizedRp.greeting) + normalizedRp.alternateGreetings
-                val greetingMsg = buildOpeningGreetingMessage(
-                    conversationId = newConvId,
-                    rp = normalizedRp,
-                    rawGreetings = rawGreetings,
+                container.campaignLaunchUseCase.launchFromPreset(
+                    presetTemplate = presetTemplate,
                     selectedGreetingIndex = selectedGreetingIndex,
-                    now = now,
+                    personaId = personaId,
+                    worldbookIds = worldbookIds,
+                    promptPresetId = promptPresetId,
                 )
-
-                val starterLore = presetTemplate.starterLore.map { s ->
-                    val entry = NovelLoreEntry(
-                        id = UUID.randomUUID().toString(),
-                        conversationId = newConvId,
-                        category = s.category,
-                        title = s.title,
-                        content = s.content,
-                        keywords = s.keywords.ifEmpty { listOf(s.title) },
-                        alwaysActive = s.alwaysActive,
-                        validFromSeq = 0,
-                        createdAt = now,
-                        updatedAt = now,
-                    )
-                    entry.copy(estimatedTokens = NovelEngine.estimateLoreTokens(entry))
-                }
-
-                val conv = ChatConversation(
-                    id = newConvId,
-                    title = normalizedRp.title,
-                    mode = ConversationMode.rp,
-                    params = defaultChatParams(settings),
-                    rp = normalizedRp,
-                    personaId = persona?.id,
-                    presetId = promptPreset?.id,
-                    createdAt = now,
-                    updatedAt = now,
-                )
-                val refs = worldbookIds.distinct().mapIndexed { idx, wbId ->
-                    ConversationWorldbookCrossRef(
-                        conversationId = newConvId,
-                        worldbookId = wbId,
-                        sortOrder = idx,
-                        enabled = true,
-                        updatedAt = now,
-                    )
-                }
-
-                database.withTransaction {
-                    chatDao.upsertConversation(conv.toEntity())
-                    if (greetingMsg != null) {
-                        chatDao.upsertMessage(greetingMsg.toEntity())
-                    }
-                    if (starterLore.isNotEmpty()) {
-                        chatDao.upsertNovelLoreList(starterLore.map { it.toEntity() })
-                    }
-                    if (refs.isNotEmpty()) {
-                        assetDao.replaceMountedWorldbooks(newConvId, refs)
-                    }
-                }
-                newConvId
             }
-
             withContext(Dispatchers.Main) {
                 onOpenConversation(convId)
             }
@@ -1492,119 +1035,6 @@ class AssetHubViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     private suspend fun recalculateWorldbookSummary(worldbookId: String, now: Long) {
-        val wb = assetDao.getWorldbookById(worldbookId) ?: return
-        val entries = assetDao.getWorldbookEntries(worldbookId)
-        val totalTokens = entries.sumOf { it.estimatedTokens.coerceAtLeast(0) }
-        assetDao.upsertWorldbook(
-            wb.copy(
-                entryCount = entries.size,
-                totalEstimatedTokens = totalTokens,
-                updatedAt = now,
-            ),
-        )
+        container.assetImportCoordinator.recalculateWorldbookSummary(worldbookId, now)
     }
-
-    private fun expandRuntimeRpMacros(rp: RpConfig): RpConfig {
-        val expandedState = rp.state.copy(
-            scene = RpEngine.replaceMacros(rp.state.scene, rp),
-            chapterTitle = RpEngine.replaceMacros(rp.state.chapterTitle, rp),
-            inventory = rp.state.inventory.map { RpEngine.replaceMacros(it, rp) },
-            quests = rp.state.quests.map { RpEngine.replaceMacros(it, rp) },
-        )
-        val expandedChoices = rp.pendingChoices.map { ch ->
-            ch.copy(
-                label = RpEngine.replaceMacros(ch.label, rp),
-                actionText = RpEngine.replaceMacros(ch.actionText, rp),
-                consequenceHint = ch.consequenceHint?.let { RpEngine.replaceMacros(it, rp) },
-            )
-        }
-        return rp.copy(
-            state = expandedState,
-            pendingChoices = expandedChoices,
-        )
-    }
-
-    private fun buildOpeningGreetingMessage(
-        conversationId: String,
-        rp: RpConfig,
-        rawGreetings: List<String>,
-        selectedGreetingIndex: Int,
-        now: Long,
-    ): ChatMessage? {
-        val cleaned = rawGreetings.map { it.trim() }.filter { it.isNotEmpty() }
-        if (cleaned.isEmpty()) return null
-        val leadSpeaker = rp.cast.firstOrNull { !it.isPlayer }?.name?.takeIf { it.isNotBlank() }
-        val openingVariants = cleaned.map { raw ->
-            val rendered = RpEngine.replaceMacros(raw, rp)
-            MessageVariant(
-                id = UUID.randomUUID().toString(),
-                content = rendered,
-                createdAt = now,
-                rpStateSnapshot = rp.state,
-                rpCastSnapshot = rp.cast,
-                rpChoices = rp.pendingChoices,
-                rpSpeakerName = leadSpeaker,
-            )
-        }
-        val activeIdx = selectedGreetingIndex.coerceIn(0, openingVariants.lastIndex)
-        val activeContent = openingVariants[activeIdx].content
-        return ChatMessage(
-            id = UUID.randomUUID().toString(),
-            conversationId = conversationId,
-            role = "assistant",
-            content = activeContent,
-            createdAt = now,
-            seq = 1,
-            rpChoices = rp.pendingChoices,
-            status = "done",
-            tokenEstimate = ContextBuilder.estimateMessageTokens(activeContent),
-            variants = openingVariants,
-            activeVariantIndex = activeIdx,
-        )
-    }
-
-    private fun defaultChatParams(settings: com.gugachat.app.core.storage.AppSettings): ChatParams {
-        return ChatParams(
-            maxTokens = settings.defaultMaxOutputTokens.takeIf { it in 256..131_072 },
-            contextWindowOverride = settings.defaultContextWindowOverride.takeIf { it in 4096..2_000_000 },
-            maxHistoryMessages = settings.defaultMaxHistoryMessages.takeIf { it in 1..500 },
-        )
-    }
-
-    private fun saveRpMediaRelative(bytes: ByteArray, prefix: String, ext: String): String =
-        LocalMediaPathResolver.saveRpMediaBytes(
-            filesDir = filesDir,
-            bytes = bytes,
-            prefix = prefix,
-            ext = ext,
-            shortUuid = true,
-        ).first
-
-    private fun transcodeToPngBytes(raw: ByteArray): ByteArray? =
-        RpCardCodec.transcodeToPngBytes(raw, maxSide = 1024)
-
-    private fun resolveUriDisplayName(contentResolver: ContentResolver, uri: Uri): String? =
-        com.gugachat.app.core.util.UriUtils.resolveDisplayName(contentResolver, uri)
-
-    private inline fun <reified T> decodeJsonOrDefault(raw: String?, fallback: T): T =
-        com.gugachat.app.core.util.JsonUtils.decodeOrDefault(raw, fallback)
-
-    private inline fun <K, V, R : Any> Map<K, V>.mapValuesNotNull(transform: (Map.Entry<K, V>) -> R?): Map<K, R> {
-        val out = LinkedHashMap<K, R>(size)
-        for (entry in this) {
-            transform(entry)?.let { out[entry.key] = it }
-        }
-        return out
-    }
-
-    private fun sha256Hex(text: String): String =
-        com.gugachat.app.core.util.HashUtils.sha256Hex(text)
 }
-
-private data class ImportedCardFilePayload(
-    val bytes: ByteArray,
-    val fileName: String?,
-    val isPng: Boolean,
-    val zipCard: com.gugachat.app.domain.chat.ExtractedZipCard?,
-    val rawJson: String,
-)

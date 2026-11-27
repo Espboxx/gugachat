@@ -129,6 +129,21 @@ data class ApiProviderDraft(
     val apiKey: String = "",
     val customModelsText: String = "",
 ) {
+    fun withProtocol(nextProto: ApiProtocol): ApiProviderDraft {
+        val curBase = baseUrl.trim()
+        val shouldResetBase = curBase.isEmpty() || ApiProtocol.entries.any { it.defaultBaseUrl == curBase }
+        return copy(
+            protocol = nextProto,
+            baseUrl = if (shouldResetBase) nextProto.defaultBaseUrl else baseUrl,
+        )
+    }
+
+    fun withPreset(preset: ApiProviderQuickPreset): ApiProviderDraft = copy(
+        protocol = preset.protocol,
+        name = preset.displayName,
+        baseUrl = preset.baseUrl,
+    )
+
     fun toConfig(): ApiProviderConfig = ApiProviderConfig(
         id = editingId ?: UUID.randomUUID().toString(),
         numericId = numericId,
@@ -866,14 +881,7 @@ fun ApiProviderEditorSheet(
                     testSuccessCount = testSuccessCount,
                     testError = testError,
                     onProtocolChange = { nextProto ->
-                        val shouldReplaceBase = initialDraft.baseUrl.isBlank() ||
-                            ApiProtocol.entries.any { it.defaultBaseUrl == initialDraft.baseUrl.trim() }
-                        onDraftChange(
-                            initialDraft.copy(
-                                protocol = nextProto,
-                                baseUrl = if (shouldReplaceBase) nextProto.defaultBaseUrl else initialDraft.baseUrl,
-                            ),
-                        )
+                        onDraftChange(initialDraft.withProtocol(nextProto))
                     },
                     onNameChange = { onDraftChange(initialDraft.copy(name = it)) },
                     onBaseUrlChange = { onDraftChange(initialDraft.copy(baseUrl = it)) },
@@ -881,13 +889,7 @@ fun ApiProviderEditorSheet(
                     onCustomModelsChange = { onDraftChange(initialDraft.copy(customModelsText = it)) },
                     onTestConnection = { onTestConnection(initialDraft) },
                     onApplyPreset = { preset ->
-                        onDraftChange(
-                            initialDraft.copy(
-                                protocol = preset.protocol,
-                                name = preset.displayName,
-                                baseUrl = preset.baseUrl,
-                            ),
-                        )
+                        onDraftChange(initialDraft.withPreset(preset))
                     },
                     showInlineTestBar = true,
                     fadeEndColor = c.page,

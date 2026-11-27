@@ -1,0 +1,98 @@
+package com.gugachat.app.data.chat
+
+import com.gugachat.app.AuthSessionState
+import com.gugachat.app.core.storage.ApiProviderConfig
+import com.gugachat.app.core.storage.ApiProviderStore
+import com.gugachat.app.data.api.DirectApiClient
+import com.gugachat.app.data.api.DirectProtocolCodec
+import com.gugachat.app.data.api.OnlineImageCapabilitiesDto
+import com.gugachat.app.data.api.OnlineImageKeyDto
+import com.gugachat.app.data.api.OnlineImageModelDto
+import com.gugachat.app.data.api.OnlineImagesApi
+import com.gugachat.app.domain.chat.FreeQuotaUtils
+import kotlinx.coroutines.flow.StateFlow
+
+data class ResolvedImageChannels(
+    val capabilities: OnlineImageCapabilitiesDto? = null,
+    val serverKeys: List<OnlineImageKeyDto> = emptyList(),
+    val customKeys: List<OnlineImageKeyDto> = emptyList(),
+    val allKeys: List<OnlineImageKeyDto> = emptyList(),
+)
+
+/**
+ * Unifies server + custom direct image channel discovery, free-quota sorting, and model
+ * resolution across [StudioImageGenerationUseCase], `ImageViewModel`, and `ProfileViewModel`.
+ */
+class ImageChannelResolver(
+    private val authSession: StateFlow<AuthSessionState>,
+    private val apiProviderStore: ApiProviderStore,
+    private val directApiClient: DirectApiClient,
+    private val onlineImagesApi: OnlineImagesApi,
+) {
+    fun customImageProviders(): List<ApiProviderConfig> =
+        apiProviderStore.enabledProviders().filter { p ->
+            DirectProtocolCodec.supportsImageGeneration(
+                protocol = p.protocol,
+                baseUrl = p.baseUrl,
+                customModels = p.customModels,
+            )
+        }
+
+    fun buildCustomImageKeys(): List<OnlineImageKeyDto> =
+        customImageProviders().map { p ->
+            OnlineImageKeyDto(
+                id = p.syntheticGroupId,
+                name = "${p.displayTitle()} · ${p.protocol.displayName}",
+                models = runCatching { directApiClient.listImageModels(p) }.getOrDefault(emptyList()),
+            )
+        }
+
+    suspend fun resolveAvailableChannels(
+        throwOnAllEmptyServerError: Boolean = false,
+    ): ResolvedImageChannels {
+        val isDirectOnly = (authSession.value as? AuthSessionState.LoggedIn)?.isDirectApiOnly == true
+        val customKeys = buildCustomImageKeys()
+        val cap = if (isDirectOnly) {
+            null
+        } else {
+            runCatching { onlineImagesApi.capabilities() }.getOrElse { err ->
+                if (throwOnAllEmptyServerError && customKeys.isEmpty()) throw err else null
+            }
+        }
+        return mergeCapabilitiesAndCustomKeys(cap, customKeys)
+    }
+
+    suspend fun resolveModelsForKey(key: OnlineImageKeyDto): List<OnlineImageModelDto> {
+        val fetched = runCatching { onlineImagesApi.models(key.id) }.getOrElse { key.models }
+        return sortModelsWithFallback(fetched, key.models)
+    }
+
+    suspend fun countAvailableImageChannels(): Int? {
+        val customCount = customImageProviders().size
+        val isDirectOnly = (authSession.value as? AuthSessionState.LoggedIn)?.isDirectApiOnly == true
+        if (isDirectOnly) return customCount
+        val serverCount = runCatching { onlineImagesApi.capabilities().keys.size }.getOrNull()
+        return serverCount?.plus(customCount)
+    }
+
+    companion object {
+        internal fun mergeCapabilitiesAndCustomKeys(
+            cap: OnlineImageCapabilitiesDto?,
+            customKeys: List<OnlineImageKeyDto>,
+        ): ResolvedImageChannels {
+            val serverKeys = cap?.keys?.let { FreeQuotaUtils.sortImageKeysByFreeQuota(it) }.orEmpty()
+            return ResolvedImageChannels(
+                capabilities = cap,
+                serverKeys = serverKeys,
+                customKeys = customKeys,
+                allKeys = serverKeys + customKeys,
+            )
+        }
+
+        internal fun sortModelsWithFallback(
+            fetched: List<OnlineImageModelDto>,
+            fallback: List<OnlineImageModelDto>,
+        ): List<OnlineImageModelDto> =
+            FreeQuotaUtils.sortImageModelsByFreeQuota(fetched.ifEmpty { fallback })
+    }
+}

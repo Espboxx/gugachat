@@ -25,8 +25,11 @@ import com.gugachat.app.data.api.PublicSettingsDto
 import com.gugachat.app.data.api.UpdateChannel
 import com.gugachat.app.data.api.UserDto
 import com.gugachat.app.data.chat.AssetImportCoordinator
+import com.gugachat.app.data.chat.CampaignLaunchUseCase
 import com.gugachat.app.data.chat.ChatContextAssembler
 import com.gugachat.app.data.chat.ChatStreamManager
+import com.gugachat.app.data.chat.ConversationForkUseCase
+import com.gugachat.app.data.chat.ImageChannelResolver
 import com.gugachat.app.data.chat.RetrievalCoordinator
 import com.gugachat.app.data.chat.StudioImageGenerationUseCase
 import com.gugachat.app.data.chat.VectorMemoryIndex
@@ -160,13 +163,25 @@ class AppContainer(context: Context) {
         retrievalCoordinator = retrievalCoordinator,
         scope = scope,
     )
-    val studioImageGenerationUseCase = StudioImageGenerationUseCase(
-        appContext = appContext,
+    val imageChannelResolver = ImageChannelResolver(
         authSession = authSession,
         apiProviderStore = apiProviderStore,
         directApiClient = directApiClient,
         onlineImagesApi = onlineImagesApi,
+    )
+    val studioImageGenerationUseCase = StudioImageGenerationUseCase(
+        appContext = appContext,
+        imageChannelResolver = imageChannelResolver,
+        onlineImagesApi = onlineImagesApi,
         settingsStore = settingsStore,
+    )
+    val campaignLaunchUseCase = CampaignLaunchUseCase(
+        appContext = appContext,
+        database = database,
+        settingsStore = settingsStore,
+    )
+    val conversationForkUseCase = ConversationForkUseCase(
+        database = database,
     )
     val chatStreamManager = ChatStreamManager(
         appContext = appContext,

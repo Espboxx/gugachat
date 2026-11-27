@@ -241,6 +241,8 @@ private fun AuthenticatedShell(
                 modelClass.isAssignableFrom(ChatViewModel::class.java) -> ChatViewModel(container) as T
                 modelClass.isAssignableFrom(ImageViewModel::class.java) -> ImageViewModel(container) as T
                 modelClass.isAssignableFrom(ProfileViewModel::class.java) -> ProfileViewModel(container) as T
+                modelClass.isAssignableFrom(com.gugachat.app.ui.studio.AssetHubViewModel::class.java) ->
+                    com.gugachat.app.ui.studio.AssetHubViewModel(container) as T
                 else -> error("Unknown ViewModel class: ${modelClass.name}")
             }
         }
@@ -248,6 +250,10 @@ private fun AuthenticatedShell(
     val chatVm: ChatViewModel = viewModel(key = "$sessionIdentityKey:chat", factory = vmFactory)
     val imageVm: ImageViewModel = viewModel(key = "$sessionIdentityKey:image", factory = vmFactory)
     val profileVm: ProfileViewModel = viewModel(key = "$sessionIdentityKey:profile", factory = vmFactory)
+    val assetHubVm: com.gugachat.app.ui.studio.AssetHubViewModel = viewModel(
+        key = "$sessionIdentityKey:asset_hub",
+        factory = vmFactory,
+    )
 
     val chatState by chatVm.ui.collectAsStateWithLifecycle()
     val imageState by imageVm.ui.collectAsStateWithLifecycle()
@@ -454,6 +460,7 @@ private fun AuthenticatedShell(
                                 chatVm.selectConversation(convId)
                                 activeTabOrdinal = MainTab.CHAT.ordinal
                             },
+                            assetHubViewModel = assetHubVm,
                         )
                         MainTab.MINE -> ProfileScreen(
                             container = container,

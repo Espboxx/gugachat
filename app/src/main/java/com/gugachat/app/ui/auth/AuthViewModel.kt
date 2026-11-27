@@ -260,13 +260,8 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
 
     fun updateDirectProtocol(protocol: ApiProtocol) {
         _ui.update { state ->
-            val curBase = state.directDraft.baseUrl.trim()
-            val shouldResetBase = curBase.isEmpty() || ApiProtocol.entries.any { it.defaultBaseUrl == curBase }
             state.copy(
-                directDraft = state.directDraft.copy(
-                    protocol = protocol,
-                    baseUrl = if (shouldResetBase) protocol.defaultBaseUrl else curBase,
-                ),
+                directDraft = state.directDraft.withProtocol(protocol),
                 directTestCount = null,
                 directTestError = null,
             )
@@ -276,11 +271,7 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
     fun applyDirectPreset(preset: ApiProviderQuickPreset) {
         _ui.update { state ->
             state.copy(
-                directDraft = state.directDraft.copy(
-                    protocol = preset.protocol,
-                    name = preset.displayName,
-                    baseUrl = preset.baseUrl,
-                ),
+                directDraft = state.directDraft.withPreset(preset),
                 directTestCount = null,
                 directTestError = null,
             )
@@ -350,32 +341,24 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
 
     fun importProvidersFromLogin(selected: List<ApiProviderConfig>) {
         if (selected.isEmpty()) return
-        val existingKeys = container.apiProviderStore.currentProviders()
-            .map(ApiProviderImportCodec::dedupeKey)
-            .toMutableSet()
-        var importedCount = 0
-        var firstSaved: ApiProviderConfig? = null
-        for (p in selected) {
-            val key = ApiProviderImportCodec.dedupeKey(p)
-            if (existingKeys.add(key)) {
-                val saved = container.apiProviderStore.upsert(p)
-                if (firstSaved == null) firstSaved = saved
-                importedCount++
-            }
-        }
+        val added = container.apiProviderStore.upsertAllDeduped(selected, allowBlankKeyForLan = true)
         val isZh = container.settingsState.value.language == AppLanguage.ZH
-        if (importedCount > 0 && firstSaved != null) {
+        if (added > 0) {
+            val importedKeys = selected.mapTo(HashSet()) { ApiProviderImportCodec.dedupeKey(it) }
+            val firstSaved = container.apiProviderStore.currentProviders()
+                .firstOrNull { ApiProviderImportCodec.dedupeKey(it) in importedKeys }
             container.toastController.show(
-                if (isZh) "已导入 $importedCount 个 API 通道" else "Imported $importedCount API providers",
+                if (isZh) "已导入 $added 个 API 通道" else "Imported $added API providers",
             )
-            val savedFirst = firstSaved
-            viewModelScope.launch {
-                container.settingsStore.setPreferredEntryMode("direct")
-                container.settingsStore.setLastChatSelection(
-                    savedFirst.syntheticGroupId,
-                    savedFirst.customModels.firstOrNull().orEmpty(),
-                )
-                container.enterDirectApiMode()
+            if (firstSaved != null) {
+                viewModelScope.launch {
+                    container.settingsStore.setPreferredEntryMode("direct")
+                    container.settingsStore.setLastChatSelection(
+                        firstSaved.syntheticGroupId,
+                        firstSaved.customModels.firstOrNull().orEmpty(),
+                    )
+                    container.enterDirectApiMode()
+                }
             }
         } else {
             container.toastController.show(

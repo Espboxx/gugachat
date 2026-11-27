@@ -3,17 +3,19 @@ package com.gugachat.app.data.chat
 import android.content.ContentResolver
 import android.content.Context
 import android.net.Uri
+import androidx.room.withTransaction
 import com.gugachat.app.core.storage.LocalMediaPathResolver
+import com.gugachat.app.core.util.UriUtils
 import com.gugachat.app.data.api.AppJson
 import com.gugachat.app.data.local.AppDatabase
 import com.gugachat.app.data.local.CharacterCardEntity
-import com.gugachat.app.data.local.PersonaEntity
 import com.gugachat.app.data.local.PromptPresetEntity
 import com.gugachat.app.data.local.WorldbookEntity
 import com.gugachat.app.data.local.WorldbookEntryEntity
 import com.gugachat.app.domain.chat.NovelLoreEntry
 import com.gugachat.app.domain.chat.ParsedQuickRepliesAsset
 import com.gugachat.app.domain.chat.ParsedTavernAsset
+import com.gugachat.app.domain.chat.PromptPresetBlock
 import com.gugachat.app.domain.chat.RpCardCodec
 import com.gugachat.app.domain.chat.RpConfig
 import com.gugachat.app.domain.chat.RpRegexScript
@@ -22,6 +24,7 @@ import com.gugachat.app.domain.chat.UuSaveCodec
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonObject
 import java.io.File
 import java.util.UUID
@@ -83,17 +86,20 @@ class AssetImportCoordinator(
     private val filesDir: File
         get() = appContext.filesDir
 
-    suspend fun importUri(uri: Uri, contentResolver: ContentResolver): AssetImportResult {
-        val (bytes, displayName) = withContext(Dispatchers.IO) {
-            val raw = contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                ?: error("Empty file")
-            val name = resolveUriDisplayName(contentResolver, uri)
-            raw to name
-        }
-        return importBytes(bytes = bytes, fileName = displayName)
+    suspend fun importUri(
+        uri: Uri,
+        contentResolver: ContentResolver,
+        persistRegexAsPreset: Boolean = false,
+    ): AssetImportResult {
+        val (bytes, displayName) = readUriBytesWithName(uri, contentResolver)
+        return importBytes(bytes = bytes, fileName = displayName, persistRegexAsPreset = persistRegexAsPreset)
     }
 
-    suspend fun importBytes(bytes: ByteArray, fileName: String? = null): AssetImportResult {
+    suspend fun importBytes(
+        bytes: ByteArray,
+        fileName: String? = null,
+        persistRegexAsPreset: Boolean = false,
+    ): AssetImportResult {
         val isPng = RpCardCodec.isPngBytes(bytes)
         val zipCard = if (!isPng) RpCardCodec.extractCardFromZipBytes(bytes) else null
 
@@ -133,10 +139,28 @@ class AssetImportCoordinator(
             }
 
             is ParsedTavernAsset.RegexScripts -> {
+                if (persistRegexAsPreset && asset.scripts.isNotEmpty()) {
+                    val name = fileNameBase(fileName)
+                        ?: asset.scripts.firstOrNull()?.name?.takeIf { it.isNotBlank() }
+                        ?: "Regex Scripts"
+                    val preset = savePromptPresetFromRegex(name = name, scripts = asset.scripts)
+                    return AssetImportResult.PromptPresetImported(
+                        preset = preset,
+                        regexScripts = asset.scripts,
+                    )
+                }
                 return AssetImportResult.RegexScriptsImported(asset.scripts)
             }
 
             is ParsedTavernAsset.Settings -> {
+                if (persistRegexAsPreset && (asset.asset.regexScripts.isNotEmpty() || asset.asset.authorNote.isNotBlank())) {
+                    val name = fileNameBase(fileName) ?: "SillyTavern Regex Pack"
+                    val preset = savePromptPresetFromRegex(name = name, scripts = asset.asset.regexScripts)
+                    return AssetImportResult.PromptPresetImported(
+                        preset = preset,
+                        regexScripts = asset.asset.regexScripts,
+                    )
+                }
                 return AssetImportResult.SettingsImported(
                     regexScripts = asset.asset.regexScripts,
                     authorNote = asset.asset.authorNote,
@@ -149,6 +173,155 @@ class AssetImportCoordinator(
         val parsedCard = RpCardCodec.parseCardToV4(rawJson = jsonText)
         return persistParsedCharacterCard(parsedCard)
     }
+
+    /**
+     * Imports a standalone setting asset (Worldbook, Preset, Regex Pack, or Worldbook extracted
+     * from a V2/V3 PNG / ZIP character card without creating a character card row).
+     */
+    suspend fun importSettingAssetUri(uri: Uri, contentResolver: ContentResolver): AssetImportResult {
+        val (bytes, fileName) = readUriBytesWithName(uri, contentResolver)
+        val isPng = RpCardCodec.isPngBytes(bytes)
+        val zipCard = if (!isPng) RpCardCodec.extractCardFromZipBytes(bytes) else null
+        if (isPng || zipCard != null) {
+            val jsonText = when {
+                isPng -> RpCardCodec.extractCardJsonFromPng(bytes)
+                    ?: error("PNG missing character card / worldbook metadata")
+                else -> zipCard!!.cardJson
+            }
+            val parsed = RpCardCodec.parseCardToV4(jsonText)
+            val wb = parsed.worldbook ?: error("Character card has no embedded worldbook")
+            val saved = saveWorldbookWithIndexing(wb.worldbook, wb.entries)
+            return AssetImportResult.WorldbookImported(
+                worldbook = saved,
+                entries = wb.entries,
+                deduplicated = false,
+            )
+        }
+        return importBytes(bytes = bytes, fileName = fileName, persistRegexAsPreset = true)
+    }
+
+    suspend fun extractRegexScriptsFromUri(
+        uri: Uri,
+        contentResolver: ContentResolver,
+    ): List<RpRegexScript> = withContext(Dispatchers.IO) {
+        val (bytes, _) = readUriBytesWithName(uri, contentResolver)
+        val text = if (RpCardCodec.isPngBytes(bytes)) {
+            RpCardCodec.extractCardJsonFromPng(bytes) ?: error("No card metadata in PNG")
+        } else {
+            RpCardCodec.extractCardFromZipBytes(bytes)?.cardJson
+                ?: bytes.toString(Charsets.UTF_8).removePrefix("\uFEFF")
+        }
+        val root = AppJson.parseToJsonElement(text.trim())
+        TavernAssetCodec.parseRegexScriptsJson(root)
+    }
+
+    suspend fun saveWorldbookWithIndexing(
+        worldbook: WorldbookEntity,
+        entries: List<WorldbookEntryEntity>,
+    ): WorldbookEntity {
+        val totalTokens = entries.sumOf { it.estimatedTokens.coerceAtLeast(0) }
+        val normalizedBook = worldbook.copy(
+            entryCount = entries.size,
+            totalEstimatedTokens = totalTokens,
+            updatedAt = System.currentTimeMillis(),
+        )
+        val normalizedEntries = entries.map { it.copy(worldbookId = normalizedBook.id) }
+        database.withTransaction {
+            assetDao.upsertWorldbook(normalizedBook)
+            assetDao.replaceWorldbookEntries(normalizedBook.id, normalizedEntries)
+        }
+        retrievalCoordinator.scheduleWorldbookIndexing(
+            scope = scope,
+            worldbookId = normalizedBook.id,
+            entries = normalizedEntries,
+        )
+        return normalizedBook
+    }
+
+    suspend fun recalculateWorldbookSummary(
+        worldbookId: String,
+        now: Long = System.currentTimeMillis(),
+    ) {
+        val wb = assetDao.getWorldbookById(worldbookId) ?: return
+        val entries = assetDao.getWorldbookEntries(worldbookId)
+        val totalTokens = entries.sumOf { it.estimatedTokens.coerceAtLeast(0) }
+        assetDao.upsertWorldbook(
+            wb.copy(
+                entryCount = entries.size,
+                totalEstimatedTokens = totalTokens,
+                updatedAt = now,
+            ),
+        )
+    }
+
+    suspend fun savePromptPresetFromRegex(
+        name: String,
+        scripts: List<RpRegexScript>,
+    ): PromptPresetEntity {
+        val now = System.currentTimeMillis()
+        val preset = PromptPresetEntity(
+            id = UUID.randomUUID().toString(),
+            name = name,
+            sourceFormat = "sillytavern_regex",
+            blocksJson = "[]",
+            regexScriptsJson = AppJson.encodeToString(scripts),
+            samplingPatchJson = "{}",
+            isDefaultRp = false,
+            createdAt = now,
+            updatedAt = now,
+        )
+        assetDao.upsertPromptPreset(preset)
+        return preset
+    }
+
+    fun formatSettingImportSummary(result: AssetImportResult, isZh: Boolean): String? = when (result) {
+        is AssetImportResult.WorldbookImported -> if (isZh) {
+            "已导入世界书「${result.worldbook.name}」(${result.entries.size} 条)"
+        } else {
+            "Imported worldbook \"${result.worldbook.name}\" (${result.entries.size} entries)"
+        }
+        is AssetImportResult.PromptPresetImported -> {
+            if (result.preset.sourceFormat == "sillytavern_regex") {
+                if (isZh) "已导入正则预设「${result.preset.name}」(${result.regexScripts.size} 条)"
+                else "Imported regex pack \"${result.preset.name}\" (${result.regexScripts.size})"
+            } else {
+                val blocksCount = runCatching {
+                    AppJson.decodeFromString<List<PromptPresetBlock>>(result.preset.blocksJson).size
+                }.getOrDefault(0)
+                if (blocksCount > 0) {
+                    if (isZh) "已导入提示词预设「${result.preset.name}」($blocksCount 个模块)"
+                    else "Imported preset \"${result.preset.name}\" ($blocksCount blocks)"
+                } else {
+                    if (isZh) "已导入预设「${result.preset.name}」" else "Imported preset \"${result.preset.name}\""
+                }
+            }
+        }
+        is AssetImportResult.CharacterCardImported -> {
+            val cardName = result.card.name.ifBlank { if (isZh) "角色卡" else "Character Card" }
+            val wbSuffix = result.worldbook?.let {
+                if (isZh) "（附带世界书 ${result.entryCount} 条）" else " (${result.entryCount} lore entries)"
+            }.orEmpty()
+            if (result.deduplicatedCard) {
+                if (isZh) "已更新角色卡「$cardName」$wbSuffix" else "Updated \"$cardName\"$wbSuffix"
+            } else {
+                if (isZh) "已导入角色卡「$cardName」$wbSuffix" else "Imported \"$cardName\"$wbSuffix"
+            }
+        }
+        else -> null
+    }
+
+    private suspend fun readUriBytesWithName(
+        uri: Uri,
+        contentResolver: ContentResolver,
+    ): Pair<ByteArray, String?> = withContext(Dispatchers.IO) {
+        val raw = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            ?: error("Empty file")
+        val name = UriUtils.resolveDisplayName(contentResolver, uri)
+        raw to name
+    }
+
+    private fun fileNameBase(fileName: String?): String? =
+        fileName?.substringBeforeLast('.')?.trim()?.takeIf { it.isNotEmpty() }
 
     suspend fun exportCharacterCardToPngUri(
         rp: RpConfig,
@@ -231,45 +404,60 @@ class AssetImportCoordinator(
     private suspend fun persistParsedCharacterCard(
         parsed: com.gugachat.app.domain.chat.ParsedCharacterCardV4,
     ): AssetImportResult.CharacterCardImported {
-        val savedBookResult = parsed.worldbook?.let { wb ->
-            persistWorldbookDeduped(wb.worldbook, wb.entries)
-        }
-        val persistedWorldbook = savedBookResult?.first
+        var persistedWorldbook: WorldbookEntity? = null
+        var indexedEntries: List<WorldbookEntryEntity> = emptyList()
         val entryCount = parsed.worldbook?.entries?.size ?: 0
         val regexCount = parsed.rpConfig.regexScripts.size
 
-        val existingCard = parsed.card.contentFingerprint
-            .takeIf { it.isNotBlank() }
-            ?.let { assetDao.getCardByFingerprint(it) }
-        val finalCard = if (existingCard != null) {
-            parsed.card.copy(
-                id = existingCard.id,
-                createdAt = existingCard.createdAt,
-                favorite = existingCard.favorite,
-                avatarPath = parsed.card.avatarPath ?: existingCard.avatarPath,
-                spritePath = parsed.card.spritePath ?: existingCard.spritePath,
-                expressionSpritesJson = if (parsed.card.expressionSpritesJson != "{}") {
-                    parsed.card.expressionSpritesJson
-                } else {
-                    existingCard.expressionSpritesJson
-                },
-                primaryWorldbookId = persistedWorldbook?.id ?: existingCard.primaryWorldbookId,
-                updatedAt = System.currentTimeMillis(),
-            )
-        } else {
-            parsed.card.copy(
-                primaryWorldbookId = persistedWorldbook?.id ?: parsed.card.primaryWorldbookId,
+        val finalCard = database.withTransaction {
+            val savedBookResult = parsed.worldbook?.let { wb ->
+                persistWorldbookInTransaction(wb.worldbook, wb.entries)
+            }
+            persistedWorldbook = savedBookResult?.first
+            indexedEntries = savedBookResult?.second.orEmpty()
+
+            val existingCard = parsed.card.contentFingerprint
+                .takeIf { it.isNotBlank() }
+                ?.let { assetDao.getCardByFingerprint(it) }
+            val resolvedCard = if (existingCard != null) {
+                parsed.card.copy(
+                    id = existingCard.id,
+                    createdAt = existingCard.createdAt,
+                    favorite = existingCard.favorite,
+                    avatarPath = parsed.card.avatarPath ?: existingCard.avatarPath,
+                    spritePath = parsed.card.spritePath ?: existingCard.spritePath,
+                    expressionSpritesJson = if (parsed.card.expressionSpritesJson != "{}") {
+                        parsed.card.expressionSpritesJson
+                    } else {
+                        existingCard.expressionSpritesJson
+                    },
+                    primaryWorldbookId = persistedWorldbook?.id ?: existingCard.primaryWorldbookId,
+                    updatedAt = System.currentTimeMillis(),
+                )
+            } else {
+                parsed.card.copy(
+                    primaryWorldbookId = persistedWorldbook?.id ?: parsed.card.primaryWorldbookId,
+                )
+            }
+            assetDao.upsertCharacterCard(resolvedCard)
+            resolvedCard to (existingCard != null)
+        }
+
+        persistedWorldbook?.let { wb ->
+            retrievalCoordinator.scheduleWorldbookIndexing(
+                scope = scope,
+                worldbookId = wb.id,
+                entries = indexedEntries,
             )
         }
-        assetDao.upsertCharacterCard(finalCard)
 
         return AssetImportResult.CharacterCardImported(
-            card = finalCard,
+            card = finalCard.first,
             rpConfig = parsed.rpConfig,
             worldbook = persistedWorldbook,
             entryCount = entryCount,
             regexCount = regexCount,
-            deduplicatedCard = existingCard != null,
+            deduplicatedCard = finalCard.second,
         )
     }
 
@@ -277,6 +465,21 @@ class AssetImportCoordinator(
         book: WorldbookEntity,
         entries: List<WorldbookEntryEntity>,
     ): Pair<WorldbookEntity, Boolean> {
+        val (savedBook, normalizedEntries, deduped) = database.withTransaction {
+            persistWorldbookInTransaction(book, entries)
+        }
+        retrievalCoordinator.scheduleWorldbookIndexing(
+            scope = scope,
+            worldbookId = savedBook.id,
+            entries = normalizedEntries,
+        )
+        return savedBook to deduped
+    }
+
+    private suspend fun persistWorldbookInTransaction(
+        book: WorldbookEntity,
+        entries: List<WorldbookEntryEntity>,
+    ): Triple<WorldbookEntity, List<WorldbookEntryEntity>, Boolean> {
         val existing = book.contentFingerprint
             .takeIf { it.isNotBlank() }
             ?.let { assetDao.getWorldbookByFingerprint(it) }
@@ -290,12 +493,7 @@ class AssetImportCoordinator(
         val normalizedEntries = entries.map { it.copy(worldbookId = targetId) }
         assetDao.upsertWorldbook(normalizedBook)
         assetDao.replaceWorldbookEntries(targetId, normalizedEntries)
-        retrievalCoordinator.scheduleWorldbookIndexing(
-            scope = scope,
-            worldbookId = targetId,
-            entries = normalizedEntries,
-        )
-        return normalizedBook to (existing != null)
+        return Triple(normalizedBook, normalizedEntries, existing != null)
     }
 
     private fun saveMediaBytesSync(bytes: ByteArray, prefix: String, ext: String): String =

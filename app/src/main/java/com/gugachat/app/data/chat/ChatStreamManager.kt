@@ -47,8 +47,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
@@ -285,32 +288,19 @@ class ChatStreamManager internal constructor(
             }
         },
         persistenceGateway = RoomStreamPersistenceGateway(database),
-        schedulePostTurnMaintenance = { conv ->
-            val maintenance = BackgroundTurnMaintenance(
+        schedulePostTurnMaintenance = BackgroundTurnMaintenance(
+            scope = scope,
+            database = database,
+            onlineChatApi = onlineChatApi,
+            settingsState = settingsState,
+            retrievalCoordinator = retrievalCoordinator,
+        )::scheduleIfEnabled,
+        scheduleVectorIndexing = { convId ->
+            retrievalCoordinator.scheduleConversationIndexingFromDb(
                 scope = scope,
                 database = database,
-                onlineChatApi = onlineChatApi,
-                settingsState = settingsState,
-                retrievalCoordinator = retrievalCoordinator,
+                conversationId = convId,
             )
-            maintenance.scheduleIfEnabled(conv)
-        },
-        scheduleVectorIndexing = { convId ->
-            val settings = settingsState.value.retrievalSettings
-            if (settings.mode != com.gugachat.app.domain.chat.RetrievalMode.LEXICAL_ONLY) {
-                scope.launch(Dispatchers.IO) {
-                    val dao = database.chatDao()
-                    val memDao = database.userMemoryDao()
-                    retrievalCoordinator.scheduleConversationIndexing(
-                        scope = scope,
-                        conversationId = convId,
-                        lore = dao.getNovelLoreForConversation(convId).map { it.toDomain() },
-                        ledger = dao.getMemoryLedgerForConversation(convId).map { it.toDomain() },
-                        episodes = dao.getMemoryEpisodesForConversation(convId).map { it.toDomain() },
-                        userMemories = memDao.getAll().map { it.toDomain() },
-                    )
-                }
-            }
         },
         completionNotifier = { convId, conv, finalMsg ->
             val isEn = settingsState.value.language == AppLanguage.EN
@@ -350,6 +340,9 @@ class ChatStreamManager internal constructor(
 
     private val _lastCommittedMessages = MutableStateFlow<Map<String, ChatMessage>>(emptyMap())
     val lastCommittedMessages: StateFlow<Map<String, ChatMessage>> = _lastCommittedMessages.asStateFlow()
+
+    private val _turnCommittedEvents = MutableSharedFlow<String>(extraBufferCapacity = 16)
+    val turnCommittedEvents: SharedFlow<String> = _turnCommittedEvents.asSharedFlow()
 
     private val _lastWaterlineContext = MutableStateFlow<com.gugachat.app.domain.chat.BuiltChatContext?>(null)
     val lastWaterlineContext: StateFlow<com.gugachat.app.domain.chat.BuiltChatContext?> = _lastWaterlineContext.asStateFlow()
@@ -491,6 +484,21 @@ class ChatStreamManager internal constructor(
 
         fun buildSnapshot(status: String = "streaming", error: String? = null): ChatMessage =
             synchronized(streamLock) { buildSnapshotLocked(status, error) }
+
+        suspend fun persistInterruptedMessage(status: String, error: String? = null) {
+            val isBufEmpty = synchronized(streamLock) {
+                if (contentBuf.isEmpty() && bestPartialContent.isNotEmpty()) contentBuf.append(bestPartialContent)
+                if (reasoningBuf.isEmpty() && bestPartialReasoning.isNotEmpty()) reasoningBuf.append(bestPartialReasoning)
+                contentBuf.isEmpty()
+            }
+            val msg = if (isContinue && request.existingMessageForVariant != null && isBufEmpty) {
+                request.existingMessageForVariant
+            } else {
+                buildSnapshot(status = status, error = error)
+            }
+            _lastCommittedMessages.update { it + (convId to msg) }
+            persistenceGateway.upsertMessageSnapshot(msg)
+        }
 
         fun publishSessionSnapshot(
             snap: ChatMessage,
@@ -741,6 +749,7 @@ class ChatStreamManager internal constructor(
             )
             _lastCommittedMessages.update { it + (convId to committedMsg) }
             clearTransientMutes()
+            _turnCommittedEvents.tryEmit(convId)
             schedulePostTurnMaintenance(committedConv)
             if (!isAppForeground()) {
                 completionNotifier(convId, committedConv, committedMsg)
@@ -748,34 +757,13 @@ class ChatStreamManager internal constructor(
         } catch (_: CancellationException) {
             flushTickerJob.cancel()
             withContext(NonCancellable) {
-                val isBufEmpty = synchronized(streamLock) {
-                    if (contentBuf.isEmpty() && bestPartialContent.isNotEmpty()) contentBuf.append(bestPartialContent)
-                    if (reasoningBuf.isEmpty() && bestPartialReasoning.isNotEmpty()) reasoningBuf.append(bestPartialReasoning)
-                    contentBuf.isEmpty()
-                }
-                val aborted = if (isContinue && request.existingMessageForVariant != null && isBufEmpty) {
-                    request.existingMessageForVariant
-                } else {
-                    buildSnapshot(status = "aborted")
-                }
-                _lastCommittedMessages.update { it + (convId to aborted) }
-                persistenceGateway.upsertMessageSnapshot(aborted)
+                persistInterruptedMessage(status = "aborted")
             }
         } catch (e: Throwable) {
             flushTickerJob.cancel()
-            val isBufEmpty = synchronized(streamLock) {
-                if (contentBuf.isEmpty() && bestPartialContent.isNotEmpty()) contentBuf.append(bestPartialContent)
-                if (reasoningBuf.isEmpty() && bestPartialReasoning.isNotEmpty()) reasoningBuf.append(bestPartialReasoning)
-                contentBuf.isEmpty()
-            }
-            val failed = if (isContinue && request.existingMessageForVariant != null && isBufEmpty) {
-                request.existingMessageForVariant
-            } else {
-                buildSnapshot(status = "error", error = e.message ?: "Generation failed")
-            }
-            _lastCommittedMessages.update { it + (convId to failed) }
-            persistenceGateway.upsertMessageSnapshot(failed)
-            toastShower(e.message ?: "Generation failed", true)
+            val errMsg = e.message ?: "Generation failed"
+            persistInterruptedMessage(status = "error", error = errMsg)
+            toastShower(errMsg, true)
         } finally {
             flushTickerJob.cancel()
         }
@@ -1147,18 +1135,11 @@ private class BackgroundTurnMaintenance(
     }
 
     private fun scheduleVectorIndexing(convId: String) {
-        val settings = settingsState.value.retrievalSettings
-        if (settings.mode == com.gugachat.app.domain.chat.RetrievalMode.LEXICAL_ONLY) return
-        scope.launch(Dispatchers.IO) {
-            retrievalCoordinator.scheduleConversationIndexing(
-                scope = scope,
-                conversationId = convId,
-                lore = chatDao.getNovelLoreForConversation(convId).map { it.toDomain() },
-                ledger = chatDao.getMemoryLedgerForConversation(convId).map { it.toDomain() },
-                episodes = chatDao.getMemoryEpisodesForConversation(convId).map { it.toDomain() },
-                userMemories = userMemoryDao.getAll().map { it.toDomain() },
-            )
-        }
+        retrievalCoordinator.scheduleConversationIndexingFromDb(
+            scope = scope,
+            database = database,
+            conversationId = convId,
+        )
     }
 
     companion object {

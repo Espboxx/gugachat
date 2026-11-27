@@ -9,9 +9,11 @@ import com.gugachat.app.data.api.DiscoveredRetrievalModel
 import com.gugachat.app.data.api.EmbeddingConnectionTestResult
 import com.gugachat.app.data.api.RemoteApiEmbeddingEngine
 import com.gugachat.app.data.api.RemoteApiRerankEngine
+import com.gugachat.app.data.local.AppDatabase
 import com.gugachat.app.data.local.LocalEmbeddingModelManager
 import com.gugachat.app.data.local.LocalOnnxEmbeddingEngine
 import com.gugachat.app.data.local.WorldbookEntryEntity
+import com.gugachat.app.data.local.toDomain
 import com.gugachat.app.domain.chat.EmbeddingEngine
 import com.gugachat.app.domain.chat.MemoryEpisode
 import com.gugachat.app.domain.chat.MemoryLedgerItem
@@ -268,6 +270,40 @@ class RetrievalCoordinator internal constructor(
             batchSize = batchSize,
             pruneStale = true,
         )
+    }
+
+    /**
+     * Convenience helper that reads all conversation-scoped memory sources from [database] on
+     * [Dispatchers.IO] and schedules incremental vector indexing when a vector engine is active.
+     */
+    fun scheduleConversationIndexingFromDb(
+        scope: CoroutineScope,
+        database: AppDatabase,
+        conversationId: String,
+        batchSize: Int = DEFAULT_INDEX_BATCH_SIZE,
+    ): Job? {
+        if (conversationId.isBlank()) return null
+        val settings = currentRetrievalSettings()
+        if (settings.mode == RetrievalMode.LEXICAL_ONLY) {
+            activeIndexJobs.remove(conversationId)?.cancel()
+            if (activeIndexJobs.isEmpty() && _indexProgress.value.running) {
+                _indexProgress.value = VectorIndexProgress()
+            }
+            return null
+        }
+        return scope.launch(Dispatchers.IO) {
+            val chatDao = database.chatDao()
+            val userMemDao = database.userMemoryDao()
+            scheduleConversationIndexing(
+                scope = scope,
+                conversationId = conversationId,
+                lore = chatDao.getNovelLoreForConversation(conversationId).map { it.toDomain() },
+                ledger = chatDao.getMemoryLedgerForConversation(conversationId).map { it.toDomain() },
+                episodes = chatDao.getMemoryEpisodesForConversation(conversationId).map { it.toDomain() },
+                userMemories = userMemDao.getAll().map { it.toDomain() },
+                batchSize = batchSize,
+            )
+        }
     }
 
     /**

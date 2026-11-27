@@ -123,27 +123,11 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             _ui.update { it.copy(isLoadingCapabilities = true) }
             try {
-                val isDirectOnly = (container.authSession.value as? AuthSessionState.LoggedIn)?.isDirectApiOnly == true
-                val customKeys = container.apiProviderStore.enabledProviders()
-                    .filter {
-                        DirectProtocolCodec.supportsImageGeneration(
-                            protocol = it.protocol,
-                            baseUrl = it.baseUrl,
-                            customModels = it.customModels,
-                        )
-                    }
-                    .map { p ->
-                        OnlineImageKeyDto(
-                            id = p.syntheticGroupId,
-                            name = "${p.displayTitle()} · ${p.protocol.displayName}",
-                            models = container.directApiClient.listImageModels(p),
-                        )
-                    }
-                val cap = if (isDirectOnly) null else runCatching { container.onlineImagesApi.capabilities() }.getOrElse { err ->
-                    if (customKeys.isEmpty()) throw err else null
-                }
-                val serverKeys = cap?.keys?.let { FreeQuotaUtils.sortImageKeysByFreeQuota(it) }.orEmpty()
-                val sortedKeys = serverKeys + customKeys
+                val resolved = container.imageChannelResolver.resolveAvailableChannels(
+                    throwOnAllEmptyServerError = true,
+                )
+                val cap = resolved.capabilities
+                val sortedKeys = resolved.allKeys
                 val saved = container.settingsStore.currentSettings()
                 val preferredKey = sortedKeys.firstOrNull { it.id == _ui.value.selectedKeyId }
                     ?: sortedKeys.firstOrNull { it.id == saved.lastImageKeyId && saved.lastImageKeyId != 0L }
@@ -181,9 +165,7 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     private suspend fun loadModelsForKey(key: OnlineImageKeyDto) {
-        val fetched = runCatching { container.onlineImagesApi.models(key.id) }
-            .getOrElse { key.models }
-        val sortedModels = FreeQuotaUtils.sortImageModelsByFreeQuota(fetched.ifEmpty { key.models })
+        val sortedModels = container.imageChannelResolver.resolveModelsForKey(key)
         val saved = container.settingsStore.currentSettings()
         val chosen = sortedModels.firstOrNull { it.id == _ui.value.selectedModelId }
             ?: sortedModels.firstOrNull { it.id == saved.lastImageModel }
@@ -413,7 +395,7 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
                 }
                 container.updateImageWorksTotal(_ui.value.totalWorks)
                 if (pendingPortraitCallback != null) {
-                    if (isActiveStatus(created.status)) {
+                    if (OnlineImageStudioUtils.isActiveJobStatus(created.status)) {
                         pendingPortraitGenId = created.id
                     } else {
                         deliverPendingPortraitIfSucceeded(created)
@@ -593,7 +575,7 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
                         isLoadingGallery = false,
                     )
                 }
-                if (merged.any { isActiveStatus(it.status) }) {
+                if (merged.any { OnlineImageStudioUtils.isActiveJobStatus(it.status) }) {
                     ensurePollingActive()
                 }
             } catch (e: Throwable) {
@@ -927,7 +909,7 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
         if (pollJob?.isActive == true) return
         pollJob = viewModelScope.launch {
             while (true) {
-                val activeIds = _ui.value.generations.filter { isActiveStatus(it.status) }.map { it.id }
+                val activeIds = _ui.value.generations.filter { OnlineImageStudioUtils.isActiveJobStatus(it.status) }.map { it.id }
                 if (activeIds.isEmpty()) break
                 delay(2400L)
                 for (id in activeIds) {
@@ -939,7 +921,7 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
                                 selectedDetail = if (cur.selectedDetail?.id == id) fresh else cur.selectedDetail,
                             )
                         }
-                        if (id == pendingPortraitGenId && !isActiveStatus(fresh.status)) {
+                        if (id == pendingPortraitGenId && !OnlineImageStudioUtils.isActiveJobStatus(fresh.status)) {
                             deliverPendingPortraitIfSucceeded(fresh)
                         }
                     }
@@ -960,9 +942,6 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
         }.getOrNull() ?: return
         callback(bytes)
     }
-
-    private fun isActiveStatus(status: String): Boolean =
-        OnlineImageStudioUtils.isActiveJobStatus(status)
 
     private fun compressRefBytes(raw: ByteArray): ByteArray? {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }

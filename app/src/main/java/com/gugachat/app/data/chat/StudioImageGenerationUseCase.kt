@@ -1,24 +1,19 @@
 package com.gugachat.app.data.chat
 
 import android.content.Context
-import com.gugachat.app.AuthSessionState
-import com.gugachat.app.core.storage.ApiProviderStore
 import com.gugachat.app.core.storage.LocalMediaPathResolver
 import com.gugachat.app.core.storage.SettingsStore
 import com.gugachat.app.core.util.newIdempotencyKey
-import com.gugachat.app.data.api.DirectApiClient
 import com.gugachat.app.data.api.ImageBinaryUpload
 import com.gugachat.app.data.api.OnlineImageKeyDto
 import com.gugachat.app.data.api.OnlineImageModelDto
 import com.gugachat.app.data.api.OnlineImageSubmitInput
 import com.gugachat.app.data.api.OnlineImagesApi
-import com.gugachat.app.domain.chat.FreeQuotaUtils
 import com.gugachat.app.domain.chat.RpCardCodec
 import com.gugachat.app.domain.images.OnlineImageNovelAI
 import com.gugachat.app.domain.images.OnlineImageStudioUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.withContext
 import java.io.File
 
@@ -29,14 +24,12 @@ data class GeneratedRpMediaResult(
 
 /**
  * Shared image generation and local media storage coordinator for RP portraits/CGs
- * and Novel book covers. Uses [DirectApiClient.supportsImageGeneration] to filter custom
- * endpoints accurately and always returns relative paths via [LocalMediaPathResolver].
+ * and Novel book covers. Uses [ImageChannelResolver] to merge server and custom endpoints
+ * consistently and always returns relative paths via [LocalMediaPathResolver].
  */
 class StudioImageGenerationUseCase(
     private val appContext: Context,
-    private val authSession: StateFlow<AuthSessionState>,
-    private val apiProviderStore: ApiProviderStore,
-    private val directApiClient: DirectApiClient,
+    private val imageChannelResolver: ImageChannelResolver,
     private val onlineImagesApi: OnlineImagesApi,
     private val settingsStore: SettingsStore,
 ) {
@@ -50,19 +43,7 @@ class StudioImageGenerationUseCase(
         prefix: String = "ai",
         noChannelMessage: String = "No available image generation channel",
     ): GeneratedRpMediaResult {
-        val isDirectOnly = (authSession.value as? AuthSessionState.LoggedIn)?.isDirectApiOnly == true
-        val customKeys = apiProviderStore.enabledProviders()
-            .filter { directApiClient.supportsImageGeneration(it) }
-            .map { p ->
-                OnlineImageKeyDto(
-                    id = p.syntheticGroupId,
-                    name = "${p.displayTitle()} · ${p.protocol.displayName}",
-                    models = runCatching { directApiClient.listImageModels(p) }.getOrDefault(emptyList()),
-                )
-            }
-        val cap = if (isDirectOnly) null else runCatching { onlineImagesApi.capabilities() }.getOrNull()
-        val serverKeys = cap?.keys?.let { FreeQuotaUtils.sortImageKeysByFreeQuota(it) }.orEmpty()
-        val allKeys = serverKeys + customKeys
+        val allKeys = imageChannelResolver.resolveAvailableChannels().allKeys
 
         val saved = settingsStore.currentSettings()
         val orderedKeys = buildList {
@@ -73,8 +54,7 @@ class StudioImageGenerationUseCase(
         var chosenKey: OnlineImageKeyDto? = null
         var chosenModel: OnlineImageModelDto? = null
         for (key in orderedKeys) {
-            val fetched = runCatching { onlineImagesApi.models(key.id) }.getOrDefault(emptyList())
-            val sortedModels = FreeQuotaUtils.sortImageModelsByFreeQuota(fetched.ifEmpty { key.models })
+            val sortedModels = imageChannelResolver.resolveModelsForKey(key)
             if (sortedModels.isNotEmpty()) {
                 chosenKey = key
                 chosenModel = sortedModels.firstOrNull { it.id == saved.lastImageModel } ?: sortedModels.first()
