@@ -1,7 +1,8 @@
 package com.gugachat.app.ui.chat
 
-import androidx.compose.foundation.BorderStroke
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -9,24 +10,30 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AddCircleOutline
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -86,28 +93,46 @@ fun StandardChatWorkspace(
     onSend: () -> Unit,
     onStop: () -> Unit,
     onToast: (String) -> Unit,
+    conversationTitle: String = "",
+    onScrollHideBottomBarChanged: (Boolean) -> Unit = {},
+    onOpenRpWizard: () -> Unit = {},
+    onOpenNovelWizard: () -> Unit = {},
 ) {
     val strings = LocalAppStrings.current
     val theme = LocalAppTheme.current
     val c = theme.colors
+
+    var canScrollBackward by remember { mutableStateOf(false) }
+    LaunchedEffect(messages.isEmpty()) {
+        if (messages.isEmpty()) canScrollBackward = false
+    }
+    val headerDividerColor by animateColorAsState(
+        targetValue = if (canScrollBackward && messages.isNotEmpty()) {
+            c.border.copy(alpha = 0.72f)
+        } else {
+            Color.Transparent
+        },
+        label = "std_chat_header_divider",
+    )
+    val composerFocusRequester = remember { FocusRequester() }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(c.page),
     ) {
-        GuAwningHeader {
+        GuAwningHeader(dividerColor = headerDividerColor) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(46.dp)
-                    .padding(horizontal = 4.dp),
+                    .height(48.dp)
+                    .padding(horizontal = 6.dp),
             ) {
                 IconButton(
                     onClick = onOpenDrawer,
                     modifier = Modifier
                         .align(Alignment.CenterStart)
-                        .size(38.dp),
+                        .size(36.dp),
                 ) {
                     Icon(
                         Icons.Default.Menu,
@@ -117,55 +142,68 @@ fun StandardChatWorkspace(
                     )
                 }
 
-                Box(
+                val hasModel = !selectedModelId.isNullOrBlank()
+                val dotColor = when {
+                    activeModelFreeQuota -> c.success
+                    hasModel -> c.primary
+                    else -> c.muted.copy(alpha = 0.55f)
+                }
+                val showWaterlineHint = waterline.sentPercentage >= 80 || waterline.isSliding
+                val waterlineColor = if (waterline.hardOverflow) c.danger else c.warning
+
+                Column(
                     modifier = Modifier
                         .align(Alignment.Center)
-                        .padding(horizontal = 82.dp),
-                    contentAlignment = Alignment.Center,
+                        .padding(horizontal = 80.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable(onClick = onOpenModelSheet)
+                        .padding(horizontal = 8.dp, vertical = 2.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(1.dp),
                 ) {
-                    val hasModel = !selectedModelId.isNullOrBlank()
-                    val dotColor = when {
-                        activeModelFreeQuota -> c.success
-                        hasModel -> c.primary
-                        else -> c.muted.copy(alpha = 0.55f)
-                    }
-                    Surface(
-                        onClick = onOpenModelSheet,
-                        shape = RoundedCornerShape(999.dp),
-                        color = if (hasModel) c.surfaceSoft else c.surface,
-                        border = BorderStroke(
-                            width = theme.borderWidth,
-                            color = if (hasModel) c.border else c.outline.copy(alpha = 0.8f),
-                        ),
-                        modifier = Modifier.heightIn(min = 32.dp),
+                    Text(
+                        text = conversationTitle.ifBlank { strings.chat.untitled },
+                        color = c.ink,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
                     ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(5.dp),
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(6.5.dp)
-                                    .clip(CircleShape)
-                                    .background(dotColor),
-                            )
+                        Box(
+                            modifier = Modifier
+                                .size(5.5.dp)
+                                .clip(CircleShape)
+                                .background(dotColor),
+                        )
+                        Text(
+                            text = selectedModelId?.takeIf { it.isNotBlank() } ?: strings.chat.selectModel,
+                            color = if (hasModel) c.muted else c.primary,
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
+                        if (showWaterlineHint) {
                             Text(
-                                text = selectedModelId ?: strings.chat.selectModel,
-                                color = if (hasModel) c.ink else c.muted,
-                                fontSize = 12.5.sp,
-                                fontWeight = if (hasModel) FontWeight.Bold else FontWeight.SemiBold,
+                                text = "· ${waterline.sentPercentage}%",
+                                color = waterlineColor,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                style = TextStyle(fontFeatureSettings = "tnum"),
                                 maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f, fill = false),
-                            )
-                            Icon(
-                                Icons.Default.KeyboardArrowDown,
-                                contentDescription = null,
-                                tint = c.muted,
-                                modifier = Modifier.size(15.dp),
                             )
                         }
+                        Icon(
+                            Icons.Default.KeyboardArrowDown,
+                            contentDescription = null,
+                            tint = c.muted,
+                            modifier = Modifier.size(13.5.dp),
+                        )
                     }
                 }
 
@@ -175,10 +213,10 @@ fun StandardChatWorkspace(
                 ) {
                     IconButton(
                         onClick = onNewSession,
-                        modifier = Modifier.size(38.dp),
+                        modifier = Modifier.size(36.dp),
                     ) {
                         Icon(
-                            Icons.Default.Add,
+                            Icons.Default.AddCircleOutline,
                             contentDescription = strings.chat.newChat,
                             tint = c.ink,
                             modifier = Modifier.size(20.dp),
@@ -188,7 +226,7 @@ fun StandardChatWorkspace(
                     Box {
                         IconButton(
                             onClick = onOpenMoreMenu,
-                            modifier = Modifier.size(38.dp),
+                            modifier = Modifier.size(36.dp),
                         ) {
                             Icon(
                                 Icons.Default.MoreVert,
@@ -228,6 +266,11 @@ fun StandardChatWorkspace(
             onSwitchVariant = onSwitchVariant,
             onToast = onToast,
             modifier = Modifier.weight(1f),
+            onScrollHideBottomBarChanged = onScrollHideBottomBarChanged,
+            onCanScrollBackwardChanged = { canScrollBackward = it },
+            onOpenRpWizard = onOpenRpWizard,
+            onOpenNovelWizard = onOpenNovelWizard,
+            onStartNormalChat = { runCatching { composerFocusRequester.requestFocus() } },
         )
 
         ChatComposerBar(
@@ -262,6 +305,7 @@ fun StandardChatWorkspace(
             onOpenContextSettings = onOpenContextSettings,
             onSend = onSend,
             onStop = onStop,
+            inputFocusRequester = composerFocusRequester,
         )
     }
 }

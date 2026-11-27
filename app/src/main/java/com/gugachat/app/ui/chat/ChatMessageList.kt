@@ -4,8 +4,10 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -13,6 +15,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -67,6 +70,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -105,10 +109,11 @@ import com.gugachat.app.core.theme.GuBadge
 import com.gugachat.app.core.theme.GuBadgeVariant
 import com.gugachat.app.core.theme.GuButton
 import com.gugachat.app.core.theme.GuButtonVariant
-import com.gugachat.app.core.theme.GuCard
 import com.gugachat.app.core.theme.GuConfirmDialog
 import com.gugachat.app.core.theme.GuGroupedCard
 import com.gugachat.app.core.theme.GuIconTile
+import com.gugachat.app.core.theme.GuMetaText
+import com.gugachat.app.core.theme.GuModelAvatar
 import com.gugachat.app.core.theme.GuTextField
 import com.gugachat.app.core.theme.LocalAppTheme
 import com.gugachat.app.domain.chat.ChatAttachmentMeta
@@ -168,6 +173,11 @@ fun ChatMessageList(
     onFrontendSetFlag: (String, String) -> Unit = { _, _ -> },
     onFrontendAdjustAffinity: (String, Int) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier,
+    onScrollHideBottomBarChanged: (Boolean) -> Unit = {},
+    onCanScrollBackwardChanged: (Boolean) -> Unit = {},
+    onOpenRpWizard: () -> Unit = {},
+    onOpenNovelWizard: () -> Unit = {},
+    onStartNormalChat: () -> Unit = {},
 ) {
     val strings = LocalAppStrings.current
     val theme = LocalAppTheme.current
@@ -208,6 +218,69 @@ fun ChatMessageList(
     val haptic = LocalHapticFeedback.current
     val swipeThresholdPx = with(LocalDensity.current) { 72.dp.toPx() }
     var autoFollowBottom by remember { mutableStateOf(true) }
+    var revealedActionMsgId by remember(active.firstOrNull()?.conversationId) { mutableStateOf<String?>(null) }
+
+    val canScrollBack by remember(listState, active.size) {
+        derivedStateOf { active.isNotEmpty() && listState.canScrollBackward }
+    }
+    LaunchedEffect(canScrollBack) {
+        onCanScrollBackwardChanged(canScrollBack)
+    }
+    LaunchedEffect(active.isEmpty()) {
+        if (active.isEmpty()) {
+            onScrollHideBottomBarChanged(false)
+            onCanScrollBackwardChanged(false)
+        }
+    }
+    LaunchedEffect(listState, active.size) {
+        if (active.isEmpty()) {
+            onScrollHideBottomBarChanged(false)
+            return@LaunchedEffect
+        }
+        var prevIndex = listState.firstVisibleItemIndex
+        var prevOffset = listState.firstVisibleItemScrollOffset
+        var accumDelta = 0
+        snapshotFlow {
+            Triple(
+                listState.isScrollInProgress,
+                listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset,
+                listState.canScrollBackward to listState.canScrollForward,
+            )
+        }.collect { (scrolling, pos, edges) ->
+            val (idx, offset) = pos
+            val (canBack, canForward) = edges
+            val rawDelta = when {
+                idx > prevIndex -> 120
+                idx < prevIndex -> -120
+                else -> offset - prevOffset
+            }
+            prevIndex = idx
+            prevOffset = offset
+
+            if (!canBack || !canForward) {
+                accumDelta = 0
+                onScrollHideBottomBarChanged(false)
+            } else if (scrolling && rawDelta != 0) {
+                if ((accumDelta > 0 && rawDelta < 0) || (accumDelta < 0 && rawDelta > 0)) {
+                    accumDelta = 0
+                }
+                accumDelta += rawDelta
+                if (accumDelta > 28) {
+                    onScrollHideBottomBarChanged(true)
+                    accumDelta = 0
+                } else if (accumDelta < -18) {
+                    onScrollHideBottomBarChanged(false)
+                    accumDelta = 0
+                }
+            }
+        }
+    }
+    DisposableEffect(Unit) {
+        onDispose {
+            onScrollHideBottomBarChanged(false)
+            onCanScrollBackwardChanged(false)
+        }
+    }
 
     // Respect user scrolling up during long streaming replies; re-lock when returning to bottom
     LaunchedEffect(listState) {
@@ -344,6 +417,9 @@ fun ChatMessageList(
             onOpenModelSheet = onOpenModelSheet,
             onStarterPrompt = onStarterPrompt,
             onOpenNovelStudio = onOpenNovelStudio,
+            onOpenRpWizard = onOpenRpWizard,
+            onOpenNovelWizard = onOpenNovelWizard,
+            onStartNormalChat = onStartNormalChat,
             modifier = modifier,
         )
         return
@@ -385,6 +461,7 @@ fun ChatMessageList(
                 val isLatestAssistant = !isUser && msg.id == active.lastOrNull { it.role == "assistant" }?.id
 
                 if (isUser) {
+                    val isRevealed = revealedActionMsgId == msg.id
                     UserMessageBlock(
                         mode = mode,
                         msg = msg,
@@ -392,13 +469,33 @@ fun ChatMessageList(
                         isFileDecayed = isFileDecayed,
                         effectiveLimitTokens = waterline.effectiveLimitTokens,
                         isStreaming = isStreaming,
+                        isActionsRevealed = isRevealed,
+                        onToggleActions = {
+                            revealedActionMsgId = if (revealedActionMsgId == msg.id) null else msg.id
+                        },
                         attachmentPathResolver = attachmentPathResolver,
                         attachmentsById = attachmentsById,
                         onOpenFilePreview = { previewFileTarget = it },
                         onOpenImagePreview = { f, title -> previewImageTarget = f to title },
-                        onEdit = { editBuffer = msg.content; editTarget = msg },
-                        onBranch = { onBranchFromMessage(msg.id) },
-                        onDelete = { deleteTarget = msg },
+                        onEdit = {
+                            revealedActionMsgId = null
+                            editBuffer = msg.content
+                            editTarget = msg
+                        },
+                        onBranch = {
+                            revealedActionMsgId = null
+                            onBranchFromMessage(msg.id)
+                        },
+                        onCopy = {
+                            val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            cm.setPrimaryClip(ClipData.newPlainText("message", msg.content))
+                            onToast(strings.common.copied)
+                            revealedActionMsgId = null
+                        },
+                        onDelete = {
+                            revealedActionMsgId = null
+                            deleteTarget = msg
+                        },
                     )
                 } else {
                     val chapterStart = chapterStartMsgMap[msg.id]
@@ -428,6 +525,7 @@ fun ChatMessageList(
                     } else {
                         Modifier
                     }
+                    val isRevealed = revealedActionMsgId == msg.id
                     Column(
                         modifier = swipeModifier,
                         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -441,6 +539,12 @@ fun ChatMessageList(
                             rpConfig = rpConfig,
                             novelConfig = novelConfig,
                             isLatestAssistant = isLatestAssistant,
+                            isActionsRevealed = isRevealed,
+                            onToggleActions = {
+                                if (!isLatestAssistant) {
+                                    revealedActionMsgId = if (revealedActionMsgId == msg.id) null else msg.id
+                                }
+                            },
                             isStreaming = isStreaming,
                             streamingStatusHint = streamingStatusHint,
                             isRefreshingChoices = isRefreshingChoices,
@@ -482,29 +586,30 @@ fun ChatMessageList(
             enter = fadeIn(),
             exit = fadeOut(),
             modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 12.dp),
+                .align(Alignment.BottomEnd)
+                .padding(end = 14.dp, bottom = 10.dp),
         ) {
             Surface(
                 onClick = {
                     autoFollowBottom = true
+                    onScrollHideBottomBarChanged(false)
                     scope.launch {
                         val bottomIndex = (active.size + 1).coerceAtLeast(0)
                         listState.animateScrollToItem(bottomIndex)
                     }
                 },
                 shape = CircleShape,
-                color = c.surfaceElevated,
-                border = BorderStroke(theme.borderWidth, c.outline.copy(alpha = 0.8f)),
-                shadowElevation = if (theme.isDark) 6.dp else 4.dp,
-                modifier = Modifier.size(38.dp),
+                color = c.surfaceElevated.copy(alpha = 0.94f),
+                border = BorderStroke(0.5.dp, c.outline.copy(alpha = 0.45f)),
+                shadowElevation = if (theme.isDark) 4.dp else 2.dp,
+                modifier = Modifier.size(34.dp),
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Icon(
                         imageVector = Icons.Default.KeyboardArrowDown,
                         contentDescription = null,
                         tint = c.ink,
-                        modifier = Modifier.size(20.dp),
+                        modifier = Modifier.size(18.dp),
                     )
                 }
             }
@@ -526,6 +631,9 @@ private fun ChatEmptyWelcomeCanvas(
     onOpenModelSheet: () -> Unit,
     onStarterPrompt: (String) -> Unit,
     onOpenNovelStudio: (Int) -> Unit = {},
+    onOpenRpWizard: () -> Unit = {},
+    onOpenNovelWizard: () -> Unit = {},
+    onStartNormalChat: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val strings = LocalAppStrings.current
@@ -543,31 +651,27 @@ private fun ChatEmptyWelcomeCanvas(
             verticalArrangement = Arrangement.Center,
         ) {
             if (!hasModelSelected) {
-                Surface(
-                    onClick = onOpenModelSheet,
-                    shape = RoundedCornerShape(999.dp),
-                    color = c.surface,
-                    border = BorderStroke(theme.borderWidth, c.border),
-                    modifier = Modifier.heightIn(min = 36.dp),
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(c.surfaceSoft)
+                        .clickable(onClick = onOpenModelSheet)
+                        .padding(horizontal = 13.dp, vertical = 7.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
                 ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 13.dp, vertical = 7.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        Text(
-                            text = strings.chat.selectModel,
-                            color = c.muted,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                        Icon(
-                            Icons.Default.KeyboardArrowDown,
-                            contentDescription = null,
-                            tint = c.muted,
-                            modifier = Modifier.size(15.dp),
-                        )
-                    }
+                    Text(
+                        text = strings.chat.selectModel,
+                        color = c.primary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Icon(
+                        Icons.Default.KeyboardArrowDown,
+                        contentDescription = null,
+                        tint = c.primary,
+                        modifier = Modifier.size(15.dp),
+                    )
                 }
                 Spacer(Modifier.height(14.dp))
             }
@@ -575,7 +679,6 @@ private fun ChatEmptyWelcomeCanvas(
             if (mode == ConversationMode.rp && rpConfig != null) {
                 GuGroupedCard(
                     modifier = Modifier.fillMaxWidth(),
-                    borderColor = c.border,
                 ) {
                     Box(
                         modifier = Modifier
@@ -610,7 +713,7 @@ private fun ChatEmptyWelcomeCanvas(
                                     text = rpConfig.title,
                                     color = c.ink,
                                     fontSize = 16.5.sp,
-                                    fontWeight = FontWeight.ExtraBold,
+                                    fontWeight = FontWeight.Bold,
                                     maxLines = 2,
                                     overflow = TextOverflow.Ellipsis,
                                 )
@@ -627,7 +730,7 @@ private fun ChatEmptyWelcomeCanvas(
                         }
                     }
 
-                    HorizontalDivider(thickness = theme.borderWidth, color = c.border.copy(alpha = 0.7f))
+                    HorizontalDivider(thickness = theme.borderWidth, color = c.border.copy(alpha = 0.6f))
 
                     Column(
                         modifier = Modifier
@@ -656,7 +759,6 @@ private fun ChatEmptyWelcomeCanvas(
                                         modifier = Modifier
                                             .clip(RoundedCornerShape(999.dp))
                                             .background(c.surfaceSoft)
-                                            .border(theme.borderWidth, c.border, RoundedCornerShape(999.dp))
                                             .padding(start = 4.dp, end = 9.dp, top = 3.dp, bottom = 3.dp),
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -695,7 +797,6 @@ private fun ChatEmptyWelcomeCanvas(
             } else if (mode == ConversationMode.novel && novelConfig != null) {
                 GuGroupedCard(
                     modifier = Modifier.fillMaxWidth(),
-                    borderColor = c.border,
                 ) {
                     Box(
                         modifier = Modifier
@@ -726,7 +827,7 @@ private fun ChatEmptyWelcomeCanvas(
                                 text = novelConfig.title,
                                 color = c.ink,
                                 fontSize = 16.5.sp,
-                                fontWeight = FontWeight.ExtraBold,
+                                fontWeight = FontWeight.Bold,
                                 maxLines = 2,
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.weight(1f),
@@ -737,7 +838,7 @@ private fun ChatEmptyWelcomeCanvas(
                         }
                     }
 
-                    HorizontalDivider(thickness = theme.borderWidth, color = c.border.copy(alpha = 0.7f))
+                    HorizontalDivider(thickness = theme.borderWidth, color = c.border.copy(alpha = 0.6f))
 
                     Column(
                         modifier = Modifier
@@ -775,32 +876,29 @@ private fun ChatEmptyWelcomeCanvas(
                             )
                         }
                         if (firstCh != null) {
-                            Surface(
-                                shape = RoundedCornerShape(10.dp),
-                                color = c.surfaceSoft,
-                                border = BorderStroke(theme.borderWidth, c.border),
-                                modifier = Modifier.fillMaxWidth(),
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(c.surfaceSoft)
+                                    .padding(horizontal = 11.dp, vertical = 9.dp),
+                                verticalArrangement = Arrangement.spacedBy(3.dp),
                             ) {
-                                Column(
-                                    modifier = Modifier.padding(horizontal = 11.dp, vertical = 9.dp),
-                                    verticalArrangement = Arrangement.spacedBy(3.dp),
-                                ) {
+                                Text(
+                                    text = firstCh.title,
+                                    color = c.ink,
+                                    fontSize = 12.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                                if (firstCh.outline.isNotBlank()) {
                                     Text(
-                                        text = firstCh.title,
-                                        color = c.ink,
-                                        fontSize = 12.5.sp,
-                                        fontWeight = FontWeight.Bold,
+                                        text = firstCh.outline,
+                                        color = c.muted,
+                                        fontSize = 12.sp,
+                                        lineHeight = 17.5.sp,
+                                        maxLines = 3,
+                                        overflow = TextOverflow.Ellipsis,
                                     )
-                                    if (firstCh.outline.isNotBlank()) {
-                                        Text(
-                                            text = firstCh.outline,
-                                            color = c.muted,
-                                            fontSize = 12.sp,
-                                            lineHeight = 17.5.sp,
-                                            maxLines = 3,
-                                            overflow = TextOverflow.Ellipsis,
-                                        )
-                                    }
                                 }
                             }
                         }
@@ -847,109 +945,116 @@ private fun ChatEmptyWelcomeCanvas(
         modifier = modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 24.dp),
+            .padding(horizontal = 20.dp, vertical = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterVertically),
+        verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
     ) {
-        Box(
-            modifier = Modifier
-                .size(56.dp)
-                .clip(RoundedCornerShape(16.dp))
-                .background(c.primarySoft)
-                .border(theme.borderWidth, c.primary.copy(alpha = 0.25f), RoundedCornerShape(16.dp)),
-            contentAlignment = Alignment.Center,
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Image(
                 painter = painterResource(id = R.drawable.img_logo),
                 contentDescription = strings.common.appName,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
-                    .size(46.dp)
-                    .clip(RoundedCornerShape(12.dp)),
+                    .size(48.dp)
+                    .clip(RoundedCornerShape(14.dp)),
             )
-        }
 
-        val heading = when (mode) {
-            ConversationMode.rp -> rpConfig?.title?.ifBlank { strings.chat.modeRpTitle } ?: strings.chat.modeRpTitle
-            ConversationMode.novel -> novelConfig?.title?.ifBlank { strings.chat.modeNovelTitle } ?: strings.chat.modeNovelTitle
-            else -> strings.chat.welcomeTitle
-        }
-        Text(
-            text = heading,
-            color = c.ink,
-            fontSize = 21.sp,
-            fontWeight = FontWeight.ExtraBold,
-            textAlign = TextAlign.Center,
-        )
+            val heading = when (mode) {
+                ConversationMode.rp -> rpConfig?.title?.ifBlank { strings.chat.modeRpTitle } ?: strings.chat.modeRpTitle
+                ConversationMode.novel -> novelConfig?.title?.ifBlank { strings.chat.modeNovelTitle } ?: strings.chat.modeNovelTitle
+                else -> strings.chat.welcomeTitle
+            }
+            Text(
+                text = heading,
+                color = c.ink,
+                fontSize = 21.sp,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center,
+            )
 
-        if (!hasModelSelected) {
-            Surface(
-                onClick = onOpenModelSheet,
-                shape = RoundedCornerShape(999.dp),
-                color = c.surface,
-                border = BorderStroke(theme.borderWidth, c.border),
-                modifier = Modifier.heightIn(min = 36.dp),
-            ) {
+            if (!hasModelSelected) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 13.dp, vertical = 7.dp),
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(999.dp))
+                        .clickable(onClick = onOpenModelSheet)
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
                 ) {
+                    Box(
+                        modifier = Modifier
+                            .size(5.5.dp)
+                            .clip(CircleShape)
+                            .background(c.muted.copy(alpha = 0.5f)),
+                    )
                     Text(
                         text = strings.chat.selectModel,
-                        color = c.muted,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false),
+                        color = c.primary,
+                        fontSize = 12.5.sp,
+                        fontWeight = FontWeight.Medium,
                     )
                     Icon(
                         Icons.Default.KeyboardArrowDown,
                         contentDescription = null,
-                        tint = c.muted,
+                        tint = c.primary,
                         modifier = Modifier.size(15.dp),
                     )
                 }
-            }
-        } else if (selectedModelLabel.isNotBlank()) {
-            val memLabel = if (memoryEnabled) strings.chat.memoryOn else strings.chat.memoryOff
-            val metaLine = buildString {
-                if (selectedGroupLabel.isNotBlank()) append("$selectedGroupLabel · ")
-                append("${strings.chat.memoryShort}$memLabel")
-            }
-            Surface(
-                onClick = onOpenModelSheet,
-                shape = RoundedCornerShape(999.dp),
-                color = c.surfaceSoft,
-                border = BorderStroke(theme.borderWidth, c.border),
-                modifier = Modifier.heightIn(min = 32.dp),
-            ) {
+            } else if (selectedModelLabel.isNotBlank()) {
+                val memLabel = if (memoryEnabled) strings.chat.memoryOn else strings.chat.memoryOff
+                val metaLine = buildString {
+                    if (selectedGroupLabel.isNotBlank()) append("$selectedGroupLabel · ")
+                    append("${strings.chat.memoryShort}$memLabel")
+                }
                 Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(999.dp))
+                        .clickable(onClick = onOpenModelSheet)
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(6.dp)
+                            .size(5.5.dp)
                             .clip(CircleShape)
                             .background(c.primary),
                     )
-                    Text(
+                    GuMetaText(
                         text = metaLine,
                         color = c.muted,
-                        fontSize = 11.5.sp,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
                     )
                 }
             }
         }
 
+        // 3 light quick-mode pills: Normal Chat / Immersive RP / Long-form Novel
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            WelcomeModeQuickPill(
+                label = if (isZh) "💬 普通对话" else "💬 Normal Chat",
+                active = mode == ConversationMode.chat,
+                onClick = onStartNormalChat,
+            )
+            WelcomeModeQuickPill(
+                label = if (isZh) "🎭 沉浸文游" else "🎭 Story RP",
+                active = mode == ConversationMode.rp,
+                onClick = onOpenRpWizard,
+            )
+            WelcomeModeQuickPill(
+                label = if (isZh) "📖 长篇创作" else "📖 Novel",
+                active = mode == ConversationMode.novel,
+                onClick = onOpenNovelWizard,
+            )
+        }
+
         if (mode == ConversationMode.chat) {
-            Spacer(Modifier.height(4.dp))
             val starters = listOf(
                 StarterTileSpec(
                     icon = Icons.Default.Code,
@@ -981,29 +1086,89 @@ private fun ChatEmptyWelcomeCanvas(
                 ),
             )
             Column(
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 6.dp),
             ) {
-                starters.chunked(2).forEach { pair ->
+                starters.forEachIndexed { idx, spec ->
+                    if (idx > 0) {
+                        HorizontalDivider(
+                            thickness = 0.5.dp,
+                            color = c.border.copy(alpha = 0.45f),
+                            modifier = Modifier.padding(start = 36.dp),
+                        )
+                    }
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(IntrinsicSize.Max),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable { onStarterPrompt(spec.prompt) }
+                            .padding(horizontal = 6.dp, vertical = 11.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        pair.forEach { spec ->
-                            StarterGridCard(
-                                spec = spec,
-                                onClick = { onStarterPrompt(spec.prompt) },
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .fillMaxHeight(),
+                        Icon(
+                            imageVector = spec.icon,
+                            contentDescription = null,
+                            tint = spec.tint,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(2.dp),
+                        ) {
+                            Text(
+                                text = spec.title,
+                                color = c.ink,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                text = spec.prompt,
+                                color = c.muted,
+                                fontSize = 12.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                             )
                         }
+                        Icon(
+                            imageVector = Icons.Default.ChevronRight,
+                            contentDescription = null,
+                            tint = c.muted.copy(alpha = 0.5f),
+                            modifier = Modifier.size(16.dp),
+                        )
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun WelcomeModeQuickPill(
+    label: String,
+    active: Boolean,
+    onClick: () -> Unit,
+) {
+    val c = LocalAppTheme.current.colors
+    Row(
+        modifier = Modifier
+            .height(34.dp)
+            .clip(RoundedCornerShape(999.dp))
+            .background(if (active) c.primarySoft else c.surfaceSoft)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 13.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            color = if (active) c.primarySoftInk else c.ink,
+            fontSize = 12.5.sp,
+            fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
+            maxLines = 1,
+        )
     }
 }
 
@@ -1016,46 +1181,6 @@ private data class StarterTileSpec(
 )
 
 @Composable
-private fun StarterGridCard(
-    spec: StarterTileSpec,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val c = LocalAppTheme.current.colors
-    GuCard(
-        onClick = onClick,
-        modifier = modifier,
-    ) {
-        GuIconTile(
-            icon = spec.icon,
-            tint = spec.tint,
-            backgroundColor = spec.bg,
-            size = 36.dp,
-            iconSize = 18.dp,
-            cornerRadius = 10.dp,
-        )
-        Spacer(Modifier.height(10.dp))
-        Text(
-            text = spec.title,
-            color = c.ink,
-            fontSize = 13.5.sp,
-            fontWeight = FontWeight.ExtraBold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Spacer(Modifier.height(4.dp))
-        Text(
-            text = spec.prompt,
-            color = c.muted,
-            fontSize = 11.5.sp,
-            lineHeight = 16.5.sp,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
-}
-
-@Composable
 private fun UserMessageBlock(
     mode: ConversationMode,
     msg: ChatMessage,
@@ -1063,39 +1188,47 @@ private fun UserMessageBlock(
     isFileDecayed: Boolean,
     effectiveLimitTokens: Int,
     isStreaming: Boolean,
+    isActionsRevealed: Boolean,
+    onToggleActions: () -> Unit,
     attachmentPathResolver: (String) -> File,
     attachmentsById: Map<String, ChatAttachmentMeta>,
     onOpenFilePreview: (ChatAttachmentMeta) -> Unit,
     onOpenImagePreview: (File, String) -> Unit,
     onEdit: () -> Unit,
     onBranch: () -> Unit,
+    onCopy: () -> Unit,
     onDelete: () -> Unit,
 ) {
     val theme = LocalAppTheme.current
     val c = theme.colors
+    val tapInteraction = remember { MutableInteractionSource() }
 
     when (mode) {
         ConversationMode.novel -> {
-            val noteShape = RoundedCornerShape(10.dp)
+            val noteShape = RoundedCornerShape(topStart = 14.dp, topEnd = 6.dp, bottomStart = 14.dp, bottomEnd = 14.dp)
             Column(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalAlignment = Alignment.End,
             ) {
                 Column(
                     modifier = Modifier
-                        .fillMaxWidth()
+                        .widthIn(max = 296.dp)
                         .clip(noteShape)
-                        .background(c.surfaceSoft)
+                        .background(c.surfaceSoft.copy(alpha = if (theme.isDark) 0.72f else 0.78f))
                         .drawBehind {
-                            val barWidth = 2.5.dp.toPx()
+                            val barWidth = 2.dp.toPx()
                             drawRect(
-                                color = c.accent,
+                                color = c.accent.copy(alpha = 0.55f),
                                 topLeft = Offset.Zero,
                                 size = Size(barWidth, size.height),
                             )
                         }
-                        .border(theme.borderWidth, c.border, noteShape)
-                        .padding(start = 13.dp, end = 12.dp, top = 9.dp, bottom = 9.dp),
+                        .clickable(
+                            interactionSource = tapInteraction,
+                            indication = null,
+                            onClick = onToggleActions,
+                        )
+                        .padding(start = 13.dp, end = 13.dp, top = 10.dp, bottom = 10.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     UserMessageBody(
@@ -1107,16 +1240,23 @@ private fun UserMessageBlock(
                         attachmentsById = attachmentsById,
                         onOpenFilePreview = onOpenFilePreview,
                         onOpenImagePreview = onOpenImagePreview,
-                        fontSizeSp = 14f,
-                        lineHeightSp = 21f,
+                        fontSizeSp = 13.5f,
+                        lineHeightSp = 21.5f,
                     )
                 }
-                UserMessageActionsRow(
-                    isStreaming = isStreaming,
-                    onEdit = onEdit,
-                    onBranch = onBranch,
-                    onDelete = onDelete,
-                )
+                AnimatedVisibility(
+                    visible = isActionsRevealed,
+                    enter = fadeIn() + expandVertically(),
+                    exit = fadeOut() + shrinkVertically(),
+                ) {
+                    UserMessageActionsRow(
+                        isStreaming = isStreaming,
+                        onEdit = onEdit,
+                        onBranch = onBranch,
+                        onCopy = onCopy,
+                        onDelete = onDelete,
+                    )
+                }
             }
         }
 
@@ -1131,7 +1271,12 @@ private fun UserMessageBlock(
                         .widthIn(max = 304.dp)
                         .clip(bubbleShape)
                         .background(c.surfaceSoft)
-                        .border(theme.borderWidth, c.accent.copy(alpha = 0.42f), bubbleShape)
+                        .border(0.5.dp, c.accent.copy(alpha = 0.30f), bubbleShape)
+                        .clickable(
+                            interactionSource = tapInteraction,
+                            indication = null,
+                            onClick = onToggleActions,
+                        )
                         .padding(horizontal = 14.dp, vertical = 10.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
@@ -1148,19 +1293,25 @@ private fun UserMessageBlock(
                         lineHeightSp = 22f,
                     )
                 }
-                UserMessageActionsRow(
-                    isStreaming = isStreaming,
-                    onEdit = onEdit,
-                    onBranch = onBranch,
-                    onDelete = onDelete,
-                )
+                AnimatedVisibility(
+                    visible = isActionsRevealed,
+                    enter = fadeIn() + expandVertically(),
+                    exit = fadeOut() + shrinkVertically(),
+                ) {
+                    UserMessageActionsRow(
+                        isStreaming = isStreaming,
+                        onEdit = onEdit,
+                        onBranch = onBranch,
+                        onCopy = onCopy,
+                        onDelete = onDelete,
+                    )
+                }
             }
         }
 
         ConversationMode.chat -> {
             val bubbleShape = RoundedCornerShape(topStart = 20.dp, topEnd = 6.dp, bottomStart = 20.dp, bottomEnd = 20.dp)
             val bubbleBg = if (theme.isDark) c.surfaceSoft else c.primarySoft
-            val bubbleBorder = if (theme.isDark) c.primary.copy(alpha = 0.34f) else c.primary.copy(alpha = 0.22f)
 
             Column(
                 modifier = Modifier.fillMaxWidth(),
@@ -1171,7 +1322,18 @@ private fun UserMessageBlock(
                         .widthIn(max = 304.dp)
                         .clip(bubbleShape)
                         .background(bubbleBg)
-                        .border(theme.borderWidth, bubbleBorder, bubbleShape)
+                        .then(
+                            if (theme.isDark) {
+                                Modifier.border(0.5.dp, c.primary.copy(alpha = 0.25f), bubbleShape)
+                            } else {
+                                Modifier
+                            },
+                        )
+                        .clickable(
+                            interactionSource = tapInteraction,
+                            indication = null,
+                            onClick = onToggleActions,
+                        )
                         .padding(horizontal = 15.dp, vertical = 11.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
@@ -1185,15 +1347,22 @@ private fun UserMessageBlock(
                         onOpenFilePreview = onOpenFilePreview,
                         onOpenImagePreview = onOpenImagePreview,
                         fontSizeSp = 15f,
-                        lineHeightSp = 22.5f,
+                        lineHeightSp = 23f,
                     )
                 }
-                UserMessageActionsRow(
-                    isStreaming = isStreaming,
-                    onEdit = onEdit,
-                    onBranch = onBranch,
-                    onDelete = onDelete,
-                )
+                AnimatedVisibility(
+                    visible = isActionsRevealed,
+                    enter = fadeIn() + expandVertically(),
+                    exit = fadeOut() + shrinkVertically(),
+                ) {
+                    UserMessageActionsRow(
+                        isStreaming = isStreaming,
+                        onEdit = onEdit,
+                        onBranch = onBranch,
+                        onCopy = onCopy,
+                        onDelete = onDelete,
+                    )
+                }
             }
         }
     }
@@ -1304,49 +1473,88 @@ private fun UserMessageActionsRow(
     isStreaming: Boolean,
     onEdit: () -> Unit,
     onBranch: () -> Unit,
+    onCopy: () -> Unit,
     onDelete: () -> Unit,
 ) {
     val strings = LocalAppStrings.current
     val c = LocalAppTheme.current.colors
+    val isZh = strings.language == AppLanguage.ZH
     Row(
-        modifier = Modifier.padding(top = 2.dp),
-        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        modifier = Modifier
+            .padding(top = 4.dp)
+            .height(28.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        IconButton(
+        UserMicroActionChip(
+            icon = Icons.Default.Edit,
+            label = if (isZh) "改词" else strings.common.edit,
+            enabled = !isStreaming,
+            tint = c.muted,
             onClick = onEdit,
-            enabled = !isStreaming,
-            modifier = Modifier.size(34.dp),
-        ) {
-            Icon(
-                Icons.Default.Edit,
-                contentDescription = strings.chat.editResend,
-                tint = c.muted.copy(alpha = 0.85f),
-                modifier = Modifier.size(15.5.dp),
-            )
-        }
-        IconButton(
+        )
+        UserMicroActionChip(
+            icon = Icons.Default.AccountTree,
+            label = if (isZh) "分支" else strings.novel.branchBtn,
+            enabled = true,
+            tint = c.muted,
             onClick = onBranch,
-            modifier = Modifier.size(34.dp),
+        )
+        UserMicroActionChip(
+            icon = Icons.Default.ContentCopy,
+            label = strings.common.copy,
+            enabled = true,
+            tint = c.muted,
+            onClick = onCopy,
+        )
+        Box(
+            modifier = Modifier
+                .size(28.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .clickable(enabled = !isStreaming, onClick = onDelete),
+            contentAlignment = Alignment.Center,
         ) {
             Icon(
-                Icons.Default.AccountTree,
-                contentDescription = strings.novel.branchBtn,
-                tint = c.muted.copy(alpha = 0.85f),
-                modifier = Modifier.size(15.5.dp),
-            )
-        }
-        IconButton(
-            onClick = onDelete,
-            enabled = !isStreaming,
-            modifier = Modifier.size(34.dp),
-        ) {
-            Icon(
-                Icons.Default.Delete,
+                imageVector = Icons.Default.Delete,
                 contentDescription = strings.common.delete,
-                tint = c.muted.copy(alpha = 0.85f),
-                modifier = Modifier.size(15.5.dp),
+                tint = if (!isStreaming) c.muted else c.muted.copy(alpha = 0.4f),
+                modifier = Modifier.size(14.dp),
             )
         }
+    }
+}
+
+@Composable
+private fun UserMicroActionChip(
+    icon: ImageVector,
+    label: String,
+    enabled: Boolean,
+    tint: Color,
+    onClick: () -> Unit,
+) {
+    val effectiveTint = if (enabled) tint else tint.copy(alpha = 0.4f)
+    Row(
+        modifier = Modifier
+            .height(28.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = effectiveTint,
+            modifier = Modifier.size(13.dp),
+        )
+        Text(
+            text = label,
+            color = effectiveTint,
+            fontSize = 11.5.sp,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+        )
     }
 }
 
@@ -1407,6 +1615,8 @@ private fun AssistantMessageBlock(
     rpConfig: RpConfig?,
     novelConfig: NovelConfig? = null,
     isLatestAssistant: Boolean,
+    isActionsRevealed: Boolean,
+    onToggleActions: () -> Unit,
     isStreaming: Boolean,
     streamingStatusHint: String? = null,
     isRefreshingChoices: Boolean,
@@ -1437,6 +1647,9 @@ private fun AssistantMessageBlock(
         extractMessageThinkAndBody(msg.reasoning, msg.content, mode)
     }
     val isThisMsgStreaming = isStreaming && msg.status == "streaming"
+    val showFooterActions = !isThisMsgStreaming && (isLatestAssistant || isActionsRevealed)
+    val showTopVariantMicroBadge = !isThisMsgStreaming && !isLatestAssistant && !isActionsRevealed && msg.variants.size > 1
+    val tapInteraction = remember { MutableInteractionSource() }
 
     when (mode) {
         ConversationMode.rp -> {
@@ -1452,7 +1665,19 @@ private fun AssistantMessageBlock(
             val affinityTier = speakerNpc?.let { RpEngine.affinityTier(it.affinity) }
 
             Surface(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .then(
+                        if (!isLatestAssistant && !isThisMsgStreaming) {
+                            Modifier.clickable(
+                                interactionSource = tapInteraction,
+                                indication = null,
+                                onClick = onToggleActions,
+                            )
+                        } else {
+                            Modifier
+                        },
+                    ),
                 shape = RoundedCornerShape(theme.cardRadius),
                 color = c.surface,
                 border = BorderStroke(theme.borderWidth, c.border),
@@ -1494,6 +1719,13 @@ private fun AssistantMessageBlock(
                                     overflow = TextOverflow.Ellipsis,
                                 )
                             }
+                        }
+                        if (showTopVariantMicroBadge) {
+                            MicroVariantBadge(
+                                index = msg.activeVariantIndex,
+                                total = msg.variants.size,
+                                onClick = onToggleActions,
+                            )
                         }
                         if (speakerNpc != null && affinityTier != null) {
                             val tierLabel = strings.rp.affinityTiers[affinityTier.code]
@@ -1548,13 +1780,188 @@ private fun AssistantMessageBlock(
                         )
                     }
 
-                    if (!isThisMsgStreaming) {
+                    if (isLatestAssistant) {
+                        if (showFooterActions) {
+                            AssistantFooterRow(
+                                msg = msg,
+                                showVariantBar = msg.variants.size > 1,
+                                isStreaming = isStreaming,
+                                showContinue = !isStreaming,
+                                onContinue = onContinueRp,
+                                onEdit = { onEditAssistant(cleanBody.ifBlank { msg.content }) },
+                                onCopy = { onCopyText(cleanBody) },
+                                onRegenerate = onRegenerate,
+                                onBranch = onBranch,
+                                onDelete = onDelete,
+                                onSwitchVariant = onSwitchVariant,
+                            )
+                        }
+                    } else {
+                        AnimatedVisibility(
+                            visible = showFooterActions,
+                            enter = fadeIn() + expandVertically(),
+                            exit = fadeOut() + shrinkVertically(),
+                        ) {
+                            AssistantFooterRow(
+                                msg = msg,
+                                showVariantBar = msg.variants.size > 1,
+                                isStreaming = isStreaming,
+                                showContinue = false,
+                                onContinue = onContinueRp,
+                                onEdit = { onEditAssistant(cleanBody.ifBlank { msg.content }) },
+                                onCopy = { onCopyText(cleanBody) },
+                                onRegenerate = onRegenerate,
+                                onBranch = onBranch,
+                                onDelete = onDelete,
+                                onSwitchVariant = onSwitchVariant,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        ConversationMode.novel -> {
+            val syncingMeta = isThisMsgStreaming && NovelExport.isStreamingInternalMeta(msg.content)
+            val showNovelChoicesDeck = isLatestAssistant && !isStreaming && (
+                msg.novelChoices.isNotEmpty() ||
+                    isRefreshingChoices ||
+                    (novelConfig?.enableChoices == true && novelConfig.playStyle != "author")
+                )
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .then(
+                        if (!isLatestAssistant && !isThisMsgStreaming) {
+                            Modifier.clickable(
+                                interactionSource = tapInteraction,
+                                indication = null,
+                                onClick = onToggleActions,
+                            )
+                        } else {
+                            Modifier
+                        },
+                    )
+                    .padding(horizontal = 4.dp, vertical = 2.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                if (showTopVariantMicroBadge) {
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        MicroVariantBadge(
+                            index = msg.activeVariantIndex,
+                            total = msg.variants.size,
+                            onClick = onToggleActions,
+                            modifier = Modifier.align(Alignment.CenterEnd),
+                        )
+                    }
+                }
+
+                AssistantBodyAndNotices(
+                    parsedReasoning = parsedReasoning,
+                    cleanBody = cleanBody,
+                    msg = msg,
+                    isStreaming = isStreaming,
+                    streamingStatusHint = streamingStatusHint,
+                    useSerif = true,
+                    fontSize = 16.sp,
+                    lineHeight = 26.sp,
+                    onRetry = onRegenerate,
+                    onToast = onToast,
+                )
+
+                if (syncingMeta) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(7.dp),
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(c.surfaceSoft)
+                            .padding(horizontal = 10.dp, vertical = 5.dp),
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(12.dp),
+                            strokeWidth = 1.8.dp,
+                            color = c.accent,
+                        )
+                        Text(
+                            text = strings.novel.syncingMeta,
+                            color = c.muted,
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.Medium,
+                        )
+                    }
+                }
+
+                if (showNovelChoicesDeck) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Text(
+                                text = strings.novel.choicesTitle,
+                                color = c.muted,
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.Bold,
+                            )
+                            Surface(
+                                onClick = onRefreshNovelChoices,
+                                enabled = !isRefreshingChoices && !isStreaming,
+                                shape = RoundedCornerShape(999.dp),
+                                color = c.surfaceSoft,
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                ) {
+                                    if (isRefreshingChoices) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(11.dp),
+                                            strokeWidth = 1.6.dp,
+                                            color = c.primary,
+                                        )
+                                    } else {
+                                        Icon(
+                                            imageVector = Icons.Default.Refresh,
+                                            contentDescription = null,
+                                            tint = c.primary,
+                                            modifier = Modifier.size(12.5.dp),
+                                        )
+                                    }
+                                    Text(
+                                        text = if (isRefreshingChoices) strings.rp.refreshingChoices else strings.rp.refreshChoicesBtn,
+                                        color = c.ink,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                    )
+                                }
+                            }
+                        }
+                        msg.novelChoices.forEachIndexed { idx, choice ->
+                            DramaticChoiceCard(
+                                index = idx + 1,
+                                label = choice,
+                                metaBadge = null,
+                                onClick = { onSelectNovelChoice(choice) },
+                            )
+                        }
+                    }
+                }
+
+                if (isLatestAssistant) {
+                    if (showFooterActions) {
                         AssistantFooterRow(
                             msg = msg,
                             showVariantBar = msg.variants.size > 1,
                             isStreaming = isStreaming,
-                            showContinue = isLatestAssistant && !isStreaming,
-                            onContinue = onContinueRp,
+                            showContinue = !isStreaming,
+                            continueLabel = strings.novel.continueBtn,
+                            onContinue = onContinueNovel,
+                            showPolish = !isStreaming,
+                            onPolish = onOpenNovelPolish,
                             onEdit = { onEditAssistant(cleanBody.ifBlank { msg.content }) },
                             onCopy = { onCopyText(cleanBody) },
                             onRegenerate = onRegenerate,
@@ -1563,174 +1970,20 @@ private fun AssistantMessageBlock(
                             onSwitchVariant = onSwitchVariant,
                         )
                     }
-                }
-            }
-        }
-
-        ConversationMode.novel -> {
-            val passageWordCount = remember(cleanBody) { NovelExport.countProseWords(cleanBody) }
-            val syncingMeta = isThisMsgStreaming && NovelExport.isStreamingInternalMeta(msg.content)
-            val showNovelChoicesDeck = isLatestAssistant && !isStreaming && (
-                msg.novelChoices.isNotEmpty() ||
-                    isRefreshingChoices ||
-                    (novelConfig?.enableChoices == true && novelConfig.playStyle != "author")
-                )
-
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(theme.cardRadius),
-                color = c.surface,
-                border = BorderStroke(theme.borderWidth, c.border.copy(alpha = 0.8f)),
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
+                } else {
+                    AnimatedVisibility(
+                        visible = showFooterActions,
+                        enter = fadeIn() + expandVertically(),
+                        exit = fadeOut() + shrinkVertically(),
                     ) {
-                        Text(
-                            text = "✦",
-                            color = c.accent,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold,
-                        )
-                        if (passageWordCount > 0) {
-                            Spacer(Modifier.width(6.dp))
-                            Text(
-                                text = if (isZh) "$passageWordCount 字" else "${passageWordCount}w",
-                                color = c.muted,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                fontFamily = FontFamily.Monospace,
-                            )
-                        }
-                        Spacer(Modifier.width(8.dp))
-                        HorizontalDivider(
-                            modifier = Modifier.weight(1f),
-                            thickness = theme.borderWidth,
-                            color = c.border.copy(alpha = 0.7f),
-                        )
-                        if (!msg.model.isNullOrBlank()) {
-                            Spacer(Modifier.width(8.dp))
-                            Text(
-                                text = msg.model,
-                                color = c.muted,
-                                fontSize = 11.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                    }
-
-                    AssistantBodyAndNotices(
-                        parsedReasoning = parsedReasoning,
-                        cleanBody = cleanBody,
-                        msg = msg,
-                        isStreaming = isStreaming,
-                        streamingStatusHint = streamingStatusHint,
-                        useSerif = true,
-                        fontSize = 15.sp,
-                        lineHeight = 24.5.sp,
-                        onRetry = onRegenerate,
-                        onToast = onToast,
-                    )
-
-                    if (syncingMeta) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(7.dp),
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(999.dp))
-                                .background(c.surfaceSoft)
-                                .border(theme.borderWidth, c.border, RoundedCornerShape(999.dp))
-                                .padding(horizontal = 10.dp, vertical = 5.dp),
-                        ) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(12.dp),
-                                strokeWidth = 1.8.dp,
-                                color = c.accent,
-                            )
-                            Text(
-                                text = strings.novel.syncingMeta,
-                                color = c.muted,
-                                fontSize = 11.5.sp,
-                                fontWeight = FontWeight.Medium,
-                            )
-                        }
-                    }
-
-                    if (showNovelChoicesDeck) {
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                            ) {
-                                Text(
-                                    text = strings.novel.choicesTitle,
-                                    color = c.muted,
-                                    fontSize = 11.5.sp,
-                                    fontWeight = FontWeight.Bold,
-                                )
-                                Surface(
-                                    onClick = onRefreshNovelChoices,
-                                    enabled = !isRefreshingChoices && !isStreaming,
-                                    shape = RoundedCornerShape(999.dp),
-                                    color = c.surfaceSoft,
-                                    border = BorderStroke(theme.borderWidth, c.border),
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                    ) {
-                                        if (isRefreshingChoices) {
-                                            CircularProgressIndicator(
-                                                modifier = Modifier.size(11.dp),
-                                                strokeWidth = 1.6.dp,
-                                                color = c.primary,
-                                            )
-                                        } else {
-                                            Icon(
-                                                imageVector = Icons.Default.Refresh,
-                                                contentDescription = null,
-                                                tint = c.primary,
-                                                modifier = Modifier.size(12.5.dp),
-                                            )
-                                        }
-                                        Text(
-                                            text = if (isRefreshingChoices) strings.rp.refreshingChoices else strings.rp.refreshChoicesBtn,
-                                            color = c.ink,
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.SemiBold,
-                                        )
-                                    }
-                                }
-                            }
-                            msg.novelChoices.forEachIndexed { idx, choice ->
-                                DramaticChoiceCard(
-                                    index = idx + 1,
-                                    label = choice,
-                                    metaBadge = null,
-                                    onClick = { onSelectNovelChoice(choice) },
-                                )
-                            }
-                        }
-                    }
-
-                    if (!isThisMsgStreaming) {
                         AssistantFooterRow(
                             msg = msg,
                             showVariantBar = msg.variants.size > 1,
                             isStreaming = isStreaming,
-                            showContinue = isLatestAssistant && !isStreaming,
+                            showContinue = false,
                             continueLabel = strings.novel.continueBtn,
                             onContinue = onContinueNovel,
-                            showPolish = isLatestAssistant && !isStreaming,
+                            showPolish = false,
                             onPolish = onOpenNovelPolish,
                             onEdit = { onEditAssistant(cleanBody.ifBlank { msg.content }) },
                             onCopy = { onCopyText(cleanBody) },
@@ -1746,32 +1999,46 @@ private fun AssistantMessageBlock(
 
         ConversationMode.chat -> {
             Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .then(
+                        if (!isLatestAssistant && !isThisMsgStreaming) {
+                            Modifier.clickable(
+                                interactionSource = tapInteraction,
+                                indication = null,
+                                onClick = onToggleActions,
+                            )
+                        } else {
+                            Modifier
+                        },
+                    ),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Image(
-                        painter = painterResource(id = R.drawable.img_logo),
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier
-                            .size(18.dp)
-                            .clip(CircleShape)
-                            .border(theme.borderWidth, c.border, CircleShape),
+                    GuModelAvatar(
+                        modelId = msg.model,
+                        size = 20.dp,
                     )
                     Text(
                         text = msg.model?.takeIf { it.isNotBlank() } ?: strings.common.appName,
                         color = c.muted,
-                        fontSize = 11.5.sp,
+                        fontSize = 12.sp,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f),
                     )
+                    if (showTopVariantMicroBadge) {
+                        MicroVariantBadge(
+                            index = msg.activeVariantIndex,
+                            total = msg.variants.size,
+                            onClick = onToggleActions,
+                        )
+                    }
                 }
 
                 AssistantBodyAndNotices(
@@ -1781,27 +2048,70 @@ private fun AssistantMessageBlock(
                     isStreaming = isStreaming,
                     streamingStatusHint = streamingStatusHint,
                     useSerif = false,
-                    fontSize = 14.5.sp,
-                    lineHeight = 22.5.sp,
+                    fontSize = 15.5.sp,
+                    lineHeight = 24.5.sp,
                     onRetry = onRegenerate,
                     onToast = onToast,
                 )
 
-                if (!isThisMsgStreaming) {
-                    AssistantFooterRow(
-                        msg = msg,
-                        showVariantBar = msg.variants.size > 1,
-                        isStreaming = isStreaming,
-                        onEdit = { onEditAssistant(cleanBody.ifBlank { msg.content }) },
-                        onCopy = { onCopyText(cleanBody) },
-                        onRegenerate = onRegenerate,
-                        onBranch = onBranch,
-                        onDelete = onDelete,
-                        onSwitchVariant = onSwitchVariant,
-                    )
+                if (isLatestAssistant) {
+                    if (showFooterActions) {
+                        AssistantFooterRow(
+                            msg = msg,
+                            showVariantBar = msg.variants.size > 1,
+                            isStreaming = isStreaming,
+                            onEdit = { onEditAssistant(cleanBody.ifBlank { msg.content }) },
+                            onCopy = { onCopyText(cleanBody) },
+                            onRegenerate = onRegenerate,
+                            onBranch = onBranch,
+                            onDelete = onDelete,
+                            onSwitchVariant = onSwitchVariant,
+                        )
+                    }
+                } else {
+                    AnimatedVisibility(
+                        visible = showFooterActions,
+                        enter = fadeIn() + expandVertically(),
+                        exit = fadeOut() + shrinkVertically(),
+                    ) {
+                        AssistantFooterRow(
+                            msg = msg,
+                            showVariantBar = msg.variants.size > 1,
+                            isStreaming = isStreaming,
+                            onEdit = { onEditAssistant(cleanBody.ifBlank { msg.content }) },
+                            onCopy = { onCopyText(cleanBody) },
+                            onRegenerate = onRegenerate,
+                            onBranch = onBranch,
+                            onDelete = onDelete,
+                            onSwitchVariant = onSwitchVariant,
+                        )
+                    }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun MicroVariantBadge(
+    index: Int,
+    total: Int,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val c = LocalAppTheme.current.colors
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(c.surfaceSoft)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 6.dp, vertical = 2.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        GuMetaText(
+            text = "${index + 1}/$total",
+            color = c.muted,
+        )
     }
 }
 
@@ -2010,19 +2320,17 @@ private fun VariantSwipePill(
     total: Int,
     onSwitch: (Int) -> Unit,
 ) {
-    val theme = LocalAppTheme.current
-    val c = theme.colors
+    val c = LocalAppTheme.current.colors
     Row(
         modifier = Modifier
-            .height(36.dp)
+            .height(30.dp)
             .clip(RoundedCornerShape(999.dp))
-            .background(c.surfaceSoft)
-            .border(theme.borderWidth, c.border, RoundedCornerShape(999.dp)),
+            .background(c.surfaceSoft),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
             modifier = Modifier
-                .size(width = 30.dp, height = 36.dp)
+                .size(width = 26.dp, height = 30.dp)
                 .clip(CircleShape)
                 .clickable(enabled = index > 0) { onSwitch((index - 1).coerceAtLeast(0)) },
             contentAlignment = Alignment.Center,
@@ -2030,20 +2338,17 @@ private fun VariantSwipePill(
             Icon(
                 Icons.Default.ChevronLeft,
                 contentDescription = null,
-                tint = if (index > 0) c.ink else c.muted.copy(alpha = 0.38f),
-                modifier = Modifier.size(16.dp),
+                tint = if (index > 0) c.ink else c.muted.copy(alpha = 0.35f),
+                modifier = Modifier.size(15.dp),
             )
         }
-        Text(
+        GuMetaText(
             text = "${index + 1}/$total",
             color = c.ink,
-            fontSize = 11.sp,
-            fontWeight = FontWeight.Bold,
-            fontFamily = FontFamily.Monospace,
         )
         Box(
             modifier = Modifier
-                .size(width = 30.dp, height = 36.dp)
+                .size(width = 26.dp, height = 30.dp)
                 .clip(CircleShape)
                 .clickable(enabled = index < total - 1) { onSwitch((index + 1).coerceAtMost(total - 1)) },
             contentAlignment = Alignment.Center,
@@ -2051,8 +2356,8 @@ private fun VariantSwipePill(
             Icon(
                 Icons.Default.ChevronRight,
                 contentDescription = null,
-                tint = if (index < total - 1) c.ink else c.muted.copy(alpha = 0.38f),
-                modifier = Modifier.size(16.dp),
+                tint = if (index < total - 1) c.ink else c.muted.copy(alpha = 0.35f),
+                modifier = Modifier.size(15.dp),
             )
         }
     }
@@ -2095,7 +2400,6 @@ private fun AssistantFooterRow(
                         enabled = !isStreaming,
                         shape = RoundedCornerShape(999.dp),
                         color = c.primarySoft,
-                        border = BorderStroke(theme.borderWidth, c.primary.copy(alpha = 0.4f)),
                         modifier = Modifier.heightIn(min = 34.dp),
                     ) {
                         Row(
@@ -2113,7 +2417,7 @@ private fun AssistantFooterRow(
                                 text = continueLabel ?: strings.rp.continueBtn,
                                 color = c.primarySoftInk,
                                 fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
+                                fontWeight = FontWeight.SemiBold,
                             )
                         }
                     }
@@ -2124,7 +2428,6 @@ private fun AssistantFooterRow(
                         enabled = !isStreaming,
                         shape = RoundedCornerShape(999.dp),
                         color = c.tag,
-                        border = BorderStroke(theme.borderWidth, c.accent.copy(alpha = 0.42f)),
                         modifier = Modifier.heightIn(min = 34.dp),
                     ) {
                         Row(
@@ -2142,7 +2445,7 @@ private fun AssistantFooterRow(
                                 text = if (isZh) "精修 / 三走向" else "Polish / 3 Paths",
                                 color = c.tagInk,
                                 fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
+                                fontWeight = FontWeight.SemiBold,
                             )
                         }
                     }
@@ -2153,76 +2456,90 @@ private fun AssistantFooterRow(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(onClick = onCopy, modifier = Modifier.size(38.dp)) {
+            IconButton(onClick = onCopy, modifier = Modifier.size(34.dp)) {
                 Icon(
                     Icons.Default.ContentCopy,
                     contentDescription = strings.common.copy,
                     tint = c.muted.copy(alpha = 0.85f),
-                    modifier = Modifier.size(15.5.dp),
+                    modifier = Modifier.size(15.dp),
                 )
             }
-            IconButton(onClick = onEdit, enabled = !isStreaming, modifier = Modifier.size(38.dp)) {
+            IconButton(onClick = onEdit, enabled = !isStreaming, modifier = Modifier.size(34.dp)) {
                 Icon(
                     Icons.Default.Edit,
                     contentDescription = strings.common.edit,
                     tint = c.muted.copy(alpha = 0.85f),
-                    modifier = Modifier.size(15.5.dp),
+                    modifier = Modifier.size(15.dp),
                 )
             }
-            IconButton(onClick = onRegenerate, enabled = !isStreaming, modifier = Modifier.size(38.dp)) {
+            IconButton(onClick = onRegenerate, enabled = !isStreaming, modifier = Modifier.size(34.dp)) {
                 Icon(
                     Icons.Default.Refresh,
                     contentDescription = strings.chat.regenerate,
                     tint = c.muted.copy(alpha = 0.85f),
-                    modifier = Modifier.size(15.5.dp),
+                    modifier = Modifier.size(15.dp),
                 )
             }
-            IconButton(onClick = onBranch, modifier = Modifier.size(38.dp)) {
+            IconButton(onClick = onBranch, modifier = Modifier.size(34.dp)) {
                 Icon(
                     Icons.Default.AccountTree,
                     contentDescription = strings.novel.branchBtn,
                     tint = c.muted.copy(alpha = 0.85f),
-                    modifier = Modifier.size(15.5.dp),
+                    modifier = Modifier.size(15.dp),
                 )
             }
-            IconButton(onClick = onDelete, enabled = !isStreaming, modifier = Modifier.size(38.dp)) {
+            IconButton(onClick = onDelete, enabled = !isStreaming, modifier = Modifier.size(34.dp)) {
                 Icon(
                     Icons.Default.Delete,
                     contentDescription = strings.common.delete,
                     tint = c.muted.copy(alpha = 0.85f),
-                    modifier = Modifier.size(15.5.dp),
+                    modifier = Modifier.size(15.dp),
                 )
             }
-            Spacer(Modifier.weight(1f))
-            if (showVariantBar && msg.variants.size > 1) {
-                VariantSwipePill(
-                    index = msg.activeVariantIndex,
-                    total = msg.variants.size,
-                    onSwitch = onSwitchVariant,
-                )
-            }
+
             val cachedTokens = msg.usage?.cacheReadInputTokens ?: 0
-            if (cachedTokens > 0) {
-                val promptTok = msg.usage?.promptTokens ?: 0
-                val totalIn = if (promptTok >= cachedTokens) promptTok else promptTok + cachedTokens
-                val hitPct = if (totalIn > 0) {
-                    kotlin.math.round(cachedTokens * 100.0 / totalIn).toInt().coerceIn(1, 100)
-                } else {
-                    0
+            val totalTokens = msg.usage?.totalTokens
+            val metaText = remember(cachedTokens, totalTokens, msg.usage?.promptTokens) {
+                val parts = ArrayList<String>(2)
+                if (cachedTokens > 0) {
+                    val promptTok = msg.usage?.promptTokens ?: 0
+                    val totalIn = if (promptTok >= cachedTokens) promptTok else promptTok + cachedTokens
+                    val hitPct = if (totalIn > 0) {
+                        kotlin.math.round(cachedTokens * 100.0 / totalIn).toInt().coerceIn(1, 100)
+                    } else {
+                        0
+                    }
+                    if (hitPct > 0) {
+                        parts.add("⚡${hitPct}%")
+                    } else {
+                        parts.add("⚡${FileContextBudgeter.formatShortTokens(cachedTokens)}")
+                    }
                 }
-                val cacheLabel = buildString {
-                    append("⚡ ")
-                    append(if (isZh) "缓存" else "Cache")
-                    if (hitPct > 0) append(" $hitPct%")
-                    append(" · ")
-                    append(FileContextBudgeter.formatShortTokens(cachedTokens))
+                if (totalTokens != null && totalTokens > 0) {
+                    parts.add(FileContextBudgeter.formatShortTokens(totalTokens))
                 }
-                Spacer(Modifier.width(5.dp))
-                GuBadge(cacheLabel, variant = GuBadgeVariant.EMERALD)
+                parts.joinToString(" · ")
             }
-            msg.usage?.totalTokens?.let { tok ->
-                Spacer(Modifier.width(5.dp))
-                GuBadge("${tok}t", variant = GuBadgeVariant.NEUTRAL)
+
+            Row(
+                modifier = Modifier.weight(1f),
+                horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.End),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (showVariantBar && msg.variants.size > 1) {
+                    VariantSwipePill(
+                        index = msg.activeVariantIndex,
+                        total = msg.variants.size,
+                        onSwitch = onSwitchVariant,
+                    )
+                }
+                if (metaText.isNotEmpty()) {
+                    GuMetaText(
+                        text = metaText,
+                        color = c.muted,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                }
             }
         }
     }
