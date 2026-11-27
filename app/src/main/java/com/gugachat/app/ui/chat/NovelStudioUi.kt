@@ -6,6 +6,7 @@ import android.content.Context
 import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
@@ -17,6 +18,7 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -66,7 +68,9 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Landscape
+import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Search
@@ -96,15 +100,19 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil.compose.rememberAsyncImagePainter
 import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.i18n.LocalAppStrings
 import com.gugachat.app.core.i18n.fmt
+import com.gugachat.app.core.storage.LocalMediaPathResolver
 import com.gugachat.app.core.theme.GuBadge
 import com.gugachat.app.core.theme.GuBadgeVariant
 import com.gugachat.app.core.theme.GuButton
@@ -1098,12 +1106,21 @@ fun NovelStudioSheet(
     val hasAssistantProse = latestAssistantProse.isNotBlank()
     val activeCh = chapters.firstOrNull { it.id == novel.activeChapterId } ?: chapters.lastOrNull()
     val totalBookWords = remember(chapters) { chapters.sumOf { it.wordCount } }
+    val chatVm = LocalChatViewModel.current
+    val chatState = chatVm?.ui?.collectAsStateWithLifecycle()?.value
+    val isGeneratingCover = chatState?.isGeneratingRpArt == true
 
     val exportTxtLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
         if (uri != null) onExportTxt(uri, exportIncludeLore)
     }
     val exportMdLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/markdown")) { uri ->
         if (uri != null) onExportMd(uri, exportIncludeLore)
+    }
+    val exportEpubLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/epub+zip")) { uri ->
+        if (uri != null) chatVm?.exportNovelEpubToUri(uri, ctx.contentResolver, includeLore = exportIncludeLore)
+    }
+    val pickCoverLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) chatVm?.bindNovelCoverImage(uri, ctx.contentResolver)
     }
     val importLoreLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) onImportLorebook(uri)
@@ -2389,6 +2406,106 @@ fun NovelStudioSheet(
                                         // Compact Book Cover Parameter Card
                                         GuCard(modifier = Modifier.fillMaxWidth()) {
                                             Column(verticalArrangement = Arrangement.spacedBy(11.dp)) {
+                                                val coverFile = remember(novel.coverImagePath) {
+                                                    LocalMediaPathResolver.resolveFile(
+                                                        ctx.applicationContext.filesDir.absolutePath,
+                                                        novel.coverImagePath,
+                                                    )?.takeIf { it.isFile }
+                                                }
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                ) {
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .size(width = 72.dp, height = 96.dp)
+                                                            .clip(RoundedCornerShape(10.dp))
+                                                            .background(c.surfaceSoft)
+                                                            .clickable {
+                                                                pickCoverLauncher.launch(
+                                                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                                                                )
+                                                            },
+                                                        contentAlignment = Alignment.Center,
+                                                    ) {
+                                                        if (coverFile != null) {
+                                                            Image(
+                                                                painter = rememberAsyncImagePainter(coverFile),
+                                                                contentDescription = novel.title,
+                                                                contentScale = ContentScale.Crop,
+                                                                modifier = Modifier.fillMaxSize(),
+                                                            )
+                                                        } else {
+                                                            Column(
+                                                                horizontalAlignment = Alignment.CenterHorizontally,
+                                                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                                                            ) {
+                                                                Icon(
+                                                                    imageVector = Icons.Default.AutoStories,
+                                                                    contentDescription = null,
+                                                                    tint = c.muted,
+                                                                    modifier = Modifier.size(22.dp),
+                                                                )
+                                                                GuMetaText(
+                                                                    text = if (isZh) "书封" else "Cover",
+                                                                    color = c.muted,
+                                                                )
+                                                            }
+                                                        }
+                                                    }
+                                                    Column(
+                                                        modifier = Modifier.weight(1f),
+                                                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                                                    ) {
+                                                        Text(
+                                                            text = if (isZh) "精装书封与插图" else "Book Cover Artwork",
+                                                            color = c.ink,
+                                                            fontSize = 13.5.sp,
+                                                            fontWeight = FontWeight.Bold,
+                                                        )
+                                                        FlowRow(
+                                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                                                        ) {
+                                                            GuButton(
+                                                                onClick = { chatVm?.generateNovelCoverArt() },
+                                                                enabled = chatVm != null && !isGeneratingCover,
+                                                                loading = isGeneratingCover,
+                                                                compact = true,
+                                                                variant = GuButtonVariant.HONEY,
+                                                            ) {
+                                                                Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(13.dp))
+                                                                Spacer(Modifier.width(4.dp))
+                                                                Text(if (isZh) "✨ AI 绘书封" else "✨ AI Cover", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                                                            }
+                                                            GuButton(
+                                                                onClick = {
+                                                                    pickCoverLauncher.launch(
+                                                                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                                                                    )
+                                                                },
+                                                                enabled = chatVm != null,
+                                                                compact = true,
+                                                                variant = GuButtonVariant.SUBTLE,
+                                                            ) {
+                                                                Icon(Icons.Default.Image, contentDescription = null, modifier = Modifier.size(13.dp))
+                                                                Spacer(Modifier.width(4.dp))
+                                                                Text(if (isZh) "相册选图" else "Pick", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                                                            }
+                                                            if (coverFile != null) {
+                                                                GuButton(
+                                                                    onClick = { chatVm?.clearNovelCoverImage() },
+                                                                    compact = true,
+                                                                    variant = GuButtonVariant.SECONDARY,
+                                                                ) {
+                                                                    Text(if (isZh) "清除" else "Clear", color = c.danger, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                HorizontalDivider(thickness = 0.5.dp, color = c.border.copy(alpha = 0.45f))
                                                 Row(
                                                     modifier = Modifier.fillMaxWidth(),
                                                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -2655,6 +2772,22 @@ fun NovelStudioSheet(
                                                     checked = exportIncludeLore,
                                                     onCheckedChange = { exportIncludeLore = it },
                                                 )
+                                                GuButton(
+                                                    onClick = {
+                                                        exportEpubLauncher.launch(NovelExport.sanitizeFileName(novel.title, "epub"))
+                                                    },
+                                                    enabled = chatVm != null,
+                                                    variant = GuButtonVariant.HONEY,
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                ) {
+                                                    Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = null, modifier = Modifier.size(16.dp))
+                                                    Spacer(Modifier.width(6.dp))
+                                                    Text(
+                                                        text = if (isZh) "📕 导出精装 EPUB" else "📕 Export EPUB 3",
+                                                        fontSize = 13.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                    )
+                                                }
                                                 Row(
                                                     modifier = Modifier.fillMaxWidth(),
                                                     horizontalArrangement = Arrangement.spacedBy(8.dp),

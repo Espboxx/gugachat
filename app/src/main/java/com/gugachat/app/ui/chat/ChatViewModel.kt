@@ -1,10 +1,9 @@
 package com.gugachat.app.ui.chat
 
 import android.content.ContentResolver
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.net.Uri
 import android.provider.OpenableColumns
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.gugachat.app.AppContainer
@@ -13,30 +12,31 @@ import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.i18n.EnStrings
 import com.gugachat.app.core.i18n.ZhStrings
 import com.gugachat.app.core.i18n.fmt
-import com.gugachat.app.core.storage.ApiProtocol
-import com.gugachat.app.core.storage.ApiProviderConfig
 import com.gugachat.app.core.storage.AppSettings
-import com.gugachat.app.core.util.newIdempotencyKey
-import com.gugachat.app.data.api.ApiException
+import com.gugachat.app.core.storage.LocalMediaPathResolver
 import com.gugachat.app.data.api.AppJson
-import com.gugachat.app.data.api.ChatTokenUsageDto
 import com.gugachat.app.data.api.DirectProtocolCodec
 import com.gugachat.app.data.api.ExternalImportService
-import com.gugachat.app.data.api.ImageBinaryUpload
 import com.gugachat.app.data.api.OnlineChatCompletionRequestDto
 import com.gugachat.app.data.api.OnlineChatGroupDto
 import com.gugachat.app.data.api.OnlineChatModelDto
-import com.gugachat.app.data.api.OnlineImageKeyDto
-import com.gugachat.app.data.api.OnlineImageModelDto
-import com.gugachat.app.data.api.OnlineImageSubmitInput
-import com.gugachat.app.data.api.WireChatContentPartDto
 import com.gugachat.app.data.api.WireChatMessageDto
-import com.gugachat.app.data.api.WireImageUrlDto
+import com.gugachat.app.data.chat.ActiveStreamSession
+import com.gugachat.app.data.chat.AssetImportResult
+import com.gugachat.app.data.chat.ChatContextAssembler
 import com.gugachat.app.data.chat.RetrievalCoordinator
+import com.gugachat.app.data.chat.StreamLaunchRequest
 import com.gugachat.app.data.local.AttachmentSaveResult
+import com.gugachat.app.data.local.CharacterCardEntity
+import com.gugachat.app.data.local.ConversationWorldbookCrossRef
+import com.gugachat.app.data.local.PersonaEntity
+import com.gugachat.app.data.local.PromptPresetEntity
+import com.gugachat.app.data.local.WorldbookEntity
+import com.gugachat.app.data.local.WorldbookEntryEntity
 import com.gugachat.app.data.local.toDomain
 import com.gugachat.app.data.local.toEntity
-import com.gugachat.app.domain.chat.BuiltChatContext
+import com.gugachat.app.domain.chat.TokenEstimator
+import com.gugachat.app.domain.chat.WorldbookEngine
 import com.gugachat.app.domain.chat.ChatAttachmentMeta
 import com.gugachat.app.domain.chat.ChatConversation
 import com.gugachat.app.domain.chat.ChatMessage
@@ -49,12 +49,10 @@ import com.gugachat.app.domain.chat.ConversationMode
 import com.gugachat.app.domain.chat.EpisodeConsolidator
 import com.gugachat.app.domain.chat.FileInjectMode
 import com.gugachat.app.domain.chat.FreeQuotaUtils
-import com.gugachat.app.domain.chat.MemoryBudget
 import com.gugachat.app.domain.chat.MemoryCategory
 import com.gugachat.app.domain.chat.MemoryEpisode
 import com.gugachat.app.domain.chat.MemoryExtractor
 import com.gugachat.app.domain.chat.MemoryLedgerItem
-import com.gugachat.app.domain.chat.MessageUsage
 import com.gugachat.app.domain.chat.MessageVariant
 import com.gugachat.app.domain.chat.NovelChapter
 import com.gugachat.app.domain.chat.NovelConfig
@@ -64,7 +62,7 @@ import com.gugachat.app.domain.chat.NovelExport
 import com.gugachat.app.domain.chat.NovelInputKind
 import com.gugachat.app.domain.chat.NovelLoreEntry
 import com.gugachat.app.domain.chat.NovelPresets
-import com.gugachat.app.domain.chat.ParsedTavernAsset
+import com.gugachat.app.domain.chat.PromptPresetBlock
 import com.gugachat.app.domain.chat.RetrievalMode
 import com.gugachat.app.domain.chat.RpCardCodec
 import com.gugachat.app.domain.chat.RpCgRecord
@@ -83,19 +81,15 @@ import com.gugachat.app.domain.chat.RpSaveSlot
 import com.gugachat.app.domain.chat.RpVisualTheme
 import com.gugachat.app.domain.chat.TavernAssetCodec
 import com.gugachat.app.domain.chat.TimelineReconciler
-import com.gugachat.app.domain.chat.TokenEstimator
 import com.gugachat.app.domain.chat.UserMemory
 import com.gugachat.app.domain.chat.UuSaveCodec
 import com.gugachat.app.domain.chat.VectorIndexProgress
 import com.gugachat.app.domain.chat.WireChatMessage
 import com.gugachat.app.domain.chat.activeVariant
-import com.gugachat.app.domain.images.OnlineImageNovelAI
-import com.gugachat.app.domain.images.OnlineImageStudioUtils
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -106,14 +100,15 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.ByteArrayOutputStream
-import java.io.File
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.builtins.MapSerializer
+import kotlinx.serialization.builtins.serializer
 import java.util.UUID
-import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.roundToInt
+
+val LocalChatViewModel = staticCompositionLocalOf<ChatViewModel?> { null }
 
 data class PendingScannedPdf(
     val fileName: String,
@@ -175,6 +170,13 @@ data class ChatUiState(
     val vectorIndexProgress: VectorIndexProgress = VectorIndexProgress(),
     val activeRetrievalMode: RetrievalMode = RetrievalMode.LEXICAL_ONLY,
     val compactingProgressText: String? = null,
+    val streamingConversationIds: Set<String> = emptySet(),
+    val activeStreamingSession: ActiveStreamSession? = null,
+    val characterCards: List<CharacterCardEntity> = emptyList(),
+    val worldbooks: List<WorldbookEntity> = emptyList(),
+    val personas: List<PersonaEntity> = emptyList(),
+    val promptPresets: List<PromptPresetEntity> = emptyList(),
+    val mountedWorldbookRefs: List<ConversationWorldbookCrossRef> = emptyList(),
 ) {
     val effectiveChatParams: ChatParams
         get() = activeConversation?.params ?: ChatParams(
@@ -182,28 +184,49 @@ data class ChatUiState(
             contextWindowOverride = defaultContextWindowOverride,
             maxHistoryMessages = defaultMaxHistoryMessages,
         )
+
+    val boundCharacterCard: CharacterCardEntity?
+        get() = activeConversation?.characterCardId?.let { id -> characterCards.firstOrNull { it.id == id } }
+
+    val boundPersona: PersonaEntity?
+        get() = activeConversation?.personaId?.let { id -> personas.firstOrNull { it.id == id } }
+
+    val boundPromptPreset: PromptPresetEntity?
+        get() = activeConversation?.presetId?.let { id -> promptPresets.firstOrNull { it.id == id } }
+
+    val mountedWorldbooks: List<WorldbookEntity>
+        get() {
+            val byId = worldbooks.associateBy { it.id }
+            return mountedWorldbookRefs
+                .sortedBy { it.sortOrder }
+                .mapNotNull { ref -> byId[ref.worldbookId] }
+        }
+
+    val activeUserTurnCount: Int
+        get() = TimelineReconciler.activeMessages(messages).count { it.role == "user" }
+
+    val activeGreetingVariants: List<String>
+        get() {
+            val card = boundCharacterCard
+            if (card != null) {
+                val alts = runCatching {
+                    AppJson.decodeFromString(ListSerializer(String.serializer()), card.alternateGreetingsJson)
+                }.getOrDefault(emptyList())
+                return (listOf(card.firstMes) + alts).map { it.trim() }.filter { it.isNotEmpty() }
+            }
+            val rp = activeConversation?.rp ?: return emptyList()
+            return (listOf(rp.greeting) + rp.alternateGreetings).map { it.trim() }.filter { it.isNotEmpty() }
+        }
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ChatViewModel(private val container: AppContainer) : ViewModel() {
-    private data class SentPayloadTracking(
-        val calibrationKey: String,
-        val protocol: ApiProtocol,
-        val estimatedRawTokens: Int,
-        val hasUndecayedImages: Boolean,
-    )
-
-    private data class BuiltWirePayload(
-        val request: OnlineChatCompletionRequestDto,
-        val builtContext: BuiltChatContext,
-        val tracking: SentPayloadTracking,
-    )
-
     private val chatDao = container.database.chatDao()
     private val userMemoryDao = container.database.userMemoryDao()
+    private val assetDao = container.database.assetDao()
+    private val chatStreamManager = container.chatStreamManager
 
     private val _activeConvId = MutableStateFlow<String?>(null)
-    private val _streamingMessage = MutableStateFlow<ChatMessage?>(null)
     private val _ui = MutableStateFlow(
         ChatUiState(
             activeRetrievalMode = container.settingsState.value.retrievalSettings.mode,
@@ -212,26 +235,71 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     )
     val ui: StateFlow<ChatUiState> = _ui.asStateFlow()
 
-    private var streamJob: Job? = null
     private var waterlineJob: Job? = null
-    private var lastBuiltTracking: SentPayloadTracking? = null
-    private val consolidatingConvIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
     init {
         viewModelScope.launch {
-            combine(chatDao.observeConversations(), _activeConvId) { list, curId ->
-                list.map { it.toDomain() } to curId
-            }.collect { (domainList, curId) ->
+            combine(
+                chatDao.observeConversations(),
+                _activeConvId,
+                assetDao.observeCharacterCards(),
+            ) { list, curId, cards ->
+                Triple(list.map { it.toDomain() }, curId, cards)
+            }.collect { (domainList, curId, cards) ->
+                val cardMap = cards.associateBy { it.id }
                 val matched = domainList.firstOrNull { it.id == curId }
-                val active = when {
+                val rawActive = when {
                     matched != null -> matched
                     curId == null -> domainList.firstOrNull()
                     else -> _ui.value.activeConversation ?: domainList.firstOrNull()
                 }
-                if (curId == null && active != null) {
-                    _activeConvId.value = active.id
+                if (curId == null && rawActive != null) {
+                    _activeConvId.value = rawActive.id
                 }
-                _ui.update { it.copy(conversations = domainList, activeConversation = active) }
+                val active = rawActive?.let { conv ->
+                    enrichConversationWithBoundCardMedia(conv, conv.characterCardId?.let { cardMap[it] })
+                }
+                val activeSession = active?.id?.let { chatStreamManager.activeSessions.value[it] }
+                _ui.update {
+                    it.copy(
+                        conversations = domainList,
+                        activeConversation = active,
+                        characterCards = cards,
+                        activeStreamingSession = activeSession,
+                        isStreaming = activeSession?.isStreaming == true,
+                        streamingStatusHint = activeSession?.statusHint,
+                    )
+                }
+                recomputeWaterline()
+            }
+        }
+
+        viewModelScope.launch {
+            assetDao.observeWorldbooks().collect { books ->
+                _ui.update { it.copy(worldbooks = books) }
+                recomputeWaterline()
+            }
+        }
+
+        viewModelScope.launch {
+            assetDao.observePersonas().collect { list ->
+                _ui.update { it.copy(personas = list) }
+                recomputeWaterline()
+            }
+        }
+
+        viewModelScope.launch {
+            assetDao.observePromptPresets().collect { presets ->
+                _ui.update { it.copy(promptPresets = presets) }
+                recomputeWaterline()
+            }
+        }
+
+        viewModelScope.launch {
+            _activeConvId.flatMapLatest { id ->
+                if (id == null) flowOf(emptyList()) else assetDao.observeMountedWorldbookRefs(id)
+            }.collect { refs ->
+                _ui.update { it.copy(mountedWorldbookRefs = refs) }
                 recomputeWaterline()
             }
         }
@@ -244,25 +312,64 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         }
 
         viewModelScope.launch {
+            combine(
+                chatStreamManager.activeSessions,
+                _activeConvId,
+            ) { sessions, curId ->
+                sessions to curId
+            }.collect { (sessions, curId) ->
+                val streamingIds = sessions.filterValues { it.isStreaming }.keys
+                val targetId = curId ?: _ui.value.activeConversation?.id
+                val activeSession = targetId?.let { sessions[it] }
+                _ui.update {
+                    it.copy(
+                        streamingConversationIds = streamingIds,
+                        activeStreamingSession = activeSession,
+                        isStreaming = activeSession?.isStreaming == true,
+                        streamingStatusHint = activeSession?.statusHint,
+                    )
+                }
+            }
+        }
+
+        viewModelScope.launch {
+            chatStreamManager.lastWaterlineContext.collect { built ->
+                if (built != null) {
+                    _ui.update { it.copy(waterline = built.summary) }
+                }
+            }
+        }
+
+        viewModelScope.launch {
             _activeConvId.flatMapLatest { id ->
                 if (id == null) {
-                    flowOf(Triple<String?, List<ChatMessage>, ChatMessage?>(null, emptyList(), null))
+                    flowOf(Triple<String?, List<ChatMessage>, Pair<ChatMessage?, ChatMessage?>>(null, emptyList(), null to null))
                 } else {
                     val dbFlow = chatDao.observeMessages(id).map { rows -> rows.map { r -> r.toDomain() } }
-                    combine(dbFlow, _streamingMessage) { dbMsgs, live ->
-                        Triple(id, dbMsgs, live)
+                    combine(
+                        dbFlow,
+                        chatStreamManager.activeSessions,
+                        chatStreamManager.lastCommittedMessages,
+                    ) { dbMsgs, sessions, committed ->
+                        val live = sessions[id]?.streamingMessage
+                        val bridge = committed[id]
+                        Triple(id, dbMsgs, live to bridge)
                     }
                 }
-            }.collect { (convId, dbMsgs, live) ->
-                val merged = if (live != null && live.conversationId == convId) {
-                    val dbMatch = dbMsgs.firstOrNull { it.id == live.id }
-                    if (dbMatch != null && dbMatch.status != "streaming" && live.status != "streaming") {
-                        _streamingMessage.compareAndSet(live, null)
+            }.collect { (convId, dbMsgs, livePair) ->
+                val (live, bridge) = livePair
+                val activeLive = live ?: bridge
+                val merged = if (convId != null && activeLive != null && activeLive.conversationId == convId) {
+                    val dbMatch = dbMsgs.firstOrNull { it.id == activeLive.id }
+                    if (dbMatch != null && dbMatch.status != "streaming" && activeLive.status != "streaming") {
+                        if (bridge != null && bridge.id == dbMatch.id) {
+                            chatStreamManager.clearCommittedBridge(convId, dbMatch.id)
+                        }
                         dbMsgs
                     } else if (dbMatch != null) {
-                        dbMsgs.map { if (it.id == live.id) live else it }
+                        dbMsgs.map { if (it.id == activeLive.id) activeLive else it }
                     } else {
-                        dbMsgs + live
+                        dbMsgs + activeLive
                     }
                 } else {
                     dbMsgs
@@ -681,13 +788,19 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun selectConversation(convId: String) {
-        if (!_ui.value.isStreaming) _streamingMessage.value = null
         val changed = _activeConvId.value != convId
         _activeConvId.value = convId
-        val conv = _ui.value.conversations.firstOrNull { it.id == convId }
+        val rawConv = _ui.value.conversations.firstOrNull { it.id == convId }
+        val conv = rawConv?.let { c ->
+            enrichConversationWithBoundCardMedia(c, _ui.value.characterCards.firstOrNull { it.id == c.characterCardId })
+        }
+        val activeSession = chatStreamManager.activeSessions.value[convId]
         _ui.update {
             it.copy(
                 activeConversation = conv ?: it.activeConversation,
+                activeStreamingSession = activeSession,
+                isStreaming = activeSession?.isStreaming == true,
+                streamingStatusHint = activeSession?.statusHint,
                 draftDiceRoll = null,
                 threePathDrafts = if (changed) emptyList() else it.threePathDrafts,
                 outlineChatReply = if (changed) "" else it.outlineChatReply,
@@ -716,6 +829,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     fun createNewChatSession(title: String = "新对话") {
         viewModelScope.launch {
             val now = System.currentTimeMillis()
+            val defaultPersonaId = assetDao.getDefaultPersona()?.id
             val conv = ChatConversation(
                 id = UUID.randomUUID().toString(),
                 title = title,
@@ -723,6 +837,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                 groupId = _ui.value.selectedGroupId,
                 model = _ui.value.selectedModelId,
                 params = defaultChatParams(),
+                personaId = defaultPersonaId,
                 createdAt = now,
                 updatedAt = now,
             )
@@ -750,6 +865,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
 
     fun deleteConversation(convId: String) {
         viewModelScope.launch {
+            chatStreamManager.cancelStreamAndWait(convId)
             chatDao.deleteConversationCascade(convId)
             if (_activeConvId.value == convId) {
                 _activeConvId.value = _ui.value.conversations.firstOrNull { it.id != convId }?.id
@@ -836,7 +952,8 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun sendMessage(overrideText: String? = null) {
-        if (_ui.value.isStreaming) return
+        val targetConvId = _activeConvId.value ?: _ui.value.activeConversation?.id
+        if (targetConvId != null && chatStreamManager.isStreaming(targetConvId)) return
         val groupId = _ui.value.selectedGroupId
         val modelId = _ui.value.selectedModelId
         if (groupId == null || modelId.isNullOrBlank()) {
@@ -858,6 +975,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
 
         viewModelScope.launch {
             val conv = ensureActiveConversation()
+            if (chatStreamManager.isStreaming(conv.id)) return@launch
             val effectiveText = if (conv.mode == ConversationMode.rp && conv.rp != null && conv.rp.regexScripts.isNotEmpty() && text.isNotEmpty()) {
                 val hasNonDisplayUserScripts = conv.rp.regexScripts.any { s ->
                     s.enabled &&
@@ -933,14 +1051,14 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun stopStreaming() {
-        streamJob?.cancel()
-        _ui.update { it.copy(isStreaming = false, streamingStatusHint = null) }
+        val convId = _activeConvId.value ?: _ui.value.activeConversation?.id ?: return
+        chatStreamManager.cancelStream(convId)
     }
 
     fun regenerateFromAssistant(assistantMsgId: String) {
-        if (_ui.value.isStreaming) return
         viewModelScope.launch {
             val conv = _ui.value.activeConversation ?: return@launch
+            if (chatStreamManager.isStreaming(conv.id)) return@launch
             val msgs = chatDao.getMessagesForConversation(conv.id).map { it.toDomain() }
             val target = msgs.firstOrNull { it.id == assistantMsgId } ?: return@launch
             val reconciled = TimelineReconciler.reconcileOnRollback(
@@ -1000,9 +1118,10 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun editAndResendUserMessage(userMsgId: String, newText: String) {
-        if (_ui.value.isStreaming || newText.isBlank()) return
+        if (newText.isBlank()) return
         viewModelScope.launch {
             val conv = _ui.value.activeConversation ?: return@launch
+            if (chatStreamManager.isStreaming(conv.id)) return@launch
             val msgs = chatDao.getMessagesForConversation(conv.id).map { it.toDomain() }
             val target = msgs.firstOrNull { it.id == userMsgId } ?: return@launch
             val reconciled = TimelineReconciler.reconcileOnRollback(
@@ -1031,10 +1150,8 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         val clean = newText.trim()
         if (clean.isEmpty()) return
         viewModelScope.launch {
-            if (!_ui.value.isStreaming && _streamingMessage.value?.id == msgId) {
-                _streamingMessage.value = null
-            }
             val conv = _ui.value.activeConversation ?: return@launch
+            if (chatStreamManager.isStreaming(conv.id)) return@launch
             val msgs = chatDao.getMessagesForConversation(conv.id).map { it.toDomain() }
             val target = msgs.firstOrNull { it.id == msgId && it.role == "assistant" } ?: return@launch
             val now = System.currentTimeMillis()
@@ -1062,8 +1179,8 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
 
     fun deleteMessage(msgId: String) {
         viewModelScope.launch {
-            if (!_ui.value.isStreaming) _streamingMessage.value = null
             val conv = _ui.value.activeConversation ?: return@launch
+            if (chatStreamManager.isStreaming(conv.id)) return@launch
             val msgs = chatDao.getMessagesForConversation(conv.id).map { it.toDomain() }
             val updated = TimelineReconciler.softDeleteMessage(msgId, msgs)
             chatDao.upsertMessages(updated.map { it.toEntity() })
@@ -1156,6 +1273,10 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             if (existingEpisodes.isNotEmpty()) {
                 chatDao.upsertMemoryEpisodes(existingEpisodes.map { it.copy(id = UUID.randomUUID().toString(), conversationId = newConvId).toEntity() })
             }
+            val mountedRefs = assetDao.getMountedWorldbookRefs(conv.id)
+            if (mountedRefs.isNotEmpty()) {
+                assetDao.replaceMountedWorldbooks(newConvId, mountedRefs.map { it.copy(conversationId = newConvId) })
+            }
 
             _activeConvId.value = newConvId
             val toast = if (conv.mode == ConversationMode.novel) {
@@ -1169,8 +1290,8 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
 
     fun switchMessageVariant(msgId: String, variantIndex: Int) {
         viewModelScope.launch {
-            if (!_ui.value.isStreaming) _streamingMessage.value = null
             val conv = _ui.value.activeConversation ?: return@launch
+            if (chatStreamManager.isStreaming(conv.id)) return@launch
             val msgs = chatDao.getMessagesForConversation(conv.id).map { it.toDomain() }
             val msg = msgs.firstOrNull { it.id == msgId } ?: return@launch
             val variant = msg.variants.getOrNull(variantIndex) ?: return@launch
@@ -1212,826 +1333,20 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     ) {
         val groupId = conv.groupId ?: _ui.value.selectedGroupId ?: return
         val modelId = conv.model ?: _ui.value.selectedModelId ?: return
-
-        streamJob?.cancel()
-        streamJob = viewModelScope.launch {
-            _ui.update { it.copy(isStreaming = true, streamingStatusHint = null) }
-
-            val allMsgs = chatDao.getMessagesForConversation(conv.id).map { it.toDomain() }
-            val isContinue = continuePrefixText != null
-            val nextSeq = existingMessageForVariant?.seq ?: ((allMsgs.maxOfOrNull { it.seq } ?: 0) + 1)
-            val assistantId = existingMessageForVariant?.id ?: UUID.randomUUID().toString()
-            val preservedVariants = if (existingMessageForVariant != null) {
-                if (existingMessageForVariant.variants.isNotEmpty()) {
-                    existingMessageForVariant.variants
-                } else if (existingMessageForVariant.content.isNotBlank()) {
-                    listOf(
-                        MessageVariant(
-                            id = UUID.randomUUID().toString(),
-                            content = existingMessageForVariant.content,
-                            reasoning = existingMessageForVariant.reasoning,
-                            createdAt = existingMessageForVariant.createdAt,
-                            usage = existingMessageForVariant.usage,
-                            model = existingMessageForVariant.model,
-                            rpStateSnapshot = conv.rp?.state,
-                            rpCastSnapshot = conv.rp?.cast,
-                            rpChoices = existingMessageForVariant.rpChoices,
-                            novelStatusSnapshot = conv.novel?.currentStatus,
-                            novelChoices = existingMessageForVariant.novelChoices,
-                        ),
-                    )
-                } else {
-                    emptyList()
-                }
-            } else {
-                emptyList()
-            }
-            val assistantStart = ChatMessage(
-                id = assistantId,
-                conversationId = conv.id,
-                role = "assistant",
-                content = continuePrefixText.orEmpty(),
-                reasoning = "",
-                model = modelId,
-                createdAt = existingMessageForVariant?.createdAt ?: System.currentTimeMillis(),
-                seq = nextSeq,
-                rpChoices = existingMessageForVariant?.rpChoices.orEmpty(),
-                novelChoices = existingMessageForVariant?.novelChoices.orEmpty(),
-                status = "streaming",
-                variants = preservedVariants,
-                activeVariantIndex = existingMessageForVariant?.activeVariantIndex ?: 0,
-            )
-            _streamingMessage.value = assistantStart
-            chatDao.upsertMessage(assistantStart.toEntity())
-
-            val streamLock = Any()
-            val contentBuf = StringBuilder()
-            val reasoningBuf = StringBuilder()
-            var bestPartialContent = ""
-            var bestPartialReasoning = ""
-            var latestUsage: MessageUsage? = null
-            var reasoningStartMs: Long? = null
-            var reasoningDurationMs: Long? = null
-            var lastUiEmitMs = 0L
-            var lastDbFlushMs = System.currentTimeMillis()
-            var uiDirty = false
-
-            val rawPrefill = if (!isContinue) conv.params.assistantPrefill.trim() else ""
-            val resolvedPrefill = if (rawPrefill.isNotEmpty()) {
-                val expanded = if (conv.rp != null) RpEngine.replaceMacros(rawPrefill, conv.rp) else rawPrefill
-                val proto = resolveProtocolForGroup(groupId)
-                val anthropicThinking = proto == ApiProtocol.ANTHROPIC &&
-                    conv.params.enableReasoning &&
-                    !conv.params.reasoningEffort.isNullOrBlank()
-                val officialOpenAi = proto == ApiProtocol.OPENAI_CHAT &&
-                    DirectProtocolCodec.isOfficialOpenAiHost(container.apiProviderStore.findBySyntheticId(groupId)?.baseUrl.orEmpty())
-                if (anthropicThinking || officialOpenAi || proto == ApiProtocol.OPENAI_RESPONSES) null else expanded
-            } else {
-                null
-            }
-
-            fun mergeWithPrefill(raw: String): String {
-                if (resolvedPrefill.isNullOrEmpty()) return raw
-                if (raw.isEmpty()) return resolvedPrefill
-                return if (raw.startsWith(resolvedPrefill)) raw else "$resolvedPrefill$raw"
-            }
-
-            fun buildSnapshotLocked(status: String = "streaming", error: String? = null): ChatMessage {
-                val baseUsage = latestUsage
-                val effectiveUsage = if (reasoningDurationMs != null) {
-                    (baseUsage ?: MessageUsage()).copy(reasoningDurationMs = reasoningDurationMs)
-                } else {
-                    baseUsage
-                }
-                return assistantStart.copy(
-                    content = if (isContinue) {
-                        combineContinueText(continuePrefixText, contentBuf.toString())
-                    } else {
-                        mergeWithPrefill(contentBuf.toString())
-                    },
-                    reasoning = reasoningBuf.toString(),
-                    reasoningDurationMs = reasoningDurationMs,
-                    usage = effectiveUsage,
-                    status = status,
-                    error = error,
-                )
-            }
-
-            fun buildSnapshot(status: String = "streaming", error: String? = null): ChatMessage =
-                synchronized(streamLock) { buildSnapshotLocked(status, error) }
-
-            fun publishStreamingSnapshot(snap: ChatMessage) {
-                _streamingMessage.update { cur ->
-                    if (cur == null || cur.id == assistantId) snap else cur
-                }
-            }
-
-            fun onChunkAppended(deltaText: String? = null, deltaReasoning: String? = null) {
-                if (_ui.value.streamingStatusHint != null) {
-                    _ui.update { it.copy(streamingStatusHint = null) }
-                }
-                val immediateSnap: ChatMessage? = synchronized(streamLock) {
-                    val now = System.currentTimeMillis()
-                    if (!deltaReasoning.isNullOrEmpty()) {
-                        if (reasoningStartMs == null) reasoningStartMs = now
-                        reasoningBuf.append(deltaReasoning)
-                    }
-                    if (!deltaText.isNullOrEmpty()) {
-                        if (reasoningStartMs != null && reasoningDurationMs == null) {
-                            reasoningDurationMs = (now - reasoningStartMs!!).coerceAtLeast(1000L)
-                        }
-                        contentBuf.append(deltaText)
-                    }
-                    if (lastUiEmitMs == 0L || now - lastUiEmitMs >= 35L) {
-                        lastUiEmitMs = now
-                        uiDirty = false
-                        buildSnapshotLocked()
-                    } else {
-                        uiDirty = true
-                        null
-                    }
-                }
-                if (immediateSnap != null) {
-                    publishStreamingSnapshot(immediateSnap)
-                }
-            }
-
-            fun onRetryScheduled(attempt: Int, maxRetries: Int) {
-                _ui.update {
-                    it.copy(
-                        streamingStatusHint = strings().chat.streamingRetrying.fmt(
-                            "attempt" to attempt,
-                            "max" to maxRetries,
-                        ),
-                    )
-                }
-            }
-
-            fun onResetBuffersForRetry() {
-                val resetSnap = synchronized(streamLock) {
-                    if (contentBuf.length > bestPartialContent.length) {
-                        bestPartialContent = contentBuf.toString()
-                    }
-                    if (reasoningBuf.length > bestPartialReasoning.length) {
-                        bestPartialReasoning = reasoningBuf.toString()
-                    }
-                    contentBuf.clear()
-                    reasoningBuf.clear()
-                    latestUsage = null
-                    lastUiEmitMs = System.currentTimeMillis()
-                    uiDirty = false
-                    buildSnapshotLocked()
-                }
-                publishStreamingSnapshot(resetSnap)
-            }
-
-            val flushTickerJob = viewModelScope.launch {
-                while (isActive) {
-                    delay(35L)
-                    val pendingSnap: ChatMessage? = synchronized(streamLock) {
-                        if (!uiDirty) {
-                            null
-                        } else {
-                            lastUiEmitMs = System.currentTimeMillis()
-                            uiDirty = false
-                            buildSnapshotLocked()
-                        }
-                    }
-                    if (pendingSnap != null) {
-                        publishStreamingSnapshot(pendingSnap)
-                    }
-                    val now = System.currentTimeMillis()
-                    if (now - lastDbFlushMs >= 1000L) {
-                        lastDbFlushMs = now
-                        val checkpoint = buildSnapshot()
-                        if (checkpoint.content.isNotEmpty() || checkpoint.reasoning.isNotEmpty()) {
-                            chatDao.upsertMessage(checkpoint.toEntity())
-                        }
-                    }
-                }
-            }
-
-            try {
-                var activeConv = conv
-                var payloadTracking: SentPayloadTracking? = null
-                var built = if (overrideMessages != null) {
-                    lastBuiltTracking = null
-                    OnlineChatCompletionRequestDto(
-                        group_id = groupId,
-                        model = modelId,
-                        messages = overrideMessages,
-                        stream = true,
-                        temperature = activeConv.params.temperature,
-                        top_p = activeConv.params.topP,
-                        max_tokens = activeConv.params.maxTokens,
-                        reasoning_effort = if (activeConv.params.enableReasoning) activeConv.params.reasoningEffort else null,
-                        frequency_penalty = activeConv.params.frequencyPenalty,
-                        presence_penalty = activeConv.params.presencePenalty,
-                        repetition_penalty = activeConv.params.repetitionPenalty,
-                        top_k = activeConv.params.topK,
-                        min_p = activeConv.params.minP,
-                        stop = activeConv.params.stopSequences.map { it.trim() }.filter { it.isNotEmpty() }.take(4).ifEmpty { null },
-                        enablePromptCaching = activeConv.params.enablePromptCaching,
-                        promptCacheKey = if (activeConv.params.enablePromptCaching) "gugachat_${activeConv.id.take(24)}" else null,
-                        assistantPrefill = resolvedPrefill,
-                    )
-                } else {
-                    val prepared = buildWirePayload(activeConv, allMsgs, groupId, modelId, assistantPrefill = resolvedPrefill)
-                    payloadTracking = prepared.tracking
-                    lastBuiltTracking = prepared.tracking
-                    prepared.request
-                }
-                try {
-                    streamOnce(
-                        request = built,
-                        onTextDelta = { delta -> onChunkAppended(deltaText = delta) },
-                        onReasoningDelta = { r -> onChunkAppended(deltaReasoning = r) },
-                        onUsageSet = { u -> synchronized(streamLock) { latestUsage = u } },
-                        onRetryAttempt = { attempt, maxRetries, _ -> onRetryScheduled(attempt, maxRetries) },
-                        onResetForRetry = ::onResetBuffersForRetry,
-                    )
-                } catch (e: ApiException) {
-                    val isBufEmpty = synchronized(streamLock) { contentBuf.isEmpty() }
-                    if (e.isContextTooLong && isBufEmpty && overrideMessages == null) {
-                        container.toastController.show(strings().chat.compactingProgress)
-                        val outcome = ContextCompactor.compactNow(
-                            chatApi = container.onlineChatApi,
-                            conversation = activeConv,
-                            messages = allMsgs,
-                            fallbackGroupId = groupId,
-                            fallbackModel = modelId,
-                        )
-                        if (outcome != null) {
-                            val updatedConv = activeConv.copy(
-                                archivedSummary = outcome.archivedSummary,
-                                summarizedUntilSeq = outcome.summarizedUntilSeq,
-                                updatedAt = System.currentTimeMillis(),
-                            )
-                            activeConv = updatedConv
-                            chatDao.upsertConversation(updatedConv.toEntity())
-                            if (outcome.newEpisodes.isNotEmpty()) {
-                                chatDao.upsertMemoryEpisodes(outcome.newEpisodes.map { it.toEntity() })
-                            } else {
-                                outcome.newEpisode?.let { chatDao.upsertMemoryEpisode(it.toEntity()) }
-                            }
-                            val freshEpisodes = chatDao.getMemoryEpisodesForConversation(updatedConv.id).map { it.toDomain() }
-                            scheduleActiveConversationIndexing(updatedConv.id)
-                            val retryPrepared = buildWirePayload(
-                                conv = updatedConv,
-                                msgs = allMsgs,
-                                groupId = groupId,
-                                modelId = modelId,
-                                episodesOverride = freshEpisodes,
-                            )
-                            built = retryPrepared.request
-                            payloadTracking = retryPrepared.tracking
-                            lastBuiltTracking = retryPrepared.tracking
-                            streamOnce(
-                                request = built,
-                                onTextDelta = { delta -> onChunkAppended(deltaText = delta) },
-                                onReasoningDelta = { r -> onChunkAppended(deltaReasoning = r) },
-                                onUsageSet = { u -> synchronized(streamLock) { latestUsage = u } },
-                                onRetryAttempt = { attempt, maxRetries, _ -> onRetryScheduled(attempt, maxRetries) },
-                                onResetForRetry = ::onResetBuffersForRetry,
-                            )
-                        } else {
-                            throw e
-                        }
-                    } else {
-                        throw e
-                    }
-                }
-
-                flushTickerJob.cancel()
-                val (finalRawContent, finalReasoning, finalUsage) = synchronized(streamLock) {
-                    if (reasoningStartMs != null && reasoningDurationMs == null) {
-                        reasoningDurationMs = (System.currentTimeMillis() - reasoningStartMs!!).coerceAtLeast(1000L)
-                    }
-                    val mergedUsage = if (reasoningDurationMs != null) {
-                        (latestUsage ?: MessageUsage()).copy(reasoningDurationMs = reasoningDurationMs)
-                    } else {
-                        latestUsage
-                    }
-                    val mergedContent = if (isContinue) contentBuf.toString() else mergeWithPrefill(contentBuf.toString())
-                    Triple(mergedContent, reasoningBuf.toString(), mergedUsage)
-                }
-
-                // C3 Fix: live cross-chat EMA calibration using actual prompt tokens (handling Anthropic cache tokens)
-                val track = payloadTracking
-                if (finalUsage != null && track != null && !track.hasUndecayedImages && track.estimatedRawTokens > 0) {
-                    val usageDto = ChatTokenUsageDto(
-                        prompt_tokens = finalUsage.promptTokens,
-                        completion_tokens = finalUsage.completionTokens,
-                        total_tokens = finalUsage.totalTokens,
-                        cache_read_input_tokens = finalUsage.cacheReadInputTokens,
-                    )
-                    val actualInput = DirectProtocolCodec.totalInputTokens(track.protocol, usageDto)
-                    if (actualInput != null && actualInput >= 200) {
-                        val currentFactor = container.settingsState.value.tokenCalibrationMap[track.calibrationKey]
-                            ?: activeConv.tokenCalibration.takeIf { it in 0.60..1.60 }
-                            ?: 1.0
-                        val updatedFactor = TokenEstimator.updateCalibrationEma(
-                            currentFactor = currentFactor,
-                            actualPromptTokens = actualInput,
-                            estimatedRawTokens = track.estimatedRawTokens,
-                        )
-                        container.settingsStore.updateTokenCalibration(track.calibrationKey, updatedFactor)
-                        activeConv = activeConv.copy(tokenCalibration = updatedFactor)
-                    }
-                }
-
-                finalizeCompletedAssistantTurn(
-                    conv = activeConv,
-                    assistantTemplate = assistantStart,
-                    rawContent = finalRawContent,
-                    reasoning = finalReasoning,
-                    usage = finalUsage,
-                    continuePrefixText = continuePrefixText,
-                )
-            } catch (_: CancellationException) {
-                flushTickerJob.cancel()
-                withContext(NonCancellable) {
-                    val isBufEmpty = synchronized(streamLock) {
-                        if (contentBuf.isEmpty() && bestPartialContent.isNotEmpty()) {
-                            contentBuf.append(bestPartialContent)
-                        }
-                        if (reasoningBuf.isEmpty() && bestPartialReasoning.isNotEmpty()) {
-                            reasoningBuf.append(bestPartialReasoning)
-                        }
-                        contentBuf.isEmpty()
-                    }
-                    val aborted = if (isContinue && existingMessageForVariant != null && isBufEmpty) {
-                        existingMessageForVariant
-                    } else {
-                        buildSnapshot(status = "aborted")
-                    }
-                    publishStreamingSnapshot(aborted)
-                    chatDao.upsertMessage(aborted.toEntity())
-                }
-            } catch (e: Throwable) {
-                flushTickerJob.cancel()
-                val isBufEmpty = synchronized(streamLock) {
-                    if (contentBuf.isEmpty() && bestPartialContent.isNotEmpty()) {
-                        contentBuf.append(bestPartialContent)
-                    }
-                    if (reasoningBuf.isEmpty() && bestPartialReasoning.isNotEmpty()) {
-                        reasoningBuf.append(bestPartialReasoning)
-                    }
-                    contentBuf.isEmpty()
-                }
-                val failed = if (isContinue && existingMessageForVariant != null && isBufEmpty) {
-                    existingMessageForVariant
-                } else {
-                    buildSnapshot(status = "error", error = e.message ?: "Generation failed")
-                }
-                publishStreamingSnapshot(failed)
-                chatDao.upsertMessage(failed.toEntity())
-                container.toastController.show(e.message ?: "Generation failed", isError = true)
-            } finally {
-                flushTickerJob.cancel()
-                _ui.update { it.copy(isStreaming = false, streamingStatusHint = null) }
-            }
-        }
-    }
-
-    private suspend fun buildWirePayload(
-        conv: ChatConversation,
-        msgs: List<ChatMessage>,
-        groupId: Long,
-        modelId: String,
-        episodesOverride: List<MemoryEpisode>? = null,
-        assistantPrefill: String? = null,
-    ): BuiltWirePayload {
-        val settings = container.settingsStore.currentSettings()
-        val budget = parseMemoryBudget(settings.memoryBudget)
         val modelMeta = _ui.value.models.firstOrNull { it.id == modelId }
-            ?: DirectProtocolCodec.inferChatModelMeta(modelId)
-        val allAttIds = msgs.asSequence().flatMap { it.attachmentIds.asSequence() }.distinct().toList()
-        val attMap = if (allAttIds.isNotEmpty()) {
-            _ui.value.attachmentsById + container.attachmentStore.loadAttachmentsMap(allAttIds)
-        } else {
-            _ui.value.attachmentsById
-        }
-        val loreList = _ui.value.novelLore
-        val ledgerList = _ui.value.memoryLedger
-        val episodeList = episodesOverride ?: _ui.value.memoryEpisodes
-        val userMemList = _ui.value.userMemories
-        val chapterList = _ui.value.novelChapters
-        val activeMuted = _ui.value.mutedRecallKeys
-
-        val queryText = buildSemanticQueryText(conv = conv, msgs = msgs, draftText = _ui.value.draftText)
-        val candidateIds = collectSemanticCandidateIds(
-            conv = conv,
-            lore = loreList,
-            ledger = ledgerList,
-            episodes = episodeList,
-            userMemories = userMemList,
+        chatStreamManager.startStream(
+            StreamLaunchRequest(
+                conversation = conv,
+                groupId = groupId,
+                modelId = modelId,
+                existingMessageForVariant = existingMessageForVariant,
+                continuePrefixText = continuePrefixText,
+                overrideMessages = overrideMessages,
+                draftText = _ui.value.draftText,
+                mutedRecallKeys = _ui.value.mutedRecallKeys,
+                modelMetaOverride = modelMeta,
+            ),
         )
-        val (semanticScores, minCosineFloor) = container.retrievalCoordinator.prepareSendSemanticScores(
-            conversationId = conv.id,
-            queryText = queryText,
-            candidateIds = candidateIds,
-        )
-
-        val extCal = lookupExternalCalibration(settings, groupId, modelId)
-        val effectiveCal = when {
-            extCal != null && extCal in 0.4..2.5 -> extCal
-            conv.tokenCalibration in 0.4..2.5 -> conv.tokenCalibration
-            else -> 1.0
-        }
-
-        val baseInput = ContextBuildInput(
-            conversation = conv,
-            messages = msgs,
-            memories = userMemList,
-            memoryBudget = budget,
-            modelContextWindow = modelMeta.context_window,
-            novelChapters = chapterList,
-            novelLore = loreList,
-            memoryLedger = ledgerList,
-            memoryEpisodes = episodeList,
-            attachmentsById = attMap,
-            resolveAttachmentDataUrl = { attId -> container.attachmentStore.resolveDataUrl(attId) },
-            resolveAttachmentText = { attId -> container.attachmentStore.readExtractedText(attId) },
-            precomputedSemanticScores = semanticScores.ifEmpty { null },
-            mutedRecallKeys = activeMuted,
-            modelId = modelId,
-            externalCalibration = extCal,
-            minSemanticCosine = minCosineFloor,
-        )
-
-        var built = ContextBuilder.buildChatContext(baseInput)
-
-        // Optional remote rerank pass when enabled and >2 dynamic candidates were recalled
-        if (container.retrievalCoordinator.isRerankEnabled(settings.retrievalSettings)) {
-            val dynamicItems = built.summary.recalledItems.filter {
-                it.triggerKind != "constant" && it.triggerKind != "pinned_ledger"
-            }
-            if (dynamicItems.size > 2) {
-                val loreById = loreList.associateBy { it.id }
-                val ledgerById = ledgerList.associateBy { it.id }
-                val epById = episodeList.associateBy { it.id }
-                val memById = userMemList.associateBy { it.id }
-                val rerankPairs = dynamicItems.map { item ->
-                    val key = "${item.source}:${item.id}"
-                    val docText = when (item.source) {
-                        "novel_lore" -> loreById[item.id]?.let { "${it.title}: ${it.content}" }
-                        "rp_ledger" -> ledgerById[item.id]?.let { "${it.title}: ${it.content}" }
-                        "episode_archived" -> epById[item.id]?.let { "${it.title}: ${it.summary}" }
-                        "user_memory_archival" -> memById[item.id]?.content
-                        else -> null
-                    }?.takeIf { it.isNotBlank() } ?: "${item.title}: ${item.contentPreview}"
-                    key to docText
-                }
-                val rerankScores = container.retrievalCoordinator.rerankCandidatesIfEnabled(queryText, rerankPairs)
-                if (rerankScores.isNotEmpty()) {
-                    val droppedNoiseKeys = HashSet<String>()
-                    val adjustedScores = HashMap<String, Double>(semanticScores)
-                    val floorBase = maxOf(minCosineFloor, 0.50)
-                    for (item in dynamicItems) {
-                        val key = "${item.source}:${item.id}"
-                        val rScore = rerankScores[key] ?: continue
-                        if (rScore < 0.15) {
-                            droppedNoiseKeys.add(key)
-                            adjustedScores.remove(item.id)
-                        } else {
-                            // Map rerank score [0.15, 1.0] monotonically into [floorBase, 1.0]
-                            adjustedScores[item.id] = (floorBase + (1.0 - floorBase) * rScore).coerceIn(floorBase, 1.0)
-                        }
-                    }
-                    val refined = ContextBuilder.buildChatContext(
-                        baseInput.copy(
-                            precomputedSemanticScores = adjustedScores.ifEmpty { null },
-                            mutedRecallKeys = activeMuted + droppedNoiseKeys,
-                        ),
-                    )
-                    built = refined.copy(
-                        summary = refined.summary.copy(
-                            retrievalModeUsed = RetrievalCoordinator.MODE_REMOTE_VECTOR_RERANK,
-                            droppedRecallCount = refined.summary.droppedRecallCount + droppedNoiseKeys.size,
-                        ),
-                    )
-                }
-            }
-        }
-
-        _ui.update { it.copy(waterline = built.summary) }
-
-        val hasUndecayedImages = built.wireMessages.any { msg ->
-            msg.parts?.any { it.type == "image_url" && !it.imageUrl.isNullOrBlank() } == true
-        }
-        val estimatedRawTokens = (built.summary.sentTokens.toDouble() / effectiveCal).roundToInt().coerceAtLeast(0)
-        val tracking = SentPayloadTracking(
-            calibrationKey = calibrationKey(groupId, modelId),
-            protocol = resolveProtocolForGroup(groupId),
-            estimatedRawTokens = estimatedRawTokens,
-            hasUndecayedImages = hasUndecayedImages,
-        )
-        val req = OnlineChatCompletionRequestDto(
-            group_id = groupId,
-            model = modelId,
-            messages = built.wireMessages.map(::toWireDto),
-            stream = true,
-            temperature = conv.params.temperature,
-            top_p = conv.params.topP,
-            max_tokens = conv.params.maxTokens,
-            reasoning_effort = if (conv.params.enableReasoning) conv.params.reasoningEffort else null,
-            frequency_penalty = conv.params.frequencyPenalty,
-            presence_penalty = conv.params.presencePenalty,
-            repetition_penalty = conv.params.repetitionPenalty,
-            top_k = conv.params.topK,
-            min_p = conv.params.minP,
-            stop = conv.params.stopSequences.map { it.trim() }.filter { it.isNotEmpty() }.take(4).ifEmpty { null },
-            enablePromptCaching = conv.params.enablePromptCaching,
-            promptCacheKey = if (conv.params.enablePromptCaching) "gugachat_${conv.id.take(24)}" else null,
-            assistantPrefill = assistantPrefill,
-        )
-        return BuiltWirePayload(request = req, builtContext = built, tracking = tracking)
-    }
-
-    private suspend fun streamOnce(
-        request: OnlineChatCompletionRequestDto,
-        onTextDelta: (String) -> Unit,
-        onReasoningDelta: (String) -> Unit,
-        onUsageSet: (MessageUsage) -> Unit,
-        onRetryAttempt: (attempt: Int, maxRetries: Int, error: Throwable) -> Unit = { _, _, _ -> },
-        onResetForRetry: () -> Unit = {},
-    ) {
-        container.onlineChatApi.streamCompletion(
-            request = request,
-            onDelta = onTextDelta,
-            onReasoning = onReasoningDelta,
-            onUsage = { u ->
-                onUsageSet(
-                    MessageUsage(
-                        promptTokens = u.prompt_tokens,
-                        completionTokens = u.completion_tokens,
-                        totalTokens = u.total_tokens,
-                        cacheReadInputTokens = u.effectiveCacheReadTokens,
-                    ),
-                )
-            },
-            onRetryAttempt = onRetryAttempt,
-            onResetForRetry = onResetForRetry,
-        )
-    }
-
-    private suspend fun finalizeCompletedAssistantTurn(
-        conv: ChatConversation,
-        assistantTemplate: ChatMessage,
-        rawContent: String,
-        reasoning: String,
-        usage: MessageUsage?,
-        continuePrefixText: String? = null,
-    ) {
-        var nextConv = conv
-        var finalContent = rawContent
-        var rpChoices: List<RpChoice> = emptyList()
-        var novelChoices: List<String> = emptyList()
-        var updatedVariants = assistantTemplate.variants
-
-        if (conv.mode == ConversationMode.novel && conv.novel != null) {
-            val outcome = NovelEngine.parseNovelTurnResponse(
-                rawText = rawContent,
-                conversationId = conv.id,
-                turnSeq = assistantTemplate.seq,
-                existingLore = _ui.value.novelLore,
-            )
-            finalContent = if (continuePrefixText != null) {
-                combineContinueText(continuePrefixText, outcome.cleanProse)
-            } else {
-                outcome.cleanProse
-            }
-            novelChoices = if (continuePrefixText != null && outcome.choices.isEmpty()) {
-                assistantTemplate.novelChoices
-            } else {
-                outcome.choices
-            }
-            if (outcome.loreUpserts.isNotEmpty()) {
-                chatDao.upsertNovelLoreList(outcome.loreUpserts.map { it.toEntity() })
-                scheduleActiveConversationIndexing(conv.id)
-            }
-            val nextStatus = outcome.statusHud ?: conv.novel.currentStatus
-            var novelCfg = conv.novel.copy(
-                currentStatus = nextStatus,
-                pendingChoices = novelChoices,
-            )
-            val currentChapters = chatDao.getNovelChaptersForConversation(conv.id).map { it.toDomain() }
-            val activeChapter = currentChapters.firstOrNull { it.id == novelCfg.activeChapterId }
-                ?: currentChapters.maxByOrNull { it.order }
-            if (activeChapter != null && outcome.chapterEndSummary != null && novelCfg.autoAdvanceChapter) {
-                val now = System.currentTimeMillis()
-                chatDao.upsertNovelChapter(
-                    activeChapter.copy(
-                        status = "done",
-                        summary = outcome.chapterEndSummary,
-                        endSeq = assistantTemplate.seq,
-                        updatedAt = now,
-                    ).toEntity(),
-                )
-                val nextOrder = (currentChapters.maxOfOrNull { it.order } ?: 0) + 1
-                val nextChap = NovelChapter(
-                    id = UUID.randomUUID().toString(),
-                    conversationId = conv.id,
-                    order = nextOrder,
-                    title = outcome.suggestedNextChapterTitle ?: "第${nextOrder}章",
-                    status = "writing",
-                    startSeq = assistantTemplate.seq + 1,
-                    createdAt = now,
-                    updatedAt = now,
-                )
-                chatDao.upsertNovelChapter(nextChap.toEntity())
-                novelCfg = novelCfg.copy(activeChapterId = nextChap.id)
-            }
-            nextConv = nextConv.copy(novel = novelCfg)
-            val newVariant = MessageVariant(
-                id = UUID.randomUUID().toString(),
-                content = finalContent,
-                reasoning = reasoning,
-                createdAt = System.currentTimeMillis(),
-                usage = usage,
-                model = assistantTemplate.model,
-                novelStatusSnapshot = nextStatus,
-                novelChoices = novelChoices,
-            )
-            updatedVariants = assistantTemplate.variants + newVariant
-        } else if (conv.mode == ConversationMode.rp && conv.rp != null) {
-            val outcome = RpEngine.parseRpTurnResponse(
-                rawText = rawContent,
-                currentState = conv.rp.state,
-                currentCast = conv.rp.cast,
-                conversationId = conv.id,
-                turnSeq = assistantTemplate.seq,
-            )
-            finalContent = if (continuePrefixText != null) {
-                combineContinueText(continuePrefixText, outcome.cleanNarrative)
-            } else {
-                outcome.cleanNarrative
-            }
-            rpChoices = if (continuePrefixText != null && outcome.choices.isEmpty()) {
-                assistantTemplate.rpChoices
-            } else {
-                outcome.choices
-            }
-            if (outcome.ledgerUpserts.isNotEmpty()) {
-                chatDao.upsertMemoryLedgerList(outcome.ledgerUpserts.map { it.toEntity() })
-                scheduleActiveConversationIndexing(conv.id)
-            }
-            val finalState = if (outcome.unlockedEnding != null &&
-                outcome.updatedState.unlockedEndings.none {
-                    it.title.equals(outcome.unlockedEnding.title, ignoreCase = true) &&
-                        it.code.equals(outcome.unlockedEnding.code, ignoreCase = true)
-                }
-            ) {
-                outcome.updatedState.copy(unlockedEndings = outcome.updatedState.unlockedEndings + outcome.unlockedEnding)
-            } else {
-                outcome.updatedState
-            }
-            val nextRp = conv.rp.copy(
-                state = finalState,
-                cast = outcome.updatedCast,
-                pendingChoices = rpChoices,
-            )
-            nextConv = nextConv.copy(rp = nextRp)
-            val resolvedSpeaker = outcome.speakerName
-                ?: (if (continuePrefixText != null) assistantTemplate.activeVariant()?.rpSpeakerName else null)
-                ?: outcome.updatedCast.firstOrNull { !it.isPlayer && it.inScene }?.name
-                ?: outcome.updatedCast.firstOrNull { !it.isPlayer }?.name
-            val newVariant = MessageVariant(
-                id = UUID.randomUUID().toString(),
-                content = finalContent,
-                reasoning = reasoning,
-                createdAt = System.currentTimeMillis(),
-                usage = usage,
-                model = assistantTemplate.model,
-                rpStateSnapshot = finalState,
-                rpCastSnapshot = outcome.updatedCast,
-                rpChoices = rpChoices,
-                rpDeltas = outcome.turnDeltas,
-                rpSpeakerName = resolvedSpeaker,
-                rpEndingUnlocked = outcome.unlockedEnding,
-            )
-            updatedVariants = assistantTemplate.variants + newVariant
-            outcome.unlockedEnding?.let { ending ->
-                container.toastController.show("${strings().rp.endingUnlockedBanner}: [${ending.code}] ${ending.title}")
-            }
-        }
-
-        val finalMsg = assistantTemplate.copy(
-            content = finalContent,
-            reasoning = reasoning,
-            usage = usage,
-            rpChoices = rpChoices,
-            novelChoices = novelChoices,
-            status = "done",
-            tokenEstimate = ContextBuilder.estimateMessageTokens(finalContent),
-            variants = updatedVariants,
-            activeVariantIndex = if (updatedVariants.isNotEmpty()) updatedVariants.lastIndex else 0,
-        )
-        _streamingMessage.update { cur -> if (cur == null || cur.id == finalMsg.id) finalMsg else cur }
-        chatDao.upsertMessage(finalMsg.toEntity())
-        chatDao.upsertConversation(nextConv.copy(updatedAt = System.currentTimeMillis()).toEntity())
-        if (_ui.value.mutedRecallKeys.isNotEmpty()) {
-            _ui.update { it.copy(mutedRecallKeys = emptySet()) }
-        }
-        if (nextConv.mode == ConversationMode.novel) {
-            syncNovelChapterWordCounts(nextConv.id)
-        }
-
-        // Background auto memory extraction & hierarchical episode consolidation
-        if (nextConv.mode == ConversationMode.chat && nextConv.params.enableAutoMemory) {
-            runBackgroundMemoryExtraction(nextConv)
-        }
-        if (nextConv.params.enableAutoConsolidate) {
-            runBackgroundEpisodeConsolidation(nextConv)
-        }
-    }
-
-    private fun runBackgroundMemoryExtraction(conv: ChatConversation) {
-        val gid = conv.groupId ?: _ui.value.selectedGroupId ?: return
-        val model = conv.model?.takeIf { it.isNotBlank() }
-            ?: _ui.value.selectedModelId?.takeIf { it.isNotBlank() }
-            ?: return
-        viewModelScope.launch(Dispatchers.IO) {
-            runCatching {
-                val msgs = TimelineReconciler.activeMessages(chatDao.getMessagesForConversation(conv.id).map { it.toDomain() })
-                if (msgs.size < 4 || msgs.size % 4 != 0) return@launch
-                val existing = userMemoryDao.getAll().map { it.toDomain() }
-                val prompt = MemoryExtractor.buildMemoryExtractionMessages(existing, msgs)
-                val res = container.onlineChatApi.completeOnce(
-                    OnlineChatCompletionRequestDto(gid, model, prompt, stream = false, temperature = 0.2, max_tokens = 500),
-                )
-                val extracted = MemoryExtractor.parseExtractedMemories(res.content)
-                if (extracted.isNotEmpty()) {
-                    val (merged, added) = MemoryExtractor.mergeExtractedMemories(existing, extracted)
-                    if (added > 0) {
-                        userMemoryDao.upsertAll(merged.map { it.toEntity() })
-                        scheduleActiveConversationIndexing(conv.id)
-                    }
-                }
-            }
-        }
-    }
-
-    private fun runBackgroundEpisodeConsolidation(conv: ChatConversation) {
-        val gid = conv.groupId ?: _ui.value.selectedGroupId ?: return
-        val model = conv.model?.takeIf { it.isNotBlank() }
-            ?: _ui.value.selectedModelId?.takeIf { it.isNotBlank() }
-            ?: return
-        if (!consolidatingConvIds.add(conv.id)) return
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                runCatching {
-                    val msgs = TimelineReconciler.activeMessages(chatDao.getMessagesForConversation(conv.id).map { it.toDomain() })
-                    val eps = chatDao.getMemoryEpisodesForConversation(conv.id).map { it.toDomain() }
-                    val batch = EpisodeConsolidator.findNextMessagesBatch(msgs, eps)
-                    var changed = false
-                    if (batch != null) {
-                        val prompt = EpisodeConsolidator.buildEpisodeConsolidationPrompt(conv.title, batch)
-                        val res = container.onlineChatApi.completeOnce(
-                            OnlineChatCompletionRequestDto(gid, model, prompt, stream = false, temperature = 0.25, max_tokens = 600),
-                        )
-                        val newEp = EpisodeConsolidator.parseConsolidationResponse(
-                            raw = res.content,
-                            conversationId = conv.id,
-                            fromSeq = batch.fromSeq,
-                            toSeq = batch.toSeq,
-                            level = 1,
-                        )
-                        chatDao.upsertMemoryEpisode(newEp.toEntity())
-                        changed = true
-                    }
-
-                    // Roll up L1 -> L2 arc summary when enough episodes accumulate
-                    val updatedEps = if (changed) {
-                        chatDao.getMemoryEpisodesForConversation(conv.id).map { it.toDomain() }
-                    } else {
-                        eps
-                    }
-                    val arcCandidates = EpisodeConsolidator.findEpisodesForArcRollup(updatedEps)
-                    if (arcCandidates.isNotEmpty()) {
-                        val rollupPrompt = EpisodeConsolidator.buildRollupPrompt(arcCandidates, targetLevel = 2)
-                        val res = container.onlineChatApi.completeOnce(
-                            OnlineChatCompletionRequestDto(gid, model, rollupPrompt, stream = false, temperature = 0.25, max_tokens = 650),
-                        )
-                        val arcEp = EpisodeConsolidator.parseConsolidationResponse(
-                            raw = res.content,
-                            conversationId = conv.id,
-                            fromSeq = arcCandidates.first().fromSeq,
-                            toSeq = arcCandidates.last().toSeq,
-                            level = 2,
-                        )
-                        chatDao.upsertMemoryEpisode(arcEp.toEntity())
-                        changed = true
-                    }
-                    if (changed) {
-                        scheduleActiveConversationIndexing(conv.id)
-                    }
-                }
-            } finally {
-                consolidatingConvIds.remove(conv.id)
-            }
-        }
     }
 
     // ==================== Memory CRUD & Actions ====================
@@ -3029,9 +2344,6 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             val conv = _ui.value.activeConversation ?: return@launch
             val msgs = chatDao.getMessagesForConversation(conv.id).map { it.toDomain() }
             val lastAssistant = TimelineReconciler.activeMessages(msgs).lastOrNull { it.role == "assistant" } ?: return@launch
-            if (!_ui.value.isStreaming && _streamingMessage.value?.id == lastAssistant.id) {
-                _streamingMessage.value = null
-            }
             val now = System.currentTimeMillis()
             val baseVariants = if (lastAssistant.variants.isNotEmpty()) {
                 lastAssistant.variants
@@ -3098,9 +2410,6 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                 val msgs = chatDao.getMessagesForConversation(conv.id).map { it.toDomain() }
                 val lastAssistant = TimelineReconciler.activeMessages(msgs).lastOrNull { it.role == "assistant" }
                 if (lastAssistant != null) {
-                    if (!_ui.value.isStreaming && _streamingMessage.value?.id == lastAssistant.id) {
-                        _streamingMessage.value = null
-                    }
                     val updatedVariants = if (lastAssistant.variants.isNotEmpty()) {
                         val activeIdx = lastAssistant.activeVariantIndex.coerceIn(0, lastAssistant.variants.lastIndex)
                         lastAssistant.variants.mapIndexed { idx, v ->
@@ -3237,27 +2546,15 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun importSillyTavernCardUri(uri: Uri, contentResolver: android.content.ContentResolver) {
+        val isZh = strings().language == AppLanguage.ZH
         viewModelScope.launch {
             try {
-                val bytes = withContext(Dispatchers.IO) {
-                    contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: error("Empty file")
-                }
-                val isPng = RpCardCodec.isPngBytes(bytes)
-                val zipCard = if (!isPng) RpCardCodec.extractCardFromZipBytes(bytes) else null
-                val jsonText = when {
-                    isPng -> RpCardCodec.extractCardJsonFromPng(bytes)
-                        ?: error("No ccv3/chara metadata found in PNG")
-                    zipCard != null -> zipCard.cardJson
-                    else -> bytes.toString(Charsets.UTF_8).removePrefix("\uFEFF")
-                }
-
-                // Also accept UUGame saves (`format: "uu-game-save"`) directly from RP Wizard import!
-                if (!isPng && zipCard == null) {
-                    val rootElem = runCatching { AppJson.parseToJsonElement(jsonText.trim()) }.getOrNull()
-                    if (rootElem is kotlinx.serialization.json.JsonObject && UuSaveCodec.isUuGameSave(rootElem)) {
-                        val displayName = withContext(Dispatchers.IO) { resolveUriDisplayName(contentResolver, uri) }
+                when (val imported = container.assetImportCoordinator.importUri(uri, contentResolver)) {
+                    is AssetImportResult.UuGameSaveDetected -> {
+                        val rootElem = runCatching { AppJson.parseToJsonElement(imported.rawJson) }.getOrNull()
+                            as? kotlinx.serialization.json.JsonObject ?: error("Invalid UUGame save")
                         val bundle = withContext(Dispatchers.Default) {
-                            UuSaveCodec.parseJsonElement(rootElem, displayName)
+                            UuSaveCodec.parseJsonElement(rootElem, imported.displayName)
                         }
                         val defaults = defaultChatParams()
                         val prepared = bundle.items.map { item ->
@@ -3292,30 +2589,34 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                         }
                         val title = prepared.firstOrNull()?.conversation?.title.orEmpty()
                         container.toastController.show(strings().rp.importSuccess.fmt("name" to title))
-                        return@launch
                     }
-                }
 
-                val imported = RpCardCodec.parseCardJson(jsonText, conversationId = "pending")
-                val avatarPayload: Pair<ByteArray, String>? = when {
-                    isPng -> bytes to "png"
-                    zipCard?.avatarBytes != null -> zipCard.avatarBytes to zipCard.avatarExt
-                    else -> null
-                }
-                val finalRp = if (avatarPayload != null) {
-                    val avatarPath = withContext(Dispatchers.IO) {
-                        saveRpMediaBytes(avatarPayload.first, "avatar", avatarPayload.second)
+                    is AssetImportResult.CharacterCardImported -> {
+                        insertRpConversation(
+                            rp = imported.rpConfig,
+                            importedLore = emptyList(),
+                            characterCardId = imported.card.id,
+                            mountedWorldbookId = imported.worldbook?.id,
+                        )
+                        container.toastController.show(strings().rp.importSuccess.fmt("name" to imported.card.name))
                     }
-                    val leadIdx = imported.rpConfig.cast.indexOfFirst { !it.isPlayer }.takeIf { it >= 0 } ?: 0
-                    val updatedCast = imported.rpConfig.cast.mapIndexed { idx, ch ->
-                        if (idx == leadIdx) ch.copy(avatarPath = avatarPath) else ch
+
+                    is AssetImportResult.WorldbookImported -> {
+                        container.toastController.show(
+                            if (isZh) "已导入世界书「${imported.worldbook.name}」到全局资产库"
+                            else "Imported worldbook \"${imported.worldbook.name}\" to library",
+                        )
                     }
-                    imported.rpConfig.copy(cast = updatedCast)
-                } else {
-                    imported.rpConfig
+
+                    is AssetImportResult.PromptPresetImported -> {
+                        container.toastController.show(
+                            if (isZh) "已导入预设「${imported.preset.name}」到全局资产库"
+                            else "Imported preset \"${imported.preset.name}\" to library",
+                        )
+                    }
+
+                    else -> error(if (isZh) "未识别到可导入的角色卡" else "Unrecognized character card")
                 }
-                insertRpConversation(finalRp, imported.importedLore)
-                container.toastController.show(strings().rp.importSuccess.fmt("name" to finalRp.title))
             } catch (e: Throwable) {
                 container.toastController.show(
                     strings().rp.importFailed.fmt("reason" to (e.message ?: "Unknown")),
@@ -3330,36 +2631,6 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         val isZh = strings().language == AppLanguage.ZH
         viewModelScope.launch {
             try {
-                val (rawText, displayName) = withContext(Dispatchers.IO) {
-                    val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                        ?: error(if (isZh) "文件为空" else "Empty file")
-                    val name = resolveUriDisplayName(contentResolver, uri)
-                    val text = if (RpCardCodec.isPngBytes(bytes)) {
-                        RpCardCodec.extractCardJsonFromPng(bytes)
-                            ?: error(if (isZh) "PNG 中未发现角色卡元数据" else "No card metadata in PNG")
-                    } else {
-                        RpCardCodec.extractCardFromZipBytes(bytes)?.cardJson
-                            ?: bytes.toString(Charsets.UTF_8).removePrefix("\uFEFF")
-                    }
-                    text to name
-                }
-
-                val existingLore = chatDao.getNovelLoreForConversation(conv.id).map { it.toDomain() }
-                val existingLoreKeys = existingLore
-                    .map { "${it.title.trim().lowercase()}|${it.content.trim()}" }
-                    .toHashSet()
-
-                suspend fun insertDedupedLore(entries: List<NovelLoreEntry>): Int {
-                    val fresh = entries.map { it.copy(conversationId = conv.id) }.filter { entry ->
-                        existingLoreKeys.add("${entry.title.trim().lowercase()}|${entry.content.trim()}")
-                    }
-                    if (fresh.isNotEmpty()) {
-                        chatDao.upsertNovelLoreList(fresh.map { it.toEntity() })
-                        scheduleActiveConversationIndexing(conv.id)
-                    }
-                    return fresh.size
-                }
-
                 fun mergeRegexIntoRp(scripts: List<RpRegexScript>): Int {
                     if (scripts.isEmpty() || conv.rp == null) return 0
                     var added = 0
@@ -3374,55 +2645,37 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                     return added
                 }
 
-                when (val asset = TavernAssetCodec.parseJsonText(rawText, conversationId = conv.id, fileName = displayName)) {
-                    is ParsedTavernAsset.Lorebook -> {
-                        val added = insertDedupedLore(asset.asset.entries)
-                        if (added > 0) {
-                            container.toastController.show(
-                                strings().rp.importLorebookSuccess.fmt(
-                                    "name" to asset.asset.name,
-                                    "count" to added,
-                                ),
-                            )
-                        } else {
-                            container.toastController.show(
-                                if (isZh) "世界书「${asset.asset.name}」条目均已存在" else "All entries in \"${asset.asset.name}\" already exist",
-                            )
-                        }
+                when (val imported = container.assetImportCoordinator.importUri(uri, contentResolver)) {
+                    is AssetImportResult.WorldbookImported -> {
+                        mountWorldbook(imported.worldbook.id, convId = conv.id)
+                        container.toastController.show(
+                            strings().rp.importLorebookSuccess.fmt(
+                                "name" to imported.worldbook.name,
+                                "count" to imported.entries.size,
+                            ),
+                        )
                     }
 
-                    is ParsedTavernAsset.Preset -> {
-                        val preset = asset.asset
-                        val addedLore = insertDedupedLore(preset.loreEntries)
-                        val addedRegex = mergeRegexIntoRp(preset.regexScripts)
-                        if (conv.rp != null) {
-                            updateRpConfig { cfg ->
-                                val nextRules = mergeTextSection(cfg.systemRules, preset.systemRules)
-                                val nextPost = mergeTextSection(cfg.postHistoryInstructions, preset.postHistoryInstructions)
-                                cfg.copy(
-                                    systemRules = nextRules,
-                                    postHistoryInstructions = nextPost,
-                                )
-                            }
-                        } else if (preset.systemRules.isNotBlank() && conv.systemPrompt.isBlank()) {
-                            val fresh = chatDao.getConversationById(conv.id)?.toDomain() ?: conv
-                            chatDao.upsertConversation(
-                                fresh.copy(
-                                    systemPrompt = preset.systemRules,
-                                    updatedAt = System.currentTimeMillis(),
-                                ).toEntity(),
-                            )
+                    is AssetImportResult.PromptPresetImported -> {
+                        val addedRegex = mergeRegexIntoRp(imported.regexScripts)
+                        val fresh = chatDao.getConversationById(conv.id)?.toDomain() ?: conv
+                        chatDao.upsertConversation(
+                            fresh.copy(
+                                presetId = imported.preset.id,
+                                updatedAt = System.currentTimeMillis(),
+                            ).toEntity(),
+                        )
+                        val baseMsg = strings().rp.importPresetSuccess.fmt("name" to imported.preset.name)
+                        val extras = if (addedRegex > 0) {
+                            if (isZh) "+$addedRegex 条正则" else "+$addedRegex regex"
+                        } else {
+                            ""
                         }
-                        val baseMsg = strings().rp.importPresetSuccess.fmt("name" to preset.name)
-                        val extras = buildList {
-                            if (addedLore > 0) add(if (isZh) "+$addedLore 条世界书" else "+$addedLore lore")
-                            if (addedRegex > 0) add(if (isZh) "+$addedRegex 条正则" else "+$addedRegex regex")
-                        }.joinToString(" · ")
                         container.toastController.show(if (extras.isEmpty()) baseMsg else "$baseMsg（$extras）")
                     }
 
-                    is ParsedTavernAsset.QuickReplies -> {
-                        val qr = asset.asset
+                    is AssetImportResult.QuickRepliesImported -> {
+                        val qr = imported.quickReplies
                         if (conv.rp != null) {
                             updateRpConfig { cfg ->
                                 cfg.copy(quickActions = (cfg.quickActions + qr.actions).distinct())
@@ -3438,8 +2691,8 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                         }
                     }
 
-                    is ParsedTavernAsset.RegexScripts -> {
-                        val addedRegex = mergeRegexIntoRp(asset.scripts)
+                    is AssetImportResult.RegexScriptsImported -> {
+                        val addedRegex = mergeRegexIntoRp(imported.scripts)
                         if (conv.rp != null) {
                             container.toastController.show(
                                 if (isZh) "已导入 $addedRegex 条正则脚本" else "Imported $addedRegex regex scripts",
@@ -3452,12 +2705,11 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                         }
                     }
 
-                    is ParsedTavernAsset.Settings -> {
-                        val st = asset.asset
-                        val addedRegex = mergeRegexIntoRp(st.regexScripts)
-                        if (conv.rp != null && st.authorNote.isNotBlank()) {
+                    is AssetImportResult.SettingsImported -> {
+                        val addedRegex = mergeRegexIntoRp(imported.regexScripts)
+                        if (conv.rp != null && imported.authorNote.isNotBlank()) {
                             updateRpConfig { cfg ->
-                                cfg.copy(authorNote = mergeTextSection(cfg.authorNote, st.authorNote))
+                                cfg.copy(authorNote = mergeTextSection(cfg.authorNote, imported.authorNote))
                             }
                         }
                         container.toastController.show(
@@ -3465,34 +2717,28 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                         )
                     }
 
-                    null -> {
-                        // Fallback: allow extracting embedded lorebook / regex from a character card JSON/PNG/CHARX
-                        val card = runCatching {
-                            RpCardCodec.parseCardJson(rawText, conversationId = conv.id)
-                        }.getOrNull()
-                        if (card != null && (card.importedLore.isNotEmpty() || card.rpConfig.regexScripts.isNotEmpty())) {
-                            val addedLore = insertDedupedLore(card.importedLore)
-                            val addedRegex = mergeRegexIntoRp(card.rpConfig.regexScripts)
-                            container.toastController.show(
-                                if (isZh) {
-                                    "已从角色卡「${card.rpConfig.title}」导入 $addedLore 条世界书" +
-                                        if (addedRegex > 0) " · $addedRegex 条正则" else ""
-                                } else {
-                                    "Imported $addedLore lore entries" +
-                                        (if (addedRegex > 0) " · $addedRegex regex" else "") +
-                                        " from \"${card.rpConfig.title}\""
-                                },
-                            )
-                        } else {
-                            error(
-                                if (isZh) {
-                                    "未识别到世界书、酒馆预设或正则 JSON"
-                                } else {
-                                    "Unrecognized lorebook, Tavern preset, or regex JSON"
-                                },
-                            )
+                    is AssetImportResult.CharacterCardImported -> {
+                        val wb = imported.worldbook
+                        if (wb != null) {
+                            mountWorldbook(wb.id, convId = conv.id)
                         }
+                        val addedRegex = mergeRegexIntoRp(imported.rpConfig.regexScripts)
+                        container.toastController.show(
+                            if (isZh) {
+                                "已从角色卡「${imported.card.name}」挂载 ${imported.entryCount} 条世界书" +
+                                    if (addedRegex > 0) " · $addedRegex 条正则" else ""
+                            } else {
+                                "Mounted ${imported.entryCount} lore entries" +
+                                    (if (addedRegex > 0) " · $addedRegex regex" else "") +
+                                    " from \"${imported.card.name}\""
+                            },
+                        )
                     }
+
+                    else -> error(
+                        if (isZh) "未识别到世界书、酒馆预设或正则 JSON"
+                        else "Unrecognized lorebook, Tavern preset, or regex JSON",
+                    )
                 }
             } catch (e: Throwable) {
                 container.toastController.show(
@@ -3571,20 +2817,30 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         return "$cleanExisting\n\n$cleanIncoming"
     }
 
-    private suspend fun insertRpConversation(rp: RpConfig, importedLore: List<NovelLoreEntry>) {
+    private suspend fun insertRpConversation(
+        rp: RpConfig,
+        importedLore: List<NovelLoreEntry>,
+        characterCardId: String? = null,
+        mountedWorldbookId: String? = null,
+    ) {
         val now = System.currentTimeMillis()
         val convId = UUID.randomUUID().toString()
+        val defaultPersona = assetDao.getDefaultPersona()
+        val defaultRpPreset = assetDao.getDefaultRpPromptPreset()
+        val effectivePlayerName = defaultPersona?.name?.trim()?.takeIf { it.isNotEmpty() } ?: rp.playerName
+        val macroRp = rp.copy(playerName = effectivePlayerName)
+
         val expandedState = rp.state.copy(
-            scene = RpEngine.replaceMacros(rp.state.scene, rp),
-            chapterTitle = RpEngine.replaceMacros(rp.state.chapterTitle, rp),
-            inventory = rp.state.inventory.map { RpEngine.replaceMacros(it, rp) },
-            quests = rp.state.quests.map { RpEngine.replaceMacros(it, rp) },
+            scene = RpEngine.replaceMacros(rp.state.scene, macroRp),
+            chapterTitle = RpEngine.replaceMacros(rp.state.chapterTitle, macroRp),
+            inventory = rp.state.inventory.map { RpEngine.replaceMacros(it, macroRp) },
+            quests = rp.state.quests.map { RpEngine.replaceMacros(it, macroRp) },
         )
         val expandedChoices = rp.pendingChoices.map { ch ->
             ch.copy(
-                label = RpEngine.replaceMacros(ch.label, rp),
-                actionText = RpEngine.replaceMacros(ch.actionText, rp),
-                consequenceHint = ch.consequenceHint?.let { RpEngine.replaceMacros(it, rp) },
+                label = RpEngine.replaceMacros(ch.label, macroRp),
+                actionText = RpEngine.replaceMacros(ch.actionText, macroRp),
+                consequenceHint = ch.consequenceHint?.let { RpEngine.replaceMacros(it, macroRp) },
             )
         }
         val normalizedRp = rp.copy(state = expandedState, pendingChoices = expandedChoices)
@@ -3595,17 +2851,34 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             groupId = _ui.value.selectedGroupId,
             model = _ui.value.selectedModelId,
             rp = normalizedRp,
+            characterCardId = characterCardId,
+            personaId = defaultPersona?.id,
+            presetId = defaultRpPreset?.id,
             createdAt = now,
             updatedAt = now,
         )
         chatDao.upsertConversation(conv.toEntity())
+        if (!mountedWorldbookId.isNullOrBlank()) {
+            assetDao.replaceMountedWorldbooks(
+                convId,
+                listOf(
+                    ConversationWorldbookCrossRef(
+                        conversationId = convId,
+                        worldbookId = mountedWorldbookId,
+                        sortOrder = 0,
+                        enabled = true,
+                        updatedAt = now,
+                    ),
+                ),
+            )
+        }
         val rawGreetings = (listOf(normalizedRp.greeting) + normalizedRp.alternateGreetings)
             .map { it.trim() }
             .filter { it.isNotEmpty() }
         val leadSpeaker = normalizedRp.cast.firstOrNull { !it.isPlayer }?.name?.takeIf { it.isNotBlank() }
         if (rawGreetings.isNotEmpty()) {
             val openingVariants = rawGreetings.map { raw ->
-                val rendered = RpEngine.replaceMacros(raw, normalizedRp)
+                val rendered = RpEngine.replaceMacros(raw, macroRp)
                 MessageVariant(
                     id = UUID.randomUUID().toString(),
                     content = rendered,
@@ -3645,15 +2918,16 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             try {
                 val savedPath = withContext(Dispatchers.IO) {
                     val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: error("Empty image")
+                    val useCase = container.studioImageGenerationUseCase
                     if (RpCardCodec.isPngBytes(bytes)) {
-                        saveRpMediaBytes(bytes, "avatar", "png")
+                        useCase.saveMediaBytesSync(bytes, "avatar", "png")
                     } else {
-                        val pngBytes = transcodeToPngBytes(bytes)
+                        val pngBytes = useCase.transcodeToPngBytes(bytes)
                         if (pngBytes != null) {
-                            saveRpMediaBytes(pngBytes, "avatar", "png")
+                            useCase.saveMediaBytesSync(pngBytes, "avatar", "png")
                         } else {
-                            val ext = inferImageExt(contentResolver.getType(uri))
-                            saveRpMediaBytes(bytes, "avatar", ext)
+                            val ext = useCase.inferImageExt(contentResolver.getType(uri))
+                            useCase.saveMediaBytesSync(bytes, "avatar", ext)
                         }
                     }
                 }
@@ -3680,8 +2954,9 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             try {
                 val savedPath = withContext(Dispatchers.IO) {
                     val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: error("Empty image")
-                    val ext = if (RpCardCodec.isPngBytes(bytes)) "png" else inferImageExt(contentResolver.getType(uri))
-                    saveRpMediaBytes(bytes, "sprite", ext)
+                    val useCase = container.studioImageGenerationUseCase
+                    val ext = if (RpCardCodec.isPngBytes(bytes)) "png" else useCase.inferImageExt(contentResolver.getType(uri))
+                    useCase.saveMediaBytesSync(bytes, "sprite", ext)
                 }
                 val exprKey = expressionKey?.trim()?.lowercase()?.takeIf { it.isNotEmpty() }
                 updateRpConfig { cfg ->
@@ -3734,8 +3009,9 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             try {
                 val savedPath = withContext(Dispatchers.IO) {
                     val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: error("Empty image")
-                    val ext = if (RpCardCodec.isPngBytes(bytes)) "png" else inferImageExt(contentResolver.getType(uri))
-                    saveRpMediaBytes(bytes, "scene", ext)
+                    val useCase = container.studioImageGenerationUseCase
+                    val ext = if (RpCardCodec.isPngBytes(bytes)) "png" else useCase.inferImageExt(contentResolver.getType(uri))
+                    useCase.saveMediaBytesSync(bytes, "scene", ext)
                 }
                 updateRpState { it.copy(sceneImagePath = savedPath, activeCgId = null) }
             } catch (e: Throwable) {
@@ -3760,8 +3036,9 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             try {
                 val savedPath = withContext(Dispatchers.IO) {
                     val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: error("Empty image")
-                    val ext = if (RpCardCodec.isPngBytes(bytes)) "png" else inferImageExt(contentResolver.getType(uri))
-                    saveRpMediaBytes(bytes, "cg", ext)
+                    val useCase = container.studioImageGenerationUseCase
+                    val ext = if (RpCardCodec.isPngBytes(bytes)) "png" else useCase.inferImageExt(contentResolver.getType(uri))
+                    useCase.saveMediaBytesSync(bytes, "cg", ext)
                 }
                 val tipSeq = TimelineReconciler.findActiveTipSeq(_ui.value.messages)
                 updateRpConfig { cfg ->
@@ -3865,11 +3142,12 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                 } else {
                     null
                 }
-                val file = generateAndDownloadRpImage(
+                val generated = container.studioImageGenerationUseCase.generateAndSaveRpMedia(
                     prompt = prompt,
                     aspectRatio = "3:4",
                     referenceFilePath = refPath,
-                ) ?: return@launch
+                    noChannelMessage = strings().rp.aiGenArtNoChannel,
+                )
 
                 val freshConv = chatDao.getConversationById(conv.id)?.toDomain() ?: conv
                 val freshRp = freshConv.rp ?: return@launch
@@ -3878,9 +3156,9 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                         c
                     } else {
                         c.copy(
-                            expressionSprites = c.expressionSprites + (exprKey to file.absolutePath),
-                            spritePath = c.spritePath?.takeIf { it.isNotBlank() } ?: file.absolutePath,
-                            avatarPath = c.avatarPath?.takeIf { it.isNotBlank() } ?: file.absolutePath,
+                            expressionSprites = c.expressionSprites + (exprKey to generated.relativePath),
+                            spritePath = c.spritePath?.takeIf { it.isNotBlank() } ?: generated.relativePath,
+                            avatarPath = c.avatarPath?.takeIf { it.isNotBlank() } ?: generated.relativePath,
                         )
                     }
                 }
@@ -3915,11 +3193,12 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             _ui.update { it.copy(isGeneratingRpArt = true, rpArtStatusLabel = statusLabel) }
             try {
                 val prompt = RpEngine.buildSceneImagePrompt(rp = rp, customHint = customHint)
-                val file = generateAndDownloadRpImage(
+                val generated = container.studioImageGenerationUseCase.generateAndSaveRpMedia(
                     prompt = prompt,
                     aspectRatio = "9:16",
                     referenceFilePath = null,
-                ) ?: return@launch
+                    noChannelMessage = strings().rp.aiGenArtNoChannel,
+                )
 
                 val freshConv = chatDao.getConversationById(conv.id)?.toDomain() ?: conv
                 val freshRp = freshConv.rp ?: return@launch
@@ -3937,7 +3216,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                         id = UUID.randomUUID().toString(),
                         title = cgTitle,
                         caption = caption,
-                        imagePath = file.absolutePath,
+                        imagePath = generated.relativePath,
                         scene = freshRp.state.scene,
                         characterNames = freshRp.cast.filter { !it.isPlayer && it.inScene }.map { it.name },
                         unlockedAt = System.currentTimeMillis(),
@@ -3947,7 +3226,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                     null
                 }
                 val nextState = freshRp.state.copy(
-                    sceneImagePath = file.absolutePath,
+                    sceneImagePath = generated.relativePath,
                     unlockedCgs = if (cgRecord != null) freshRp.state.unlockedCgs + cgRecord else freshRp.state.unlockedCgs,
                     activeCgId = cgRecord?.id ?: freshRp.state.activeCgId,
                 )
@@ -3968,134 +3247,6 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    private suspend fun generateAndDownloadRpImage(
-        prompt: String,
-        aspectRatio: String,
-        referenceFilePath: String? = null,
-    ): File? {
-        val isDirectOnly = (container.authSession.value as? AuthSessionState.LoggedIn)?.isDirectApiOnly == true
-        val customKeys = container.apiProviderStore.enabledProviders()
-            .filter { it.protocol.supportsImages }
-            .map { p ->
-                OnlineImageKeyDto(
-                    id = p.syntheticGroupId,
-                    name = "${p.displayTitle()} · ${p.protocol.displayName}",
-                    models = runCatching { container.directApiClient.listImageModels(p) }.getOrDefault(emptyList()),
-                )
-            }
-        val cap = if (isDirectOnly) null else runCatching { container.onlineImagesApi.capabilities() }.getOrNull()
-        val serverKeys = cap?.keys?.let { FreeQuotaUtils.sortImageKeysByFreeQuota(it) }.orEmpty()
-        val allKeys = serverKeys + customKeys
-
-        val saved = container.settingsStore.currentSettings()
-        val orderedKeys = buildList {
-            allKeys.firstOrNull { it.id == saved.lastImageKeyId && saved.lastImageKeyId != 0L }?.let { add(it) }
-            allKeys.forEach { k -> if (none { it.id == k.id }) add(k) }
-        }
-
-        var chosenKey: OnlineImageKeyDto? = null
-        var chosenModel: OnlineImageModelDto? = null
-        for (key in orderedKeys) {
-            val fetched = runCatching { container.onlineImagesApi.models(key.id) }.getOrDefault(emptyList())
-            val sortedModels = FreeQuotaUtils.sortImageModelsByFreeQuota(fetched.ifEmpty { key.models })
-            if (sortedModels.isNotEmpty()) {
-                chosenKey = key
-                chosenModel = sortedModels.firstOrNull { it.id == saved.lastImageModel } ?: sortedModels.first()
-                break
-            }
-        }
-        if (chosenKey == null || chosenModel == null) {
-            container.toastController.show(strings().rp.aiGenArtNoChannel, isError = true)
-            return null
-        }
-
-        val effectiveRatio = when {
-            chosenModel.aspect_ratios.isEmpty() -> aspectRatio
-            aspectRatio in chosenModel.aspect_ratios -> aspectRatio
-            "3:4" in chosenModel.aspect_ratios && (aspectRatio == "3:4" || aspectRatio == "9:16") -> "3:4"
-            "auto" in chosenModel.aspect_ratios -> "auto"
-            else -> chosenModel.aspect_ratios.first()
-        }
-
-        val referenceUploads = if (!referenceFilePath.isNullOrBlank() && chosenModel.max_reference_images > 0) {
-            withContext(Dispatchers.IO) {
-                runCatching {
-                    val refFile = File(referenceFilePath)
-                    if (refFile.isFile && refFile.length() in 1L..(10L * 1024L * 1024L)) {
-                        val rawBytes = refFile.readBytes()
-                        val isPng = RpCardCodec.isPngBytes(rawBytes)
-                        listOf(
-                            ImageBinaryUpload(
-                                fileName = if (isPng) "rp_ref.png" else "rp_ref.jpg",
-                                mimeType = if (isPng) "image/png" else "image/jpeg",
-                                bytes = rawBytes,
-                            ),
-                        )
-                    } else {
-                        emptyList()
-                    }
-                }.getOrDefault(emptyList())
-            }
-        } else {
-            emptyList()
-        }
-
-        val naiJson = if (OnlineImageStudioUtils.isNovelAIModel(chosenModel)) {
-            val defaultNai = OnlineImageNovelAI.defaultParamsForVersion(OnlineImageNovelAI.detectVersion(chosenModel.id))
-            OnlineImageNovelAI.buildNovelAIPayloadJsonObject(
-                prompt = prompt,
-                params = defaultNai,
-                modelId = chosenModel.id,
-                hasReferenceImages = referenceUploads.isNotEmpty(),
-                isImg2Img = false,
-            )
-        } else {
-            null
-        }
-
-        var current = container.onlineImagesApi.submit(
-            input = OnlineImageSubmitInput(
-                apiKeyId = chosenKey.id,
-                provider = chosenModel.provider,
-                transport = chosenModel.transport,
-                model = chosenModel.id,
-                prompt = prompt,
-                count = 1,
-                aspectRatio = effectiveRatio,
-                resolution = "auto",
-                referenceImages = referenceUploads,
-                novelai = naiJson,
-            ),
-            idempotencyKey = newIdempotencyKey(),
-        )
-
-        val deadline = System.currentTimeMillis() + 60_000L
-        while (current.status.lowercase() in setOf("pending", "queued", "processing", "running") &&
-            System.currentTimeMillis() < deadline
-        ) {
-            delay(1500L)
-            current = container.onlineImagesApi.get(current.id)
-        }
-
-        val finalStatus = current.status.lowercase()
-        if (finalStatus != "completed" && current.images.isEmpty()) {
-            val errMsg = current.errors.firstOrNull()?.message?.takeIf { it.isNotBlank() }
-                ?: "Image generation $finalStatus"
-            throw IllegalStateException(errMsg)
-        }
-
-        val bytes = container.onlineImagesApi.contentBytes(current.id, 0, variant = "original")
-        if (bytes.isEmpty()) throw IllegalStateException("Empty generated image")
-
-        return withContext(Dispatchers.IO) {
-            val dir = File(container.appContext.filesDir, "rp_media")
-            if (!dir.exists()) dir.mkdirs()
-            val outFile = File(dir, "ai_${UUID.randomUUID()}.png")
-            outFile.writeBytes(bytes)
-            outFile
-        }
-    }
-
     fun toggleRpTheaterMode() {
         updateRpConfig { it.copy(theaterMode = !it.theaterMode) }
     }
@@ -4109,8 +3260,8 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun continueLastAssistantMessage(instruction: String = "") {
-        if (_ui.value.isStreaming) return
         val conv = _ui.value.activeConversation ?: return
+        if (chatStreamManager.isStreaming(conv.id)) return
         val groupId = conv.groupId ?: _ui.value.selectedGroupId
         val modelId = conv.model ?: _ui.value.selectedModelId
         if (groupId == null || modelId.isNullOrBlank()) {
@@ -4257,9 +3408,6 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                 val msgs = chatDao.getMessagesForConversation(conv.id).map { it.toDomain() }
                 val lastAssistant = TimelineReconciler.activeMessages(msgs).lastOrNull { it.role == "assistant" }
                 if (lastAssistant != null) {
-                    if (!_ui.value.isStreaming && _streamingMessage.value?.id == lastAssistant.id) {
-                        _streamingMessage.value = null
-                    }
                     val updatedVariants = if (lastAssistant.variants.isNotEmpty()) {
                         val activeIdx = lastAssistant.activeVariantIndex.coerceIn(0, lastAssistant.variants.lastIndex)
                         lastAssistant.variants.mapIndexed { idx, v ->
@@ -4602,7 +3750,6 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     fun loadRpSaveSlotRewind(slot: RpSaveSlot) {
         val conv = _ui.value.activeConversation ?: return
         viewModelScope.launch {
-            if (!_ui.value.isStreaming) _streamingMessage.value = null
             chatDao.deleteMessagesForConversation(conv.id)
             chatDao.deleteMemoryLedgerForConversation(conv.id)
             chatDao.deleteMemoryEpisodesForConversation(conv.id)
@@ -4621,7 +3768,6 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     fun branchFromRpSaveSlot(slot: RpSaveSlot) {
         val conv = _ui.value.activeConversation ?: return
         viewModelScope.launch {
-            if (!_ui.value.isStreaming) _streamingMessage.value = null
             val now = System.currentTimeMillis()
             val newConvId = UUID.randomUUID().toString()
             val forkedConv = conv.copy(
@@ -4658,6 +3804,10 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             if (clonedLore.isNotEmpty()) {
                 chatDao.upsertNovelLoreList(clonedLore.map { it.toEntity() })
             }
+            val mountedRefs = assetDao.getMountedWorldbookRefs(conv.id)
+            if (mountedRefs.isNotEmpty()) {
+                assetDao.replaceMountedWorldbooks(newConvId, mountedRefs.map { it.copy(conversationId = newConvId) })
+            }
             _ui.update { it.copy(draftDiceRoll = null) }
             _activeConvId.value = newConvId
             container.toastController.show(strings().rp.saveBranchedToast.fmt("name" to slot.name))
@@ -4681,22 +3831,19 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun exportRpCardPngToUri(uri: Uri, contentResolver: android.content.ContentResolver) {
-        val rp = _ui.value.activeConversation?.rp ?: return
+        val conv = _ui.value.activeConversation ?: return
+        val rp = conv.rp ?: return
         val lore = _ui.value.novelLore
+        val boundCard = _ui.value.boundCharacterCard
         viewModelScope.launch {
             try {
-                withContext(Dispatchers.IO) {
-                    val json = RpCardCodec.exportToV3Json(rp, lore)
-                    val leadChar = rp.cast.firstOrNull { !it.isPlayer } ?: rp.cast.firstOrNull()
-                    val basePng = leadChar?.avatarPath
-                        ?.takeIf { it.isNotBlank() }
-                        ?.let { path -> runCatching { File(path).takeIf { it.isFile }?.readBytes() }.getOrNull() }
-                        ?.takeIf { RpCardCodec.isPngBytes(it) }
-                        ?: RpCardCodec.createMinimalCardPngBytes()
-                    val cardPng = RpCardCodec.embedCardJsonInPng(basePng, json)
-                    contentResolver.openOutputStream(uri)?.use { it.write(cardPng) }
-                        ?: error("Failed to open output stream")
-                }
+                container.assetImportCoordinator.exportCharacterCardToPngUri(
+                    rp = rp,
+                    lore = lore,
+                    cardEntity = boundCard,
+                    uri = uri,
+                    contentResolver = contentResolver,
+                )
                 container.toastController.show(strings().rp.exportDone)
             } catch (e: Throwable) {
                 container.toastController.show(e.message ?: "Export failed", isError = true)
@@ -4704,57 +3851,599 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
+    // ==================== v0.4 Assets, Greeting Switch, Novel Cover & EPUB ====================
+
+    suspend fun importTavernAssetFromBytes(bytes: ByteArray, fileName: String?): Boolean {
+        val isZh = strings().language == AppLanguage.ZH
+        return when (val imported = container.assetImportCoordinator.importBytes(bytes = bytes, fileName = fileName)) {
+            is AssetImportResult.CharacterCardImported -> {
+                insertRpConversation(
+                    rp = imported.rpConfig,
+                    importedLore = emptyList(),
+                    characterCardId = imported.card.id,
+                    mountedWorldbookId = imported.worldbook?.id,
+                )
+                container.toastController.show(strings().rp.importSuccess.fmt("name" to imported.card.name))
+                true
+            }
+            is AssetImportResult.WorldbookImported -> {
+                container.toastController.show(
+                    if (isZh) "已导入世界书「${imported.worldbook.name}」（${imported.entries.size} 条）到全局资产库"
+                    else "Imported worldbook \"${imported.worldbook.name}\" (${imported.entries.size} entries)",
+                )
+                true
+            }
+            is AssetImportResult.PromptPresetImported -> {
+                container.toastController.show(
+                    if (isZh) "已导入预设「${imported.preset.name}」到全局资产库"
+                    else "Imported preset \"${imported.preset.name}\" to library",
+                )
+                true
+            }
+            else -> false
+        }
+    }
+
+    fun resolveLocalMediaFile(storedPath: String?): java.io.File? =
+        LocalMediaPathResolver.resolveFile(container.appContext.filesDir.absolutePath, storedPath)?.takeIf { it.isFile }
+
+    fun createRpSessionFromCharacterCard(cardId: String) {
+        viewModelScope.launch {
+            val card = assetDao.getCharacterCardById(cardId) ?: return@launch
+            val playStyle = runCatching { RpPlayStyle.valueOf(card.playStyle) }.getOrDefault(RpPlayStyle.chengguang)
+            val cast = runCatching {
+                AppJson.decodeFromString(ListSerializer(RpCharacter.serializer()), card.castJson)
+            }.getOrDefault(emptyList())
+            val altGreetings = runCatching {
+                AppJson.decodeFromString(ListSerializer(String.serializer()), card.alternateGreetingsJson)
+            }.getOrDefault(emptyList())
+            val regexScripts = runCatching {
+                AppJson.decodeFromString(ListSerializer(RpRegexScript.serializer()), card.regexScriptsJson)
+            }.getOrDefault(emptyList())
+            val visualTheme = runCatching {
+                AppJson.decodeFromString(RpVisualTheme.serializer(), card.visualThemeJson)
+            }.getOrDefault(RpVisualTheme())
+            val leadChar = cast.firstOrNull { !it.isPlayer } ?: RpCharacter(
+                id = UUID.randomUUID().toString(),
+                name = card.name,
+                role = "protagonist",
+                appearance = card.description.take(600),
+                personality = card.personality,
+                background = card.description,
+                avatarPath = card.avatarPath,
+                spritePath = card.spritePath,
+                inScene = true,
+            )
+            val effectiveCast = if (cast.isNotEmpty()) cast else listOf(leadChar)
+            val rp = RpConfig(
+                title = card.name.ifBlank { "角色剧场" },
+                worldview = card.scenario,
+                systemRules = card.systemPrompt,
+                narratorStyle = card.creatorNotes,
+                authorNote = card.depthPromptText,
+                authorNoteDepth = card.depthPromptDepth,
+                cast = effectiveCast,
+                state = RpGameState(scene = card.scenario.take(40).ifBlank { "初次相遇" }),
+                greeting = card.firstMes,
+                cardSource = "sillytavern_${card.sourceSpec}",
+                playStyle = playStyle,
+                theaterMode = playStyle == RpPlayStyle.chengguang,
+                alternateGreetings = altGreetings,
+                mesExample = card.mesExample,
+                postHistoryInstructions = card.postHistoryInstructions,
+                regexScripts = regexScripts,
+                visualTheme = visualTheme,
+            )
+            insertRpConversation(
+                rp = rp,
+                importedLore = emptyList(),
+                characterCardId = card.id,
+                mountedWorldbookId = card.primaryWorldbookId,
+            )
+        }
+    }
+
+    fun selectGreetingVariant(index: Int) {
+        viewModelScope.launch {
+            val conv = _ui.value.activeConversation ?: return@launch
+            val card = conv.characterCardId?.let { assetDao.getCharacterCardById(it) }
+            val persona = conv.personaId?.let { assetDao.getPersonaById(it) }
+            refreshOpeningGreetingMessage(
+                conv = conv,
+                card = card,
+                persona = persona,
+                selectedVariantIndex = index,
+            )
+        }
+    }
+
+    fun selectConversationPersona(personaId: String?) {
+        viewModelScope.launch {
+            val activeId = _activeConvId.value ?: _ui.value.activeConversation?.id ?: return@launch
+            val fresh = chatDao.getConversationById(activeId)?.toDomain() ?: return@launch
+            val normalizedId = personaId?.trim()?.takeIf { it.isNotEmpty() }
+            val updated = fresh.copy(personaId = normalizedId, updatedAt = System.currentTimeMillis())
+            chatDao.upsertConversation(updated.toEntity())
+            val card = updated.characterCardId?.let { assetDao.getCharacterCardById(it) }
+            val persona = normalizedId?.let { assetDao.getPersonaById(it) }
+            refreshOpeningGreetingMessage(
+                conv = updated,
+                card = card,
+                persona = persona,
+                selectedVariantIndex = null,
+            )
+            recomputeWaterline()
+        }
+    }
+
+    fun selectConversationPreset(presetId: String?) {
+        viewModelScope.launch {
+            val activeId = _activeConvId.value ?: _ui.value.activeConversation?.id ?: return@launch
+            val fresh = chatDao.getConversationById(activeId)?.toDomain() ?: return@launch
+            val normalizedId = presetId?.trim()?.takeIf { it.isNotEmpty() }
+            chatDao.upsertConversation(
+                fresh.copy(presetId = normalizedId, updatedAt = System.currentTimeMillis()).toEntity(),
+            )
+            recomputeWaterline()
+        }
+    }
+
+    fun togglePromptPresetBlockEnabled(presetId: String, identifier: String, index: Int) {
+        viewModelScope.launch {
+            val preset = assetDao.getPromptPresetById(presetId) ?: return@launch
+            val blocks = runCatching {
+                AppJson.decodeFromString(ListSerializer(PromptPresetBlock.serializer()), preset.blocksJson)
+            }.getOrDefault(emptyList())
+            if (blocks.isEmpty()) return@launch
+            val updated = blocks.mapIndexed { idx, block ->
+                if (idx == index && (identifier.isBlank() || block.identifier == identifier)) {
+                    block.copy(enabled = !block.enabled)
+                } else {
+                    block
+                }
+            }
+            val encoded = AppJson.encodeToString(ListSerializer(PromptPresetBlock.serializer()), updated)
+            assetDao.upsertPromptPreset(
+                preset.copy(blocksJson = encoded, updatedAt = System.currentTimeMillis()),
+            )
+            recomputeWaterline()
+        }
+    }
+
+    fun mountWorldbook(worldbookId: String, convId: String? = null) {
+        val targetId = convId ?: _activeConvId.value ?: _ui.value.activeConversation?.id ?: return
+        viewModelScope.launch {
+            val existing = assetDao.getMountedWorldbookRefs(targetId)
+            if (existing.any { it.worldbookId == worldbookId }) {
+                val updated = existing.map {
+                    if (it.worldbookId == worldbookId) it.copy(enabled = true, updatedAt = System.currentTimeMillis()) else it
+                }
+                assetDao.replaceMountedWorldbooks(targetId, updated)
+            } else {
+                val nextSort = (existing.maxOfOrNull { it.sortOrder } ?: -1) + 1
+                val added = ConversationWorldbookCrossRef(
+                    conversationId = targetId,
+                    worldbookId = worldbookId,
+                    sortOrder = nextSort,
+                    enabled = true,
+                    updatedAt = System.currentTimeMillis(),
+                )
+                assetDao.replaceMountedWorldbooks(targetId, existing + added)
+            }
+            recomputeWaterline()
+        }
+    }
+
+    fun unmountWorldbook(worldbookId: String) {
+        val targetId = _activeConvId.value ?: _ui.value.activeConversation?.id ?: return
+        viewModelScope.launch {
+            val remaining = assetDao.getMountedWorldbookRefs(targetId)
+                .filterNot { it.worldbookId == worldbookId }
+                .mapIndexed { idx, ref -> ref.copy(sortOrder = idx) }
+            assetDao.replaceMountedWorldbooks(targetId, remaining)
+            recomputeWaterline()
+        }
+    }
+
+    fun toggleMountedWorldbookEnabled(worldbookId: String) {
+        val targetId = _activeConvId.value ?: _ui.value.activeConversation?.id ?: return
+        viewModelScope.launch {
+            val updated = assetDao.getMountedWorldbookRefs(targetId).map { ref ->
+                if (ref.worldbookId == worldbookId) {
+                    ref.copy(enabled = !ref.enabled, updatedAt = System.currentTimeMillis())
+                } else {
+                    ref
+                }
+            }
+            assetDao.replaceMountedWorldbooks(targetId, updated)
+            recomputeWaterline()
+        }
+    }
+
+    fun saveV2LoreEntryForActiveConversation(
+        existingLegacyId: String?,
+        category: String,
+        title: String,
+        keywordsRaw: String,
+        secondaryKeysRaw: String,
+        selectiveLogic: Int,
+        useDepthInjection: Boolean,
+        depth: Int,
+        sticky: Int,
+        cooldown: Int,
+        delay: Int,
+        content: String,
+        alwaysActive: Boolean,
+    ) {
+        val conv = _ui.value.activeConversation ?: return
+        val hasV2Triggers = useDepthInjection ||
+            secondaryKeysRaw.trim().isNotEmpty() ||
+            sticky > 0 ||
+            cooldown > 0 ||
+            delay > 0
+        if (!hasV2Triggers) {
+            if (existingLegacyId != null) {
+                val existing = _ui.value.novelLore.firstOrNull { it.id == existingLegacyId }
+                if (existing != null) {
+                    val parsedKeys = keywordsRaw.split(',', '，', '、').map { it.trim() }.filter { it.isNotEmpty() }
+                    updateNovelLore(
+                        existing.copy(
+                            category = category,
+                            title = title.trim(),
+                            keywords = parsedKeys.ifEmpty { listOf(title.trim()) },
+                            content = content.trim(),
+                            alwaysActive = alwaysActive,
+                        ),
+                    )
+                    return
+                }
+            }
+            upsertNovelLore(category, title, keywordsRaw, content, alwaysActive)
+            return
+        }
+
+        viewModelScope.launch {
+            val now = System.currentTimeMillis()
+            val wbId = "conv_v2_wb_${conv.id}"
+            val primaryKeys = keywordsRaw.split(',', '，', '、').map { it.trim() }.filter { it.isNotEmpty() }
+                .ifEmpty { if (alwaysActive) emptyList() else listOf(title.trim()) }
+            val secondaryKeys = secondaryKeysRaw.split(',', '，', '、').map { it.trim() }.filter { it.isNotEmpty() }
+            val entryId = existingLegacyId?.takeIf { it.isNotBlank() } ?: UUID.randomUUID().toString()
+
+            val existingWb = assetDao.getWorldbookById(wbId)
+            val wb = existingWb ?: WorldbookEntity(
+                id = wbId,
+                name = "${conv.title.take(18)} · 高级词条",
+                description = "Session V2 worldbook triggers",
+                sourceFormat = "gugachat_v2",
+                globalEnabled = false,
+                createdAt = now,
+                updatedAt = now,
+            )
+            if (existingWb == null) {
+                assetDao.upsertWorldbook(wb)
+            }
+            val entry = WorldbookEntryEntity(
+                id = entryId,
+                worldbookId = wbId,
+                uid = entryId.hashCode(),
+                title = title.trim(),
+                content = content.trim(),
+                category = category,
+                keysJson = AppJson.encodeToString(ListSerializer(String.serializer()), primaryKeys),
+                secondaryKeysJson = AppJson.encodeToString(ListSerializer(String.serializer()), secondaryKeys),
+                selectiveLogic = selectiveLogic.coerceIn(0, 3),
+                constant = alwaysActive,
+                enabled = true,
+                position = if (useDepthInjection) WorldbookEngine.POSITION_AT_DEPTH else WorldbookEngine.POSITION_BEFORE_CHAR,
+                depth = depth.coerceIn(0, 16),
+                sticky = sticky.coerceAtLeast(0),
+                cooldown = cooldown.coerceAtLeast(0),
+                delay = delay.coerceAtLeast(0),
+                estimatedTokens = TokenEstimator.estimateItem(title.trim(), content.trim(), overhead = 8, minTokens = 8),
+                createdAt = now,
+                updatedAt = now,
+            )
+            assetDao.upsertWorldbookEntry(entry)
+            val wbEntries = assetDao.getWorldbookEntries(wbId)
+            assetDao.upsertWorldbook(
+                wb.copy(
+                    entryCount = wbEntries.size,
+                    totalEstimatedTokens = wbEntries.sumOf { it.estimatedTokens },
+                    updatedAt = now,
+                ),
+            )
+            val refs = assetDao.getMountedWorldbookRefs(conv.id)
+            if (refs.none { it.worldbookId == wbId }) {
+                assetDao.replaceMountedWorldbooks(
+                    conv.id,
+                    refs + ConversationWorldbookCrossRef(
+                        conversationId = conv.id,
+                        worldbookId = wbId,
+                        sortOrder = (refs.maxOfOrNull { it.sortOrder } ?: -1) + 1,
+                        enabled = true,
+                        updatedAt = now,
+                    ),
+                )
+            }
+            if (existingLegacyId != null) {
+                chatDao.deleteNovelLore(existingLegacyId)
+            }
+            container.retrievalCoordinator.scheduleWorldbookIndexing(viewModelScope, wbId, wbEntries)
+            recomputeWaterline()
+        }
+    }
+
+    fun syncBoundCharacterCardFields() {
+        val isZh = strings().language == AppLanguage.ZH
+        viewModelScope.launch {
+            val activeId = _activeConvId.value ?: _ui.value.activeConversation?.id ?: return@launch
+            val fresh = chatDao.getConversationById(activeId)?.toDomain() ?: return@launch
+            val rp = fresh.rp ?: return@launch
+            val card = fresh.characterCardId?.let { assetDao.getCharacterCardById(it) } ?: return@launch
+            val cardCast = runCatching {
+                AppJson.decodeFromString(ListSerializer(RpCharacter.serializer()), card.castJson)
+            }.getOrDefault(emptyList())
+            val cardExpr = runCatching {
+                AppJson.decodeFromString(MapSerializer(String.serializer(), String.serializer()), card.expressionSpritesJson)
+            }.getOrDefault(emptyMap())
+            val cardRegex = runCatching {
+                AppJson.decodeFromString(ListSerializer(RpRegexScript.serializer()), card.regexScriptsJson)
+            }.getOrDefault(emptyList())
+            val altGreetings = runCatching {
+                AppJson.decodeFromString(ListSerializer(String.serializer()), card.alternateGreetingsJson)
+            }.getOrDefault(emptyList())
+
+            val leadCardChar = cardCast.firstOrNull { !it.isPlayer }
+            val updatedCast = rp.cast.mapIndexed { idx, ch ->
+                val src = cardCast.firstOrNull { it.id == ch.id }
+                    ?: cardCast.firstOrNull { it.name.equals(ch.name, ignoreCase = true) }
+                    ?: if (!ch.isPlayer && idx == 0) leadCardChar else null
+                if (src != null) {
+                    ch.copy(
+                        appearance = src.appearance.ifBlank { ch.appearance },
+                        personality = src.personality.ifBlank { ch.personality },
+                        background = src.background.ifBlank { ch.background },
+                        avatarPath = ch.avatarPath?.takeIf { it.isNotBlank() } ?: src.avatarPath ?: card.avatarPath,
+                        spritePath = ch.spritePath?.takeIf { it.isNotBlank() } ?: src.spritePath ?: card.spritePath,
+                        expressionSprites = ch.expressionSprites.ifEmpty {
+                            src.expressionSprites.ifEmpty { cardExpr }
+                        },
+                    )
+                } else {
+                    ch
+                }
+            }
+            val syncedRp = rp.copy(
+                worldview = card.scenario.ifBlank { rp.worldview },
+                systemRules = card.systemPrompt.ifBlank { rp.systemRules },
+                narratorStyle = card.creatorNotes.ifBlank { rp.narratorStyle },
+                authorNote = card.depthPromptText.ifBlank { rp.authorNote },
+                authorNoteDepth = card.depthPromptDepth,
+                postHistoryInstructions = card.postHistoryInstructions.ifBlank { rp.postHistoryInstructions },
+                mesExample = card.mesExample.ifBlank { rp.mesExample },
+                greeting = card.firstMes.ifBlank { rp.greeting },
+                alternateGreetings = altGreetings.ifEmpty { rp.alternateGreetings },
+                regexScripts = cardRegex.ifEmpty { rp.regexScripts },
+                cast = updatedCast,
+            )
+            chatDao.upsertConversation(
+                fresh.copy(rp = syncedRp, updatedAt = System.currentTimeMillis()).toEntity(),
+            )
+            val persona = fresh.personaId?.let { assetDao.getPersonaById(it) }
+            refreshOpeningGreetingMessage(
+                conv = fresh.copy(rp = syncedRp),
+                card = card,
+                persona = persona,
+                selectedVariantIndex = null,
+            )
+            container.toastController.show(
+                if (isZh) "已同步角色卡「${card.name}」最新设定" else "Synced latest fields from \"${card.name}\"",
+            )
+        }
+    }
+
+    fun bindNovelCoverImage(uri: Uri, contentResolver: ContentResolver) {
+        viewModelScope.launch {
+            try {
+                val relPath = withContext(Dispatchers.IO) {
+                    val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: error("Empty image")
+                    val useCase = container.studioImageGenerationUseCase
+                    val ext = if (RpCardCodec.isPngBytes(bytes)) "png" else useCase.inferImageExt(contentResolver.getType(uri))
+                    useCase.saveMediaBytesSync(bytes, "novel_cover", ext)
+                }
+                updateNovelConfig { it.copy(coverImagePath = relPath) }
+            } catch (e: Throwable) {
+                container.toastController.show(e.message ?: strings().chat.invalidImage, isError = true)
+            }
+        }
+    }
+
+    fun clearNovelCoverImage() {
+        updateNovelConfig { it.copy(coverImagePath = null) }
+    }
+
+    fun generateNovelCoverArt() {
+        if (_ui.value.isGeneratingRpArt) return
+        val conv = _ui.value.activeConversation ?: return
+        val novel = conv.novel ?: return
+        val isZh = strings().language == AppLanguage.ZH
+        val statusLabel = if (isZh) "正在绘制书封 (${novel.title})" else "Generating cover (${novel.title})"
+        viewModelScope.launch {
+            _ui.update { it.copy(isGeneratingRpArt = true, rpArtStatusLabel = statusLabel) }
+            try {
+                val prompt = buildString {
+                    append("Vertical book cover illustration, high quality literary artwork, no text, no watermark. ")
+                    append("Title mood: ").append(novel.title).append(". ")
+                    if (novel.genre.isNotBlank()) append("Genre: ").append(novel.genre).append(". ")
+                    if (novel.synopsis.isNotBlank()) append("Premise: ").append(novel.synopsis.take(260)).append(". ")
+                    if (novel.worldview.isNotBlank()) append("Worldview: ").append(novel.worldview.take(200))
+                }
+                val generated = container.studioImageGenerationUseCase.generateAndSaveRpMedia(
+                    prompt = prompt,
+                    aspectRatio = "3:4",
+                    prefix = "novel_cover",
+                    noChannelMessage = strings().rp.aiGenArtNoChannel,
+                )
+                updateNovelConfig { it.copy(coverImagePath = generated.relativePath) }
+                container.toastController.show(if (isZh) "书封已生成并保存" else "Book cover generated")
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                container.toastController.show(e.message ?: strings().common.unknownError, isError = true)
+            } finally {
+                _ui.update { it.copy(isGeneratingRpArt = false, rpArtStatusLabel = "") }
+            }
+        }
+    }
+
+    fun exportNovelEpubToUri(
+        uri: Uri,
+        contentResolver: ContentResolver,
+        includeLore: Boolean = false,
+    ) {
+        val conv = _ui.value.activeConversation ?: return
+        val novel = conv.novel ?: return
+        viewModelScope.launch {
+            try {
+                val coverFile = resolveLocalMediaFile(novel.coverImagePath)
+                val epubBytes = withContext(Dispatchers.IO) {
+                    val coverBytes = coverFile?.takeIf { it.isFile }?.readBytes()
+                    val mime = when (coverFile?.extension?.lowercase()) {
+                        "jpg", "jpeg" -> "image/jpeg"
+                        "webp" -> "image/webp"
+                        else -> "image/png"
+                    }
+                    NovelExport.exportEpubBytes(
+                        conv = conv,
+                        chapters = _ui.value.novelChapters,
+                        messages = _ui.value.messages,
+                        lore = if (includeLore) _ui.value.novelLore else emptyList(),
+                        coverImageBytes = coverBytes,
+                        coverMimeType = mime,
+                    )
+                }
+                withContext(Dispatchers.IO) {
+                    contentResolver.openOutputStream(uri)?.use { it.write(epubBytes) }
+                        ?: error("Failed to open output stream")
+                }
+                container.toastController.show(strings().novel.exportDone)
+            } catch (e: Throwable) {
+                container.toastController.show(e.message ?: "Export failed", isError = true)
+            }
+        }
+    }
+
+    private suspend fun refreshOpeningGreetingMessage(
+        conv: ChatConversation,
+        card: CharacterCardEntity?,
+        persona: PersonaEntity?,
+        selectedVariantIndex: Int? = null,
+    ) {
+        val allMsgs = chatDao.getMessagesForConversation(conv.id).map { it.toDomain() }
+        val active = TimelineReconciler.activeMessages(allMsgs)
+        if (active.any { it.role == "user" }) return
+        val greetingMsg = active.firstOrNull { it.role == "assistant" && it.seq == 1 } ?: return
+
+        val rawGreetings = if (card != null) {
+            val alts = runCatching {
+                AppJson.decodeFromString(ListSerializer(String.serializer()), card.alternateGreetingsJson)
+            }.getOrDefault(emptyList())
+            (listOf(card.firstMes) + alts).map { it.trim() }.filter { it.isNotEmpty() }
+        } else {
+            val rp = conv.rp
+            if (rp != null) {
+                (listOf(rp.greeting) + rp.alternateGreetings).map { it.trim() }.filter { it.isNotEmpty() }
+            } else {
+                emptyList()
+            }
+        }
+        if (rawGreetings.isEmpty()) return
+
+        val charName = card?.name?.trim()?.takeIf { it.isNotEmpty() }
+            ?: conv.rp?.cast?.firstOrNull { !it.isPlayer }?.name?.trim()?.takeIf { it.isNotEmpty() }
+            ?: conv.title.trim().ifBlank { "角色" }
+        val userName = persona?.name?.trim()?.takeIf { it.isNotEmpty() }
+            ?: conv.rp?.playerName?.trim()?.takeIf { it.isNotEmpty() }
+            ?: "旅人"
+
+        val baseRp = conv.rp
+        val leadSpeaker = baseRp?.cast?.firstOrNull { !it.isPlayer }?.name?.takeIf { it.isNotBlank() } ?: charName
+        val now = System.currentTimeMillis()
+        val variants = rawGreetings.mapIndexed { idx, raw ->
+            val withRpMacros = if (baseRp != null) {
+                val effectiveCast = if (baseRp.cast.any { !it.isPlayer }) {
+                    baseRp.cast
+                } else {
+                    listOf(RpCharacter(id = "lead_macro", name = charName))
+                }
+                RpEngine.replaceMacros(raw, baseRp.copy(playerName = userName, cast = effectiveCast))
+            } else {
+                raw
+            }
+            val rendered = ContextBuilder.expandStaticMacros(withRpMacros, charName, userName)
+            val prev = greetingMsg.variants.getOrNull(idx)
+            MessageVariant(
+                id = prev?.id ?: UUID.randomUUID().toString(),
+                content = rendered,
+                createdAt = prev?.createdAt ?: now,
+                rpStateSnapshot = prev?.rpStateSnapshot ?: baseRp?.state,
+                rpCastSnapshot = prev?.rpCastSnapshot ?: baseRp?.cast,
+                rpChoices = prev?.rpChoices ?: baseRp?.pendingChoices.orEmpty(),
+                rpSpeakerName = prev?.rpSpeakerName ?: leadSpeaker,
+            )
+        }
+        val activeIdx = (selectedVariantIndex ?: greetingMsg.activeVariantIndex).coerceIn(0, variants.lastIndex)
+        val selectedContent = variants[activeIdx].content
+        chatDao.upsertMessage(
+            greetingMsg.copy(
+                content = selectedContent,
+                variants = variants,
+                activeVariantIndex = activeIdx,
+                tokenEstimate = ContextBuilder.estimateMessageTokens(selectedContent),
+            ).toEntity(),
+        )
+    }
+
+    private fun enrichConversationWithBoundCardMedia(
+        conv: ChatConversation,
+        card: CharacterCardEntity?,
+    ): ChatConversation {
+        val rp = conv.rp ?: return conv
+        if (card == null) return conv
+        val cardCast = runCatching {
+            AppJson.decodeFromString(ListSerializer(RpCharacter.serializer()), card.castJson)
+        }.getOrDefault(emptyList())
+        val cardExpr = runCatching {
+            AppJson.decodeFromString(MapSerializer(String.serializer(), String.serializer()), card.expressionSpritesJson)
+        }.getOrDefault(emptyMap())
+        val leadCardChar = cardCast.firstOrNull { !it.isPlayer }
+        var changed = false
+        val enrichedCast = rp.cast.mapIndexed { idx, ch ->
+            if (ch.isPlayer) return@mapIndexed ch
+            val fallbackSrc = cardCast.firstOrNull { it.id == ch.id }
+                ?: cardCast.firstOrNull { it.name.equals(ch.name, ignoreCase = true) }
+                ?: if (idx == 0 || ch.id == rp.cast.firstOrNull { !it.isPlayer }?.id) leadCardChar else null
+            val fallbackAvatar = fallbackSrc?.avatarPath?.takeIf { it.isNotBlank() } ?: card.avatarPath?.takeIf { it.isNotBlank() }
+            val fallbackSprite = fallbackSrc?.spritePath?.takeIf { it.isNotBlank() } ?: card.spritePath?.takeIf { it.isNotBlank() }
+            val fallbackExpr = (fallbackSrc?.expressionSprites ?: emptyMap()).ifEmpty { cardExpr }
+            val nextAvatar = ch.avatarPath?.takeIf { it.isNotBlank() } ?: fallbackAvatar
+            val nextSprite = ch.spritePath?.takeIf { it.isNotBlank() } ?: fallbackSprite
+            val nextExpr = if (ch.expressionSprites.isNotEmpty()) ch.expressionSprites else fallbackExpr
+            if (nextAvatar != ch.avatarPath || nextSprite != ch.spritePath || nextExpr != ch.expressionSprites) {
+                changed = true
+                ch.copy(avatarPath = nextAvatar, spritePath = nextSprite, expressionSprites = nextExpr)
+            } else {
+                ch
+            }
+        }
+        return if (changed) conv.copy(rp = rp.copy(cast = enrichedCast)) else conv
+    }
+
     // ==================== Helpers ====================
 
     private fun strings() =
         if (container.settingsState.value.language == AppLanguage.EN) EnStrings else ZhStrings
-
-    private fun combineContinueText(prefix: String?, streamed: String): String {
-        val cleanPrefix = prefix?.trimEnd().orEmpty()
-        val cleanStream = streamed.trimStart()
-        return when {
-            cleanPrefix.isEmpty() -> streamed
-            cleanStream.isEmpty() -> cleanPrefix
-            else -> "$cleanPrefix\n\n$cleanStream"
-        }
-    }
-
-    private fun saveRpMediaBytes(bytes: ByteArray, prefix: String, ext: String): String {
-        val dir = File(container.appContext.filesDir, "rp_media")
-        if (!dir.exists()) dir.mkdirs()
-        val file = File(dir, "${prefix}_${UUID.randomUUID()}.$ext")
-        file.writeBytes(bytes)
-        return file.absolutePath
-    }
-
-    private fun transcodeToPngBytes(rawBytes: ByteArray): ByteArray? = runCatching {
-        val decoded = BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size) ?: return@runCatching null
-        val maxSide = 1024
-        val bitmap = if (decoded.width > maxSide || decoded.height > maxSide) {
-            val scale = maxSide.toFloat() / maxOf(decoded.width, decoded.height).toFloat()
-            val w = (decoded.width * scale).toInt().coerceAtLeast(1)
-            val h = (decoded.height * scale).toInt().coerceAtLeast(1)
-            Bitmap.createScaledBitmap(decoded, w, h, true).also {
-                if (it !== decoded) decoded.recycle()
-            }
-        } else {
-            decoded
-        }
-        try {
-            val out = ByteArrayOutputStream()
-            bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
-            out.toByteArray()
-        } finally {
-            bitmap.recycle()
-        }
-    }.getOrNull()
-
-    private fun inferImageExt(mimeType: String?): String =
-        when (mimeType?.lowercase()) {
-            "image/png" -> "png"
-            "image/webp" -> "webp"
-            else -> "jpg"
-        }
 
     private suspend fun ensureActiveConversation(): ChatConversation {
         _ui.value.activeConversation?.let { return it }
@@ -4793,13 +4482,15 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             val st = _ui.value
             val conv = st.activeConversation ?: return@launch
             val settings = container.settingsState.value
-            val budget = parseMemoryBudget(settings.memoryBudget)
+            val assembler = container.chatContextAssembler
+            val budget = assembler.parseMemoryBudget(settings.memoryBudget)
             val effectiveModelId = conv.model?.takeIf { it.isNotBlank() } ?: st.selectedModelId
             val effectiveGroupId = conv.groupId ?: st.selectedGroupId
             val modelWin = st.models.firstOrNull { it.id == effectiveModelId }?.context_window
                 ?: effectiveModelId?.let { DirectProtocolCodec.inferChatModelMeta(it).context_window }
                 ?: 128000
-            val extCal = lookupExternalCalibration(settings, effectiveGroupId, effectiveModelId)
+            val extCal = assembler.lookupExternalCalibration(settings, effectiveGroupId, effectiveModelId)
+            val v4Assets = assembler.loadV4Assets(conv)
             val input = ContextBuildInput(
                 conversation = conv,
                 messages = st.messages,
@@ -4818,6 +4509,11 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                 modelId = effectiveModelId,
                 externalCalibration = extCal,
                 minSemanticCosine = settings.retrievalSettings.minCosineOverride ?: RetrievalCoordinator.DEFAULT_MIN_COSINE_FLOOR,
+                characterCard = v4Assets.characterCard,
+                persona = v4Assets.persona,
+                promptPreset = v4Assets.promptPreset,
+                mountedWorldbooks = v4Assets.mountedWorldbooks,
+                loreTimedStates = v4Assets.loreTimedStates,
             )
             val wl = withContext(Dispatchers.Default) {
                 ContextBuilder.computeContextWaterline(input)
@@ -4843,118 +4539,6 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                 episodes = episodes,
                 userMemories = userMems,
             )
-        }
-    }
-
-    private fun buildSemanticQueryText(
-        conv: ChatConversation,
-        msgs: List<ChatMessage>,
-        draftText: String,
-    ): String {
-        val active = TimelineReconciler.activeMessages(msgs)
-        val presentNames = when (conv.mode) {
-            ConversationMode.novel -> conv.novel?.currentStatus?.present.orEmpty()
-            ConversationMode.rp -> conv.rp?.cast?.filter { it.inScene }?.map { it.name }.orEmpty()
-            ConversationMode.chat -> emptyList()
-        }
-        val recentTail = active.takeLast(3)
-            .mapNotNull { m -> m.content.trim().takeIf { it.isNotEmpty() } }
-            .joinToString("\n")
-            .takeLast(500)
-        return buildList {
-            draftText.trim().takeIf { it.isNotEmpty() }?.let { add(it) }
-            recentTail.takeIf { it.isNotEmpty() }?.let { add(it) }
-            if (presentNames.isNotEmpty()) add(presentNames.joinToString(" "))
-        }.joinToString("\n").trim()
-    }
-
-    private fun collectSemanticCandidateIds(
-        conv: ChatConversation,
-        lore: List<NovelLoreEntry>,
-        ledger: List<MemoryLedgerItem>,
-        episodes: List<MemoryEpisode>,
-        userMemories: List<UserMemory>,
-    ): Set<String> {
-        val ids = LinkedHashSet<String>()
-        if (conv.mode == ConversationMode.novel || conv.mode == ConversationMode.rp) {
-            for (entry in lore) {
-                if (!entry.alwaysActive && entry.enabled && !entry.stale) {
-                    ids.add(entry.id)
-                }
-            }
-        }
-        if (conv.mode == ConversationMode.rp) {
-            for (item in ledger) {
-                if (item.enabled && !item.stale) {
-                    ids.add(item.id)
-                }
-            }
-        }
-        for (ep in episodes) {
-            if (!ep.stale) {
-                ids.add(ep.id)
-            }
-        }
-        if (conv.params.enableAutoMemory) {
-            for (mem in userMemories) {
-                if (mem.enabled && mem.content.isNotBlank()) {
-                    ids.add(mem.id)
-                }
-            }
-        }
-        return ids
-    }
-
-    private fun calibrationKey(groupId: Long?, modelId: String?): String {
-        val providerKey = when {
-            groupId == null -> "default"
-            ApiProviderConfig.isCustomProviderId(groupId) ->
-                container.apiProviderStore.findBySyntheticId(groupId)?.id ?: "custom_$groupId"
-            else -> "server_$groupId"
-        }
-        val family = TokenEstimator.modelFamilyKey(modelId)
-        return "$providerKey|$family"
-    }
-
-    private fun lookupExternalCalibration(
-        settings: AppSettings,
-        groupId: Long?,
-        modelId: String?,
-    ): Double? {
-        if (settings.tokenCalibrationMap.isEmpty() || modelId.isNullOrBlank()) return null
-        val key = calibrationKey(groupId, modelId)
-        return settings.tokenCalibrationMap[key]?.takeIf { it in 0.60..1.60 }
-    }
-
-    private fun resolveProtocolForGroup(groupId: Long): ApiProtocol {
-        if (ApiProviderConfig.isCustomProviderId(groupId)) {
-            return container.apiProviderStore.findBySyntheticId(groupId)?.protocol ?: ApiProtocol.OPENAI_CHAT
-        }
-        return ApiProtocol.OPENAI_CHAT
-    }
-
-    private fun parseMemoryBudget(raw: String): MemoryBudget =
-        when (raw.trim().lowercase()) {
-            "low", "2k" -> MemoryBudget.low
-            "high", "8k" -> MemoryBudget.high
-            else -> MemoryBudget.standard
-        }
-
-    private fun toWireDto(msg: WireChatMessage): WireChatMessageDto {
-        val parts = msg.parts
-        return if (!parts.isNullOrEmpty()) {
-            WireChatMessageDto.parts(
-                role = msg.role,
-                parts = parts.map { p ->
-                    if (p.type == "image_url" && !p.imageUrl.isNullOrBlank()) {
-                        WireChatContentPartDto(type = "image_url", image_url = WireImageUrlDto(p.imageUrl))
-                    } else {
-                        WireChatContentPartDto(type = "text", text = p.text.orEmpty())
-                    }
-                },
-            )
-        } else {
-            WireChatMessageDto.text(msg.role, msg.textContent.orEmpty())
         }
     }
 }

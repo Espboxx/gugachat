@@ -1,6 +1,14 @@
 package com.gugachat.app.ui.chat
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -28,12 +36,14 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.OpenInFull
 import androidx.compose.material.icons.filled.CloseFullscreen
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -43,7 +53,10 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -59,12 +72,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.i18n.LocalAppStrings
 import com.gugachat.app.core.i18n.fmt
@@ -76,15 +91,21 @@ import com.gugachat.app.core.theme.GuInlineStepper
 import com.gugachat.app.core.theme.GuMetaText
 import com.gugachat.app.core.theme.GuModalDragHandle
 import com.gugachat.app.core.theme.GuPill
+import com.gugachat.app.core.theme.GuSectionHeader
 import com.gugachat.app.core.theme.GuSegmentedControl
+import com.gugachat.app.core.theme.GuSettingsRow
 import com.gugachat.app.core.theme.GuSheetHeader
 import com.gugachat.app.core.theme.GuSwitchRow
 import com.gugachat.app.core.theme.GuTextField
 import com.gugachat.app.core.theme.LocalAppTheme
+import com.gugachat.app.data.api.AppJson
+import com.gugachat.app.data.local.PromptPresetEntity
 import com.gugachat.app.domain.chat.ChatParams
 import com.gugachat.app.domain.chat.ContextWaterlineSummary
 import com.gugachat.app.domain.chat.FileContextBudgeter
+import com.gugachat.app.domain.chat.PromptPresetBlock
 import kotlinx.coroutines.delay
+import kotlinx.serialization.builtins.ListSerializer
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -127,8 +148,15 @@ fun ChatParamsSheet(
     val theme = LocalAppTheme.current
     val c = theme.colors
     val isZh = strings.language == AppLanguage.ZH
+    val chatVm = LocalChatViewModel.current
+    val chatState = chatVm?.ui?.collectAsStateWithLifecycle()?.value
 
     var activeTab by remember { mutableIntStateOf(0) } // 0=Persona&Sampling, 1=ContextBudget, 2=Advanced&Cache
+    var showingPresetSubpage by remember { mutableStateOf(false) }
+
+    BackHandler(enabled = showingPresetSubpage) {
+        showingPresetSubpage = false
+    }
 
     // Draft state initialized when sheet opens
     var promptDraft by remember { mutableStateOf(systemPrompt) }
@@ -351,13 +379,36 @@ fun ChatParamsSheet(
         dragHandle = { GuModalDragHandle() },
         modifier = Modifier.statusBarsPadding(),
     ) {
-        Column(
+        AnimatedContent(
+            targetState = showingPresetSubpage,
+            transitionSpec = {
+                if (!targetState) {
+                    (slideInHorizontally(tween(220)) { -it / 4 } + fadeIn(tween(180)))
+                        .togetherWith(slideOutHorizontally(tween(220)) { it / 3 } + fadeOut(tween(140)))
+                } else {
+                    (slideInHorizontally(tween(220)) { it / 3 } + fadeIn(tween(180)))
+                        .togetherWith(slideOutHorizontally(tween(220)) { -it / 4 } + fadeOut(tween(140)))
+                }
+            },
+            label = "params_preset_subpage",
             modifier = Modifier
                 .fillMaxWidth()
                 .fillMaxHeight(0.88f)
                 .imePadding()
                 .navigationBarsPadding(),
-        ) {
+        ) { inPresetSubpage ->
+            if (inPresetSubpage) {
+                PresetBlocksSubpage(
+                    presets = chatState?.promptPresets.orEmpty(),
+                    boundPresetId = chatState?.activeConversation?.presetId,
+                    onSelectPreset = { id -> chatVm?.selectConversationPreset(id) },
+                    onToggleBlock = { presetId, identifier, idx ->
+                        chatVm?.togglePromptPresetBlockEnabled(presetId, identifier, idx)
+                    },
+                    onBack = { showingPresetSubpage = false },
+                )
+            } else {
+                Column(modifier = Modifier.fillMaxWidth()) {
             GuSheetHeader(
                 title = strings.chat.paramsTitle,
                 onClose = {
@@ -465,6 +516,33 @@ fun ChatParamsSheet(
                                 singleLine = false,
                                 minLines = if (promptExpanded) 7 else 3,
                                 maxLines = if (promptExpanded) 12 else 3,
+                            )
+                        }
+
+                        val boundPreset = chatState?.boundPromptPreset
+                        val presetSubtitle = if (boundPreset != null) {
+                            val blockCount = runCatching {
+                                AppJson.decodeFromString(ListSerializer(PromptPresetBlock.serializer()), boundPreset.blocksJson)
+                                    .count { it.enabled && !it.marker }
+                            }.getOrDefault(0)
+                            if (isZh) "${boundPreset.name} · 已启用 $blockCount 个提示槽位" else "${boundPreset.name} · $blockCount active blocks"
+                        } else {
+                            val avail = chatState?.promptPresets?.size ?: 0
+                            if (avail > 0) {
+                                if (isZh) "未挂载预设（点击从 $avail 套预设中选择）" else "None (tap to pick from $avail presets)"
+                            } else {
+                                if (isZh) "暂无预设，可在工具→资产库或导入页添加" else "No presets imported yet"
+                            }
+                        }
+                        GuGroupedCard(modifier = Modifier.fillMaxWidth()) {
+                            GuSettingsRow(
+                                title = if (isZh) "🎛 提示词预设" else "🎛 Prompt Preset",
+                                subtitle = presetSubtitle,
+                                icon = Icons.Default.Tune,
+                                iconTint = c.primarySoftInk,
+                                iconBg = c.primarySoft,
+                                showChevron = true,
+                                onClick = { showingPresetSubpage = true },
                             )
                         }
 
@@ -1296,6 +1374,8 @@ fun ChatParamsSheet(
                     }
                 }
             }
+                }
+            }
         }
     }
 }
@@ -1486,5 +1566,255 @@ private fun WaterlineLegendDot(
             text = value,
             color = c.ink,
         )
+    }
+}
+
+@Composable
+private fun PresetBlocksSubpage(
+    presets: List<PromptPresetEntity>,
+    boundPresetId: String?,
+    onSelectPreset: (String?) -> Unit,
+    onToggleBlock: (presetId: String, identifier: String, index: Int) -> Unit,
+    onBack: () -> Unit,
+) {
+    val strings = LocalAppStrings.current
+    val c = LocalAppTheme.current.colors
+    val isZh = strings.language == AppLanguage.ZH
+    val activePreset = presets.firstOrNull { it.id == boundPresetId }
+    val indexedBlocks = remember(activePreset?.id, activePreset?.blocksJson) {
+        if (activePreset == null) {
+            emptyList()
+        } else {
+            runCatching {
+                AppJson.decodeFromString(ListSerializer(PromptPresetBlock.serializer()), activePreset.blocksJson)
+                    .mapIndexed { idx, block -> idx to block }
+            }.getOrDefault(emptyList())
+        }
+    }
+    var expandedIdx by remember(activePreset?.id) { mutableStateOf<Int?>(null) }
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(999.dp))
+                    .clickable(onClick = onBack)
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = strings.common.back,
+                    tint = c.primary,
+                    modifier = Modifier.size(18.dp),
+                )
+                Text(
+                    text = if (isZh) "返回" else "Back",
+                    color = c.primary,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+            Text(
+                text = if (isZh) "提示词预设槽位" else "Prompt Preset Blocks",
+                color = c.ink,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            if (activePreset != null) {
+                TextButton(onClick = { onSelectPreset(null) }) {
+                    Text(if (isZh) "停用" else "Clear", fontSize = 12.sp, color = c.danger)
+                }
+            }
+        }
+        SheetHairlineDivider()
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                item(key = "__none__") {
+                    GuPill(
+                        label = if (isZh) "不使用预设" else "Default",
+                        selected = activePreset == null,
+                        onClick = { onSelectPreset(null) },
+                    )
+                }
+                items(presets, key = { it.id }) { preset ->
+                    GuPill(
+                        label = preset.name.ifBlank { if (isZh) "预设" else "Preset" },
+                        selected = preset.id == activePreset?.id,
+                        onClick = { onSelectPreset(preset.id) },
+                    )
+                }
+            }
+
+            if (activePreset == null) {
+                GuCard(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = if (isZh) {
+                            "当前未绑定 SillyTavern 提示词预设。上方选择预设后可查看并开关每个提示词槽位。"
+                        } else {
+                            "No prompt preset bound. Select a preset above to inspect and toggle prompt blocks."
+                        },
+                        color = c.muted,
+                        fontSize = 12.5.sp,
+                        lineHeight = 18.sp,
+                    )
+                }
+            } else {
+                val staticBlocks = indexedBlocks.filter { it.second.injectionPosition != 1 }
+                val dynamicBlocks = indexedBlocks.filter { it.second.injectionPosition == 1 }
+
+                if (staticBlocks.isNotEmpty()) {
+                    PresetZoneDividerPill(
+                        text = if (isZh) "⚡ 静态前缀缓存区" else "⚡ Static Prefix Cache Zone",
+                        accentColor = c.primarySoftInk,
+                        backgroundColor = c.primarySoft,
+                    )
+                    GuGroupedCard(modifier = Modifier.fillMaxWidth()) {
+                        staticBlocks.forEachIndexed { pos, (origIdx, block) ->
+                            if (pos > 0) SheetHairlineDivider()
+                            PresetBlockRow(
+                                block = block,
+                                expanded = expandedIdx == origIdx,
+                                isZh = isZh,
+                                onToggleExpand = { expandedIdx = if (expandedIdx == origIdx) null else origIdx },
+                                onToggleEnabled = { onToggleBlock(activePreset.id, block.identifier, origIdx) },
+                            )
+                        }
+                    }
+                }
+
+                if (dynamicBlocks.isNotEmpty()) {
+                    PresetZoneDividerPill(
+                        text = if (isZh) "🌊 动态注入区" else "🌊 Dynamic Injection Zone",
+                        accentColor = c.accent,
+                        backgroundColor = c.accentSoft,
+                    )
+                    GuGroupedCard(modifier = Modifier.fillMaxWidth()) {
+                        dynamicBlocks.forEachIndexed { pos, (origIdx, block) ->
+                            if (pos > 0) SheetHairlineDivider()
+                            PresetBlockRow(
+                                block = block,
+                                expanded = expandedIdx == origIdx,
+                                isZh = isZh,
+                                onToggleExpand = { expandedIdx = if (expandedIdx == origIdx) null else origIdx },
+                                onToggleEnabled = { onToggleBlock(activePreset.id, block.identifier, origIdx) },
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PresetZoneDividerPill(
+    text: String,
+    accentColor: Color,
+    backgroundColor: Color,
+) {
+    Surface(
+        shape = RoundedCornerShape(999.dp),
+        color = backgroundColor,
+    ) {
+        Text(
+            text = text,
+            color = accentColor,
+            fontSize = 11.5.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(horizontal = 11.dp, vertical = 4.dp),
+        )
+    }
+}
+
+@Composable
+private fun PresetBlockRow(
+    block: PromptPresetBlock,
+    expanded: Boolean,
+    isZh: Boolean,
+    onToggleExpand: () -> Unit,
+    onToggleEnabled: () -> Unit,
+) {
+    val c = LocalAppTheme.current.colors
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onToggleExpand)
+            .padding(horizontal = 12.dp, vertical = 9.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            GuBadge(
+                text = block.role.uppercase().take(4),
+                variant = if (block.role.equals("assistant", ignoreCase = true)) GuBadgeVariant.AMBER else GuBadgeVariant.BLUE,
+            )
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    text = block.name.ifBlank { block.identifier },
+                    color = if (block.enabled) c.ink else c.muted,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                val meta = buildList {
+                    if (block.marker) add(if (isZh) "占位符" else "Marker")
+                    if (block.injectionPosition == 1) add("@D${block.injectionDepth}")
+                    add(block.identifier)
+                }.joinToString(" · ")
+                GuMetaText(text = meta, color = c.muted)
+            }
+            Switch(
+                checked = block.enabled,
+                onCheckedChange = { onToggleEnabled() },
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = Color.White,
+                    checkedTrackColor = c.primary,
+                    uncheckedThumbColor = c.muted,
+                    uncheckedTrackColor = c.surfaceSoft,
+                ),
+                modifier = Modifier.graphicsLayer { scaleX = 0.8f; scaleY = 0.8f },
+            )
+        }
+        AnimatedVisibility(visible = expanded) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(c.surfaceSoft)
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+            ) {
+                Text(
+                    text = block.content.ifBlank {
+                        if (isZh) "(系统占位符槽位，发送时自动替换)" else "(Dynamic system marker slot)"
+                    },
+                    color = c.ink.copy(alpha = 0.88f),
+                    fontSize = 12.sp,
+                    lineHeight = 17.5.sp,
+                )
+            }
+        }
     }
 }

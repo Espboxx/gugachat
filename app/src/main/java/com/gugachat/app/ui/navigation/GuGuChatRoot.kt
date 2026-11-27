@@ -70,7 +70,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.gugachat.app.AppContainer
 import com.gugachat.app.AuthSessionState
 import com.gugachat.app.R
@@ -89,6 +92,7 @@ import com.gugachat.app.ui.auth.AuthViewModel
 import com.gugachat.app.ui.auth.LoginScreen
 import com.gugachat.app.ui.chat.ChatViewModel
 import com.gugachat.app.ui.chat.ChatWorkspaceScreen
+import com.gugachat.app.ui.chat.LocalChatViewModel
 import com.gugachat.app.ui.chat.resolveNovelPaperTheme
 import com.gugachat.app.ui.chat.resolveRpStageAccent
 import com.gugachat.app.ui.images.CreativeStudioScreen
@@ -150,7 +154,13 @@ fun GuGuChatRoot(container: AppContainer) {
                         val authVm = remember(container) { AuthViewModel(container) }
                         LoginScreen(viewModel = authVm)
                     }
-                    is AuthSessionState.LoggedIn -> AuthenticatedShell(container = container)
+                    is AuthSessionState.LoggedIn -> {
+                        val sessionKey = container.authSessionIdentityKey(session, settings.serverUrl)
+                        AuthenticatedShell(
+                            container = container,
+                            sessionIdentityKey = sessionKey,
+                        )
+                    }
                 }
 
                 GuToastHost(
@@ -216,14 +226,28 @@ private fun SplashGate() {
 }
 
 @Composable
-private fun AuthenticatedShell(container: AppContainer) {
+private fun AuthenticatedShell(
+    container: AppContainer,
+    sessionIdentityKey: String,
+) {
     val strings = LocalAppStrings.current
     val theme = LocalAppTheme.current
     val c = theme.colors
 
-    val chatVm = remember(container) { ChatViewModel(container) }
-    val imageVm = remember(container) { ImageViewModel(container) }
-    val profileVm = remember(container) { ProfileViewModel(container) }
+    val vmFactory = remember(container, sessionIdentityKey) {
+        object : ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : ViewModel> create(modelClass: Class<T>): T = when {
+                modelClass.isAssignableFrom(ChatViewModel::class.java) -> ChatViewModel(container) as T
+                modelClass.isAssignableFrom(ImageViewModel::class.java) -> ImageViewModel(container) as T
+                modelClass.isAssignableFrom(ProfileViewModel::class.java) -> ProfileViewModel(container) as T
+                else -> error("Unknown ViewModel class: ${modelClass.name}")
+            }
+        }
+    }
+    val chatVm: ChatViewModel = viewModel(key = "$sessionIdentityKey:chat", factory = vmFactory)
+    val imageVm: ImageViewModel = viewModel(key = "$sessionIdentityKey:image", factory = vmFactory)
+    val profileVm: ProfileViewModel = viewModel(key = "$sessionIdentityKey:profile", factory = vmFactory)
 
     val chatState by chatVm.ui.collectAsStateWithLifecycle()
     val imageState by imageVm.ui.collectAsStateWithLifecycle()
@@ -345,7 +369,10 @@ private fun AuthenticatedShell(container: AppContainer) {
         0.dp
     }
 
-    CompositionLocalProvider(LocalAppShellController provides shellController) {
+    CompositionLocalProvider(
+        LocalAppShellController provides shellController,
+        LocalChatViewModel provides chatVm,
+    ) {
         Scaffold(
             containerColor = scaffoldContainerColor,
             contentWindowInsets = WindowInsets(0, 0, 0, 0),
