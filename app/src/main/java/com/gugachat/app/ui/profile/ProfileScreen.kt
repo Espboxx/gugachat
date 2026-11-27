@@ -5,15 +5,18 @@ import android.content.ClipboardManager
 import android.content.Context
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -30,6 +33,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.CloudDone
+import androidx.compose.material.icons.filled.CloudDownload
+import androidx.compose.material.icons.filled.CloudSync
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Download
@@ -38,6 +44,7 @@ import androidx.compose.material.icons.filled.FormatSize
 import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.OpenInBrowser
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Psychology
@@ -45,6 +52,9 @@ import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Upload
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -57,6 +67,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -71,6 +82,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -81,6 +94,7 @@ import com.gugachat.app.R
 import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.i18n.LocalAppStrings
 import com.gugachat.app.core.i18n.fmt
+import com.gugachat.app.core.storage.WebDavSyncConfig
 import com.gugachat.app.core.theme.ColorMode
 import com.gugachat.app.core.theme.GuAwningHeader
 import com.gugachat.app.core.theme.GuBadge
@@ -92,10 +106,13 @@ import com.gugachat.app.core.theme.GuConfirmDialog
 import com.gugachat.app.core.theme.GuGroupedCard
 import com.gugachat.app.core.theme.GuMetaText
 import com.gugachat.app.core.theme.GuModalDragHandle
+import com.gugachat.app.core.theme.GuPill
 import com.gugachat.app.core.theme.GuSectionHeader
 import com.gugachat.app.core.theme.GuSegmentedControl
 import com.gugachat.app.core.theme.GuSettingsRow
 import com.gugachat.app.core.theme.GuSheetHeader
+import com.gugachat.app.core.theme.GuSwitchRow
+import com.gugachat.app.core.theme.GuTextField
 import com.gugachat.app.core.theme.LocalAppTheme
 import com.gugachat.app.core.theme.ThemeStyle
 import com.gugachat.app.core.theme.UiScalePreset
@@ -109,6 +126,9 @@ import com.gugachat.app.ui.providers.ApiProviderDraft
 import com.gugachat.app.ui.providers.ApiProviderEditorSheet
 import com.gugachat.app.ui.providers.ApiProviderImportSheet
 import com.gugachat.app.ui.providers.ApiProviderManagerCard
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @Composable
 fun ProfileScreen(
@@ -134,17 +154,29 @@ fun ProfileScreen(
     var showAppearanceSheet by remember { mutableStateOf(false) }
     var showScaleLanguageSheet by remember { mutableStateOf(false) }
     var showBackupSheet by remember { mutableStateOf(false) }
+    var showWebDavSheet by remember { mutableStateOf(false) }
     var showAboutUpdateSheet by remember { mutableStateOf(false) }
     var editingProviderDraft by remember { mutableStateOf<ApiProviderDraft?>(null) }
     var showProviderImport by remember { mutableStateOf(false) }
     var activeBackupOp by remember { mutableStateOf<String?>(null) }
 
+    var backupIncludeVault by remember { mutableStateOf(true) }
+    var backupExportPassphrase by remember { mutableStateOf("") }
+    var backupIncludeDirectImages by remember { mutableStateOf(false) }
+
     val exportLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.CreateDocument("application/json"),
+        contract = ActivityResultContracts.CreateDocument("application/octet-stream"),
     ) { uri ->
         if (uri != null) {
             activeBackupOp = "export"
-            viewModel.exportBackup(uri, ctx.contentResolver, strings.chat.exportDone)
+            viewModel.exportBackup(
+                uri = uri,
+                contentResolver = ctx.contentResolver,
+                includeVault = backupIncludeVault,
+                passphrase = backupExportPassphrase,
+                includeDirectImages = backupIncludeDirectImages,
+                successMessage = strings.chat.exportDone,
+            )
         }
     }
 
@@ -157,6 +189,7 @@ fun ProfileScreen(
                 uri = uri,
                 contentResolver = ctx.contentResolver,
                 replaceExisting = false,
+                passphrase = null,
                 successMessage = strings.chat.importDone,
                 failedMessage = strings.chat.importFailed,
             )
@@ -243,17 +276,70 @@ fun ProfileScreen(
             isBackupBusy = state.isBackupBusy,
             exportingNow = exportingNow,
             importingNow = importingNow,
+            includeVault = backupIncludeVault,
+            onIncludeVaultChange = { backupIncludeVault = it },
+            passphrase = backupExportPassphrase,
+            onPassphraseChange = { backupExportPassphrase = it },
+            includeDirectImages = backupIncludeDirectImages,
+            onIncludeDirectImagesChange = { backupIncludeDirectImages = it },
             onOpenExternalImport = {
                 showBackupSheet = false
                 showDeepSeekImport = true
             },
             onExportBackup = {
-                exportLauncher.launch("gugachat-backup-${System.currentTimeMillis()}.json")
+                exportLauncher.launch("gugachat-backup-${System.currentTimeMillis()}.gugubackup")
             },
             onImportBackup = {
                 importLauncher.launch(arrayOf("*/*"))
             },
             onDismiss = { showBackupSheet = false },
+        )
+    }
+
+    if (showWebDavSheet) {
+        WebDavSyncSheet(
+            config = state.webDavConfig,
+            password = state.webDavPassword,
+            passphrase = state.webDavPassphrase,
+            isTesting = state.isTestingWebDav,
+            testStatus = state.webDavTestStatus,
+            remoteUpdatedAt = state.webDavRemoteUpdatedAt,
+            isSyncBusy = state.isWebDavSyncBusy,
+            lastSyncSummary = state.lastWebDavSyncSummary,
+            onTestConnection = { cfg, pwd, pass ->
+                viewModel.testWebDavConnection(cfg, pwd, pass)
+            },
+            onSyncNow = { cfg, pwd, pass ->
+                viewModel.syncWebDavNow(cfg, pwd, pass)
+            },
+            onRestoreFromCloud = { cfg, pwd, pass ->
+                viewModel.restoreFromWebDav(cfg, pwd, pass)
+            },
+            onSaveSettings = { cfg, pwd, pass ->
+                viewModel.updateWebDavSettings(cfg, pwd, pass)
+            },
+            onDismiss = {
+                viewModel.clearWebDavTestStatus()
+                showWebDavSheet = false
+            },
+        )
+    }
+
+    state.pendingRestoreUri?.let { pendingUri ->
+        RestorePassphraseDialog(
+            errorMessage = state.pendingRestorePassphraseError,
+            isBusy = state.isBackupBusy,
+            onConfirm = { pass ->
+                viewModel.importBackup(
+                    uri = pendingUri,
+                    contentResolver = ctx.contentResolver,
+                    replaceExisting = state.pendingRestoreReplaceExisting,
+                    passphrase = pass,
+                    successMessage = strings.chat.importDone,
+                    failedMessage = strings.chat.importFailed,
+                )
+            },
+            onDismiss = viewModel::dismissRestorePassphrasePrompt,
         )
     }
 
@@ -679,6 +765,7 @@ fun ProfileScreen(
                 GuGroupedCard(modifier = Modifier.fillMaxWidth()) {
                     GuSettingsRow(
                         title = if (isZh) "外部导入与本地备份" else "Import & Local Backup",
+                        subtitle = if (isZh) ".gugubackup 全量存档 · 兼容旧 JSON" else ".gugubackup archive & JSON restore",
                         icon = Icons.Default.FolderZip,
                         iconTint = c.tagInk,
                         iconBg = c.tag,
@@ -687,6 +774,34 @@ fun ProfileScreen(
                         showDivider = true,
                         onClick = { showBackupSheet = true },
                         trailing = if (state.isBackupBusy) {
+                            {
+                                CircularProgressIndicator(
+                                    color = c.primary,
+                                    strokeWidth = 2.dp,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                            }
+                        } else {
+                            null
+                        },
+                    )
+                    val webDavValue = when {
+                        state.isWebDavSyncBusy -> strings.common.loading
+                        state.webDavConfig.lastSyncAt > 0L -> formatSyncShortTime(state.webDavConfig.lastSyncAt, isZh)
+                        state.webDavConfig.url.isNotBlank() -> if (isZh) "已配置" else "Configured"
+                        else -> if (isZh) "未启用" else "Not set"
+                    }
+                    GuSettingsRow(
+                        title = if (isZh) "WebDAV 加密云同步" else "WebDAV Encrypted Sync",
+                        subtitle = if (isZh) "坚果云 / Nextcloud / Alist 端到端加密同步" else "Jianguoyun / Nextcloud / Alist E2EE sync",
+                        icon = Icons.Default.CloudSync,
+                        iconTint = c.primarySoftInk,
+                        iconBg = c.primarySoft,
+                        valueText = webDavValue,
+                        showChevron = !state.isWebDavSyncBusy,
+                        showDivider = true,
+                        onClick = { showWebDavSheet = true },
+                        trailing = if (state.isWebDavSyncBusy) {
                             {
                                 CircularProgressIndicator(
                                     color = c.primary,
@@ -1150,6 +1265,12 @@ private fun DataMigrationBackupSheet(
     isBackupBusy: Boolean,
     exportingNow: Boolean,
     importingNow: Boolean,
+    includeVault: Boolean,
+    onIncludeVaultChange: (Boolean) -> Unit,
+    passphrase: String,
+    onPassphraseChange: (String) -> Unit,
+    includeDirectImages: Boolean,
+    onIncludeDirectImagesChange: (Boolean) -> Unit,
     onOpenExternalImport: () -> Unit,
     onExportBackup: () -> Unit,
     onImportBackup: () -> Unit,
@@ -1159,6 +1280,8 @@ private fun DataMigrationBackupSheet(
     val c = LocalAppTheme.current.colors
     val isZh = strings.language == AppLanguage.ZH
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var showPassphrase by remember { mutableStateOf(false) }
+    val canExportNow = !isBackupBusy && (!includeVault || passphrase.isNotBlank())
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -1173,7 +1296,8 @@ private fun DataMigrationBackupSheet(
         ) {
             GuSheetHeader(
                 title = if (isZh) "外部导入与本地备份" else "Import & Local Backup",
-                subtitle = strings.profile.backupSectionTitle,
+                subtitle = if (isZh) "导出全量 .gugubackup 存档（含角色卡、世界书、媒体与加密密钥）"
+                else "Export full .gugubackup archive & restore v2/JSON",
                 closeContentDescription = strings.common.close,
                 onClose = onDismiss,
             )
@@ -1181,8 +1305,61 @@ private fun DataMigrationBackupSheet(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
+                GuCard(backgroundColor = c.surface) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        GuSwitchRow(
+                            label = if (isZh) "包含 API 密钥保险箱（设口令加密）" else "Include API Vault (passphrase encrypted)",
+                            subtitle = if (isZh) "加密打包直连渠道、检索密钥与 WebDAV 凭据"
+                            else "Encrypts Direct API keys, retrieval keys & WebDAV secrets",
+                            checked = includeVault,
+                            onCheckedChange = onIncludeVaultChange,
+                        )
+                        AnimatedVisibility(visible = includeVault) {
+                            GuTextField(
+                                value = passphrase,
+                                onValueChange = onPassphraseChange,
+                                label = if (isZh) "归档加密口令" else "Archive Encryption Passphrase",
+                                placeholder = if (isZh) "输入用于解密恢复的保护口令" else "Enter passphrase for vault restore",
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Default.Lock,
+                                        contentDescription = null,
+                                        tint = c.muted,
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                },
+                                visualTransformation = if (showPassphrase) {
+                                    VisualTransformation.None
+                                } else {
+                                    PasswordVisualTransformation()
+                                },
+                                trailingIcon = {
+                                    IconButton(onClick = { showPassphrase = !showPassphrase }) {
+                                        Icon(
+                                            imageVector = if (showPassphrase) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                            contentDescription = null,
+                                            tint = c.muted,
+                                            modifier = Modifier.size(18.dp),
+                                        )
+                                    }
+                                },
+                                isError = includeVault && passphrase.isBlank(),
+                            )
+                        }
+                        HorizontalDivider(color = c.border.copy(alpha = 0.45f))
+                        GuSwitchRow(
+                            label = if (isZh) "打包画室直连生图原图" else "Include Atelier Direct Images",
+                            subtitle = if (isZh) "关闭可保持 .gugubackup 体积轻巧" else "Keep off for lightweight archive size",
+                            checked = includeDirectImages,
+                            onCheckedChange = onIncludeDirectImagesChange,
+                        )
+                    }
+                }
+
                 GuGroupedCard(modifier = Modifier.fillMaxWidth()) {
                     GuSettingsRow(
                         title = strings.chat.importExternalTitle,
@@ -1195,14 +1372,19 @@ private fun DataMigrationBackupSheet(
                         onClick = onOpenExternalImport,
                     )
                     GuSettingsRow(
-                        title = strings.profile.exportBackup,
-                        subtitle = if (isZh) "导出全部本地对话与长期记忆为 JSON" else "Export all local chats & memories as JSON",
+                        title = if (isZh) "导出本地存档 (.gugubackup)" else "Export Local Archive (.gugubackup)",
+                        subtitle = if (includeVault && passphrase.isBlank()) {
+                            if (isZh) "请先在上方填写加密口令" else "Enter passphrase above first"
+                        } else {
+                            if (isZh) "打包全部对话、角色卡、世界书、预设与立绘"
+                            else "Archive all chats, cards, worldbooks, presets & media"
+                        },
                         icon = Icons.Default.Download,
-                        iconTint = c.primarySoftInk,
-                        iconBg = c.primarySoft,
-                        showChevron = !exportingNow,
+                        iconTint = if (canExportNow) c.primarySoftInk else c.muted,
+                        iconBg = if (canExportNow) c.primarySoft else c.surfaceSoft,
+                        showChevron = canExportNow && !exportingNow,
                         showDivider = true,
-                        onClick = if (isBackupBusy) null else onExportBackup,
+                        onClick = if (canExportNow) onExportBackup else null,
                         trailing = if (exportingNow) {
                             {
                                 CircularProgressIndicator(
@@ -1216,8 +1398,9 @@ private fun DataMigrationBackupSheet(
                         },
                     )
                     GuSettingsRow(
-                        title = strings.profile.importBackup,
-                        subtitle = if (isZh) "从本地 JSON 备份合并恢复数据" else "Restore chats & memories from a JSON backup",
+                        title = if (isZh) "从本地备份恢复 (.gugubackup / .json)" else "Restore Backup (.gugubackup / .json)",
+                        subtitle = if (isZh) "自动识别 v2 加密压缩包与旧版 JSON 备份"
+                        else "Auto-detects .gugubackup v2 archive & legacy JSON",
                         icon = Icons.Default.Upload,
                         iconTint = c.success,
                         iconBg = c.successBg,
@@ -1241,6 +1424,410 @@ private fun DataMigrationBackupSheet(
             }
         }
     }
+}
+
+@Composable
+private fun RestorePassphraseDialog(
+    errorMessage: String?,
+    isBusy: Boolean,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val strings = LocalAppStrings.current
+    val c = LocalAppTheme.current.colors
+    val isZh = strings.language == AppLanguage.ZH
+    var passphraseDraft by remember { mutableStateOf("") }
+    var showPassphrase by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        shape = RoundedCornerShape(22.dp),
+        containerColor = c.surfaceElevated,
+        tonalElevation = 0.dp,
+        title = {
+            Text(
+                text = if (isZh) "输入备份解密口令" else "Enter Backup Passphrase",
+                color = c.ink,
+                fontSize = 17.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = if (isZh) "此 .gugubackup 存档包含受口令保护的 API 密钥保险箱，请输入导出口令以完整恢复。"
+                    else "This .gugubackup archive contains an encrypted API vault. Enter the passphrase to restore.",
+                    color = c.muted,
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp,
+                )
+                GuTextField(
+                    value = passphraseDraft,
+                    onValueChange = { passphraseDraft = it },
+                    placeholder = if (isZh) "请输入备份保护口令" else "Passphrase",
+                    isError = !errorMessage.isNullOrBlank(),
+                    visualTransformation = if (showPassphrase) {
+                        VisualTransformation.None
+                    } else {
+                        PasswordVisualTransformation()
+                    },
+                    trailingIcon = {
+                        IconButton(onClick = { showPassphrase = !showPassphrase }) {
+                            Icon(
+                                imageVector = if (showPassphrase) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                contentDescription = null,
+                                tint = c.muted,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
+                    },
+                )
+                if (!errorMessage.isNullOrBlank()) {
+                    Text(
+                        text = errorMessage,
+                        color = c.danger,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirm(passphraseDraft) },
+                enabled = !isBusy && passphraseDraft.isNotBlank(),
+            ) {
+                Text(
+                    text = if (isZh) "解密并恢复" else "Unlock & Restore",
+                    color = c.primary,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !isBusy) {
+                Text(strings.common.cancel, color = c.muted)
+            }
+        },
+    )
+}
+
+private enum class WebDavPreset(val url: String, val labelZh: String, val labelEn: String) {
+    JIANGUOYUN("https://dav.jianguoyun.com/dav/", "坚果云", "Jianguoyun"),
+    NEXTCLOUD("https://example.com/remote.php/dav/files/username/", "Nextcloud", "Nextcloud"),
+    ALIST("http://127.0.0.1:5244/dav/", "Alist", "Alist"),
+    CUSTOM("", "自定义", "Custom"),
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun WebDavSyncSheet(
+    config: WebDavSyncConfig,
+    password: String,
+    passphrase: String,
+    isTesting: Boolean,
+    testStatus: String?,
+    remoteUpdatedAt: Long?,
+    isSyncBusy: Boolean,
+    lastSyncSummary: String?,
+    onTestConnection: (WebDavSyncConfig, String, String) -> Unit,
+    onSyncNow: (WebDavSyncConfig, String, String) -> Unit,
+    onRestoreFromCloud: (WebDavSyncConfig, String, String) -> Unit,
+    onSaveSettings: (WebDavSyncConfig, String, String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val strings = LocalAppStrings.current
+    val c = LocalAppTheme.current.colors
+    val isZh = strings.language == AppLanguage.ZH
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    var urlDraft by remember { mutableStateOf(config.url) }
+    var usernameDraft by remember { mutableStateOf(config.username) }
+    var passwordDraft by remember { mutableStateOf(password) }
+    var passphraseDraft by remember { mutableStateOf(passphrase) }
+    var syncDirectImagesDraft by remember { mutableStateOf(config.syncDirectImages) }
+    var showPassword by remember { mutableStateOf(false) }
+    var showPassphrase by remember { mutableStateOf(false) }
+    var confirmCloudRestore by remember { mutableStateOf(false) }
+
+    LaunchedEffect(config.url, config.username, config.syncDirectImages) {
+        if (urlDraft.isBlank() && config.url.isNotBlank()) urlDraft = config.url
+        if (usernameDraft.isBlank() && config.username.isNotBlank()) usernameDraft = config.username
+        syncDirectImagesDraft = config.syncDirectImages
+    }
+    LaunchedEffect(password) {
+        if (passwordDraft.isBlank() && password.isNotBlank()) passwordDraft = password
+    }
+    LaunchedEffect(passphrase) {
+        if (passphraseDraft.isBlank() && passphrase.isNotBlank()) passphraseDraft = passphrase
+    }
+
+    val currentDraftConfig = WebDavSyncConfig(
+        url = urlDraft.trim(),
+        username = usernameDraft.trim(),
+        syncDirectImages = syncDirectImagesDraft,
+        autoSyncOnBackground = config.autoSyncOnBackground,
+        lastSyncAt = config.lastSyncAt,
+    )
+
+    if (confirmCloudRestore) {
+        GuConfirmDialog(
+            title = if (isZh) "从云端恢复档案" else "Restore from WebDAV",
+            message = if (isZh) "将从 WebDAV 拉取加密云端快照并按最新时间合并到本地数据库与媒体文件，确认继续？"
+            else "Pull the encrypted WebDAV archive and merge latest records into local storage?",
+            confirmText = if (isZh) "立即拉取恢复" else "Restore Now",
+            cancelText = strings.common.cancel,
+            onConfirm = {
+                confirmCloudRestore = false
+                onRestoreFromCloud(currentDraftConfig, passwordDraft, passphraseDraft)
+            },
+            onDismiss = { confirmCloudRestore = false },
+        )
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = {
+            onSaveSettings(currentDraftConfig, passwordDraft, passphraseDraft)
+            onDismiss()
+        },
+        sheetState = sheetState,
+        containerColor = c.page,
+        dragHandle = { GuModalDragHandle() },
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .fillMaxHeight(0.90f)
+                .navigationBarsPadding(),
+        ) {
+            GuSheetHeader(
+                title = if (isZh) "WebDAV 加密云同步" else "WebDAV Encrypted Sync",
+                subtitle = if (isZh) "全量 E2EE 端到端加密：仅上传密文块与增量差异" else "E2EE encrypted incremental cloud sync",
+                closeContentDescription = strings.common.close,
+                onClose = {
+                    onSaveSettings(currentDraftConfig, passwordDraft, passphraseDraft)
+                    onDismiss()
+                },
+            )
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                // 1-tap server presets
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = if (isZh) "服务器模板" else "Server Presets",
+                        color = c.ink,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Row(
+                        modifier = Modifier.horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        WebDavPreset.entries.forEach { preset ->
+                            val selected = when (preset) {
+                                WebDavPreset.JIANGUOYUN -> urlDraft.contains("jianguoyun.com", ignoreCase = true)
+                                WebDavPreset.NEXTCLOUD -> urlDraft.contains("remote.php/dav", ignoreCase = true)
+                                WebDavPreset.ALIST -> urlDraft.contains("5244/dav", ignoreCase = true)
+                                WebDavPreset.CUSTOM -> urlDraft.isBlank() || (
+                                    !urlDraft.contains("jianguoyun.com", ignoreCase = true) &&
+                                        !urlDraft.contains("remote.php/dav", ignoreCase = true) &&
+                                        !urlDraft.contains("5244/dav", ignoreCase = true)
+                                    )
+                            }
+                            GuPill(
+                                label = if (isZh) preset.labelZh else preset.labelEn,
+                                selected = selected,
+                                onClick = {
+                                    urlDraft = when (preset) {
+                                        WebDavPreset.CUSTOM -> if (selected) urlDraft else ""
+                                        else -> preset.url
+                                    }
+                                },
+                            )
+                        }
+                    }
+                }
+
+                GuCard(backgroundColor = c.surface) {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        GuTextField(
+                            value = urlDraft,
+                            onValueChange = { urlDraft = it },
+                            label = if (isZh) "WebDAV 服务器地址" else "WebDAV Server URL",
+                            placeholder = "https://dav.jianguoyun.com/dav/",
+                        )
+                        GuTextField(
+                            value = usernameDraft,
+                            onValueChange = { usernameDraft = it },
+                            label = if (isZh) "账号 / 邮箱" else "Username",
+                            placeholder = if (isZh) "例如：user@example.com" else "Username",
+                        )
+                        GuTextField(
+                            value = passwordDraft,
+                            onValueChange = { passwordDraft = it },
+                            label = if (isZh) "应用专属密码" else "App Password",
+                            placeholder = if (isZh) "坚果云请前往账户安全生成应用密码" else "App-specific password",
+                            visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
+                            trailingIcon = {
+                                IconButton(onClick = { showPassword = !showPassword }) {
+                                    Icon(
+                                        imageVector = if (showPassword) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                        contentDescription = null,
+                                        tint = c.muted,
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                }
+                            },
+                        )
+                        GuTextField(
+                            value = passphraseDraft,
+                            onValueChange = { passphraseDraft = it },
+                            label = if (isZh) "云端加密口令 (E2EE Passphrase)" else "Cloud Encryption Passphrase",
+                            placeholder = if (isZh) "本地加密密钥，丢失无法从云端找回" else "Secret passphrase for encryption",
+                            leadingIcon = {
+                                Icon(Icons.Default.Lock, contentDescription = null, tint = c.muted, modifier = Modifier.size(18.dp))
+                            },
+                            visualTransformation = if (showPassphrase) VisualTransformation.None else PasswordVisualTransformation(),
+                            trailingIcon = {
+                                IconButton(onClick = { showPassphrase = !showPassphrase }) {
+                                    Icon(
+                                        imageVector = if (showPassphrase) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                        contentDescription = null,
+                                        tint = c.muted,
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                }
+                            },
+                        )
+                    }
+                }
+
+                GuCard(backgroundColor = c.surface) {
+                    GuSwitchRow(
+                        label = if (isZh) "同步画室生图原图" else "Sync Atelier Direct Images",
+                        subtitle = if (isZh) "关闭可节省坚果云每月 1GB 流量" else "Off to save 1GB/mo Jianguoyun quota",
+                        checked = syncDirectImagesDraft,
+                        onCheckedChange = { checked ->
+                            syncDirectImagesDraft = checked
+                            onSaveSettings(
+                                currentDraftConfig.copy(syncDirectImages = checked),
+                                passwordDraft,
+                                passphraseDraft,
+                            )
+                        },
+                    )
+                }
+
+                // Action buttons: [⚡ 测通连接], [☁️ 立即增量同步], [📥 从云端恢复]
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    GuButton(
+                        onClick = { onTestConnection(currentDraftConfig, passwordDraft, passphraseDraft) },
+                        variant = GuButtonVariant.SECONDARY,
+                        loading = isTesting,
+                        enabled = !isTesting && !isSyncBusy,
+                        compact = true,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text(if (isZh) "⚡ 测通连接" else "⚡ Test", fontSize = 12.sp, maxLines = 1)
+                    }
+                    GuButton(
+                        onClick = { onSyncNow(currentDraftConfig, passwordDraft, passphraseDraft) },
+                        variant = GuButtonVariant.PRIMARY,
+                        loading = isSyncBusy,
+                        enabled = !isSyncBusy && !isTesting,
+                        compact = true,
+                        modifier = Modifier.weight(1.25f),
+                    ) {
+                        Text(if (isZh) "☁️ 立即增量同步" else "☁️ Sync Now", fontSize = 12.sp, maxLines = 1)
+                    }
+                }
+
+                GuButton(
+                    onClick = { confirmCloudRestore = true },
+                    variant = GuButtonVariant.HONEY,
+                    enabled = !isSyncBusy && !isTesting,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(if (isZh) "📥 从云端恢复" else "📥 Restore from Cloud")
+                }
+
+                // Status & Last Sync card
+                if (testStatus != null || config.lastSyncAt > 0L || remoteUpdatedAt != null || lastSyncSummary != null) {
+                    GuCard(backgroundColor = c.surfaceSoft) {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            if (testStatus != null) {
+                                val isError = testStatus.startsWith("失败") || testStatus.startsWith("Failed")
+                                Text(
+                                    text = testStatus,
+                                    color = if (isError) c.danger else c.success,
+                                    fontSize = 12.5.sp,
+                                    fontWeight = FontWeight.Medium,
+                                )
+                            }
+                            if (config.lastSyncAt > 0L) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                ) {
+                                    Icon(Icons.Default.CloudDone, contentDescription = null, tint = c.primary, modifier = Modifier.size(16.dp))
+                                    Text(
+                                        text = if (isZh) {
+                                            "最近本地同步：${formatSyncFullTime(config.lastSyncAt)}"
+                                        } else {
+                                            "Last local sync: ${formatSyncFullTime(config.lastSyncAt)}"
+                                        },
+                                        color = c.ink,
+                                        fontSize = 12.5.sp,
+                                    )
+                                }
+                            }
+                            if (remoteUpdatedAt != null) {
+                                Text(
+                                    text = if (isZh) {
+                                        "云端快照时间戳：${formatSyncFullTime(remoteUpdatedAt)}"
+                                    } else {
+                                        "Remote snapshot timestamp: ${formatSyncFullTime(remoteUpdatedAt)}"
+                                    },
+                                    color = c.muted,
+                                    fontSize = 12.sp,
+                                )
+                            }
+                            if (!lastSyncSummary.isNullOrBlank()) {
+                                Text(
+                                    text = lastSyncSummary,
+                                    color = c.muted,
+                                    fontSize = 12.sp,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun formatSyncShortTime(timestamp: Long, isZh: Boolean): String {
+    if (timestamp <= 0L) return if (isZh) "未同步" else "Never"
+    val fmt = SimpleDateFormat("MM-dd HH:mm", Locale.getDefault())
+    return fmt.format(Date(timestamp))
+}
+
+private fun formatSyncFullTime(timestamp: Long): String {
+    val fmt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+    return fmt.format(Date(timestamp))
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

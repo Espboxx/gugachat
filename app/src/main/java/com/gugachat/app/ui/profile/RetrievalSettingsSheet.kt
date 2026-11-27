@@ -145,34 +145,58 @@ fun RetrievalSettingsSheet(
     val embedCfg = retrievalSettings.remoteEmbedding
     val rerankCfg = retrievalSettings.remoteRerank
 
-    // Local text field drafts prevent IME cursor jitter during async DataStore persistence
+    // Local text field drafts prevent IME cursor jitter during async DataStore / SecretVaultStore persistence
     var embedBaseUrlDraft by remember { mutableStateOf(embedCfg.customBaseUrl) }
+    var lastDispatchedEmbedBaseUrl by remember { mutableStateOf(embedCfg.customBaseUrl) }
     var embedApiKeyDraft by remember { mutableStateOf(embedCfg.customApiKey) }
+    var lastDispatchedEmbedApiKey by remember { mutableStateOf(embedCfg.customApiKey) }
     var embedModelIdDraft by remember { mutableStateOf(embedCfg.modelId) }
+    var lastDispatchedEmbedModelId by remember { mutableStateOf(embedCfg.modelId) }
     var showEmbedApiKey by remember { mutableStateOf(false) }
 
     var rerankBaseUrlDraft by remember { mutableStateOf(rerankCfg.customBaseUrl) }
+    var lastDispatchedRerankBaseUrl by remember { mutableStateOf(rerankCfg.customBaseUrl) }
     var rerankApiKeyDraft by remember { mutableStateOf(rerankCfg.customApiKey) }
+    var lastDispatchedRerankApiKey by remember { mutableStateOf(rerankCfg.customApiKey) }
     var rerankModelIdDraft by remember { mutableStateOf(rerankCfg.modelId) }
+    var lastDispatchedRerankModelId by remember { mutableStateOf(rerankCfg.modelId) }
     var showRerankApiKey by remember { mutableStateOf(false) }
 
     LaunchedEffect(embedCfg.customBaseUrl) {
-        if (embedCfg.customBaseUrl != embedBaseUrlDraft) embedBaseUrlDraft = embedCfg.customBaseUrl
+        if (embedCfg.customBaseUrl != lastDispatchedEmbedBaseUrl && embedCfg.customBaseUrl != embedBaseUrlDraft) {
+            embedBaseUrlDraft = embedCfg.customBaseUrl
+            lastDispatchedEmbedBaseUrl = embedCfg.customBaseUrl
+        }
     }
     LaunchedEffect(embedCfg.customApiKey) {
-        if (embedCfg.customApiKey != embedApiKeyDraft) embedApiKeyDraft = embedCfg.customApiKey
+        if (embedCfg.customApiKey != lastDispatchedEmbedApiKey.trim() && embedCfg.customApiKey != embedApiKeyDraft.trim()) {
+            embedApiKeyDraft = embedCfg.customApiKey
+            lastDispatchedEmbedApiKey = embedCfg.customApiKey
+        }
     }
     LaunchedEffect(embedCfg.modelId) {
-        if (embedCfg.modelId != embedModelIdDraft) embedModelIdDraft = embedCfg.modelId
+        if (embedCfg.modelId != lastDispatchedEmbedModelId && embedCfg.modelId != embedModelIdDraft) {
+            embedModelIdDraft = embedCfg.modelId
+            lastDispatchedEmbedModelId = embedCfg.modelId
+        }
     }
     LaunchedEffect(rerankCfg.customBaseUrl) {
-        if (rerankCfg.customBaseUrl != rerankBaseUrlDraft) rerankBaseUrlDraft = rerankCfg.customBaseUrl
+        if (rerankCfg.customBaseUrl != lastDispatchedRerankBaseUrl && rerankCfg.customBaseUrl != rerankBaseUrlDraft) {
+            rerankBaseUrlDraft = rerankCfg.customBaseUrl
+            lastDispatchedRerankBaseUrl = rerankCfg.customBaseUrl
+        }
     }
     LaunchedEffect(rerankCfg.customApiKey) {
-        if (rerankCfg.customApiKey != rerankApiKeyDraft) rerankApiKeyDraft = rerankCfg.customApiKey
+        if (rerankCfg.customApiKey != lastDispatchedRerankApiKey.trim() && rerankCfg.customApiKey != rerankApiKeyDraft.trim()) {
+            rerankApiKeyDraft = rerankCfg.customApiKey
+            lastDispatchedRerankApiKey = rerankCfg.customApiKey
+        }
     }
     LaunchedEffect(rerankCfg.modelId) {
-        if (rerankCfg.modelId != rerankModelIdDraft) rerankModelIdDraft = rerankCfg.modelId
+        if (rerankCfg.modelId != lastDispatchedRerankModelId && rerankCfg.modelId != rerankModelIdDraft) {
+            rerankModelIdDraft = rerankCfg.modelId
+            lastDispatchedRerankModelId = rerankCfg.modelId
+        }
     }
 
     if (showClearCacheConfirm) {
@@ -664,6 +688,7 @@ fun RetrievalSettingsSheet(
                                         value = embedBaseUrlDraft,
                                         onValueChange = {
                                             embedBaseUrlDraft = it
+                                            lastDispatchedEmbedBaseUrl = it
                                             onUpdateRemoteEmbeddingConfig(embedCfg.copy(customBaseUrl = it))
                                         },
                                         label = ctxUi.remoteBaseUrlLabel,
@@ -675,6 +700,7 @@ fun RetrievalSettingsSheet(
                                         value = embedApiKeyDraft,
                                         onValueChange = {
                                             embedApiKeyDraft = it
+                                            lastDispatchedEmbedApiKey = it
                                             onUpdateRemoteEmbeddingConfig(embedCfg.copy(customApiKey = it))
                                         },
                                         label = ctxUi.remoteApiKeyLabel,
@@ -711,6 +737,7 @@ fun RetrievalSettingsSheet(
                                         value = embedModelIdDraft,
                                         onValueChange = {
                                             embedModelIdDraft = it
+                                            lastDispatchedEmbedModelId = it
                                             onUpdateRemoteEmbeddingConfig(embedCfg.copy(modelId = it))
                                         },
                                         label = ctxUi.remoteModelIdLabel,
@@ -942,6 +969,7 @@ fun RetrievalSettingsSheet(
                                                 value = rerankBaseUrlDraft,
                                                 onValueChange = {
                                                     rerankBaseUrlDraft = it
+                                                    lastDispatchedRerankBaseUrl = it
                                                     onUpdateRemoteRerankConfig(rerankCfg.copy(customBaseUrl = it))
                                                 },
                                                 label = ctxUi.remoteBaseUrlLabel,
@@ -951,6 +979,7 @@ fun RetrievalSettingsSheet(
                                                 value = rerankApiKeyDraft,
                                                 onValueChange = {
                                                     rerankApiKeyDraft = it
+                                                    lastDispatchedRerankApiKey = it
                                                     onUpdateRemoteRerankConfig(rerankCfg.copy(customApiKey = it))
                                                 },
                                                 label = ctxUi.remoteApiKeyLabel,
@@ -981,6 +1010,7 @@ fun RetrievalSettingsSheet(
                                             value = rerankModelIdDraft,
                                             onValueChange = {
                                                 rerankModelIdDraft = it
+                                                lastDispatchedRerankModelId = it
                                                 onUpdateRemoteRerankConfig(rerankCfg.copy(modelId = it))
                                             },
                                             label = ctxUi.remoteRerankModelLabel,
