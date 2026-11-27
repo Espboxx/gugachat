@@ -563,32 +563,6 @@ fun ChatWorkspaceScreen(
                         showMemorySheet = true
                     },
                 )
-                HorizontalDivider(
-                    thickness = outerTheme.borderWidth,
-                    color = mc.border.copy(alpha = 0.75f),
-                )
-                DropdownMenuItem(
-                    leadingIcon = {
-                        Icon(
-                            Icons.Default.FolderZip,
-                            contentDescription = null,
-                            tint = mc.accent,
-                            modifier = Modifier.size(18.dp),
-                        )
-                    },
-                    text = {
-                        Text(
-                            strings.chat.importExternalTitle,
-                            color = mc.ink,
-                            fontSize = 13.5.sp,
-                            fontWeight = FontWeight.Medium,
-                        )
-                    },
-                    onClick = {
-                        showMoreMenu = false
-                        showDeepSeekImport = true
-                    },
-                )
                 if (mode == ConversationMode.novel && novelConfig != null) {
                     HorizontalDivider(
                         thickness = outerTheme.borderWidth,
@@ -780,6 +754,7 @@ fun ChatWorkspaceScreen(
                 onNewSession = { showNewSessionSheet = true },
                 onImportDeepSeek = { showDeepSeekImport = true },
                 onTogglePin = viewModel::togglePinConversation,
+                onRenameConversation = viewModel::renameConversation,
                 onDeleteConversation = viewModel::deleteConversation,
                 onCloseDrawer = { scope.launch { drawerState.close() } },
             )

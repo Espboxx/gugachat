@@ -179,7 +179,7 @@ private fun SplashGate() {
         verticalArrangement = Arrangement.Center,
     ) {
         Image(
-            painter = painterResource(id = R.drawable.img_splash),
+            painter = painterResource(id = R.drawable.img_logo),
             contentDescription = strings.common.appName,
             contentScale = ContentScale.Crop,
             modifier = Modifier
@@ -360,7 +360,11 @@ private fun AuthenticatedShell(container: AppContainer) {
             saveableStateHolder.SaveableStateProvider(key = activeTab.name) {
                 when (activeTab) {
                     MainTab.CHAT -> ChatWorkspaceScreen(container = container, viewModel = chatVm)
-                    MainTab.STUDIO -> CreativeStudioScreen(container = container, imageViewModel = imageVm)
+                    MainTab.STUDIO -> CreativeStudioScreen(
+                        container = container,
+                        imageViewModel = imageVm,
+                        onOpenProfile = { activeTabOrdinal = MainTab.MINE.ordinal },
+                    )
                     MainTab.MINE -> ProfileScreen(
                         container = container,
                         viewModel = profileVm,

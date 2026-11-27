@@ -28,15 +28,18 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoStories
 import androidx.compose.material.icons.filled.Casino
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FolderZip
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PushPin
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -64,6 +67,7 @@ import com.gugachat.app.core.theme.GuIconTile
 import com.gugachat.app.core.theme.GuPopupMenu
 import com.gugachat.app.core.theme.GuSectionHeader
 import com.gugachat.app.core.theme.GuSegmentedControl
+import com.gugachat.app.core.theme.GuTextField
 import com.gugachat.app.core.theme.LocalAppTheme
 import com.gugachat.app.core.util.FuzzyMatcher
 import com.gugachat.app.domain.chat.ChatConversation
@@ -78,6 +82,7 @@ fun ChatSessionsDrawerContent(
     onNewSession: () -> Unit,
     onImportDeepSeek: () -> Unit,
     onTogglePin: (String) -> Unit,
+    onRenameConversation: (String, String) -> Unit = { _, _ -> },
     onDeleteConversation: (String) -> Unit,
     onCloseDrawer: () -> Unit,
 ) {
@@ -89,6 +94,8 @@ fun ChatSessionsDrawerContent(
     var search by remember { mutableStateOf("") }
     var filterIndex by remember { mutableIntStateOf(0) }
     var deleteTarget by remember { mutableStateOf<ChatConversation?>(null) }
+    var renameTarget by remember { mutableStateOf<ChatConversation?>(null) }
+    var renameBuffer by remember { mutableStateOf("") }
 
     val filterMode: ConversationMode? = when (filterIndex) {
         1 -> ConversationMode.chat
@@ -117,6 +124,50 @@ fun ChatSessionsDrawerContent(
                 deleteTarget = null
             },
             onDismiss = { deleteTarget = null },
+        )
+    }
+
+    if (renameTarget != null) {
+        AlertDialog(
+            onDismissRequest = { renameTarget = null },
+            shape = RoundedCornerShape(22.dp),
+            containerColor = c.surfaceElevated,
+            title = {
+                Text(
+                    text = strings.common.rename,
+                    color = c.ink,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                )
+            },
+            text = {
+                GuTextField(
+                    value = renameBuffer,
+                    onValueChange = { renameBuffer = it },
+                    placeholder = strings.chat.untitled,
+                    singleLine = true,
+                )
+            },
+            confirmButton = {
+                GuButton(
+                    onClick = {
+                        val trimmed = renameBuffer.trim()
+                        if (trimmed.isNotEmpty()) {
+                            onRenameConversation(renameTarget!!.id, trimmed)
+                        }
+                        renameTarget = null
+                    },
+                    enabled = renameBuffer.isNotBlank(),
+                    compact = true,
+                ) {
+                    Text(strings.common.save, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { renameTarget = null }) {
+                    Text(strings.common.cancel, color = c.muted, fontWeight = FontWeight.SemiBold)
+                }
+            },
         )
     }
 
@@ -363,6 +414,29 @@ fun ChatSessionsDrawerContent(
                                             onClick = {
                                                 rowMenuOpen = false
                                                 onTogglePin(conv.id)
+                                            },
+                                        )
+                                        DropdownMenuItem(
+                                            leadingIcon = {
+                                                Icon(
+                                                    Icons.Default.Edit,
+                                                    contentDescription = null,
+                                                    tint = c.muted,
+                                                    modifier = Modifier.size(17.dp),
+                                                )
+                                            },
+                                            text = {
+                                                Text(
+                                                    text = strings.common.rename,
+                                                    color = c.ink,
+                                                    fontSize = 13.sp,
+                                                    fontWeight = FontWeight.Medium,
+                                                )
+                                            },
+                                            onClick = {
+                                                rowMenuOpen = false
+                                                renameBuffer = conv.title
+                                                renameTarget = conv
                                             },
                                         )
                                         DropdownMenuItem(

@@ -70,6 +70,14 @@ data class ChatParams(
     val contextWindowOverride: Int? = null,
     val maxHistoryMessages: Int? = null,
     val activeWindowStartSeq: Int? = null,
+    val enablePromptCaching: Boolean = true,
+    val frequencyPenalty: Double? = null,
+    val presencePenalty: Double? = null,
+    val repetitionPenalty: Double? = null,
+    val topK: Int? = null,
+    val minP: Double? = null,
+    val stopSequences: List<String> = emptyList(),
+    val assistantPrefill: String = "",
 )
 
 @Serializable
@@ -100,6 +108,7 @@ data class MessageUsage(
     val completionTokens: Int? = null,
     val totalTokens: Int? = null,
     val cacheReadInputTokens: Int? = null,
+    val reasoningDurationMs: Long? = null,
 )
 
 @Serializable
@@ -283,6 +292,7 @@ data class MessageVariant(
     val rpDeltas: List<RpTurnDelta> = emptyList(),
     val rpSpeakerName: String? = null,
     val rpEndingUnlocked: RpEndingRecord? = null,
+    val reasoningDurationMs: Long? = null,
 )
 
 @Serializable
@@ -292,6 +302,7 @@ data class ChatMessage(
     val role: String, // "system" | "user" | "assistant"
     val content: String,
     val reasoning: String = "",
+    val reasoningDurationMs: Long? = null,
     val model: String? = null,
     val createdAt: Long,
     val seq: Int,

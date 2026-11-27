@@ -11,6 +11,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -73,6 +74,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -82,8 +84,12 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -199,17 +205,37 @@ fun ChatMessageList(
     }
 
     val lastMsg = active.lastOrNull()
-    LaunchedEffect(active.size, lastMsg?.content?.length, lastMsg?.reasoning?.length) {
+    val haptic = LocalHapticFeedback.current
+    val swipeThresholdPx = with(LocalDensity.current) { 72.dp.toPx() }
+    var autoFollowBottom by remember { mutableStateOf(true) }
+
+    // Respect user scrolling up during long streaming replies; re-lock when returning to bottom
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.isScrollInProgress to listState.canScrollForward }
+            .collect { (scrolling, canGoDown) ->
+                if (scrolling && canGoDown) {
+                    autoFollowBottom = false
+                } else if (!canGoDown) {
+                    autoFollowBottom = true
+                }
+            }
+    }
+
+    LaunchedEffect(active.size) {
         if (active.isEmpty()) return@LaunchedEffect
         val bottomIndex = active.size + 1
-        if (isStreaming) {
-            val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: bottomIndex
-            if (lastVisible >= bottomIndex - 2) {
-                listState.scrollToItem(bottomIndex)
-            }
-        } else {
+        if (lastMsg?.role == "user" || !isStreaming) {
+            autoFollowBottom = true
+            listState.scrollToItem(bottomIndex)
+        } else if (autoFollowBottom) {
             listState.scrollToItem(bottomIndex)
         }
+    }
+
+    LaunchedEffect(lastMsg?.content?.length, lastMsg?.reasoning?.length, isStreaming) {
+        if (active.isEmpty() || !isStreaming || !autoFollowBottom) return@LaunchedEffect
+        val bottomIndex = active.size + 1
+        listState.scrollToItem(bottomIndex)
     }
 
     if (deleteTarget != null) {
@@ -337,11 +363,9 @@ fun ChatMessageList(
         }
     }
 
-    val showScrollToBottom by remember(active.size) {
+    val showScrollToBottom by remember(listState, active.size) {
         derivedStateOf {
-            val totalItems = listState.layoutInfo.totalItemsCount
-            val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-            totalItems > 2 && lastVisible < totalItems - 2
+            active.isNotEmpty() && listState.canScrollForward
         }
     }
 
@@ -378,7 +402,36 @@ fun ChatMessageList(
                     )
                 } else {
                     val chapterStart = chapterStartMsgMap[msg.id]
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    val canSwipeVariants = !isStreaming && msg.status != "streaming" && msg.variants.size > 1
+                    val swipeModifier = if (canSwipeVariants) {
+                        Modifier.pointerInput(msg.id, msg.activeVariantIndex, msg.variants.size) {
+                            var totalDragX = 0f
+                            detectHorizontalDragGestures(
+                                onDragStart = { totalDragX = 0f },
+                                onHorizontalDrag = { _, dragAmount -> totalDragX += dragAmount },
+                                onDragEnd = {
+                                    when {
+                                        totalDragX <= -swipeThresholdPx && msg.activeVariantIndex < msg.variants.lastIndex -> {
+                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            onSwitchVariant(msg.id, msg.activeVariantIndex + 1)
+                                        }
+                                        totalDragX >= swipeThresholdPx && msg.activeVariantIndex > 0 -> {
+                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            onSwitchVariant(msg.id, msg.activeVariantIndex - 1)
+                                        }
+                                    }
+                                    totalDragX = 0f
+                                },
+                                onDragCancel = { totalDragX = 0f },
+                            )
+                        }
+                    } else {
+                        Modifier
+                    }
+                    Column(
+                        modifier = swipeModifier,
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
                         if (chapterStart != null) {
                             NovelChapterDividerRibbon(chapter = chapterStart)
                         }
@@ -434,6 +487,7 @@ fun ChatMessageList(
         ) {
             Surface(
                 onClick = {
+                    autoFollowBottom = true
                     scope.launch {
                         val bottomIndex = (active.size + 1).coerceAtLeast(0)
                         listState.animateScrollToItem(bottomIndex)
@@ -1778,6 +1832,8 @@ private fun AssistantBodyAndNotices(
         ReasoningCard(
             reasoning = parsedReasoning,
             isStreaming = msg.status == "streaming" && cleanBody.isEmpty(),
+            messageKey = "${msg.id}:${msg.activeVariantIndex}",
+            durationMs = msg.reasoningDurationMs ?: msg.usage?.reasoningDurationMs,
         )
     }
 
@@ -2097,44 +2153,44 @@ private fun AssistantFooterRow(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(onClick = onCopy, modifier = Modifier.size(30.dp)) {
+            IconButton(onClick = onCopy, modifier = Modifier.size(38.dp)) {
                 Icon(
                     Icons.Default.ContentCopy,
                     contentDescription = strings.common.copy,
                     tint = c.muted.copy(alpha = 0.85f),
-                    modifier = Modifier.size(15.dp),
+                    modifier = Modifier.size(15.5.dp),
                 )
             }
-            IconButton(onClick = onEdit, enabled = !isStreaming, modifier = Modifier.size(30.dp)) {
+            IconButton(onClick = onEdit, enabled = !isStreaming, modifier = Modifier.size(38.dp)) {
                 Icon(
                     Icons.Default.Edit,
                     contentDescription = strings.common.edit,
                     tint = c.muted.copy(alpha = 0.85f),
-                    modifier = Modifier.size(15.dp),
+                    modifier = Modifier.size(15.5.dp),
                 )
             }
-            IconButton(onClick = onRegenerate, enabled = !isStreaming, modifier = Modifier.size(30.dp)) {
+            IconButton(onClick = onRegenerate, enabled = !isStreaming, modifier = Modifier.size(38.dp)) {
                 Icon(
                     Icons.Default.Refresh,
                     contentDescription = strings.chat.regenerate,
                     tint = c.muted.copy(alpha = 0.85f),
-                    modifier = Modifier.size(15.dp),
+                    modifier = Modifier.size(15.5.dp),
                 )
             }
-            IconButton(onClick = onBranch, modifier = Modifier.size(30.dp)) {
+            IconButton(onClick = onBranch, modifier = Modifier.size(38.dp)) {
                 Icon(
                     Icons.Default.AccountTree,
                     contentDescription = strings.novel.branchBtn,
                     tint = c.muted.copy(alpha = 0.85f),
-                    modifier = Modifier.size(15.dp),
+                    modifier = Modifier.size(15.5.dp),
                 )
             }
-            IconButton(onClick = onDelete, enabled = !isStreaming, modifier = Modifier.size(30.dp)) {
+            IconButton(onClick = onDelete, enabled = !isStreaming, modifier = Modifier.size(38.dp)) {
                 Icon(
                     Icons.Default.Delete,
                     contentDescription = strings.common.delete,
                     tint = c.muted.copy(alpha = 0.85f),
-                    modifier = Modifier.size(15.dp),
+                    modifier = Modifier.size(15.5.dp),
                 )
             }
             Spacer(Modifier.weight(1f))
@@ -2145,8 +2201,27 @@ private fun AssistantFooterRow(
                     onSwitch = onSwitchVariant,
                 )
             }
+            val cachedTokens = msg.usage?.cacheReadInputTokens ?: 0
+            if (cachedTokens > 0) {
+                val promptTok = msg.usage?.promptTokens ?: 0
+                val totalIn = if (promptTok >= cachedTokens) promptTok else promptTok + cachedTokens
+                val hitPct = if (totalIn > 0) {
+                    kotlin.math.round(cachedTokens * 100.0 / totalIn).toInt().coerceIn(1, 100)
+                } else {
+                    0
+                }
+                val cacheLabel = buildString {
+                    append("⚡ ")
+                    append(if (isZh) "缓存" else "Cache")
+                    if (hitPct > 0) append(" $hitPct%")
+                    append(" · ")
+                    append(FileContextBudgeter.formatShortTokens(cachedTokens))
+                }
+                Spacer(Modifier.width(5.dp))
+                GuBadge(cacheLabel, variant = GuBadgeVariant.EMERALD)
+            }
             msg.usage?.totalTokens?.let { tok ->
-                Spacer(Modifier.width(6.dp))
+                Spacer(Modifier.width(5.dp))
                 GuBadge("${tok}t", variant = GuBadgeVariant.NEUTRAL)
             }
         }

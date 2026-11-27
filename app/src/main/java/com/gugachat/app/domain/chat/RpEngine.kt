@@ -431,16 +431,13 @@ object RpEngine {
         }
         if (chronicleSummary.isNotBlank()) sb.appendLine("\n【前期历程】\n$chronicleSummary")
         if (rp.cast.isNotEmpty()) {
-            sb.appendLine("\n【主要登场人物表】")
+            sb.appendLine("\n【主要登场人物表（静态人设）】")
             rp.cast.forEach { c ->
-                val tier = affinityTier(c.affinity)
-                val presence = if (c.inScene) "在场" else "暂离场"
-                sb.append("- ${c.name}（${c.role}, $presence, 心情:${c.mood}, 好感:${c.affinity}·${tier.zhLabel}）")
+                sb.append("- ${c.name}（${c.role}）")
                 if (c.personality.isNotBlank()) sb.append("；性格：${c.personality}")
                 if (c.speakingStyle.isNotBlank()) sb.append("；口吻：${c.speakingStyle}")
                 if (c.appearance.isNotBlank()) sb.append("；外貌：${c.appearance}")
                 if (c.relationship.isNotBlank()) sb.append("；关系：${c.relationship}")
-                if (c.status.isNotBlank()) sb.append("；状态：${c.status}")
                 if (c.secret.isNotBlank()) sb.append("；暗线秘密（仅GM掌握，切勿直白泄密）：${c.secret}")
                 sb.appendLine()
             }
@@ -473,6 +470,7 @@ object RpEngine {
         archivedEpisodeLines: List<String> = emptyList(),
         triggeredLore: List<NovelLoreEntry> = emptyList(),
         isContinue: Boolean = false,
+        includeAuthorNote: Boolean = true,
     ): String {
         val sb = StringBuilder()
         if (triggeredLore.isNotEmpty()) {
@@ -524,14 +522,22 @@ object RpEngine {
             val absent = rp.cast.filter { !it.inScene && !it.isPlayer }
             if (present.isNotEmpty()) {
                 sb.appendLine(
-                    "当前在场角色: ${present.joinToString("、") { "${it.name}(${it.mood}/好感${it.affinity}·${affinityTier(it.affinity).zhLabel})" }}",
+                    "当前在场角色: ${present.joinToString("、") { c ->
+                        val statusPart = c.status.trim().takeIf { it.isNotEmpty() }?.let { "/状态:$it" }.orEmpty()
+                        "${c.name}(${c.mood}/好感${c.affinity}·${affinityTier(c.affinity).zhLabel}$statusPart)"
+                    }}",
                 )
             }
             if (absent.isNotEmpty()) {
-                sb.appendLine("暂离场角色: ${absent.joinToString("、") { it.name }}")
+                sb.appendLine(
+                    "暂离场角色: ${absent.joinToString("、") { c ->
+                        val statusPart = c.status.trim().takeIf { it.isNotEmpty() }?.let { "($it)" }.orEmpty()
+                        "${c.name}$statusPart"
+                    }}",
+                )
             }
         }
-        if (rp.authorNote.isNotBlank()) {
+        if (includeAuthorNote && rp.authorNote.isNotBlank()) {
             sb.appendLine("【OOC 作者备注】${rp.authorNote.trim()}")
         }
 

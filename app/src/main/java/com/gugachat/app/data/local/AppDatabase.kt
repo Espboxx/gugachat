@@ -21,7 +21,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         MemoryEmbeddingEntity::class,
     ],
     version = 3,
-    exportSchema = false,
+    exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun chatDao(): ChatDao
@@ -78,7 +78,6 @@ abstract class AppDatabase : RoomDatabase() {
                 "gugachat_app.db",
             )
                 .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
-                .fallbackToDestructiveMigration()
                 .build()
     }
 }

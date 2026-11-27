@@ -595,7 +595,7 @@ class DirectApiClient(
         stream: Boolean,
     ): Pair<String, String> = when (provider.protocol) {
         ApiProtocol.OPENAI_CHAT -> DirectProtocolCodec.openaiChatUrl(provider.baseUrl) to
-            DirectProtocolCodec.buildOpenAIChatRequestJson(request, stream)
+            DirectProtocolCodec.buildOpenAIChatRequestJson(request, stream, provider.baseUrl)
         ApiProtocol.OPENAI_RESPONSES -> DirectProtocolCodec.openaiResponsesUrl(provider.baseUrl) to
             DirectProtocolCodec.buildOpenAIResponsesRequestJson(request, stream)
         ApiProtocol.ANTHROPIC -> DirectProtocolCodec.anthropicMessagesUrl(provider.baseUrl) to

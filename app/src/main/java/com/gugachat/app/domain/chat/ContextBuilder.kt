@@ -943,6 +943,7 @@ object ContextBuilder {
                 attachmentsById = input.attachmentsById,
                 perTurnFileBudget = fileTurnBudget,
                 modelId = effectiveModelId,
+                conversation = conv,
             )
         }
         val msgFileCosts = slice.active.map { msg ->
@@ -994,6 +995,7 @@ object ContextBuilder {
                 attachmentsById = input.attachmentsById,
                 perTurnFileBudget = fileTurnBudget,
                 modelId = effectiveModelId,
+                conversation = conv,
             )
         }
         val archiveTotalTokens = ((prefix.systemTokens + draftTokens + dynamicOverhead + allArchiveHistoryRaw) * calibration).roundToInt()
@@ -1112,6 +1114,25 @@ object ContextBuilder {
         return min(rawSum, perTurnFileBudget)
     }
 
+    internal fun cleanAssistantHistoryText(msg: ChatMessage, conversation: ChatConversation): String {
+        if (msg.role != "assistant") return msg.content
+        return when {
+            conversation.mode == ConversationMode.novel && conversation.novel != null ->
+                NovelExport.stripInternalTags(msg.content)
+            conversation.mode == ConversationMode.rp && conversation.rp != null -> {
+                val stripped = RpEngine.stripRpInternalTags(msg.content)
+                RpRegexEngine.applyScripts(
+                    text = stripped,
+                    scripts = conversation.rp.regexScripts,
+                    placement = "ai_output",
+                    forDisplay = false,
+                    rp = conversation.rp,
+                )
+            }
+            else -> msg.content
+        }
+    }
+
     private fun resolveMsgTokenCost(
         msg: ChatMessage,
         imageDecayed: Boolean,
@@ -1119,6 +1140,7 @@ object ContextBuilder {
         attachmentsById: Map<String, ChatAttachmentMeta>,
         perTurnFileBudget: Int,
         modelId: String? = null,
+        conversation: ChatConversation? = null,
     ): Int {
         val imageIds = if (msg.role == "user") {
             msg.attachmentIds.filter { id -> attachmentsById[id]?.isFile != true }
@@ -1127,7 +1149,8 @@ object ContextBuilder {
         }
         val imgCount = if (!imageDecayed) imageIds.size else 0
         val fileTok = resolveMsgFileTokens(msg, fileDecayed, attachmentsById, perTurnFileBudget)
-        val base = estimateMessageTokens(msg.content, imgCount, modelId) + fileTok
+        val effectiveText = if (conversation != null) cleanAssistantHistoryText(msg, conversation) else msg.content
+        val base = estimateMessageTokens(effectiveText, imgCount, modelId) + fileTok
         return if (imageDecayed && imageIds.isNotEmpty()) base + 12 else base
     }
 
@@ -1162,6 +1185,7 @@ object ContextBuilder {
                     attachmentsById = input.attachmentsById,
                     perTurnFileBudget = fileTurnBudget,
                     modelId = pipe.effectiveModelId,
+                    conversation = conv,
                 )
             }
             return (tok * pipe.calibration).roundToInt()
@@ -1197,6 +1221,7 @@ object ContextBuilder {
                 attachmentsById = input.attachmentsById,
                 perTurnFileBudget = fileTurnBudget,
                 modelId = pipe.effectiveModelId,
+                conversation = conv,
             )
             val msgTok = (rawCost * pipe.calibration).roundToInt()
             if (selected.isNotEmpty() && used + msgTok > pipe.effectiveLimitTokens) break
@@ -1239,15 +1264,7 @@ object ContextBuilder {
 
         for (idx in selected.indices) {
             val msg = selected[idx]
-            val rawContent = if (msg.role == "assistant") {
-                when {
-                    pipe.isNovel -> NovelExport.stripInternalTags(msg.content)
-                    pipe.isRp -> RpEngine.stripRpInternalTags(msg.content)
-                    else -> msg.content
-                }
-            } else {
-                msg.content
-            }
+            val rawContent = cleanAssistantHistoryText(msg, conv)
 
             val isFinalNovelUser = pipe.isNovel && idx == lastUserIdx
             val isFinalRpUser = pipe.isRp && idx == lastUserIdx
@@ -1279,6 +1296,7 @@ object ContextBuilder {
                     recalledMemoryLines = pipe.tailBundle.rpRecalledMemoryLines,
                     archivedEpisodeLines = pipe.tailBundle.rpArchivedEpisodeLines,
                     triggeredLore = pipe.loreMatch.triggered,
+                    includeAuthorNote = conv.rp.authorNoteDepth <= 0,
                 )
                 isFinalChatUser && pipe.tailBundle.chatTailRecallBlock.isNotBlank() -> {
                     if (rawContent.isNotBlank()) "${pipe.tailBundle.chatTailRecallBlock}\n\n$rawContent"
@@ -1421,6 +1439,7 @@ object ContextBuilder {
                         recalledMemoryLines = pipe.tailBundle.rpRecalledMemoryLines,
                         archivedEpisodeLines = pipe.tailBundle.rpArchivedEpisodeLines,
                         triggeredLore = pipe.loreMatch.triggered,
+                        includeAuthorNote = conv.rp.authorNoteDepth <= 0,
                     )
                     wireMessages.add(WireChatMessage(role = "user", textContent = openingRp))
                 }
@@ -1428,6 +1447,16 @@ object ContextBuilder {
                     wireMessages.add(WireChatMessage(role = "user", textContent = pipe.tailBundle.chatTailRecallBlock))
                 }
             }
+        }
+
+        // Honor RpConfig.authorNoteDepth >= 1 by injecting OOC Author's Note at depth from end of history
+        if (pipe.isRp && conv.rp != null && conv.rp.authorNote.isNotBlank() && conv.rp.authorNoteDepth >= 1) {
+            val firstNonSystemIdx = wireMessages.indexOfFirst { it.role != "system" }.let {
+                if (it < 0) wireMessages.size else it
+            }
+            val insertIdx = (wireMessages.size - conv.rp.authorNoteDepth).coerceIn(firstNonSystemIdx, wireMessages.size)
+            val noteText = RpEngine.replaceMacros("【OOC 作者备注】\n${conv.rp.authorNote.trim()}", conv.rp)
+            wireMessages.add(insertIdx, WireChatMessage(role = "system", textContent = noteText))
         }
 
         // C2 fix: recompute sentTokens / sentPercentage / fileTokens / hardOverflow for actual `selected` payload

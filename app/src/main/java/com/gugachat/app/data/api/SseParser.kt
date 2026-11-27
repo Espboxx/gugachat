@@ -78,11 +78,12 @@ object SseParser {
             ?: msg?.thinking
         val contentPiece = delta?.content ?: msg?.content
 
+        val normalizedUsage = chunk.usage?.let { normalizeUsage(it) }
         return SseLineOutcome(
             done = false,
             deltaText = contentPiece.orEmpty(),
             deltaReasoning = reasoningPiece.orEmpty(),
-            usage = chunk.usage,
+            usage = normalizedUsage,
             finishReason = choice?.finish_reason?.takeIf { it.isNotBlank() },
         )
     }
@@ -104,18 +105,28 @@ object SseParser {
         return CompletionResult(
             content = msg?.content.orEmpty(),
             reasoning = (msg?.reasoning_content ?: msg?.reasoning ?: msg?.thinking).orEmpty(),
-            usage = parsed.usage,
+            usage = parsed.usage?.let { normalizeUsage(it) },
         )
+    }
+
+    private fun normalizeUsage(u: ChatTokenUsageDto): ChatTokenUsageDto {
+        val cached = u.effectiveCacheReadTokens
+        return if (cached != null && u.cache_read_input_tokens == null) {
+            u.copy(cache_read_input_tokens = cached)
+        } else {
+            u
+        }
     }
 
     fun mergeUsage(previous: ChatTokenUsageDto?, incoming: ChatTokenUsageDto?): ChatTokenUsageDto? {
         if (incoming == null) return previous
-        if (previous == null) return incoming
+        val normIn = normalizeUsage(incoming)
+        if (previous == null) return normIn
         return ChatTokenUsageDto(
-            prompt_tokens = incoming.prompt_tokens ?: previous.prompt_tokens,
-            completion_tokens = incoming.completion_tokens ?: previous.completion_tokens,
-            total_tokens = incoming.total_tokens ?: previous.total_tokens,
-            cache_read_input_tokens = incoming.cache_read_input_tokens ?: previous.cache_read_input_tokens,
+            prompt_tokens = normIn.prompt_tokens ?: previous.prompt_tokens,
+            completion_tokens = normIn.completion_tokens ?: previous.completion_tokens,
+            total_tokens = normIn.total_tokens ?: previous.total_tokens,
+            cache_read_input_tokens = normIn.effectiveCacheReadTokens ?: previous.effectiveCacheReadTokens,
         )
     }
 }

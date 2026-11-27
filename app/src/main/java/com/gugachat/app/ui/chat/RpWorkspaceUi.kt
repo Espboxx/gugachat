@@ -488,7 +488,6 @@ private fun RpUnifiedGameTopHud(
                 contentAlignment = Alignment.CenterStart,
             ) {
                 Surface(
-                    onClick = onOpenStudio,
                     shape = RoundedCornerShape(999.dp),
                     color = Color(0xC4131928),
                     border = BorderStroke(0.8.dp, stageAccent.copy(alpha = 0.66f)),
@@ -580,7 +579,6 @@ private fun RpUnifiedGameTopHud(
             ) {
                 val sceneLabel = if (envText.isNotBlank()) "📍 $envText" else "✦ ${rp.title}"
                 Surface(
-                    onClick = onOpenStudio,
                     shape = RoundedCornerShape(999.dp),
                     color = Color(0xA60D121F),
                     border = BorderStroke(0.8.dp, Color(0x47CBD5E1)),
@@ -599,7 +597,6 @@ private fun RpUnifiedGameTopHud(
 
                 if (showVitals) {
                     Surface(
-                        onClick = onOpenStudio,
                         shape = RoundedCornerShape(999.dp),
                         color = Color(0xA60D121F),
                         border = BorderStroke(0.8.dp, stageAccent.copy(alpha = 0.48f)),

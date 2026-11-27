@@ -1270,22 +1270,52 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             var bestPartialContent = ""
             var bestPartialReasoning = ""
             var latestUsage: MessageUsage? = null
+            var reasoningStartMs: Long? = null
+            var reasoningDurationMs: Long? = null
             var lastUiEmitMs = 0L
             var lastDbFlushMs = System.currentTimeMillis()
             var uiDirty = false
 
-            fun buildSnapshotLocked(status: String = "streaming", error: String? = null): ChatMessage =
-                assistantStart.copy(
+            val rawPrefill = if (!isContinue) conv.params.assistantPrefill.trim() else ""
+            val resolvedPrefill = if (rawPrefill.isNotEmpty()) {
+                val expanded = if (conv.rp != null) RpEngine.replaceMacros(rawPrefill, conv.rp) else rawPrefill
+                val proto = resolveProtocolForGroup(groupId)
+                val anthropicThinking = proto == ApiProtocol.ANTHROPIC &&
+                    conv.params.enableReasoning &&
+                    !conv.params.reasoningEffort.isNullOrBlank()
+                val officialOpenAi = proto == ApiProtocol.OPENAI_CHAT &&
+                    DirectProtocolCodec.isOfficialOpenAiHost(container.apiProviderStore.findBySyntheticId(groupId)?.baseUrl.orEmpty())
+                if (anthropicThinking || officialOpenAi || proto == ApiProtocol.OPENAI_RESPONSES) null else expanded
+            } else {
+                null
+            }
+
+            fun mergeWithPrefill(raw: String): String {
+                if (resolvedPrefill.isNullOrEmpty()) return raw
+                if (raw.isEmpty()) return resolvedPrefill
+                return if (raw.startsWith(resolvedPrefill)) raw else "$resolvedPrefill$raw"
+            }
+
+            fun buildSnapshotLocked(status: String = "streaming", error: String? = null): ChatMessage {
+                val baseUsage = latestUsage
+                val effectiveUsage = if (reasoningDurationMs != null) {
+                    (baseUsage ?: MessageUsage()).copy(reasoningDurationMs = reasoningDurationMs)
+                } else {
+                    baseUsage
+                }
+                return assistantStart.copy(
                     content = if (isContinue) {
                         combineContinueText(continuePrefixText, contentBuf.toString())
                     } else {
-                        contentBuf.toString()
+                        mergeWithPrefill(contentBuf.toString())
                     },
                     reasoning = reasoningBuf.toString(),
-                    usage = latestUsage,
+                    reasoningDurationMs = reasoningDurationMs,
+                    usage = effectiveUsage,
                     status = status,
                     error = error,
                 )
+            }
 
             fun buildSnapshot(status: String = "streaming", error: String? = null): ChatMessage =
                 synchronized(streamLock) { buildSnapshotLocked(status, error) }
@@ -1301,9 +1331,17 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                     _ui.update { it.copy(streamingStatusHint = null) }
                 }
                 val immediateSnap: ChatMessage? = synchronized(streamLock) {
-                    if (!deltaText.isNullOrEmpty()) contentBuf.append(deltaText)
-                    if (!deltaReasoning.isNullOrEmpty()) reasoningBuf.append(deltaReasoning)
                     val now = System.currentTimeMillis()
+                    if (!deltaReasoning.isNullOrEmpty()) {
+                        if (reasoningStartMs == null) reasoningStartMs = now
+                        reasoningBuf.append(deltaReasoning)
+                    }
+                    if (!deltaText.isNullOrEmpty()) {
+                        if (reasoningStartMs != null && reasoningDurationMs == null) {
+                            reasoningDurationMs = (now - reasoningStartMs!!).coerceAtLeast(1000L)
+                        }
+                        contentBuf.append(deltaText)
+                    }
                     if (lastUiEmitMs == 0L || now - lastUiEmitMs >= 35L) {
                         lastUiEmitMs = now
                         uiDirty = false
@@ -1387,9 +1425,18 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                         top_p = activeConv.params.topP,
                         max_tokens = activeConv.params.maxTokens,
                         reasoning_effort = if (activeConv.params.enableReasoning) activeConv.params.reasoningEffort else null,
+                        frequency_penalty = activeConv.params.frequencyPenalty,
+                        presence_penalty = activeConv.params.presencePenalty,
+                        repetition_penalty = activeConv.params.repetitionPenalty,
+                        top_k = activeConv.params.topK,
+                        min_p = activeConv.params.minP,
+                        stop = activeConv.params.stopSequences.map { it.trim() }.filter { it.isNotEmpty() }.take(4).ifEmpty { null },
+                        enablePromptCaching = activeConv.params.enablePromptCaching,
+                        promptCacheKey = if (activeConv.params.enablePromptCaching) "gugachat_${activeConv.id.take(24)}" else null,
+                        assistantPrefill = resolvedPrefill,
                     )
                 } else {
-                    val prepared = buildWirePayload(activeConv, allMsgs, groupId, modelId)
+                    val prepared = buildWirePayload(activeConv, allMsgs, groupId, modelId, assistantPrefill = resolvedPrefill)
                     payloadTracking = prepared.tracking
                     lastBuiltTracking = prepared.tracking
                     prepared.request
@@ -1457,7 +1504,16 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
 
                 flushTickerJob.cancel()
                 val (finalRawContent, finalReasoning, finalUsage) = synchronized(streamLock) {
-                    Triple(contentBuf.toString(), reasoningBuf.toString(), latestUsage)
+                    if (reasoningStartMs != null && reasoningDurationMs == null) {
+                        reasoningDurationMs = (System.currentTimeMillis() - reasoningStartMs!!).coerceAtLeast(1000L)
+                    }
+                    val mergedUsage = if (reasoningDurationMs != null) {
+                        (latestUsage ?: MessageUsage()).copy(reasoningDurationMs = reasoningDurationMs)
+                    } else {
+                        latestUsage
+                    }
+                    val mergedContent = if (isContinue) contentBuf.toString() else mergeWithPrefill(contentBuf.toString())
+                    Triple(mergedContent, reasoningBuf.toString(), mergedUsage)
                 }
 
                 // C3 Fix: live cross-chat EMA calibration using actual prompt tokens (handling Anthropic cache tokens)
@@ -1544,6 +1600,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         groupId: Long,
         modelId: String,
         episodesOverride: List<MemoryEpisode>? = null,
+        assistantPrefill: String? = null,
     ): BuiltWirePayload {
         val settings = container.settingsStore.currentSettings()
         val budget = parseMemoryBudget(settings.memoryBudget)
@@ -1679,6 +1736,15 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             top_p = conv.params.topP,
             max_tokens = conv.params.maxTokens,
             reasoning_effort = if (conv.params.enableReasoning) conv.params.reasoningEffort else null,
+            frequency_penalty = conv.params.frequencyPenalty,
+            presence_penalty = conv.params.presencePenalty,
+            repetition_penalty = conv.params.repetitionPenalty,
+            top_k = conv.params.topK,
+            min_p = conv.params.minP,
+            stop = conv.params.stopSequences.map { it.trim() }.filter { it.isNotEmpty() }.take(4).ifEmpty { null },
+            enablePromptCaching = conv.params.enablePromptCaching,
+            promptCacheKey = if (conv.params.enablePromptCaching) "gugachat_${conv.id.take(24)}" else null,
+            assistantPrefill = assistantPrefill,
         )
         return BuiltWirePayload(request = req, builtContext = built, tracking = tracking)
     }
@@ -1701,7 +1767,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                         promptTokens = u.prompt_tokens,
                         completionTokens = u.completion_tokens,
                         totalTokens = u.total_tokens,
-                        cacheReadInputTokens = u.cache_read_input_tokens,
+                        cacheReadInputTokens = u.effectiveCacheReadTokens,
                     ),
                 )
             },

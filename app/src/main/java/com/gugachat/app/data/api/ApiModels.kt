@@ -284,12 +284,24 @@ data class WireChatMessageDto(
 }
 
 @Serializable
+data class PromptTokensDetailsDto(
+    val cached_tokens: Int? = null,
+)
+
+@Serializable
 data class ChatTokenUsageDto(
     val prompt_tokens: Int? = null,
     val completion_tokens: Int? = null,
     val total_tokens: Int? = null,
     val cache_read_input_tokens: Int? = null,
-)
+    val prompt_cache_hit_tokens: Int? = null,
+    val prompt_tokens_details: PromptTokensDetailsDto? = null,
+) {
+    val effectiveCacheReadTokens: Int?
+        get() = cache_read_input_tokens
+            ?: prompt_cache_hit_tokens
+            ?: prompt_tokens_details?.cached_tokens
+}
 
 @Serializable
 data class OnlineChatCompletionRequestDto(
@@ -301,6 +313,15 @@ data class OnlineChatCompletionRequestDto(
     val top_p: Double? = null,
     val max_tokens: Int? = null,
     val reasoning_effort: String? = null,
+    val frequency_penalty: Double? = null,
+    val presence_penalty: Double? = null,
+    val repetition_penalty: Double? = null,
+    val top_k: Int? = null,
+    val min_p: Double? = null,
+    val stop: List<String>? = null,
+    @kotlinx.serialization.Transient val enablePromptCaching: Boolean = true,
+    @kotlinx.serialization.Transient val promptCacheKey: String? = null,
+    @kotlinx.serialization.Transient val assistantPrefill: String? = null,
 )
 
 // ==================== Online Images DTOs ====================

@@ -141,7 +141,20 @@ object DirectProtocolCodec {
 
     // ==================== Chat Request Builders ====================
 
-    fun buildOpenAIChatRequestJson(request: OnlineChatCompletionRequestDto, stream: Boolean): String {
+    fun isOfficialOpenAiHost(baseUrl: String): Boolean {
+        val norm = normalizeBaseOrigin(baseUrl)
+        if (norm.isEmpty()) return false
+        val host = runCatching { URI(norm).host }.getOrNull()?.lowercase() ?: return false
+        return host == "api.openai.com"
+    }
+
+    fun buildOpenAIChatRequestJson(
+        request: OnlineChatCompletionRequestDto,
+        stream: Boolean,
+        baseUrl: String = "",
+    ): String {
+        val officialOpenAi = isOfficialOpenAiHost(baseUrl)
+        val prefill = request.assistantPrefill?.takeIf { it.isNotBlank() && !officialOpenAi }
         val obj = buildJsonObject {
             put("model", request.model)
             put("stream", stream)
@@ -155,11 +168,30 @@ object DirectProtocolCodec {
                         put("content", msg.content)
                     }
                 }
+                if (prefill != null) {
+                    addJsonObject {
+                        put("role", "assistant")
+                        put("content", prefill)
+                    }
+                }
             })
             request.temperature?.let { put("temperature", it) }
             request.top_p?.let { put("top_p", it) }
             request.max_tokens?.let { put("max_tokens", it) }
             request.reasoning_effort?.takeIf { it.isNotBlank() }?.let { put("reasoning_effort", it) }
+            request.frequency_penalty?.let { put("frequency_penalty", it) }
+            request.presence_penalty?.let { put("presence_penalty", it) }
+            if (!officialOpenAi) {
+                request.repetition_penalty?.let { put("repetition_penalty", it) }
+                request.top_k?.let { put("top_k", it) }
+                request.min_p?.let { put("min_p", it) }
+            }
+            request.stop?.map { it.trim() }?.filter { it.isNotEmpty() }?.take(4)?.takeIf { it.isNotEmpty() }?.let { stops ->
+                putJsonArray("stop") { stops.forEach { add(JsonPrimitive(it)) } }
+            }
+            if (request.enablePromptCaching && officialOpenAi && !request.promptCacheKey.isNullOrBlank()) {
+                put("prompt_cache_key", request.promptCacheKey)
+            }
         }
         return obj.toString()
     }
@@ -223,6 +255,9 @@ object DirectProtocolCodec {
             request.max_tokens?.let { put("max_output_tokens", it) }
             request.reasoning_effort?.takeIf { it.isNotBlank() }?.let { effort ->
                 putJsonObject("reasoning") { put("effort", effort) }
+            }
+            if (request.enablePromptCaching && !request.promptCacheKey.isNullOrBlank()) {
+                put("prompt_cache_key", request.promptCacheKey)
             }
         }
         return obj.toString()
@@ -292,12 +327,51 @@ object DirectProtocolCodec {
             if (thinkingBudget != null && reqMax <= thinkingBudget) thinkingBudget + 1024 else reqMax
         }
 
+        // Prompt Caching Breakpoint 2: pin stable conversation history right before the latest turn
+        if (request.enablePromptCaching && rawTurns.size >= 3) {
+            val cacheTurnIdx = rawTurns.lastIndex - 1
+            val blocks = rawTurns[cacheTurnIdx].second
+            val textBlockIdx = blocks.indexOfLast { it["type"]?.jsonPrimitive?.content == "text" }
+            if (textBlockIdx >= 0) {
+                val orig = blocks[textBlockIdx]
+                blocks[textBlockIdx] = buildJsonObject {
+                    orig.forEach { (k, v) -> put(k, v) }
+                    putJsonObject("cache_control") { put("type", "ephemeral") }
+                }
+            }
+        }
+
+        // Anthropic rejects assistant prefill when extended thinking is enabled
+        val prefill = request.assistantPrefill?.takeIf { it.isNotBlank() && thinkingBudget == null }
+        if (prefill != null) {
+            val prefillBlock = buildJsonObject {
+                put("type", "text")
+                put("text", prefill)
+            }
+            if (rawTurns.isNotEmpty() && rawTurns.last().first == "assistant") {
+                rawTurns.last().second.add(prefillBlock)
+            } else {
+                rawTurns += "assistant" to mutableListOf(prefillBlock)
+            }
+        }
+
         val obj = buildJsonObject {
             put("model", request.model)
             put("stream", stream)
             put("max_tokens", maxTokens)
             if (systemTexts.isNotEmpty()) {
-                put("system", systemTexts.joinToString("\n\n"))
+                val joinedSystem = systemTexts.joinToString("\n\n")
+                if (request.enablePromptCaching) {
+                    putJsonArray("system") {
+                        addJsonObject {
+                            put("type", "text")
+                            put("text", joinedSystem)
+                            putJsonObject("cache_control") { put("type", "ephemeral") }
+                        }
+                    }
+                } else {
+                    put("system", joinedSystem)
+                }
             }
             put("messages", buildJsonArray {
                 rawTurns.forEach { (role, blocks) ->
@@ -308,7 +382,7 @@ object DirectProtocolCodec {
                 }
             })
             if (thinkingBudget != null) {
-                // Anthropic rejects temperature / top_p when extended thinking is enabled
+                // Anthropic rejects temperature / top_p / top_k when extended thinking is enabled
                 putJsonObject("thinking") {
                     put("type", "enabled")
                     put("budget_tokens", thinkingBudget)
@@ -316,6 +390,10 @@ object DirectProtocolCodec {
             } else {
                 request.temperature?.let { put("temperature", it) }
                 request.top_p?.let { put("top_p", it) }
+                request.top_k?.let { put("top_k", it) }
+            }
+            request.stop?.map { it.trim() }?.filter { it.isNotEmpty() }?.take(4)?.takeIf { it.isNotEmpty() }?.let { stops ->
+                putJsonArray("stop_sequences") { stops.forEach { add(JsonPrimitive(it)) } }
             }
         }
         return obj.toString()
@@ -369,6 +447,16 @@ object DirectProtocolCodec {
             }
         }
 
+        val prefill = request.assistantPrefill?.takeIf { it.isNotBlank() }
+        if (prefill != null) {
+            contents += buildJsonObject {
+                put("role", "model")
+                putJsonArray("parts") {
+                    addJsonObject { put("text", prefill) }
+                }
+            }
+        }
+
         val thinkingBudget = effortToBudgetTokens(request.reasoning_effort)
         val obj = buildJsonObject {
             if (systemTexts.isNotEmpty()) {
@@ -382,7 +470,13 @@ object DirectProtocolCodec {
             putJsonObject("generationConfig") {
                 request.temperature?.let { put("temperature", it) }
                 request.top_p?.let { put("topP", it) }
+                request.top_k?.let { put("topK", it) }
                 request.max_tokens?.let { put("maxOutputTokens", it) }
+                request.frequency_penalty?.let { put("frequencyPenalty", it) }
+                request.presence_penalty?.let { put("presencePenalty", it) }
+                request.stop?.map { it.trim() }?.filter { it.isNotEmpty() }?.take(4)?.takeIf { it.isNotEmpty() }?.let { stops ->
+                    putJsonArray("stopSequences") { stops.forEach { add(JsonPrimitive(it)) } }
+                }
                 if (thinkingBudget != null) {
                     putJsonObject("thinkingConfig") {
                         put("includeThoughts", true)

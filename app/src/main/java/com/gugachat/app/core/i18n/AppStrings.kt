@@ -147,7 +147,7 @@ data class ProfileStrings(
 )
 
 @Immutable
-data class ChatStrings(
+class ChatStrings(
     val title: String,
     val unavailable: String,
     val newChat: String,
@@ -529,7 +529,7 @@ data class NovelStrings(
 )
 
 @Immutable
-data class RpStrings(
+class RpStrings(
     val badge: String,
     val newBtn: String,
     val filterRp: String,

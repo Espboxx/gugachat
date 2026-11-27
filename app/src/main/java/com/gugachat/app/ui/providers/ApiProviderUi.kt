@@ -8,6 +8,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -88,6 +89,7 @@ import com.gugachat.app.core.storage.ApiProviderConfig
 import com.gugachat.app.core.storage.ApiProviderImportBundle
 import com.gugachat.app.core.storage.ApiProviderImportCodec
 import com.gugachat.app.core.theme.AppThemeSpec
+import com.gugachat.app.data.api.DirectApiClient
 import com.gugachat.app.core.theme.GuBadge
 import com.gugachat.app.core.theme.GuBadgeVariant
 import com.gugachat.app.core.theme.GuButton
@@ -206,6 +208,30 @@ private fun ProtocolBadge(
     }
 }
 
+data class ApiProviderQuickPreset(
+    val id: String,
+    val zhLabel: String,
+    val enLabel: String,
+    val displayName: String,
+    val protocol: ApiProtocol,
+    val baseUrl: String,
+    val allowsBlankKey: Boolean = false,
+)
+
+val API_PROVIDER_QUICK_PRESETS: List<ApiProviderQuickPreset> = listOf(
+    ApiProviderQuickPreset("deepseek", "DeepSeek", "DeepSeek", "DeepSeek", ApiProtocol.OPENAI_CHAT, "https://api.deepseek.com/v1"),
+    ApiProviderQuickPreset("siliconflow", "硅基流动", "SiliconFlow", "SiliconFlow", ApiProtocol.OPENAI_CHAT, "https://api.siliconflow.cn/v1"),
+    ApiProviderQuickPreset("gemini", "Gemini", "Gemini", "Google Gemini", ApiProtocol.GEMINI, "https://generativelanguage.googleapis.com/v1beta"),
+    ApiProviderQuickPreset("openrouter", "OpenRouter", "OpenRouter", "OpenRouter", ApiProtocol.OPENAI_CHAT, "https://openrouter.ai/api/v1"),
+    ApiProviderQuickPreset("zhipu", "智谱 GLM", "Zhipu GLM", "Zhipu GLM", ApiProtocol.OPENAI_CHAT, "https://open.bigmodel.cn/api/paas/v4"),
+    ApiProviderQuickPreset("kimi", "Kimi", "Kimi", "Moonshot Kimi", ApiProtocol.OPENAI_CHAT, "https://api.moonshot.cn/v1"),
+    ApiProviderQuickPreset("claude", "Claude", "Claude", "Anthropic Claude", ApiProtocol.ANTHROPIC, "https://api.anthropic.com/v1"),
+    ApiProviderQuickPreset("ollama", "Ollama 局域网", "Ollama LAN", "Ollama LAN", ApiProtocol.OPENAI_CHAT, "http://192.168.1.10:11434/v1", allowsBlankKey = true),
+)
+
+fun canSubmitProviderDraft(draft: ApiProviderDraft): Boolean =
+    draft.baseUrl.isNotBlank() && (draft.apiKey.isNotBlank() || DirectApiClient.isLocalOrLanHost(draft.baseUrl))
+
 @Composable
 fun ApiProviderFormContent(
     draft: ApiProviderDraft,
@@ -218,15 +244,56 @@ fun ApiProviderFormContent(
     onApiKeyChange: (String) -> Unit,
     onCustomModelsChange: (String) -> Unit,
     onTestConnection: () -> Unit,
+    onApplyPreset: ((ApiProviderQuickPreset) -> Unit)? = null,
 ) {
     val strings = LocalAppStrings.current
     val theme = LocalAppTheme.current
     val c = theme.colors
     val isZh = strings.language == AppLanguage.ZH
     var keyVisible by remember { mutableStateOf(false) }
-    val canTest = draft.baseUrl.isNotBlank() && draft.apiKey.isNotBlank() && !isTesting
+    val isLanEndpoint = remember(draft.baseUrl) { DirectApiClient.isLocalOrLanHost(draft.baseUrl) }
+    val canTest = canSubmitProviderDraft(draft) && !isTesting
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        if (onApplyPreset != null) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    text = if (isZh) "一键速配主流服务商" else "Quick Provider Presets",
+                    color = c.ink,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                ) {
+                    API_PROVIDER_QUICK_PRESETS.forEach { preset ->
+                        val active = draft.baseUrl.trim().trimEnd('/').equals(preset.baseUrl.trimEnd('/'), ignoreCase = true)
+                        Surface(
+                            onClick = { onApplyPreset(preset) },
+                            shape = RoundedCornerShape(999.dp),
+                            color = if (active) c.primarySoft else c.surfaceSoft,
+                            border = BorderStroke(
+                                width = if (active) 1.2.dp else theme.borderWidth,
+                                color = if (active) c.primary.copy(alpha = 0.65f) else c.border,
+                            ),
+                            modifier = Modifier.heightIn(min = 32.dp),
+                        ) {
+                            Text(
+                                text = if (isZh) preset.zhLabel else preset.enLabel,
+                                color = if (active) c.primarySoftInk else c.ink,
+                                fontSize = 11.5.sp,
+                                fontWeight = if (active) FontWeight.Bold else FontWeight.SemiBold,
+                                maxLines = 1,
+                                modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp),
+                            )
+                        }
+                    }
+                }
+            }
+        }
         // Protocol Selector (clean 2x2 pill grid with semantic protocol dot)
         Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
             Text(
@@ -308,8 +375,16 @@ fun ApiProviderFormContent(
         GuTextField(
             value = draft.apiKey,
             onValueChange = onApiKeyChange,
-            label = strings.providers.apiKeyLabel,
-            placeholder = strings.providers.apiKeyPlaceholder,
+            label = if (isLanEndpoint) {
+                if (isZh) "${strings.providers.apiKeyLabel}（局域网可留空）" else "${strings.providers.apiKeyLabel} (optional for LAN)"
+            } else {
+                strings.providers.apiKeyLabel
+            },
+            placeholder = if (isLanEndpoint) {
+                if (isZh) "本地 Ollama / LM Studio 可直接留空" else "Leave empty for local Ollama / LAN"
+            } else {
+                strings.providers.apiKeyPlaceholder
+            },
             leadingIcon = { Icon(Icons.Default.Key, contentDescription = null, tint = c.muted, modifier = Modifier.size(18.dp)) },
             visualTransformation = if (keyVisible) VisualTransformation.None else PasswordVisualTransformation(),
             trailingIcon = {
@@ -493,6 +568,15 @@ fun ApiProviderEditorSheet(
                     onApiKeyChange = { onDraftChange(initialDraft.copy(apiKey = it)) },
                     onCustomModelsChange = { onDraftChange(initialDraft.copy(customModelsText = it)) },
                     onTestConnection = { onTestConnection(initialDraft) },
+                    onApplyPreset = { preset ->
+                        onDraftChange(
+                            initialDraft.copy(
+                                protocol = preset.protocol,
+                                name = preset.displayName,
+                                baseUrl = preset.baseUrl,
+                            ),
+                        )
+                    },
                 )
             }
 
@@ -509,7 +593,7 @@ fun ApiProviderEditorSheet(
             ) {
                 GuButton(
                     onClick = { onSave(initialDraft) },
-                    enabled = initialDraft.baseUrl.isNotBlank() && initialDraft.apiKey.isNotBlank(),
+                    enabled = canSubmitProviderDraft(initialDraft),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Text(strings.common.save, fontSize = 14.sp, fontWeight = FontWeight.Bold)

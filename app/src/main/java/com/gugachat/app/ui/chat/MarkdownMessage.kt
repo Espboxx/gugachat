@@ -99,12 +99,25 @@ fun ReasoningCard(
     reasoning: String,
     isStreaming: Boolean,
     modifier: Modifier = Modifier,
+    messageKey: Any? = null,
+    durationMs: Long? = null,
 ) {
     if (reasoning.isBlank() && !isStreaming) return
     val strings = LocalAppStrings.current
     val theme = LocalAppTheme.current
     val c = theme.colors
-    var expanded by remember(isStreaming) { mutableStateOf(isStreaming) }
+    // Never force-collapse when streaming finishes so readers don't lose scroll position
+    var expanded by remember(messageKey) { mutableStateOf(isStreaming) }
+    var liveElapsedSec by remember(messageKey) { mutableStateOf(0) }
+    LaunchedEffect(isStreaming, messageKey) {
+        if (isStreaming) {
+            val startedAt = System.currentTimeMillis()
+            while (true) {
+                liveElapsedSec = ((System.currentTimeMillis() - startedAt) / 1000L).toInt().coerceAtLeast(1)
+                delay(1000L)
+            }
+        }
+    }
     val collapsedPreview = remember(reasoning) {
         reasoning.trim()
             .replace(Regex("\\s+"), " ")
@@ -116,9 +129,18 @@ fun ReasoningCard(
         verticalArrangement = Arrangement.spacedBy(5.dp),
     ) {
         val showInlinePreview = !expanded && !isStreaming && collapsedPreview.isNotEmpty()
+        val labelText = when {
+            isStreaming && liveElapsedSec > 0 -> "${strings.chat.thinkingRunning} · ${liveElapsedSec}s"
+            isStreaming -> strings.chat.thinkingRunning
+            durationMs != null && durationMs > 0L ->
+                strings.chat.thinkingDone.fmt("seconds" to kotlin.math.max(1, ((durationMs + 500L) / 1000L).toInt()))
+            liveElapsedSec > 0 ->
+                strings.chat.thinkingDone.fmt("seconds" to liveElapsedSec)
+            else -> strings.chat.thinkingTitle
+        }
         Row(
             modifier = Modifier
-                .heightIn(min = 28.dp)
+                .heightIn(min = 32.dp)
                 .clip(RoundedCornerShape(999.dp))
                 .background(c.surfaceSoft)
                 .border(theme.borderWidth, c.border, RoundedCornerShape(999.dp))
@@ -142,11 +164,7 @@ fun ReasoningCard(
                 )
             }
             Text(
-                text = if (isStreaming) {
-                    strings.chat.thinkingRunning
-                } else {
-                    strings.chat.thinkingDone.fmt("seconds" to kotlin.math.max(1, reasoning.length / 45))
-                },
+                text = labelText,
                 color = c.ink,
                 fontSize = 11.5.sp,
                 fontWeight = FontWeight.SemiBold,

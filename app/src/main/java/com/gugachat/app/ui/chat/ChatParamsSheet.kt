@@ -1,8 +1,10 @@
 package com.gugachat.app.ui.chat
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,6 +26,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -34,6 +38,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -106,6 +111,24 @@ fun ChatParamsSheet(
     var enableReasoning by remember(params) { mutableStateOf(params.enableReasoning) }
     var enableAutoMemory by remember(params) { mutableStateOf(params.enableAutoMemory) }
     var enableAutoConsolidate by remember(params) { mutableStateOf(params.enableAutoConsolidate) }
+    var enablePromptCaching by remember(params) { mutableStateOf(params.enablePromptCaching) }
+    var freqPenaltyText by remember(params) { mutableStateOf(params.frequencyPenalty?.toString().orEmpty()) }
+    var presPenaltyText by remember(params) { mutableStateOf(params.presencePenalty?.toString().orEmpty()) }
+    var repPenaltyText by remember(params) { mutableStateOf(params.repetitionPenalty?.toString().orEmpty()) }
+    var topKText by remember(params) { mutableStateOf(params.topK?.toString().orEmpty()) }
+    var minPText by remember(params) { mutableStateOf(params.minP?.toString().orEmpty()) }
+    var stopSeqText by remember(params) { mutableStateOf(params.stopSequences.joinToString("\n")) }
+    var prefillText by remember(params) { mutableStateOf(params.assistantPrefill) }
+    val activeTavernCount = listOf(
+        freqPenaltyText,
+        presPenaltyText,
+        repPenaltyText,
+        topKText,
+        minPText,
+        stopSeqText,
+        prefillText,
+    ).count { it.isNotBlank() }
+    var showTavernAdvanced by remember(params) { mutableStateOf(activeTavernCount > 0) }
 
     val effortKeys = remember { listOf(null, "low", "medium", "high") }
     val effortLabels = remember(strings) {
@@ -537,10 +560,161 @@ fun ChatParamsSheet(
                     }
                 }
 
+                // Section 3.5: Collapsible Tavern Advanced Sampling & Assistant Prefill
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    GuGroupedCard(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { showTavernAdvanced = !showTavernAdvanced }
+                                .padding(horizontal = 14.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(
+                                    text = if (isZh) "高级采样与预填（酒馆参数）" else "Advanced Sampling & Prefill",
+                                    color = c.ink,
+                                    fontSize = 13.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                                Text(
+                                    text = if (isZh) "Min-P / Top-K / 重复惩罚 / 停止词 / 开头预填" else "Min-P / Top-K / Penalties / Stop / Assistant Prefill",
+                                    color = c.muted,
+                                    fontSize = 11.5.sp,
+                                )
+                            }
+                            if (activeTavernCount > 0) {
+                                MonoValuePill("$activeTavernCount", highlight = true)
+                            }
+                            Icon(
+                                imageVector = if (showTavernAdvanced) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                contentDescription = null,
+                                tint = c.muted,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
+                        AnimatedVisibility(visible = showTavernAdvanced) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(start = 14.dp, end = 14.dp, bottom = 14.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                HorizontalDivider(thickness = theme.borderWidth, color = c.border.copy(alpha = 0.78f))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    GuTextField(
+                                        value = minPText,
+                                        onValueChange = { minPText = filterDecimalInput(it, allowNegative = false) },
+                                        label = "Min-P",
+                                        placeholder = "0.05",
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    GuTextField(
+                                        value = topKText,
+                                        onValueChange = { topKText = it.filter(Char::isDigit).take(4) },
+                                        label = "Top-K",
+                                        placeholder = "40",
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    GuTextField(
+                                        value = freqPenaltyText,
+                                        onValueChange = { freqPenaltyText = filterDecimalInput(it, allowNegative = true) },
+                                        label = if (isZh) "频率惩罚" else "Freq Penalty",
+                                        placeholder = "-2 ~ 2",
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    GuTextField(
+                                        value = presPenaltyText,
+                                        onValueChange = { presPenaltyText = filterDecimalInput(it, allowNegative = true) },
+                                        label = if (isZh) "存在惩罚" else "Pres Penalty",
+                                        placeholder = "-2 ~ 2",
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                }
+                                GuTextField(
+                                    value = repPenaltyText,
+                                    onValueChange = { repPenaltyText = filterDecimalInput(it, allowNegative = false) },
+                                    label = if (isZh) "重复惩罚 (Repetition Penalty)" else "Repetition Penalty",
+                                    placeholder = "1.0 ~ 1.3",
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                )
+                                GuTextField(
+                                    value = stopSeqText,
+                                    onValueChange = { stopSeqText = it },
+                                    label = if (isZh) "停止词 Stop Sequences（每行一条，最多 4 条）" else "Stop Sequences (one per line, max 4)",
+                                    placeholder = if (isZh) "例如：{{user}}:" else "e.g. {{user}}:",
+                                    singleLine = false,
+                                    minLines = 1,
+                                    maxLines = 3,
+                                )
+                                GuTextField(
+                                    value = prefillText,
+                                    onValueChange = { prefillText = it },
+                                    label = if (isZh) "助手开头预填 (Assistant Prefill)" else "Assistant Prefill",
+                                    placeholder = if (isZh) "留空不启用；支持 {{char}}/{{user}} 宏（Anthropic 开启思考时自动跳过）" else "Optional opening text; supports {{char}}/{{user}} macros",
+                                    singleLine = false,
+                                    minLines = 2,
+                                    maxLines = 4,
+                                )
+                                if (activeTavernCount > 0) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.End,
+                                    ) {
+                                        TextButton(
+                                            onClick = {
+                                                freqPenaltyText = ""
+                                                presPenaltyText = ""
+                                                repPenaltyText = ""
+                                                topKText = ""
+                                                minPText = ""
+                                                stopSeqText = ""
+                                                prefillText = ""
+                                            },
+                                        ) {
+                                            Text(
+                                                text = strings.common.reset,
+                                                color = c.muted,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // Section 4: Thinking & Memory Automation
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     GuSectionHeader(title = strings.chat.memoryTitle)
                     GuGroupedCard(modifier = Modifier.fillMaxWidth()) {
+                        GuSwitchRow(
+                            label = if (isZh) "Prompt Caching 提示词缓存" else "Prompt Caching",
+                            subtitle = if (isZh) "自动固定系统与历史前缀断点，显著降低长剧情输入成本（老中转站报错时可关）" else "Pin static system & history breakpoints to cut long-context input cost",
+                            checked = enablePromptCaching,
+                            onCheckedChange = { enablePromptCaching = it },
+                            modifier = Modifier.padding(horizontal = 14.dp),
+                        )
+                        HorizontalDivider(
+                            modifier = Modifier.padding(horizontal = 14.dp),
+                            thickness = theme.borderWidth,
+                            color = c.border.copy(alpha = 0.78f),
+                        )
                         GuSwitchRow(
                             label = strings.chat.thinkingTitle,
                             checked = enableReasoning,
@@ -591,6 +765,11 @@ fun ChatParamsSheet(
                     onClick = {
                         val parsedWindow = contextWindowKText.toIntOrNull()?.takeIf { it >= 4 }?.let { (it * 1000).coerceIn(4096, 2_000_000) }
                         val parsedHistory = maxHistoryText.toIntOrNull()?.takeIf { it > 0 }?.coerceIn(1, 500)
+                        val parsedStops = stopSeqText
+                            .lines()
+                            .map { it.trim() }
+                            .filter { it.isNotEmpty() }
+                            .take(4)
                         val updated = params.copy(
                             temperature = ((temp * 100).roundToInt() / 100.0),
                             topP = ((topP * 100).roundToInt() / 100.0),
@@ -602,6 +781,14 @@ fun ChatParamsSheet(
                             enableAutoConsolidate = enableAutoConsolidate,
                             contextWindowOverride = parsedWindow,
                             maxHistoryMessages = parsedHistory,
+                            enablePromptCaching = enablePromptCaching,
+                            frequencyPenalty = freqPenaltyText.toDoubleOrNull()?.coerceIn(-2.0, 2.0),
+                            presencePenalty = presPenaltyText.toDoubleOrNull()?.coerceIn(-2.0, 2.0),
+                            repetitionPenalty = repPenaltyText.toDoubleOrNull()?.coerceIn(0.5, 2.5),
+                            topK = topKText.toIntOrNull()?.coerceIn(1, 500),
+                            minP = minPText.toDoubleOrNull()?.coerceIn(0.0, 1.0),
+                            stopSequences = parsedStops,
+                            assistantPrefill = prefillText.trim(),
                         )
                         onSave(promptDraft, updated)
                         onDismiss()
@@ -676,4 +863,20 @@ private fun WaterlineLegendDot(
             fontWeight = FontWeight.SemiBold,
         )
     }
+}
+
+private fun filterDecimalInput(raw: String, allowNegative: Boolean): String {
+    val sb = StringBuilder()
+    var hasDot = false
+    for ((idx, ch) in raw.withIndex()) {
+        when {
+            ch.isDigit() -> sb.append(ch)
+            ch == '.' && !hasDot -> {
+                hasDot = true
+                sb.append(ch)
+            }
+            ch == '-' && allowNegative && idx == 0 -> sb.append(ch)
+        }
+    }
+    return sb.toString().take(6)
 }

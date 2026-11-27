@@ -143,7 +143,7 @@ class AppContainer(context: Context) {
         val current = settingsStore.currentSettings()
         val snap = tokenStore.readSnapshot()
         if (current.serverUrl.isBlank() || snap.accessToken.isNullOrBlank()) {
-            if (current.directModeActive && apiProviderStore.enabledProviders().isNotEmpty()) {
+            if (current.directModeActive) {
                 _authSession.value = AuthSessionState.LoggedIn(
                     user = directModeUser(),
                     isDirectApiOnly = true,

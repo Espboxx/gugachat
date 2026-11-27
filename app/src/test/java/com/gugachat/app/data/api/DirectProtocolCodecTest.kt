@@ -81,7 +81,9 @@ class DirectProtocolCodecTest {
         assertEquals("input_image", respContent[1].jsonObject["type"]?.jsonPrimitive?.content)
 
         val claudeObj = AppJson.parseToJsonElement(DirectProtocolCodec.buildAnthropicRequestJson(req, true)).jsonObject
-        assertEquals("You are GuGu.", claudeObj["system"]?.jsonPrimitive?.content)
+        val claudeSysBlock = claudeObj["system"]!!.jsonArray[0].jsonObject
+        assertEquals("You are GuGu.", claudeSysBlock["text"]?.jsonPrimitive?.content)
+        assertEquals("ephemeral", claudeSysBlock["cache_control"]?.jsonObject?.get("type")?.jsonPrimitive?.content)
         assertFalse(claudeObj.containsKey("temperature"))
         assertEquals("enabled", claudeObj["thinking"]?.jsonObject?.get("type")?.jsonPrimitive?.content)
         assertEquals(5120, claudeObj["max_tokens"]?.jsonPrimitive?.content?.toInt())

@@ -48,6 +48,7 @@ import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.HorizontalDivider
@@ -55,6 +56,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -101,6 +103,8 @@ import com.gugachat.app.data.api.GugagaHosts
 import com.gugachat.app.data.api.HostLatencyResult
 import com.gugachat.app.data.api.HostProbeStatus
 import com.gugachat.app.ui.providers.ApiProviderFormContent
+import com.gugachat.app.ui.providers.ApiProviderImportSheet
+import com.gugachat.app.ui.providers.canSubmitProviderDraft
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -113,9 +117,20 @@ fun LoginScreen(
     val c = theme.colors
     val focusManager = LocalFocusManager.current
     var passwordVisible by remember { mutableStateOf(false) }
+    var showProviderImportSheet by remember { mutableStateOf(false) }
 
     val initialCustomExpanded = state.serverUrlInput.isNotBlank() && !GugagaHosts.isPresetUrl(state.serverUrlInput)
     var showCustomServerUrl by remember(initialCustomExpanded) { mutableStateOf(initialCustomExpanded) }
+
+    if (showProviderImportSheet) {
+        ApiProviderImportSheet(
+            onImportSelected = { selected ->
+                showProviderImportSheet = false
+                viewModel.importProvidersFromLogin(selected)
+            },
+            onDismiss = { showProviderImportSheet = false },
+        )
+    }
 
     if (state.showWebLoginDialog) {
         WebLoginDialog(
@@ -204,6 +219,7 @@ fun LoginScreen(
                     colorMode = state.colorMode,
                     onChooseGugaga = { viewModel.chooseEntryMode(LoginEntryMode.SUB2API) },
                     onChooseCustomApi = { viewModel.chooseEntryMode(LoginEntryMode.DIRECT_API) },
+                    onEnterGuest = viewModel::enterGuestMode,
                     onToggleLanguage = viewModel::toggleLanguage,
                     onToggleThemeStyle = viewModel::toggleThemeStyle,
                     onCycleColorMode = viewModel::cycleColorMode,
@@ -311,16 +327,50 @@ fun LoginScreen(
                         onApiKeyChange = viewModel::updateDirectApiKey,
                         onCustomModelsChange = viewModel::updateDirectCustomModels,
                         onTestConnection = viewModel::testDirectConnection,
+                        onApplyPreset = viewModel::applyDirectPreset,
                     )
                     Spacer(Modifier.height(14.dp))
                     GuButton(
                         onClick = viewModel::saveAndEnterDirectMode,
-                        enabled = state.directDraft.baseUrl.isNotBlank() && state.directDraft.apiKey.isNotBlank(),
+                        enabled = canSubmitProviderDraft(state.directDraft),
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Icon(Icons.Default.Lock, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
                         Text(strings.providers.saveAndEnterBtn, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Spacer(Modifier.height(9.dp))
+                    GuButton(
+                        onClick = { showProviderImportSheet = true },
+                        variant = GuButtonVariant.SECONDARY,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Icon(Icons.Default.UploadFile, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = if (strings.language == AppLanguage.ZH) {
+                                "批量导入通道（Chatbox / Cherry / RikkaHub）"
+                            } else {
+                                "Batch Import (Chatbox / Cherry / RikkaHub)"
+                            },
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        TextButton(onClick = viewModel::enterGuestMode) {
+                            Text(
+                                text = if (strings.language == AppLanguage.ZH) {
+                                    "先逛逛 / 离线导入体验（发消息时再配 Key）"
+                                } else {
+                                    "Explore first / import offline (add key later)"
+                                },
+                                color = c.muted,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
                     }
                 }
                 LoginQuickSettingsRow(
@@ -859,6 +909,7 @@ private fun FirstLaunchModeChooser(
     colorMode: ColorMode,
     onChooseGugaga: () -> Unit,
     onChooseCustomApi: () -> Unit,
+    onEnterGuest: () -> Unit,
     onToggleLanguage: () -> Unit,
     onToggleThemeStyle: () -> Unit,
     onCycleColorMode: () -> Unit,
@@ -884,7 +935,7 @@ private fun FirstLaunchModeChooser(
             contentAlignment = Alignment.Center,
         ) {
             Image(
-                painter = painterResource(id = R.drawable.img_splash),
+                painter = painterResource(id = R.drawable.img_logo),
                 contentDescription = strings.common.appName,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
@@ -944,7 +995,18 @@ private fun FirstLaunchModeChooser(
             onClick = onChooseCustomApi,
         )
 
-        Spacer(Modifier.height(4.dp))
+        TextButton(onClick = onEnterGuest) {
+            Text(
+                text = if (strings.language == AppLanguage.ZH) {
+                    "先逛逛 / 离线导入体验（发消息时再配 Key）"
+                } else {
+                    "Explore first / import offline (add key later)"
+                },
+                color = c.muted,
+                fontSize = 12.5.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
 
         LoginQuickSettingsRow(
             colorMode = colorMode,

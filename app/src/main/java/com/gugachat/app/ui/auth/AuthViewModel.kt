@@ -5,6 +5,8 @@ import androidx.lifecycle.viewModelScope
 import com.gugachat.app.AppContainer
 import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.storage.ApiProtocol
+import com.gugachat.app.core.storage.ApiProviderConfig
+import com.gugachat.app.core.storage.ApiProviderImportCodec
 import com.gugachat.app.core.theme.ColorMode
 import com.gugachat.app.core.theme.ThemeStyle
 import com.gugachat.app.core.util.ServerUrlUtils
@@ -12,6 +14,7 @@ import com.gugachat.app.data.api.ActiveCaptchaConfig
 import com.gugachat.app.data.api.ApiException
 import com.gugachat.app.data.api.AppJson
 import com.gugachat.app.data.api.CaptchaProof
+import com.gugachat.app.data.api.DirectApiClient
 import com.gugachat.app.data.api.GugagaHostProber
 import com.gugachat.app.data.api.GugagaHosts
 import com.gugachat.app.data.api.GugagaPresetHost
@@ -21,6 +24,7 @@ import com.gugachat.app.data.api.PublicSettingsDto
 import com.gugachat.app.data.api.UserDto
 import com.gugachat.app.data.api.resolveActiveCaptcha
 import com.gugachat.app.ui.providers.ApiProviderDraft
+import com.gugachat.app.ui.providers.ApiProviderQuickPreset
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -271,6 +275,20 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
+    fun applyDirectPreset(preset: ApiProviderQuickPreset) {
+        _ui.update { state ->
+            state.copy(
+                directDraft = state.directDraft.copy(
+                    protocol = preset.protocol,
+                    name = preset.displayName,
+                    baseUrl = preset.baseUrl,
+                ),
+                directTestCount = null,
+                directTestError = null,
+            )
+        }
+    }
+
     fun updateDirectName(v: String) = _ui.update { it.copy(directDraft = it.directDraft.copy(name = v)) }
     fun updateDirectBaseUrl(v: String) = _ui.update {
         it.copy(directDraft = it.directDraft.copy(baseUrl = v), directTestCount = null, directTestError = null)
@@ -304,7 +322,8 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
 
     fun saveAndEnterDirectMode() {
         val draft = _ui.value.directDraft
-        if (draft.baseUrl.isBlank() || draft.apiKey.isBlank()) {
+        val allowEmptyKey = DirectApiClient.isLocalOrLanHost(draft.baseUrl)
+        if (draft.baseUrl.isBlank() || (!allowEmptyKey && draft.apiKey.isBlank())) {
             _ui.update { it.copy(directTestError = "Base URL and API Key are required") }
             return
         }
@@ -322,6 +341,49 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
         val enabled = container.apiProviderStore.enabledProviders()
         if (enabled.isEmpty()) return
         container.enterDirectApiMode()
+    }
+
+    fun enterGuestMode() {
+        viewModelScope.launch {
+            container.settingsStore.setPreferredEntryMode("direct")
+            container.enterDirectApiMode()
+        }
+    }
+
+    fun importProvidersFromLogin(selected: List<ApiProviderConfig>) {
+        if (selected.isEmpty()) return
+        val existingKeys = container.apiProviderStore.currentProviders()
+            .map(ApiProviderImportCodec::dedupeKey)
+            .toMutableSet()
+        var importedCount = 0
+        var firstSaved: ApiProviderConfig? = null
+        for (p in selected) {
+            val key = ApiProviderImportCodec.dedupeKey(p)
+            if (existingKeys.add(key)) {
+                val saved = container.apiProviderStore.upsert(p)
+                if (firstSaved == null) firstSaved = saved
+                importedCount++
+            }
+        }
+        val isZh = container.settingsState.value.language == AppLanguage.ZH
+        if (importedCount > 0 && firstSaved != null) {
+            container.toastController.show(
+                if (isZh) "已导入 $importedCount 个 API 通道" else "Imported $importedCount API providers",
+            )
+            val savedFirst = firstSaved
+            viewModelScope.launch {
+                container.settingsStore.setPreferredEntryMode("direct")
+                container.settingsStore.setLastChatSelection(
+                    savedFirst.syntheticGroupId,
+                    savedFirst.customModels.firstOrNull().orEmpty(),
+                )
+                container.enterDirectApiMode()
+            }
+        } else {
+            container.toastController.show(
+                if (isZh) "所选通道已存在，未重复导入" else "All selected providers already exist",
+            )
+        }
     }
 
     fun updateServerUrlInput(value: String) {

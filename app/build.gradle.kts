@@ -21,16 +21,21 @@ android {
         vectorDrawables {
             useSupportLibrary = true
         }
-        ndk {
-            // Keep arm64-v8a (modern Android phones) and x86_64 (MuMu / emulators);
-            // strip unused 32-bit armeabi-v7a & x86 ONNX Runtime .so (~13 MB APK savings).
-            abiFilters += listOf("arm64-v8a", "x86_64")
+    }
+
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "x86_64")
+            isUniversalApk = false
         }
     }
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             signingConfig = signingConfigs.getByName("debug")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
@@ -56,6 +61,8 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            // pdfbox-android pulls in ~4 MB of BouncyCastle post-quantum tables unused by text extraction
+            excludes += "org/bouncycastle/pqc/**"
         }
     }
 
@@ -68,6 +75,7 @@ android {
 
 ksp {
     arg("room.generateKotlin", "true")
+    arg("room.schemaLocation", "$projectDir/schemas")
 }
 
 dependencies {

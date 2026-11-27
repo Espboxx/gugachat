@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.gugachat.app.AppContainer
+import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.i18n.LocalAppStrings
 import com.gugachat.app.core.theme.GuAwningHeader
 import com.gugachat.app.core.theme.GuIconTile
@@ -58,6 +59,7 @@ import kotlinx.coroutines.launch
 fun CreativeStudioScreen(
     container: AppContainer,
     imageViewModel: ImageViewModel,
+    onOpenProfile: (() -> Unit)? = null,
 ) {
     val state by imageViewModel.ui.collectAsStateWithLifecycle()
     val strings = LocalAppStrings.current
@@ -174,33 +176,6 @@ fun CreativeStudioScreen(
                             }
                         }
                     }
-
-                    Surface(
-                        onClick = { imageViewModel.setShowCreateSheet(true) },
-                        shape = RoundedCornerShape(theme.pillRadius),
-                        color = c.primary,
-                        modifier = Modifier.height(34.dp),
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 11.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        ) {
-                            Icon(
-                                Icons.Default.Add,
-                                contentDescription = null,
-                                tint = Color.White,
-                                modifier = Modifier.size(15.dp),
-                            )
-                            Text(
-                                text = strings.images.studioCreateFab,
-                                color = Color.White,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1,
-                            )
-                        }
-                    }
                 }
 
                 GuSegmentedControl(
@@ -251,6 +226,23 @@ fun CreativeStudioScreen(
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f),
                         )
+                        if (onOpenProfile != null) {
+                            val isZh = strings.language == AppLanguage.ZH
+                            Surface(
+                                onClick = onOpenProfile,
+                                shape = RoundedCornerShape(999.dp),
+                                color = c.warning.copy(alpha = 0.16f),
+                                border = BorderStroke(theme.borderWidth, c.warning.copy(alpha = 0.45f)),
+                            ) {
+                                Text(
+                                    text = if (isZh) "去配置" else "Configure",
+                                    color = c.warning,
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                )
+                            }
+                        }
                     }
                 }
             }
