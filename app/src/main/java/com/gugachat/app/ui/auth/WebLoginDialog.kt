@@ -122,144 +122,102 @@ fun WebLoginDialog(
         }
     }
 
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(
-            usePlatformDefaultWidth = false,
-            decorFitsSystemWindows = false,
-        ),
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(c.page)
-                .navigationBarsPadding()
-                .imePadding(),
-        ) {
-            GuAwningHeader(includeStatusBarPadding = true) {
-                Row(
+    GuFullscreenWebDialogScaffold(
+        onDismiss = onDismiss,
+        applyImePadding = true,
+        loadProgress = loadProgress,
+        headerContent = {
+            IconButton(onClick = onDismiss, modifier = Modifier.size(44.dp)) {
+                Box(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .height(56.dp)
-                        .padding(horizontal = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        .size(34.dp)
+                        .clip(CircleShape)
+                        .background(c.surfaceSoft)
+                        .border(theme.borderWidth, c.border, CircleShape),
+                    contentAlignment = Alignment.Center,
                 ) {
-                    IconButton(onClick = onDismiss, modifier = Modifier.size(44.dp)) {
-                        Box(
-                            modifier = Modifier
-                                .size(34.dp)
-                                .clip(CircleShape)
-                                .background(c.surfaceSoft)
-                                .border(theme.borderWidth, c.border, CircleShape),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = strings.common.close,
-                                tint = c.muted,
-                                modifier = Modifier.size(18.dp),
-                            )
-                        }
-                    }
-                    Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(horizontal = 2.dp),
-                        verticalArrangement = Arrangement.spacedBy(1.dp),
-                    ) {
-                        Text(
-                            text = strings.auth.webLoginTitle,
-                            color = c.ink,
-                            fontSize = 15.5.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Text(
-                            text = strings.auth.webLoginHint,
-                            color = c.muted,
-                            fontSize = 11.5.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                    IconButton(
-                        onClick = { webViewRef?.reload() },
-                        modifier = Modifier.size(44.dp),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Refresh,
-                            contentDescription = strings.common.refresh,
-                            tint = c.ink,
-                            modifier = Modifier.size(20.dp),
-                        )
-                    }
-                    Spacer(Modifier.width(2.dp))
-                    GuButton(
-                        onClick = { evaluateLocalStorageToken(webViewRef) },
-                        compact = true,
-                        variant = GuButtonVariant.HONEY,
-                    ) {
-                        Text(strings.common.confirm, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    }
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = strings.common.close,
+                        tint = c.muted,
+                        modifier = Modifier.size(18.dp),
+                    )
                 }
             }
-
-            if (loadProgress in 1..99) {
-                LinearProgressIndicator(
-                    progress = { loadProgress / 100f },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(2.5.dp),
-                    color = c.primary,
-                    trackColor = Color.Transparent,
-                )
-            }
-
-            Box(
+            Column(
                 modifier = Modifier
                     .weight(1f)
-                    .fillMaxWidth(),
+                    .padding(horizontal = 2.dp),
+                verticalArrangement = Arrangement.spacedBy(1.dp),
             ) {
-                AndroidView(
-                    modifier = Modifier.fillMaxSize(),
-                    factory = { ctx ->
-                        WebView(ctx).apply {
-                            val cookies = CookieManager.getInstance()
-                            cookies.setAcceptCookie(true)
-                            cookies.setAcceptThirdPartyCookies(this, true)
-                            settings.javaScriptEnabled = true
-                            settings.domStorageEnabled = true
-                            settings.databaseEnabled = true
-                            settings.useWideViewPort = true
-                            settings.loadWithOverviewMode = true
-                            webChromeClient = object : WebChromeClient() {
-                                override fun onProgressChanged(view: WebView?, newProgress: Int) {
-                                    loadProgress = newProgress
-                                }
-                            }
-                            webViewClient = object : WebViewClient() {
-                                override fun onPageFinished(view: WebView?, url: String?) {
-                                    evaluateLocalStorageToken(view)
-                                }
-
-                                override fun shouldOverrideUrlLoading(
-                                    view: WebView?,
-                                    request: WebResourceRequest?,
-                                ): Boolean = false
-                            }
-                            loadUrl(targetUrl)
-                            webViewRef = this
-                        }
-                    },
-                    onRelease = { wv ->
-                        wv.stopLoading()
-                        wv.loadUrl("about:blank")
-                        wv.destroy()
-                    },
+                Text(
+                    text = strings.auth.webLoginTitle,
+                    color = c.ink,
+                    fontSize = 15.5.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = strings.auth.webLoginHint,
+                    color = c.muted,
+                    fontSize = 11.5.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
-        }
+            IconButton(
+                onClick = { webViewRef?.reload() },
+                modifier = Modifier.size(44.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Refresh,
+                    contentDescription = strings.common.refresh,
+                    tint = c.ink,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+            Spacer(Modifier.width(2.dp))
+            GuButton(
+                onClick = { evaluateLocalStorageToken(webViewRef) },
+                compact = true,
+                variant = GuButtonVariant.HONEY,
+            ) {
+                Text(strings.common.confirm, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            }
+        },
+    ) {
+        AndroidView(
+            modifier = Modifier.fillMaxSize(),
+            factory = { ctx ->
+                WebView(ctx).apply {
+                    configureAuthWebViewDefaults(
+                        webView = this,
+                        wideViewport = true,
+                    )
+                    webChromeClient = object : WebChromeClient() {
+                        override fun onProgressChanged(view: WebView?, newProgress: Int) {
+                            loadProgress = newProgress
+                        }
+                    }
+                    webViewClient = object : WebViewClient() {
+                        override fun onPageFinished(view: WebView?, url: String?) {
+                            evaluateLocalStorageToken(view)
+                        }
+
+                        override fun shouldOverrideUrlLoading(
+                            view: WebView?,
+                            request: WebResourceRequest?,
+                        ): Boolean = false
+                    }
+                    loadUrl(targetUrl)
+                    webViewRef = this
+                }
+            },
+            onRelease = { wv ->
+                destroyAuthWebView(wv)
+                webViewRef = null
+            },
+        )
     }
 }

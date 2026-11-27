@@ -86,6 +86,7 @@ import com.gugachat.app.core.theme.GuBadge
 import com.gugachat.app.core.theme.GuBadgeVariant
 import com.gugachat.app.core.theme.GuButton
 import com.gugachat.app.core.theme.GuButtonVariant
+import com.gugachat.app.core.theme.GuLinearProgressBar
 import com.gugachat.app.core.theme.GuMetaText
 import com.gugachat.app.core.theme.GuTextField
 import com.gugachat.app.core.theme.LocalAppShellController
@@ -483,13 +484,13 @@ fun NovelWorkspaceScreen(
                     }
 
                     // 1.5dp chapter progress hairline flush below the single-row header
-                    LinearProgressIndicator(
-                        progress = { progressRatio },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(1.5.dp),
+                    GuLinearProgressBar(
+                        progress = progressRatio,
+                        height = 1.5.dp,
+                        rounded = false,
                         color = goldRibbonColor,
                         trackColor = paperTheme.border.copy(alpha = 0.35f),
+                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
 
@@ -744,14 +745,12 @@ private fun NovelBookmarkFloatingOverlay(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    LinearProgressIndicator(
-                        progress = { progressRatio },
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(5.dp)
-                            .clip(RoundedCornerShape(999.dp)),
+                    GuLinearProgressBar(
+                        progress = progressRatio,
+                        height = 5.dp,
                         color = goldRibbonColor,
                         trackColor = paperTheme.border.copy(alpha = 0.45f),
+                        modifier = Modifier.weight(1f),
                     )
                     GuMetaText(
                         text = progressLabel,

@@ -66,7 +66,8 @@ import com.gugachat.app.core.theme.GuButton
 import com.gugachat.app.core.theme.GuButtonVariant
 import com.gugachat.app.core.theme.GuConfirmDialog
 import com.gugachat.app.core.theme.GuGroupedCard
-import com.gugachat.app.core.theme.GuModalDragHandle
+import com.gugachat.app.core.theme.GuHairlineDivider
+import com.gugachat.app.core.theme.GuModalBottomSheet
 import com.gugachat.app.core.theme.GuSectionHeader
 import com.gugachat.app.core.theme.GuSheetHeader
 import com.gugachat.app.core.theme.LocalAppTheme
@@ -131,12 +132,9 @@ fun ImageDetailSheet(
     }
 
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(
+    GuModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = c.page,
-        dragHandle = { GuModalDragHandle() },
-        modifier = Modifier.statusBarsPadding(),
     ) {
         Column(
             modifier = Modifier

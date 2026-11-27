@@ -115,14 +115,17 @@ import com.gugachat.app.core.theme.GuBadgeVariant
 import com.gugachat.app.core.theme.GuButton
 import com.gugachat.app.core.theme.GuButtonVariant
 import com.gugachat.app.core.theme.GuCard
+import com.gugachat.app.core.theme.GuCollapsibleSearchBar
 import com.gugachat.app.core.theme.GuCompactSearchBar
 import com.gugachat.app.core.theme.GuConfirmDialog
 import com.gugachat.app.core.theme.GuEmptyState
 import com.gugachat.app.core.theme.GuGroupedCard
+import com.gugachat.app.core.theme.GuHairlineDivider
 import com.gugachat.app.core.theme.GuIconTile
 import com.gugachat.app.core.theme.GuInlineStepper
-import com.gugachat.app.core.theme.GuModalDragHandle
+import com.gugachat.app.core.theme.GuModalBottomSheet
 import com.gugachat.app.core.theme.GuPill
+import com.gugachat.app.core.theme.GuPushPopContainer
 import com.gugachat.app.core.theme.GuSettingsRow
 import com.gugachat.app.core.theme.GuSheetHeader
 import com.gugachat.app.core.theme.GuSwitchRow
@@ -375,31 +378,17 @@ fun CharactersHubTab(
             )
         }
 
-        AnimatedVisibility(visible = showSearchBar || searchQuery.isNotEmpty()) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                GuCompactSearchBar(
-                    value = searchQuery,
-                    onValueChange = onSearchQueryChange,
-                    placeholder = if (isZh) "搜索角色名、标签或世界观..." else "Search characters or scenarios...",
-                    clearContentDescription = strings.common.clear,
-                    modifier = Modifier.weight(1f),
-                )
-                TextButton(
-                    onClick = {
-                        onSearchQueryChange("")
-                        onCloseSearchBar()
-                    },
-                ) {
-                    Text(strings.common.close, color = c.muted, fontSize = 12.sp)
-                }
-            }
-        }
+        GuCollapsibleSearchBar(
+            visible = showSearchBar,
+            query = searchQuery,
+            onQueryChange = onSearchQueryChange,
+            placeholder = if (isZh) "搜索角色名、标签或世界观..." else "Search characters or scenarios...",
+            onClose = onCloseSearchBar,
+            clearContentDescription = strings.common.clear,
+            closeText = strings.common.close,
+            useTextCloseButton = true,
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+        )
 
         LazyVerticalStaggeredGrid(
             state = gridState,
@@ -952,11 +941,9 @@ private fun CharacterCardLaunchSheet(
         )
     }
 
-    ModalBottomSheet(
+    GuModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = c.page,
-        dragHandle = { GuModalDragHandle() },
     ) {
         Column(
             modifier = Modifier
@@ -1600,11 +1587,9 @@ private fun PersonaManagerSheet(
     var draftDepth by remember { mutableIntStateOf(4) }
     var draftMakeDefault by remember { mutableStateOf(false) }
 
-    ModalBottomSheet(
+    GuModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = c.page,
-        dragHandle = { GuModalDragHandle() },
     ) {
         Column(
             modifier = Modifier
@@ -1824,11 +1809,9 @@ private fun CreateOriginalCardSheet(
     var scenario by remember { mutableStateOf("") }
     var firstMes by remember { mutableStateOf("") }
 
-    ModalBottomSheet(
+    GuModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = c.page,
-        dragHandle = { GuModalDragHandle() },
     ) {
         Column(
             modifier = Modifier
@@ -2034,31 +2017,17 @@ fun LoreSettingsHubTab(
             )
         }
 
-        AnimatedVisibility(visible = showSearchBar || searchQuery.isNotEmpty()) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                GuCompactSearchBar(
-                    value = searchQuery,
-                    onValueChange = onSearchQueryChange,
-                    placeholder = if (isZh) "搜索世界书、预设或正则..." else "Search worldbooks or presets...",
-                    clearContentDescription = strings.common.clear,
-                    modifier = Modifier.weight(1f),
-                )
-                TextButton(
-                    onClick = {
-                        onSearchQueryChange("")
-                        onCloseSearchBar()
-                    },
-                ) {
-                    Text(strings.common.close, color = c.muted, fontSize = 12.sp)
-                }
-            }
-        }
+        GuCollapsibleSearchBar(
+            visible = showSearchBar,
+            query = searchQuery,
+            onQueryChange = onSearchQueryChange,
+            placeholder = if (isZh) "搜索世界书、预设或正则..." else "Search worldbooks or presets...",
+            onClose = onCloseSearchBar,
+            clearContentDescription = strings.common.clear,
+            closeText = strings.common.close,
+            useTextCloseButton = true,
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+        )
 
         LazyColumn(
             state = listState,
@@ -2475,11 +2444,9 @@ private fun CreateWorldbookSheet(
     var name by remember { mutableStateOf("") }
     var desc by remember { mutableStateOf("") }
 
-    ModalBottomSheet(
+    GuModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = c.page,
-        dragHandle = { GuModalDragHandle() },
     ) {
         Column(
             modifier = Modifier
@@ -2613,11 +2580,9 @@ private fun WorldbookDetailSheet(
         )
     }
 
-    ModalBottomSheet(
+    GuModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = c.page,
-        dragHandle = { GuModalDragHandle() },
     ) {
         Column(
             modifier = Modifier
@@ -3093,11 +3058,9 @@ private fun PromptPresetDetailSheet(
         )
     }
 
-    ModalBottomSheet(
+    GuModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = c.page,
-        dragHandle = { GuModalDragHandle() },
     ) {
         Column(
             modifier = Modifier

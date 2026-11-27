@@ -106,12 +106,16 @@ import com.gugachat.app.core.theme.GuButton
 import com.gugachat.app.core.theme.GuButtonVariant
 import com.gugachat.app.core.theme.GuConfirmDialog
 import com.gugachat.app.core.theme.GuGroupedCard
+import com.gugachat.app.core.theme.GuHairlineDivider
+import com.gugachat.app.core.theme.GuHorizontalFadeOverlayStrip
 import com.gugachat.app.core.theme.GuIconTile
 import com.gugachat.app.core.theme.GuMetaText
-import com.gugachat.app.core.theme.GuModalDragHandle
+import com.gugachat.app.core.theme.GuModalBottomSheet
 import com.gugachat.app.core.theme.GuSectionHeader
 import com.gugachat.app.core.theme.GuSegmentedControl
 import com.gugachat.app.core.theme.GuSheetHeader
+import com.gugachat.app.core.theme.GuStatusBanner
+import com.gugachat.app.core.theme.GuStatusTone
 import com.gugachat.app.core.theme.GuTextField
 import com.gugachat.app.core.theme.LocalAppTheme
 import com.gugachat.app.data.api.DirectApiClient
@@ -289,7 +293,10 @@ fun ApiProviderFormContent(
                     fontSize = 11.5.sp,
                     fontWeight = FontWeight.SemiBold,
                 )
-                Box(modifier = Modifier.fillMaxWidth()) {
+                GuHorizontalFadeOverlayStrip(
+                    modifier = Modifier.fillMaxWidth(),
+                    fadeColor = fadeEndColor,
+                ) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -353,17 +360,6 @@ fun ApiProviderFormContent(
                             }
                         }
                     }
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.CenterEnd)
-                            .width(16.dp)
-                            .height(32.dp)
-                            .background(
-                                Brush.horizontalGradient(
-                                    colors = listOf(Color.Transparent, fadeEndColor),
-                                ),
-                            ),
-                    )
                 }
             }
         }
@@ -792,37 +788,10 @@ private fun ProtocolCompactBar(
 
 @Composable
 private fun ProviderErrorBanner(message: String) {
-    val c = LocalAppTheme.current.colors
-    Surface(
-        shape = RoundedCornerShape(10.dp),
-        color = c.dangerBg,
-        border = null,
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.Top,
-            horizontalArrangement = Arrangement.spacedBy(7.dp),
-        ) {
-            Icon(
-                imageVector = Icons.Default.ErrorOutline,
-                contentDescription = null,
-                tint = c.danger,
-                modifier = Modifier
-                    .padding(top = 1.dp)
-                    .size(15.dp),
-            )
-            Text(
-                text = message,
-                color = c.danger,
-                fontSize = 12.sp,
-                lineHeight = 17.sp,
-                modifier = Modifier.weight(1f),
-            )
-        }
-    }
+    GuStatusBanner(
+        message = message,
+        tone = GuStatusTone.ERROR,
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -844,12 +813,9 @@ fun ApiProviderEditorSheet(
     val protoLabel = strings.providers.protocolShortNames[initialDraft.protocol.wireValue]
         ?: initialDraft.protocol.displayName
 
-    ModalBottomSheet(
+    GuModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = c.page,
-        dragHandle = { GuModalDragHandle() },
-        modifier = Modifier.statusBarsPadding(),
     ) {
         Column(
             modifier = Modifier
@@ -1196,12 +1162,9 @@ fun ApiProviderImportSheet(
         }
     }
 
-    ModalBottomSheet(
+    GuModalBottomSheet(
         onDismissRequest = { if (!isBusy) onDismiss() },
         sheetState = sheetState,
-        containerColor = c.page,
-        dragHandle = { GuModalDragHandle() },
-        modifier = Modifier.statusBarsPadding(),
     ) {
         Column(
             modifier = Modifier

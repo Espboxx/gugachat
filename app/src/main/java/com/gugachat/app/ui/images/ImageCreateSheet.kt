@@ -71,8 +71,9 @@ import com.gugachat.app.core.theme.GuBadgeVariant
 import com.gugachat.app.core.theme.GuButton
 import com.gugachat.app.core.theme.GuButtonVariant
 import com.gugachat.app.core.theme.GuCard
+import com.gugachat.app.core.theme.GuHairlineDivider
 import com.gugachat.app.core.theme.GuMetaText
-import com.gugachat.app.core.theme.GuModalDragHandle
+import com.gugachat.app.core.theme.GuModalBottomSheet
 import com.gugachat.app.core.theme.GuSearchableListBox
 import com.gugachat.app.core.theme.GuSelectableListRow
 import com.gugachat.app.core.theme.GuSheetHeader
@@ -159,12 +160,9 @@ fun ImageCreateSheet(
     val totalRefs = state.referenceUploads.size + state.referenceAssets.size
     val modelHasFree = activeModel != null && FreeQuotaUtils.hasAvailableFreeQuota(activeModel.free_quota)
 
-    ModalBottomSheet(
+    GuModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = c.page,
-        dragHandle = { GuModalDragHandle() },
-        modifier = Modifier.statusBarsPadding(),
     ) {
         Column(
             modifier = Modifier

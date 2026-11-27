@@ -79,6 +79,8 @@ import androidx.compose.ui.window.DialogWindowProvider
 import androidx.core.view.WindowCompat
 import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.i18n.LocalAppStrings
+import com.gugachat.app.core.theme.GuHairlineDivider
+import com.gugachat.app.core.theme.GuModalBottomSheet
 import com.gugachat.app.core.theme.LocalAppTheme
 import com.gugachat.app.domain.chat.ChatMessage
 import com.gugachat.app.domain.chat.NovelChapter
@@ -929,10 +931,12 @@ fun PureReadingOverlay(
         // Table of Contents Bottom Sheet
         if (showTocSheet) {
             val tocSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-            ModalBottomSheet(
+            GuModalBottomSheet(
                 onDismissRequest = { showTocSheet = false },
                 sheetState = tocSheetState,
                 containerColor = readerColors.bg,
+                dragHandle = null,
+                applyStatusBarsPadding = false,
             ) {
                 Column(
                     modifier = Modifier

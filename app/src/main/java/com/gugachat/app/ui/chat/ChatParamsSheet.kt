@@ -86,15 +86,20 @@ import com.gugachat.app.core.i18n.fmt
 import com.gugachat.app.core.theme.GuBadge
 import com.gugachat.app.core.theme.GuBadgeVariant
 import com.gugachat.app.core.theme.GuCard
+import com.gugachat.app.core.theme.GuCompactActionPill
 import com.gugachat.app.core.theme.GuGroupedCard
+import com.gugachat.app.core.theme.GuHairlineDivider
 import com.gugachat.app.core.theme.GuInlineStepper
+import com.gugachat.app.core.theme.GuLabeledSliderRow
 import com.gugachat.app.core.theme.GuMetaText
-import com.gugachat.app.core.theme.GuModalDragHandle
+import com.gugachat.app.core.theme.GuModalBottomSheet
 import com.gugachat.app.core.theme.GuPill
+import com.gugachat.app.core.theme.GuPushPopContainer
 import com.gugachat.app.core.theme.GuSectionHeader
 import com.gugachat.app.core.theme.GuSegmentedControl
 import com.gugachat.app.core.theme.GuSettingsRow
 import com.gugachat.app.core.theme.GuSheetHeader
+import com.gugachat.app.core.theme.GuSubpageTopBar
 import com.gugachat.app.core.theme.GuSwitchRow
 import com.gugachat.app.core.theme.GuTextField
 import com.gugachat.app.core.theme.LocalAppTheme
@@ -369,27 +374,15 @@ fun ChatParamsSheet(
     )
 
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(
+    GuModalBottomSheet(
         onDismissRequest = {
             flushIfDirty()
             onDismiss()
         },
         sheetState = sheetState,
-        containerColor = c.page,
-        dragHandle = { GuModalDragHandle() },
-        modifier = Modifier.statusBarsPadding(),
     ) {
-        AnimatedContent(
-            targetState = showingPresetSubpage,
-            transitionSpec = {
-                if (!targetState) {
-                    (slideInHorizontally(tween(220)) { -it / 4 } + fadeIn(tween(180)))
-                        .togetherWith(slideOutHorizontally(tween(220)) { it / 3 } + fadeOut(tween(140)))
-                } else {
-                    (slideInHorizontally(tween(220)) { it / 3 } + fadeIn(tween(180)))
-                        .togetherWith(slideOutHorizontally(tween(220)) { -it / 4 } + fadeOut(tween(140)))
-                }
-            },
+        GuPushPopContainer(
+            showingSubpage = showingPresetSubpage,
             label = "params_preset_subpage",
             modifier = Modifier
                 .fillMaxWidth()
@@ -1392,80 +1385,18 @@ private fun NullableSamplingSliderRow(
     onValueChange: (Double?) -> Unit,
     onCommit: () -> Unit,
 ) {
-    val c = LocalAppTheme.current.colors
-    val minVal = valueRange.start.toDouble()
-    val maxVal = valueRange.endInclusive.toDouble()
-    val currentNumeric = value ?: defaultAnchor
-    val snapThreshold = step * 0.45
-
-    fun normalize(raw: Double): Double? {
-        val clamped = raw.coerceIn(minVal, maxVal)
-        val rounded = (clamped * 100.0).roundToInt() / 100.0
-        return if (abs(rounded - defaultAnchor) < snapThreshold) null else rounded
-    }
-
-    val displayText = if (value == null) {
-        if (isZh) "默认" else "Auto"
-    } else {
-        String.format(Locale.US, "%.2f", value)
-    }
-
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 14.dp, vertical = 8.dp),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            Text(
-                text = label,
-                color = c.ink,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.weight(1f),
-            )
-            if (value != null) {
-                Text(
-                    text = if (isZh) "归零" else "Reset",
-                    color = c.primary,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(6.dp))
-                        .clickable {
-                            onValueChange(null)
-                            onCommit()
-                        }
-                        .padding(horizontal = 6.dp, vertical = 2.dp),
-                )
-            }
-            GuInlineStepper(
-                valueText = displayText,
-                onDecrement = {
-                    onValueChange(normalize(currentNumeric - step))
-                    onCommit()
-                },
-                onIncrement = {
-                    onValueChange(normalize(currentNumeric + step))
-                    onCommit()
-                },
-                canDecrement = currentNumeric > minVal + 0.001,
-                canIncrement = currentNumeric < maxVal - 0.001,
-            )
-        }
-        Slider(
-            value = currentNumeric.toFloat().coerceIn(valueRange.start, valueRange.endInclusive),
-            onValueChange = { sliderVal ->
-                onValueChange(normalize(sliderVal.toDouble()))
-            },
-            onValueChangeFinished = onCommit,
-            valueRange = valueRange,
-            colors = sliderColors,
-        )
-    }
+    GuLabeledSliderRow(
+        label = label,
+        value = value,
+        defaultAnchor = defaultAnchor,
+        valueRange = valueRange,
+        step = step,
+        autoText = if (isZh) "默认" else "Auto",
+        resetText = if (isZh) "归零" else "Reset",
+        sliderColors = sliderColors,
+        onValueChange = onValueChange,
+        onCommit = onCommit,
+    )
 }
 
 @Composable
@@ -1476,50 +1407,18 @@ private fun CompactInlineActionPill(
     bgColor: Color,
     onClick: () -> Unit,
 ) {
-    Surface(
+    GuCompactActionPill(
+        label = label,
         onClick = onClick,
-        enabled = !loading,
-        shape = RoundedCornerShape(999.dp),
-        color = bgColor,
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(3.dp),
-        ) {
-            if (loading) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(11.dp),
-                    strokeWidth = 1.6.dp,
-                    color = fgColor,
-                )
-            } else {
-                Icon(
-                    imageVector = Icons.Default.Bolt,
-                    contentDescription = null,
-                    tint = fgColor,
-                    modifier = Modifier.size(12.dp),
-                )
-            }
-            Text(
-                text = label,
-                color = fgColor,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-            )
-        }
-    }
+        loading = loading,
+        fgColor = fgColor,
+        bgColor = bgColor,
+    )
 }
 
 @Composable
 private fun SheetHairlineDivider(modifier: Modifier = Modifier) {
-    val c = LocalAppTheme.current.colors
-    HorizontalDivider(
-        modifier = modifier,
-        thickness = 0.5.dp,
-        color = c.border.copy(alpha = 0.45f),
-    )
+    GuHairlineDivider(modifier = modifier, alpha = 0.45f)
 }
 
 @Composable

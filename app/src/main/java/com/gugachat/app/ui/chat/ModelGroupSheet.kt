@@ -72,7 +72,7 @@ import com.gugachat.app.core.theme.GuCompactSearchBar
 import com.gugachat.app.core.theme.GuEmptyState
 import com.gugachat.app.core.theme.GuIconTile
 import com.gugachat.app.core.theme.GuMetaText
-import com.gugachat.app.core.theme.GuModalDragHandle
+import com.gugachat.app.core.theme.GuModalBottomSheet
 import com.gugachat.app.core.theme.GuModelAvatar
 import com.gugachat.app.core.theme.GuPill
 import com.gugachat.app.core.theme.GuSegmentedControl
@@ -202,12 +202,9 @@ fun ModelGroupSheet(
         params.maxTokens != null
 
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(
+    GuModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = c.page,
-        dragHandle = { GuModalDragHandle() },
-        modifier = Modifier.statusBarsPadding(),
     ) {
         Column(
             modifier = Modifier

@@ -111,20 +111,28 @@ import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.i18n.LocalAppStrings
 import com.gugachat.app.core.i18n.fmt
 import com.gugachat.app.core.storage.LocalMediaPathResolver
+import com.gugachat.app.core.theme.GuAccordionCard
 import com.gugachat.app.core.theme.GuBadge
 import com.gugachat.app.core.theme.GuBadgeVariant
 import com.gugachat.app.core.theme.GuButton
 import com.gugachat.app.core.theme.GuButtonVariant
 import com.gugachat.app.core.theme.GuCard
 import com.gugachat.app.core.theme.GuCompactSearchBar
+import com.gugachat.app.core.theme.GuCompactSwitch
 import com.gugachat.app.core.theme.GuEmptyState
 import com.gugachat.app.core.theme.GuGroupedCard
+import com.gugachat.app.core.theme.GuHairlineDivider
 import com.gugachat.app.core.theme.GuIconTile
+import com.gugachat.app.core.theme.GuInlineDeleteConfirmStrip
+import com.gugachat.app.core.theme.GuLinearProgressBar
 import com.gugachat.app.core.theme.GuMetaText
+import com.gugachat.app.core.theme.GuModalBottomSheet
 import com.gugachat.app.core.theme.GuPill
+import com.gugachat.app.core.theme.GuPushPopContainer
 import com.gugachat.app.core.theme.GuSectionHeader
 import com.gugachat.app.core.theme.GuSegmentedControl
 import com.gugachat.app.core.theme.GuSheetHeader
+import com.gugachat.app.core.theme.GuSubpageTopBar
 import com.gugachat.app.core.theme.GuSwitchRow
 import com.gugachat.app.core.theme.GuTextField
 import com.gugachat.app.core.theme.LocalAppTheme
@@ -210,11 +218,9 @@ fun NovelWizardDialog(
 
     val activePreset = NovelPresets.findById(selectedPreset)
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(
+    GuModalBottomSheet(
         onDismissRequest = { if (!isCreatingWithAi) onDismiss() },
         sheetState = sheetState,
-        containerColor = c.page,
-        modifier = Modifier.statusBarsPadding(),
     ) {
         Column(
             modifier = Modifier
@@ -699,11 +705,9 @@ fun NovelStudioSheet(
     }
 
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(
+    GuModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = c.page,
-        modifier = Modifier.statusBarsPadding(),
     ) {
         BackHandler(enabled = subPage != null) {
             subPage = null
@@ -877,14 +881,12 @@ fun NovelStudioSheet(
                                                             )
                                                         }
                                                     }
-                                                    LinearProgressIndicator(
-                                                        progress = { pct },
-                                                        modifier = Modifier
-                                                            .fillMaxWidth()
-                                                            .height(5.dp)
-                                                            .clip(RoundedCornerShape(999.dp)),
+                                                    GuLinearProgressBar(
+                                                        progress = pct,
+                                                        height = 5.dp,
                                                         color = if (pct >= 1f) c.success else c.primary,
                                                         trackColor = c.border.copy(alpha = 0.4f),
+                                                        modifier = Modifier.fillMaxWidth(),
                                                     )
                                                 }
                                             }
@@ -1052,14 +1054,12 @@ fun NovelStudioSheet(
                                                     }
 
                                                     if (ch.wordCount > 0) {
-                                                        LinearProgressIndicator(
-                                                            progress = { chProgress },
-                                                            modifier = Modifier
-                                                                .fillMaxWidth()
-                                                                .height(2.5.dp)
-                                                                .clip(RoundedCornerShape(999.dp)),
+                                                        GuLinearProgressBar(
+                                                            progress = chProgress,
+                                                            height = 2.5.dp,
                                                             color = if (ch.status == "done" || chProgress >= 1f) c.success else c.primary,
                                                             trackColor = c.border.copy(alpha = 0.35f),
+                                                            modifier = Modifier.fillMaxWidth(),
                                                         )
                                                     }
 
@@ -2434,52 +2434,12 @@ private fun NovelSubPageHeader(
     onBack: () -> Unit,
     trailing: (@Composable () -> Unit)? = null,
 ) {
-    val c = LocalAppTheme.current.colors
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(48.dp)
-                .padding(horizontal = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            Row(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(999.dp))
-                    .clickable(onClick = onBack)
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(3.dp),
-            ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = backLabel,
-                    tint = c.primary,
-                    modifier = Modifier.size(17.dp),
-                )
-                Text(
-                    text = backLabel,
-                    color = c.primary,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-            Text(
-                text = title,
-                color = c.ink,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-            if (trailing != null) {
-                trailing()
-            }
-        }
-        HorizontalDivider(thickness = 0.5.dp, color = c.border.copy(alpha = 0.45f))
-    }
+    GuSubpageTopBar(
+        title = title,
+        backLabel = backLabel,
+        onBack = onBack,
+        trailing = trailing,
+    )
 }
 
 @Composable
@@ -2598,32 +2558,13 @@ private fun NovelChapterDetailSubPage(
 
             if (canDelete) {
                 if (confirmDelete) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(c.dangerBg)
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            text = if (isZh) "删除《${chapter.title}》？正文将保留在相邻章节。" else "Delete chapter? Prose remains intact.",
-                            color = c.danger,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.weight(1f),
-                        )
-                        TextButton(onClick = { confirmDelete = false }) {
-                            Text(strings.common.cancel, color = c.muted, fontSize = 12.sp)
-                        }
-                        GuButton(
-                            onClick = onDelete,
-                            compact = true,
-                            variant = GuButtonVariant.DANGER,
-                        ) {
-                            Text(strings.common.delete, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                        }
-                    }
+                    GuInlineDeleteConfirmStrip(
+                        prompt = if (isZh) "删除《${chapter.title}》？正文将保留在相邻章节。" else "Delete chapter? Prose remains intact.",
+                        confirmText = strings.common.delete,
+                        cancelText = strings.common.cancel,
+                        onConfirm = onDelete,
+                        onCancel = { confirmDelete = false },
+                    )
                 } else {
                     TextButton(
                         onClick = { confirmDelete = true },
@@ -2886,32 +2827,13 @@ private fun NovelLoreEditorSubPage(
 
             if (existing != null) {
                 if (confirmDelete) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(c.dangerBg)
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            text = if (isZh) "确认永久删除「${existing.title}」？" else "Delete \"${existing.title}\"?",
-                            color = c.danger,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.weight(1f),
-                        )
-                        TextButton(onClick = { confirmDelete = false }) {
-                            Text(strings.common.cancel, color = c.muted, fontSize = 12.sp)
-                        }
-                        GuButton(
-                            onClick = { onDelete(existing.id) },
-                            compact = true,
-                            variant = GuButtonVariant.DANGER,
-                        ) {
-                            Text(strings.common.delete, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                        }
-                    }
+                    GuInlineDeleteConfirmStrip(
+                        prompt = if (isZh) "确认永久删除「${existing.title}」？" else "Delete \"${existing.title}\"?",
+                        confirmText = strings.common.delete,
+                        cancelText = strings.common.cancel,
+                        onConfirm = { onDelete(existing.id) },
+                        onCancel = { confirmDelete = false },
+                    )
                 } else {
                     TextButton(
                         onClick = { confirmDelete = true },
@@ -2936,55 +2858,14 @@ private fun ArchiveAccordionCard(
     onToggle: () -> Unit,
     content: @Composable () -> Unit,
 ) {
-    val c = LocalAppTheme.current.colors
-    GuCard(
-        modifier = Modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 11.dp),
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(onClick = onToggle),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                ) {
-                    Text(
-                        text = title,
-                        color = c.ink,
-                        fontSize = 13.5.sp,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    if (!expanded) {
-                        Text(
-                            text = preview.trim().replace('\n', ' ').ifBlank { emptyText },
-                            color = c.muted,
-                            fontSize = 11.5.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                }
-                Icon(
-                    imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                    contentDescription = null,
-                    tint = c.muted,
-                    modifier = Modifier.size(18.dp),
-                )
-            }
-            AnimatedVisibility(
-                visible = expanded,
-                enter = expandVertically() + fadeIn(),
-                exit = shrinkVertically() + fadeOut(),
-            ) {
-                content()
-            }
-        }
-    }
+    GuAccordionCard(
+        title = title,
+        expanded = expanded,
+        onToggle = onToggle,
+        preview = preview,
+        emptyText = emptyText,
+        content = { content() },
+    )
 }
 
 @Composable
@@ -2992,27 +2873,10 @@ private fun CompactTogglePill(
     checked: Boolean,
     onToggle: () -> Unit,
 ) {
-    val theme = LocalAppTheme.current
-    val c = theme.colors
-    val trackColor = if (checked) c.primary else c.surfaceSoft
-    val thumbOffset = if (checked) 14.dp else 2.dp
-    Box(
-        modifier = Modifier
-            .width(34.dp)
-            .height(20.dp)
-            .clip(RoundedCornerShape(999.dp))
-            .background(trackColor)
-            .clickable(onClick = onToggle),
-        contentAlignment = Alignment.CenterStart,
-    ) {
-        Box(
-            modifier = Modifier
-                .offset(x = thumbOffset)
-                .size(16.dp)
-                .clip(CircleShape)
-                .background(if (checked) Color.White else if (theme.isDark) Color(0xFFB4C0D6) else Color(0xFF94A3B8)),
-        )
-    }
+    GuCompactSwitch(
+        checked = checked,
+        onCheckedChange = { onToggle() },
+    )
 }
 
 private fun localizeChapterStatus(status: String, isZh: Boolean): String = when (status.lowercase()) {

@@ -77,18 +77,25 @@ import com.gugachat.app.core.theme.GuButtonVariant
 import com.gugachat.app.core.theme.GuCard
 import com.gugachat.app.core.theme.GuConfirmDialog
 import com.gugachat.app.core.theme.GuGroupedCard
+import com.gugachat.app.core.theme.GuHairlineDivider
 import com.gugachat.app.core.theme.GuIconTile
 import com.gugachat.app.core.theme.GuInlineStepper
+import com.gugachat.app.core.theme.GuLabeledStepperRow
+import com.gugachat.app.core.theme.GuLinearProgressBar
 import com.gugachat.app.core.theme.GuMetaText
-import com.gugachat.app.core.theme.GuModalDragHandle
+import com.gugachat.app.core.theme.GuModalBottomSheet
+import com.gugachat.app.core.theme.GuPasswordField
 import com.gugachat.app.core.theme.GuPill
 import com.gugachat.app.core.theme.GuSectionHeader
 import com.gugachat.app.core.theme.GuSegmentedControl
 import com.gugachat.app.core.theme.GuSettingsRow
 import com.gugachat.app.core.theme.GuSheetHeader
+import com.gugachat.app.core.theme.GuStatusBanner
+import com.gugachat.app.core.theme.GuStatusTone
 import com.gugachat.app.core.theme.GuSwitchRow
 import com.gugachat.app.core.theme.GuTextField
 import com.gugachat.app.core.theme.LocalAppTheme
+import com.gugachat.app.core.util.FormatUtils
 import com.gugachat.app.data.api.DiscoveredModelKind
 import com.gugachat.app.data.api.DiscoveredRetrievalModel
 import com.gugachat.app.data.local.LocalEmbeddingModelManager
@@ -242,12 +249,9 @@ fun RetrievalSettingsSheet(
     }
 
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(
+    GuModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = c.page,
-        dragHandle = { GuModalDragHandle() },
-        modifier = Modifier.statusBarsPadding(),
     ) {
         Column(
             modifier = Modifier
@@ -405,7 +409,7 @@ fun RetrievalSettingsSheet(
                                         when (dlState) {
                                             is LocalModelDownloadState.Ready -> {
                                                 GuBadge(
-                                                    text = "${ctxUi.localReadyBadge} · ${formatSizeMb(dlState.sizeBytes)}",
+                                                    text = "${ctxUi.localReadyBadge} · ${FormatUtils.formatSizeMb(dlState.sizeBytes)}",
                                                     variant = GuBadgeVariant.EMERALD,
                                                 )
                                             }
@@ -429,26 +433,17 @@ fun RetrievalSettingsSheet(
                                                 0
                                             }
                                             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                                if (dlState.totalBytes > 0L) {
-                                                    LinearProgressIndicator(
-                                                        progress = { (dlState.bytesRead.toFloat() / dlState.totalBytes.toFloat()).coerceIn(0f, 1f) },
-                                                        modifier = Modifier
-                                                            .fillMaxWidth()
-                                                            .height(6.dp)
-                                                            .clip(RoundedCornerShape(999.dp)),
-                                                        color = c.primary,
-                                                        trackColor = c.surfaceSoft,
-                                                    )
-                                                } else {
-                                                    LinearProgressIndicator(
-                                                        modifier = Modifier
-                                                            .fillMaxWidth()
-                                                            .height(6.dp)
-                                                            .clip(RoundedCornerShape(999.dp)),
-                                                        color = c.primary,
-                                                        trackColor = c.surfaceSoft,
-                                                    )
-                                                }
+                                                GuLinearProgressBar(
+                                                    progress = if (dlState.totalBytes > 0L) {
+                                                        (dlState.bytesRead.toFloat() / dlState.totalBytes.toFloat()).coerceIn(0f, 1f)
+                                                    } else {
+                                                        null
+                                                    },
+                                                    height = 6.dp,
+                                                    color = c.primary,
+                                                    trackColor = c.surfaceSoft,
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                )
                                                 Row(
                                                     modifier = Modifier.fillMaxWidth(),
                                                     verticalAlignment = Alignment.CenterVertically,
@@ -623,285 +618,190 @@ fun RetrievalSettingsSheet(
                             )
 
                             GuCard(modifier = Modifier.fillMaxWidth()) {
-                                Text(
-                                    text = ctxUi.remoteProviderLabel,
-                                    color = c.ink,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                )
-                                Spacer(Modifier.height(6.dp))
-                                FlowRow(
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                                ) {
-                                    GuPill(
-                                        label = ctxUi.remoteProviderCustom,
-                                        selected = embedCfg.providerId.isBlank(),
-                                        onClick = {
+                                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    RemoteEndpointConfigFields(
+                                        compatibleProviders = embedCompatibleProviders,
+                                        selectedProviderId = embedCfg.providerId,
+                                        customOptionLabel = ctxUi.remoteProviderCustom,
+                                        providerSectionLabel = ctxUi.remoteProviderLabel,
+                                        onSelectCustomProvider = {
                                             onUpdateRemoteEmbeddingConfig(embedCfg.copy(providerId = ""))
                                         },
-                                    )
-                                    embedCompatibleProviders.forEach { prov ->
-                                        GuPill(
-                                            label = prov.name.ifBlank { prov.protocol.name },
-                                            selected = embedCfg.providerId == prov.id,
-                                            onClick = {
-                                                onUpdateRemoteEmbeddingConfig(
-                                                    embedCfg.copy(
-                                                        providerId = prov.id,
-                                                        protocol = prov.protocol,
-                                                    ),
-                                                )
-                                            },
-                                        )
-                                    }
-                                }
-
-                                if (embedCfg.providerId.isBlank()) {
-                                    Spacer(Modifier.height(12.dp))
-                                    Text(
-                                        text = ctxUi.remoteProtocolLabel,
-                                        color = c.ink,
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                    )
-                                    Spacer(Modifier.height(6.dp))
-                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        GuPill(
-                                            label = ctxUi.remoteProtocolOpenAi,
-                                            selected = embedCfg.protocol != ApiProtocol.GEMINI,
-                                            onClick = {
-                                                onUpdateRemoteEmbeddingConfig(embedCfg.copy(protocol = ApiProtocol.OPENAI_CHAT))
-                                            },
-                                        )
-                                        GuPill(
-                                            label = ctxUi.remoteProtocolGemini,
-                                            selected = embedCfg.protocol == ApiProtocol.GEMINI,
-                                            onClick = {
-                                                onUpdateRemoteEmbeddingConfig(embedCfg.copy(protocol = ApiProtocol.GEMINI))
-                                            },
-                                        )
-                                    }
-
-                                    Spacer(Modifier.height(10.dp))
-                                    GuTextField(
-                                        value = embedBaseUrlDraft,
-                                        onValueChange = {
+                                        onSelectProvider = { prov ->
+                                            onUpdateRemoteEmbeddingConfig(
+                                                embedCfg.copy(
+                                                    providerId = prov.id,
+                                                    protocol = prov.protocol,
+                                                ),
+                                            )
+                                        },
+                                        baseUrlDraft = embedBaseUrlDraft,
+                                        onBaseUrlChange = {
                                             embedBaseUrlDraft = it
                                             lastDispatchedEmbedBaseUrl = it
                                             onUpdateRemoteEmbeddingConfig(embedCfg.copy(customBaseUrl = it))
                                         },
-                                        label = ctxUi.remoteBaseUrlLabel,
-                                        placeholder = ctxUi.remoteBaseUrlPlaceholder,
-                                    )
-
-                                    Spacer(Modifier.height(10.dp))
-                                    GuTextField(
-                                        value = embedApiKeyDraft,
-                                        onValueChange = {
+                                        baseUrlLabel = ctxUi.remoteBaseUrlLabel,
+                                        baseUrlPlaceholder = ctxUi.remoteBaseUrlPlaceholder,
+                                        apiKeyDraft = embedApiKeyDraft,
+                                        onApiKeyChange = {
                                             embedApiKeyDraft = it
                                             lastDispatchedEmbedApiKey = it
                                             onUpdateRemoteEmbeddingConfig(embedCfg.copy(customApiKey = it))
                                         },
-                                        label = ctxUi.remoteApiKeyLabel,
-                                        placeholder = ctxUi.remoteApiKeyPlaceholder,
-                                        visualTransformation = if (showEmbedApiKey) {
-                                            VisualTransformation.None
-                                        } else {
-                                            PasswordVisualTransformation()
+                                        apiKeyLabel = ctxUi.remoteApiKeyLabel,
+                                        apiKeyPlaceholder = ctxUi.remoteApiKeyPlaceholder,
+                                        protocolSection = {
+                                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                Text(
+                                                    text = ctxUi.remoteProtocolLabel,
+                                                    color = c.ink,
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                )
+                                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                    GuPill(
+                                                        label = ctxUi.remoteProtocolOpenAi,
+                                                        selected = embedCfg.protocol != ApiProtocol.GEMINI,
+                                                        onClick = {
+                                                            onUpdateRemoteEmbeddingConfig(embedCfg.copy(protocol = ApiProtocol.OPENAI_CHAT))
+                                                        },
+                                                    )
+                                                    GuPill(
+                                                        label = ctxUi.remoteProtocolGemini,
+                                                        selected = embedCfg.protocol == ApiProtocol.GEMINI,
+                                                        onClick = {
+                                                            onUpdateRemoteEmbeddingConfig(embedCfg.copy(protocol = ApiProtocol.GEMINI))
+                                                        },
+                                                    )
+                                                }
+                                            }
                                         },
-                                        trailingIcon = {
-                                            IconButton(onClick = { showEmbedApiKey = !showEmbedApiKey }) {
-                                                Icon(
-                                                    imageVector = if (showEmbedApiKey) {
-                                                        Icons.Default.VisibilityOff
-                                                    } else {
-                                                        Icons.Default.Visibility
+                                        modelInputContent = {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                verticalAlignment = Alignment.Bottom,
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            ) {
+                                                GuTextField(
+                                                    value = embedModelIdDraft,
+                                                    onValueChange = {
+                                                        embedModelIdDraft = it
+                                                        lastDispatchedEmbedModelId = it
+                                                        onUpdateRemoteEmbeddingConfig(embedCfg.copy(modelId = it))
                                                     },
-                                                    contentDescription = null,
-                                                    tint = c.muted,
-                                                    modifier = Modifier.size(18.dp),
+                                                    label = ctxUi.remoteModelIdLabel,
+                                                    placeholder = ctxUi.remoteModelIdPlaceholder,
+                                                    modifier = Modifier.weight(1f),
+                                                )
+                                                GuButton(
+                                                    onClick = {
+                                                        onFetchRemoteRetrievalModels(
+                                                            embedCfg.providerId,
+                                                            embedBaseUrlDraft,
+                                                            embedApiKeyDraft,
+                                                            embedCfg.protocol,
+                                                        )
+                                                    },
+                                                    loading = isFetchingRetrievalModels,
+                                                    compact = true,
+                                                    variant = GuButtonVariant.SECONDARY,
+                                                    modifier = Modifier.padding(bottom = 4.dp),
+                                                ) {
+                                                    if (!isFetchingRetrievalModels) {
+                                                        Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(14.dp))
+                                                        Spacer(Modifier.width(4.dp))
+                                                    }
+                                                    Text(
+                                                        text = if (isFetchingRetrievalModels) {
+                                                            ctxUi.remoteFetchingModelsBtn
+                                                        } else {
+                                                            ctxUi.remoteFetchModelsBtn
+                                                        },
+                                                        fontSize = 11.5.sp,
+                                                        fontWeight = FontWeight.SemiBold,
+                                                    )
+                                                }
+                                            }
+                                        },
+                                        discoveredLabel = ctxUi.remoteDiscoveredLabel,
+                                        discoveredModels = discoveredEmbedModels,
+                                        selectedModelId = embedModelIdDraft,
+                                        onSelectDiscoveredModel = { modelId ->
+                                            embedModelIdDraft = modelId
+                                            onUpdateRemoteEmbeddingConfig(embedCfg.copy(modelId = modelId))
+                                        },
+                                        discoveredLimit = 12,
+                                        presetsLabel = ctxUi.remotePresetsLabel,
+                                        presetsContent = {
+                                            items(REMOTE_EMBEDDING_PRESETS, key = { it.id }) { preset ->
+                                                val isCurrent = embedModelIdDraft.equals(preset.modelId, ignoreCase = true) &&
+                                                    (embedCfg.providerId.isNotBlank() || embedBaseUrlDraft.trim().startsWith(preset.defaultBaseUrl.take(24)))
+                                                GuPill(
+                                                    label = "${preset.providerName} · ${preset.modelId.substringAfterLast('/')}",
+                                                    selected = isCurrent,
+                                                    useHoneySelected = preset.isFreeTier,
+                                                    onClick = {
+                                                        embedModelIdDraft = preset.modelId
+                                                        val nextBase = if (embedCfg.providerId.isBlank()) {
+                                                            embedBaseUrlDraft = preset.defaultBaseUrl
+                                                            preset.defaultBaseUrl
+                                                        } else {
+                                                            embedCfg.customBaseUrl
+                                                        }
+                                                        onUpdateRemoteEmbeddingConfig(
+                                                            embedCfg.copy(
+                                                                customBaseUrl = nextBase,
+                                                                protocol = if (embedCfg.providerId.isBlank()) preset.protocol else embedCfg.protocol,
+                                                                modelId = preset.modelId,
+                                                                dimensions = if (preset.supportsMrl) embedCfg.dimensions else null,
+                                                            ),
+                                                        )
+                                                    },
                                                 )
                                             }
                                         },
                                     )
-                                }
 
-                                Spacer(Modifier.height(10.dp))
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalAlignment = Alignment.Bottom,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                ) {
-                                    GuTextField(
-                                        value = embedModelIdDraft,
-                                        onValueChange = {
-                                            embedModelIdDraft = it
-                                            lastDispatchedEmbedModelId = it
-                                            onUpdateRemoteEmbeddingConfig(embedCfg.copy(modelId = it))
-                                        },
-                                        label = ctxUi.remoteModelIdLabel,
-                                        placeholder = ctxUi.remoteModelIdPlaceholder,
-                                        modifier = Modifier.weight(1f),
-                                    )
-                                    GuButton(
-                                        onClick = {
-                                            onFetchRemoteRetrievalModels(
-                                                embedCfg.providerId,
-                                                embedBaseUrlDraft,
-                                                embedApiKeyDraft,
-                                                embedCfg.protocol,
-                                            )
-                                        },
-                                        loading = isFetchingRetrievalModels,
-                                        compact = true,
-                                        variant = GuButtonVariant.SECONDARY,
-                                        modifier = Modifier.padding(bottom = 4.dp),
-                                    ) {
-                                        if (!isFetchingRetrievalModels) {
-                                            Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(14.dp))
-                                            Spacer(Modifier.width(4.dp))
-                                        }
-                                        Text(
-                                            text = if (isFetchingRetrievalModels) {
-                                                ctxUi.remoteFetchingModelsBtn
-                                            } else {
-                                                ctxUi.remoteFetchModelsBtn
-                                            },
-                                            fontSize = 11.5.sp,
-                                            fontWeight = FontWeight.SemiBold,
-                                        )
-                                    }
-                                }
-
-                                if (discoveredEmbedModels.isNotEmpty()) {
-                                    Spacer(Modifier.height(10.dp))
                                     Text(
-                                        text = ctxUi.remoteDiscoveredLabel,
-                                        color = c.muted,
-                                        fontSize = 11.5.sp,
+                                        text = ctxUi.remoteDimensionsLabel,
+                                        color = c.ink,
+                                        fontSize = 12.sp,
                                         fontWeight = FontWeight.SemiBold,
                                     )
-                                    Spacer(Modifier.height(6.dp))
-                                    FlowRow(
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                                    ) {
-                                        discoveredEmbedModels.take(12).forEach { dm ->
+                                    val dimOptions = remember { listOf(null, 512, 768, 1024) }
+                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        dimOptions.forEach { dim ->
                                             GuPill(
-                                                label = dm.id,
-                                                selected = embedModelIdDraft.equals(dm.id, ignoreCase = true),
-                                                useHoneySelected = true,
+                                                label = dim?.toString() ?: ctxUi.remoteDimAuto,
+                                                selected = embedCfg.dimensions == dim,
                                                 onClick = {
-                                                    embedModelIdDraft = dm.id
-                                                    onUpdateRemoteEmbeddingConfig(embedCfg.copy(modelId = dm.id))
+                                                    onUpdateRemoteEmbeddingConfig(embedCfg.copy(dimensions = dim))
                                                 },
                                             )
                                         }
                                     }
-                                }
 
-                                Spacer(Modifier.height(12.dp))
-                                Text(
-                                    text = ctxUi.remotePresetsLabel,
-                                    color = c.muted,
-                                    fontSize = 11.5.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                )
-                                Spacer(Modifier.height(6.dp))
-                                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    items(REMOTE_EMBEDDING_PRESETS, key = { it.id }) { preset ->
-                                        val isCurrent = embedModelIdDraft.equals(preset.modelId, ignoreCase = true) &&
-                                            (embedCfg.providerId.isNotBlank() || embedBaseUrlDraft.trim().startsWith(preset.defaultBaseUrl.take(24)))
-                                        GuPill(
-                                            label = "${preset.providerName} · ${preset.modelId.substringAfterLast('/')}",
-                                            selected = isCurrent,
-                                            useHoneySelected = preset.isFreeTier,
-                                            onClick = {
-                                                embedModelIdDraft = preset.modelId
-                                                val nextBase = if (embedCfg.providerId.isBlank()) {
-                                                    embedBaseUrlDraft = preset.defaultBaseUrl
-                                                    preset.defaultBaseUrl
-                                                } else {
-                                                    embedCfg.customBaseUrl
-                                                }
-                                                onUpdateRemoteEmbeddingConfig(
-                                                    embedCfg.copy(
-                                                        customBaseUrl = nextBase,
-                                                        protocol = if (embedCfg.providerId.isBlank()) preset.protocol else embedCfg.protocol,
-                                                        modelId = preset.modelId,
-                                                        dimensions = if (preset.supportsMrl) embedCfg.dimensions else null,
-                                                    ),
-                                                )
-                                            },
-                                        )
-                                    }
-                                }
-
-                                Spacer(Modifier.height(12.dp))
-                                Text(
-                                    text = ctxUi.remoteDimensionsLabel,
-                                    color = c.ink,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                )
-                                Spacer(Modifier.height(6.dp))
-                                val dimOptions = remember { listOf(null, 512, 768, 1024) }
-                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    dimOptions.forEach { dim ->
-                                        GuPill(
-                                            label = dim?.toString() ?: ctxUi.remoteDimAuto,
-                                            selected = embedCfg.dimensions == dim,
-                                            onClick = {
-                                                onUpdateRemoteEmbeddingConfig(embedCfg.copy(dimensions = dim))
-                                            },
-                                        )
-                                    }
-                                }
-
-                                Spacer(Modifier.height(14.dp))
-                                GuButton(
-                                    onClick = onTestRemoteEmbedding,
-                                    loading = isTestingEmbedding,
-                                    variant = GuButtonVariant.PRIMARY,
-                                    modifier = Modifier.fillMaxWidth(),
-                                ) {
-                                    Text(
-                                        text = if (isTestingEmbedding) ctxUi.remoteTestingEmbedBtn else ctxUi.remoteTestEmbedBtn,
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                    )
-                                }
-
-                                if (!embeddingTestStatus.isNullOrBlank()) {
-                                    Spacer(Modifier.height(8.dp))
-                                    val isErr = embeddingTestStatus.startsWith("失败") ||
-                                        embeddingTestStatus.startsWith("Failed", ignoreCase = true)
-                                    Surface(
-                                        shape = RoundedCornerShape(10.dp),
-                                        color = if (isErr) c.dangerBg else c.successBg,
-                                        border = null,
+                                    GuButton(
+                                        onClick = onTestRemoteEmbedding,
+                                        loading = isTestingEmbedding,
+                                        variant = GuButtonVariant.PRIMARY,
                                         modifier = Modifier.fillMaxWidth(),
                                     ) {
-                                        Row(
-                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(7.dp),
-                                        ) {
-                                            Icon(
-                                                imageVector = if (isErr) Icons.Default.ErrorOutline else Icons.Default.CheckCircle,
-                                                contentDescription = null,
-                                                tint = if (isErr) c.danger else c.success,
-                                                modifier = Modifier.size(16.dp),
-                                            )
-                                            Text(
-                                                text = embeddingTestStatus,
-                                                color = if (isErr) c.danger else c.success,
-                                                fontSize = 12.sp,
-                                                fontWeight = FontWeight.SemiBold,
-                                                lineHeight = 16.5.sp,
-                                            )
-                                        }
+                                        Text(
+                                            text = if (isTestingEmbedding) ctxUi.remoteTestingEmbedBtn else ctxUi.remoteTestEmbedBtn,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                        )
+                                    }
+
+                                    if (!embeddingTestStatus.isNullOrBlank()) {
+                                        val isErr = embeddingTestStatus.startsWith("失败") ||
+                                            embeddingTestStatus.startsWith("Failed", ignoreCase = true)
+                                        GuStatusBanner(
+                                            message = embeddingTestStatus,
+                                            tone = if (isErr) GuStatusTone.ERROR else GuStatusTone.SUCCESS,
+                                        )
                                     }
                                 }
                             }
@@ -925,10 +825,9 @@ fun RetrievalSettingsSheet(
                                 )
 
                                 if (rerankCfg.enabled) {
-                                    HorizontalDivider(
+                                    GuHairlineDivider(
                                         modifier = Modifier.padding(horizontal = 14.dp),
-                                        thickness = 0.5.dp,
-                                        color = c.border.copy(alpha = 0.65f),
+                                        alpha = 0.65f,
                                     )
                                     Column(
                                         modifier = Modifier
@@ -936,142 +835,81 @@ fun RetrievalSettingsSheet(
                                             .padding(14.dp),
                                         verticalArrangement = Arrangement.spacedBy(10.dp),
                                     ) {
-                                        Text(
-                                            text = ctxUi.remoteProviderLabel,
-                                            color = c.ink,
-                                            fontSize = 12.sp,
-                                            fontWeight = FontWeight.SemiBold,
-                                        )
-                                        FlowRow(
-                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                            verticalArrangement = Arrangement.spacedBy(6.dp),
-                                        ) {
-                                            GuPill(
-                                                label = ctxUi.remoteProviderCustom,
-                                                selected = rerankCfg.providerId.isBlank(),
-                                                onClick = {
-                                                    onUpdateRemoteRerankConfig(rerankCfg.copy(providerId = ""))
-                                                },
-                                            )
-                                            rerankCompatibleProviders.forEach { prov ->
-                                                GuPill(
-                                                    label = prov.name.ifBlank { prov.protocol.name },
-                                                    selected = rerankCfg.providerId == prov.id,
-                                                    onClick = {
-                                                        onUpdateRemoteRerankConfig(rerankCfg.copy(providerId = prov.id))
-                                                    },
-                                                )
-                                            }
-                                        }
-
-                                        if (rerankCfg.providerId.isBlank()) {
-                                            GuTextField(
-                                                value = rerankBaseUrlDraft,
-                                                onValueChange = {
-                                                    rerankBaseUrlDraft = it
-                                                    lastDispatchedRerankBaseUrl = it
-                                                    onUpdateRemoteRerankConfig(rerankCfg.copy(customBaseUrl = it))
-                                                },
-                                                label = ctxUi.remoteBaseUrlLabel,
-                                                placeholder = ctxUi.remoteBaseUrlPlaceholder,
-                                            )
-                                            GuTextField(
-                                                value = rerankApiKeyDraft,
-                                                onValueChange = {
-                                                    rerankApiKeyDraft = it
-                                                    lastDispatchedRerankApiKey = it
-                                                    onUpdateRemoteRerankConfig(rerankCfg.copy(customApiKey = it))
-                                                },
-                                                label = ctxUi.remoteApiKeyLabel,
-                                                placeholder = ctxUi.remoteApiKeyPlaceholder,
-                                                visualTransformation = if (showRerankApiKey) {
-                                                    VisualTransformation.None
-                                                } else {
-                                                    PasswordVisualTransformation()
-                                                },
-                                                trailingIcon = {
-                                                    IconButton(onClick = { showRerankApiKey = !showRerankApiKey }) {
-                                                        Icon(
-                                                            imageVector = if (showRerankApiKey) {
-                                                                Icons.Default.VisibilityOff
-                                                            } else {
-                                                                Icons.Default.Visibility
-                                                            },
-                                                            contentDescription = null,
-                                                            tint = c.muted,
-                                                            modifier = Modifier.size(18.dp),
-                                                        )
-                                                    }
-                                                },
-                                            )
-                                        }
-
-                                        GuTextField(
-                                            value = rerankModelIdDraft,
-                                            onValueChange = {
-                                                rerankModelIdDraft = it
-                                                lastDispatchedRerankModelId = it
-                                                onUpdateRemoteRerankConfig(rerankCfg.copy(modelId = it))
+                                        RemoteEndpointConfigFields(
+                                            compatibleProviders = rerankCompatibleProviders,
+                                            selectedProviderId = rerankCfg.providerId,
+                                            customOptionLabel = ctxUi.remoteProviderCustom,
+                                            providerSectionLabel = ctxUi.remoteProviderLabel,
+                                            onSelectCustomProvider = {
+                                                onUpdateRemoteRerankConfig(rerankCfg.copy(providerId = ""))
                                             },
-                                            label = ctxUi.remoteRerankModelLabel,
-                                            placeholder = ctxUi.remoteRerankModelPlaceholder,
-                                        )
-
-                                        if (discoveredRerankModels.isNotEmpty()) {
-                                            FlowRow(
-                                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                                verticalArrangement = Arrangement.spacedBy(6.dp),
-                                            ) {
-                                                discoveredRerankModels.take(8).forEach { dm ->
+                                            onSelectProvider = { prov ->
+                                                onUpdateRemoteRerankConfig(rerankCfg.copy(providerId = prov.id))
+                                            },
+                                            baseUrlDraft = rerankBaseUrlDraft,
+                                            onBaseUrlChange = {
+                                                rerankBaseUrlDraft = it
+                                                lastDispatchedRerankBaseUrl = it
+                                                onUpdateRemoteRerankConfig(rerankCfg.copy(customBaseUrl = it))
+                                            },
+                                            baseUrlLabel = ctxUi.remoteBaseUrlLabel,
+                                            baseUrlPlaceholder = ctxUi.remoteBaseUrlPlaceholder,
+                                            apiKeyDraft = rerankApiKeyDraft,
+                                            onApiKeyChange = {
+                                                rerankApiKeyDraft = it
+                                                lastDispatchedRerankApiKey = it
+                                                onUpdateRemoteRerankConfig(rerankCfg.copy(customApiKey = it))
+                                            },
+                                            apiKeyLabel = ctxUi.remoteApiKeyLabel,
+                                            apiKeyPlaceholder = ctxUi.remoteApiKeyPlaceholder,
+                                            modelInputContent = {
+                                                GuTextField(
+                                                    value = rerankModelIdDraft,
+                                                    onValueChange = {
+                                                        rerankModelIdDraft = it
+                                                        lastDispatchedRerankModelId = it
+                                                        onUpdateRemoteRerankConfig(rerankCfg.copy(modelId = it))
+                                                    },
+                                                    label = ctxUi.remoteRerankModelLabel,
+                                                    placeholder = ctxUi.remoteRerankModelPlaceholder,
+                                                )
+                                            },
+                                            discoveredModels = discoveredRerankModels,
+                                            selectedModelId = rerankModelIdDraft,
+                                            onSelectDiscoveredModel = { modelId ->
+                                                rerankModelIdDraft = modelId
+                                                onUpdateRemoteRerankConfig(rerankCfg.copy(modelId = modelId))
+                                            },
+                                            discoveredLimit = 8,
+                                            presetsLabel = ctxUi.remotePresetsLabel,
+                                            presetsContent = {
+                                                items(REMOTE_RERANK_PRESETS, key = { it.id }) { preset ->
                                                     GuPill(
-                                                        label = dm.id,
-                                                        selected = rerankModelIdDraft.equals(dm.id, ignoreCase = true),
-                                                        useHoneySelected = true,
+                                                        label = "${preset.providerName} · ${preset.modelId.substringAfterLast('/')}",
+                                                        selected = rerankModelIdDraft.equals(preset.modelId, ignoreCase = true),
+                                                        useHoneySelected = preset.isFreeTier,
                                                         onClick = {
-                                                            rerankModelIdDraft = dm.id
-                                                            onUpdateRemoteRerankConfig(rerankCfg.copy(modelId = dm.id))
+                                                            rerankModelIdDraft = preset.modelId
+                                                            val nextBase = if (rerankCfg.providerId.isBlank()) {
+                                                                rerankBaseUrlDraft = preset.defaultBaseUrl
+                                                                preset.defaultBaseUrl
+                                                            } else {
+                                                                rerankCfg.customBaseUrl
+                                                            }
+                                                            onUpdateRemoteRerankConfig(
+                                                                rerankCfg.copy(
+                                                                    customBaseUrl = nextBase,
+                                                                    modelId = preset.modelId,
+                                                                    useTeiSchema = preset.useTeiSchema,
+                                                                ),
+                                                            )
                                                         },
                                                     )
                                                 }
-                                            }
-                                        }
-
-                                        Text(
-                                            text = ctxUi.remotePresetsLabel,
-                                            color = c.muted,
-                                            fontSize = 11.5.sp,
-                                            fontWeight = FontWeight.SemiBold,
+                                            },
                                         )
-                                        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                            items(REMOTE_RERANK_PRESETS, key = { it.id }) { preset ->
-                                                GuPill(
-                                                    label = "${preset.providerName} · ${preset.modelId.substringAfterLast('/')}",
-                                                    selected = rerankModelIdDraft.equals(preset.modelId, ignoreCase = true),
-                                                    useHoneySelected = preset.isFreeTier,
-                                                    onClick = {
-                                                        rerankModelIdDraft = preset.modelId
-                                                        val nextBase = if (rerankCfg.providerId.isBlank()) {
-                                                            rerankBaseUrlDraft = preset.defaultBaseUrl
-                                                            preset.defaultBaseUrl
-                                                        } else {
-                                                            rerankCfg.customBaseUrl
-                                                        }
-                                                        onUpdateRemoteRerankConfig(
-                                                            rerankCfg.copy(
-                                                                customBaseUrl = nextBase,
-                                                                modelId = preset.modelId,
-                                                                useTeiSchema = preset.useTeiSchema,
-                                                            ),
-                                                        )
-                                                    },
-                                                )
-                                            }
-                                        }
 
-                                        HorizontalDivider(
-                                            thickness = 0.5.dp,
-                                            color = c.border.copy(alpha = 0.65f),
-                                        )
+                                        GuHairlineDivider(alpha = 0.65f)
                                         GuSwitchRow(
                                             label = ctxUi.remoteRerankTeiLabel,
                                             subtitle = ctxUi.remoteRerankTeiSub,
@@ -1282,28 +1120,17 @@ fun RetrievalSettingsSheet(
 
                         if (vectorIndexProgress.running) {
                             Spacer(Modifier.height(10.dp))
-                            if (vectorIndexProgress.total > 0) {
-                                val ratio = (vectorIndexProgress.indexed.toFloat() / vectorIndexProgress.total.toFloat())
-                                    .coerceIn(0f, 1f)
-                                LinearProgressIndicator(
-                                    progress = { ratio },
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(5.dp)
-                                        .clip(RoundedCornerShape(999.dp)),
-                                    color = c.primary,
-                                    trackColor = c.surfaceSoft,
-                                )
-                            } else {
-                                LinearProgressIndicator(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(5.dp)
-                                        .clip(RoundedCornerShape(999.dp)),
-                                    color = c.primary,
-                                    trackColor = c.surfaceSoft,
-                                )
-                            }
+                            GuLinearProgressBar(
+                                progress = if (vectorIndexProgress.total > 0) {
+                                    (vectorIndexProgress.indexed.toFloat() / vectorIndexProgress.total.toFloat()).coerceIn(0f, 1f)
+                                } else {
+                                    null
+                                },
+                                height = 5.dp,
+                                color = c.primary,
+                                trackColor = c.surfaceSoft,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
                         }
                     }
                 }
@@ -1312,6 +1139,115 @@ fun RetrievalSettingsSheet(
             }
         }
     }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun RemoteEndpointConfigFields(
+    compatibleProviders: List<ApiProviderConfig>,
+    selectedProviderId: String,
+    customOptionLabel: String,
+    providerSectionLabel: String,
+    onSelectCustomProvider: () -> Unit,
+    onSelectProvider: (ApiProviderConfig) -> Unit,
+    baseUrlDraft: String,
+    onBaseUrlChange: (String) -> Unit,
+    baseUrlLabel: String,
+    baseUrlPlaceholder: String,
+    apiKeyDraft: String,
+    onApiKeyChange: (String) -> Unit,
+    apiKeyLabel: String,
+    apiKeyPlaceholder: String,
+    protocolSection: (@Composable () -> Unit)? = null,
+    modelInputContent: @Composable () -> Unit,
+    discoveredLabel: String? = null,
+    discoveredModels: List<DiscoveredRetrievalModel>,
+    selectedModelId: String,
+    onSelectDiscoveredModel: (String) -> Unit,
+    discoveredLimit: Int = 12,
+    presetsLabel: String,
+    presetsContent: androidx.compose.foundation.lazy.LazyListScope.() -> Unit,
+) {
+    val c = LocalAppTheme.current.colors
+
+    Text(
+        text = providerSectionLabel,
+        color = c.ink,
+        fontSize = 12.sp,
+        fontWeight = FontWeight.SemiBold,
+    )
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        GuPill(
+            label = customOptionLabel,
+            selected = selectedProviderId.isBlank(),
+            onClick = onSelectCustomProvider,
+        )
+        compatibleProviders.forEach { prov ->
+            GuPill(
+                label = prov.name.ifBlank { prov.protocol.name },
+                selected = selectedProviderId == prov.id,
+                onClick = { onSelectProvider(prov) },
+            )
+        }
+    }
+
+    if (selectedProviderId.isBlank()) {
+        if (protocolSection != null) {
+            protocolSection()
+        }
+        GuTextField(
+            value = baseUrlDraft,
+            onValueChange = onBaseUrlChange,
+            label = baseUrlLabel,
+            placeholder = baseUrlPlaceholder,
+        )
+        GuPasswordField(
+            value = apiKeyDraft,
+            onValueChange = onApiKeyChange,
+            label = apiKeyLabel,
+            placeholder = apiKeyPlaceholder,
+        )
+    }
+
+    modelInputContent()
+
+    if (discoveredModels.isNotEmpty()) {
+        if (!discoveredLabel.isNullOrBlank()) {
+            Text(
+                text = discoveredLabel,
+                color = c.muted,
+                fontSize = 11.5.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            discoveredModels.take(discoveredLimit).forEach { dm ->
+                GuPill(
+                    label = dm.id,
+                    selected = selectedModelId.equals(dm.id, ignoreCase = true),
+                    useHoneySelected = true,
+                    onClick = { onSelectDiscoveredModel(dm.id) },
+                )
+            }
+        }
+    }
+
+    Text(
+        text = presetsLabel,
+        color = c.muted,
+        fontSize = 11.5.sp,
+        fontWeight = FontWeight.SemiBold,
+    )
+    LazyRow(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        content = presetsContent,
+    )
 }
 
 @Composable
@@ -1338,6 +1274,3 @@ private fun LexicalFeatureRow(text: String) {
         )
     }
 }
-
-private fun formatSizeMb(sizeBytes: Long): String =
-    com.gugachat.app.core.util.FormatUtils.formatSizeMb(sizeBytes)

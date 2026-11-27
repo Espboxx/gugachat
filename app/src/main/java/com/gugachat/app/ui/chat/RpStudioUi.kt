@@ -150,15 +150,24 @@ import com.gugachat.app.core.theme.GuCard
 import com.gugachat.app.core.theme.GuCompactSearchBar
 import com.gugachat.app.core.theme.GuEmptyState
 import com.gugachat.app.core.theme.GuGroupedCard
+import com.gugachat.app.core.theme.GuHairlineDivider
 import com.gugachat.app.core.theme.GuIconTile
+import com.gugachat.app.core.theme.GuInlineDeleteConfirmStrip
 import com.gugachat.app.core.theme.GuInlineStepper
+import com.gugachat.app.core.theme.GuLabeledSliderRow
+import com.gugachat.app.core.theme.GuLinearProgressBar
 import com.gugachat.app.core.theme.GuMetaText
-import com.gugachat.app.core.theme.GuModalDragHandle
+import com.gugachat.app.core.theme.GuModalBottomSheet
 import com.gugachat.app.core.theme.GuPill
+import com.gugachat.app.core.theme.GuPushPopContainer
+import com.gugachat.app.core.theme.GuRemovableChip
 import com.gugachat.app.core.theme.GuSectionHeader
 import com.gugachat.app.core.theme.GuSegmentedControl
 import com.gugachat.app.core.theme.GuSettingsRow
 import com.gugachat.app.core.theme.GuSheetHeader
+import com.gugachat.app.core.theme.GuStatusBanner
+import com.gugachat.app.core.theme.GuStatusTone
+import com.gugachat.app.core.theme.GuSubpageTopBar
 import com.gugachat.app.core.theme.GuSwitchRow
 import com.gugachat.app.core.theme.GuTextField
 import com.gugachat.app.core.theme.LocalAppTheme
@@ -403,48 +412,13 @@ private fun RpArtProgressBanner(
     modifier: Modifier = Modifier,
 ) {
     val strings = LocalAppStrings.current
-    val c = LocalAppTheme.current.colors
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        color = c.primarySoft,
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Icon(
-                    imageVector = Icons.Default.AutoAwesome,
-                    contentDescription = null,
-                    tint = c.primarySoftInk,
-                    modifier = Modifier.size(16.dp),
-                )
-                Text(
-                    text = statusLabel.ifBlank { strings.rp.aiGeneratingArt },
-                    color = c.primarySoftInk,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
-            }
-            LinearProgressIndicator(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(4.dp)
-                    .clip(RoundedCornerShape(999.dp)),
-                color = c.primary,
-                trackColor = c.surface,
-            )
-        }
-    }
+    GuStatusBanner(
+        message = statusLabel.ifBlank { strings.rp.aiGeneratingArt },
+        tone = GuStatusTone.INFO,
+        icon = Icons.Default.AutoAwesome,
+        indeterminateProgress = true,
+        modifier = modifier,
+    )
 }
 
 @Composable
@@ -456,44 +430,14 @@ private fun RpInlineDeleteConfirmStrip(
     onCancel: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val c = LocalAppTheme.current.colors
-    Surface(
-        shape = RoundedCornerShape(10.dp),
-        color = c.dangerBg,
-        modifier = modifier.fillMaxWidth(),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 7.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Text(
-                text = prompt,
-                color = c.danger,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Medium,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-            TextButton(
-                onClick = onCancel,
-                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-            ) {
-                Text(cancelText, color = c.muted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-            }
-            GuButton(
-                onClick = onConfirm,
-                compact = true,
-                variant = GuButtonVariant.DANGER,
-                modifier = Modifier.heightIn(min = 32.dp),
-            ) {
-                Text(confirmText, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
-            }
-        }
-    }
+    GuInlineDeleteConfirmStrip(
+        prompt = prompt,
+        confirmText = confirmText,
+        cancelText = cancelText,
+        onConfirm = onConfirm,
+        onCancel = onCancel,
+        modifier = modifier,
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -546,13 +490,10 @@ fun RpWizardDialog(
     val greetingCount = (if (active.config.greeting.isNotBlank()) 1 else 0) + active.config.alternateGreetings.size
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    ModalBottomSheet(
+    GuModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = c.page,
         scrimColor = Color(0x8C060912),
-        dragHandle = { GuModalDragHandle() },
-        modifier = Modifier.statusBarsPadding(),
     ) {
         val dialogView = LocalView.current
         SideEffect {
@@ -1565,13 +1506,10 @@ fun RpStudioSheet(
     }
 
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(
+    GuModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = c.page,
         scrimColor = Color(0x8C060912),
-        dragHandle = { GuModalDragHandle() },
-        modifier = Modifier.statusBarsPadding(),
     ) {
         // Ensure status bar clock/icons never turn dark-on-dark above the sheet
         val dialogView = LocalView.current
@@ -1856,50 +1794,12 @@ private fun StudioSubpageTopBar(
     onBack: () -> Unit,
     trailing: (@Composable () -> Unit)? = null,
 ) {
-    val theme = LocalAppTheme.current
-    val c = theme.colors
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = 48.dp)
-                .padding(horizontal = 8.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            TextButton(
-                onClick = onBack,
-                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-            ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = backLabel,
-                    tint = c.primary,
-                    modifier = Modifier.size(17.dp),
-                )
-                Spacer(Modifier.width(4.dp))
-                Text(
-                    text = backLabel,
-                    color = c.primary,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-            Text(
-                text = title,
-                color = c.ink,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-            if (trailing != null) {
-                trailing()
-            }
-        }
-        HorizontalDivider(thickness = theme.borderWidth, color = c.border.copy(alpha = 0.55f))
-    }
+    GuSubpageTopBar(
+        title = title,
+        backLabel = backLabel,
+        onBack = onBack,
+        trailing = trailing,
+    )
 }
 
 // ==================== Tab 0: 角色 (Cast + Collapsible Protagonist Card) ====================
@@ -2303,14 +2203,12 @@ private fun RpCastSection(
                         }
                     }
                     Spacer(Modifier.height(5.dp))
-                    LinearProgressIndicator(
-                        progress = { tier.progress },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(5.dp)
-                            .clip(RoundedCornerShape(999.dp)),
+                    GuLinearProgressBar(
+                        progress = tier.progress,
+                        height = 5.dp,
                         color = affinityBarColor(tier.code, c),
                         trackColor = c.surfaceSoft,
+                        modifier = Modifier.fillMaxWidth(),
                     )
 
                     if (isConfirmDelete) {
@@ -3070,14 +2968,12 @@ private fun RpStateAndArchiveSection(
                 ) {
                     Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text("HP ${rp.state.hp}/${rp.state.maxHp}", color = c.ink, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                        LinearProgressIndicator(
-                            progress = { hpFrac },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(6.dp)
-                                .clip(RoundedCornerShape(999.dp)),
+                        GuLinearProgressBar(
+                            progress = hpFrac,
+                            height = 6.dp,
                             color = c.danger,
                             trackColor = c.surfaceSoft,
+                            modifier = Modifier.fillMaxWidth(),
                         )
                     }
                     GuInlineStepper(
@@ -3096,14 +2992,12 @@ private fun RpStateAndArchiveSection(
                 ) {
                     Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text("MP ${rp.state.mp}/${rp.state.maxMp}", color = c.ink, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                        LinearProgressIndicator(
-                            progress = { mpFrac },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(6.dp)
-                                .clip(RoundedCornerShape(999.dp)),
+                        GuLinearProgressBar(
+                            progress = mpFrac,
+                            height = 6.dp,
                             color = c.primary,
                             trackColor = c.surfaceSoft,
+                            modifier = Modifier.fillMaxWidth(),
                         )
                     }
                     GuInlineStepper(
@@ -4582,11 +4476,11 @@ private fun RpWorldbookMountPickerSheet(
 ) {
     val c = LocalAppTheme.current.colors
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(
+    GuModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = c.surface,
-        dragHandle = { GuModalDragHandle() },
+        applyStatusBarsPadding = false,
     ) {
         Column(
             modifier = Modifier
@@ -5879,41 +5773,7 @@ private fun RpRemovableChip(
     text: String,
     onRemove: () -> Unit,
 ) {
-    val c = LocalAppTheme.current.colors
-    Surface(
-        shape = RoundedCornerShape(999.dp),
-        color = c.surfaceSoft,
-        modifier = Modifier.heightIn(min = 32.dp),
-    ) {
-        Row(
-            modifier = Modifier.padding(start = 10.dp, end = 4.dp, top = 3.dp, bottom = 3.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            Text(
-                text = text,
-                color = c.ink,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Box(
-                modifier = Modifier
-                    .size(24.dp)
-                    .clip(CircleShape)
-                    .clickable(onClick = onRemove),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Close,
-                    contentDescription = null,
-                    tint = c.muted,
-                    modifier = Modifier.size(13.dp),
-                )
-            }
-        }
-    }
+    GuRemovableChip(text = text, onRemove = onRemove)
 }
 
 @Composable

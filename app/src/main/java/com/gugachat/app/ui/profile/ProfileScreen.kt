@@ -102,15 +102,20 @@ import com.gugachat.app.core.theme.GuButtonVariant
 import com.gugachat.app.core.theme.GuCard
 import com.gugachat.app.core.theme.GuConfirmDialog
 import com.gugachat.app.core.theme.GuGroupedCard
+import com.gugachat.app.core.theme.GuHairlineDivider
 import com.gugachat.app.core.theme.GuMetaText
-import com.gugachat.app.core.theme.GuModalDragHandle
+import com.gugachat.app.core.theme.GuModalBottomSheet
+import com.gugachat.app.core.theme.GuPasswordField
 import com.gugachat.app.core.theme.GuPill
 import com.gugachat.app.core.theme.GuSectionHeader
 import com.gugachat.app.core.theme.GuSegmentedControl
 import com.gugachat.app.core.theme.GuSettingsRow
 import com.gugachat.app.core.theme.GuSheetHeader
+import com.gugachat.app.core.theme.GuStatusBanner
+import com.gugachat.app.core.theme.GuStatusTone
 import com.gugachat.app.core.theme.GuSwitchRow
 import com.gugachat.app.core.theme.GuTextField
+import com.gugachat.app.core.theme.GuTextInputDialog
 import com.gugachat.app.core.theme.LocalAppTheme
 import com.gugachat.app.core.theme.ThemeStyle
 import com.gugachat.app.core.theme.UiScalePreset
@@ -915,12 +920,9 @@ private fun ApiProvidersManagerSheet(
     val isZh = strings.language == AppLanguage.ZH
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    ModalBottomSheet(
+    GuModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = c.page,
-        dragHandle = { GuModalDragHandle() },
-        modifier = Modifier.statusBarsPadding(),
     ) {
         Column(
             modifier = Modifier
@@ -995,11 +997,9 @@ private fun AppearanceSettingsSheet(
     val isZh = strings.language == AppLanguage.ZH
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    ModalBottomSheet(
+    GuModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = c.page,
-        dragHandle = { GuModalDragHandle() },
     ) {
         Column(
             modifier = Modifier
@@ -1177,11 +1177,9 @@ private fun ScaleAndLanguageSheet(
     val scalePresets = UiScalePreset.entries
     val scaleIndex = scalePresets.indexOf(uiScale).coerceAtLeast(0)
 
-    ModalBottomSheet(
+    GuModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = c.page,
-        dragHandle = { GuModalDragHandle() },
     ) {
         Column(
             modifier = Modifier
@@ -1279,11 +1277,9 @@ private fun DataMigrationBackupSheet(
     var showPassphrase by remember { mutableStateOf(false) }
     val canExportNow = !isBackupBusy && (!includeVault || passphrase.isNotBlank())
 
-    ModalBottomSheet(
+    GuModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = c.page,
-        dragHandle = { GuModalDragHandle() },
     ) {
         Column(
             modifier = Modifier
@@ -1315,7 +1311,7 @@ private fun DataMigrationBackupSheet(
                             onCheckedChange = onIncludeVaultChange,
                         )
                         AnimatedVisibility(visible = includeVault) {
-                            GuTextField(
+                            GuPasswordField(
                                 value = passphrase,
                                 onValueChange = onPassphraseChange,
                                 label = if (isZh) "归档加密口令" else "Archive Encryption Passphrase",
@@ -1328,25 +1324,10 @@ private fun DataMigrationBackupSheet(
                                         modifier = Modifier.size(18.dp),
                                     )
                                 },
-                                visualTransformation = if (showPassphrase) {
-                                    VisualTransformation.None
-                                } else {
-                                    PasswordVisualTransformation()
-                                },
-                                trailingIcon = {
-                                    IconButton(onClick = { showPassphrase = !showPassphrase }) {
-                                        Icon(
-                                            imageVector = if (showPassphrase) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                                            contentDescription = null,
-                                            tint = c.muted,
-                                            modifier = Modifier.size(18.dp),
-                                        )
-                                    }
-                                },
                                 isError = includeVault && passphrase.isBlank(),
                             )
                         }
-                        HorizontalDivider(color = c.border.copy(alpha = 0.45f))
+                        GuHairlineDivider(alpha = 0.45f)
                         GuSwitchRow(
                             label = if (isZh) "打包画室直连生图原图" else "Include Atelier Direct Images",
                             subtitle = if (isZh) "关闭可保持 .gugubackup 体积轻巧" else "Keep off for lightweight archive size",
@@ -1430,81 +1411,27 @@ private fun RestorePassphraseDialog(
     onDismiss: () -> Unit,
 ) {
     val strings = LocalAppStrings.current
-    val c = LocalAppTheme.current.colors
     val isZh = strings.language == AppLanguage.ZH
     var passphraseDraft by remember { mutableStateOf("") }
-    var showPassphrase by remember { mutableStateOf(false) }
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        shape = RoundedCornerShape(22.dp),
-        containerColor = c.surfaceElevated,
-        tonalElevation = 0.dp,
-        title = {
-            Text(
-                text = if (isZh) "输入备份解密口令" else "Enter Backup Passphrase",
-                color = c.ink,
-                fontSize = 17.sp,
-                fontWeight = FontWeight.SemiBold,
-            )
+    GuTextInputDialog(
+        title = if (isZh) "输入备份解密口令" else "Enter Backup Passphrase",
+        value = passphraseDraft,
+        onValueChange = { passphraseDraft = it },
+        confirmText = if (isZh) "解密并恢复" else "Unlock & Restore",
+        cancelText = strings.common.cancel,
+        onConfirm = { onConfirm(passphraseDraft) },
+        onDismiss = onDismiss,
+        placeholder = if (isZh) "请输入备份保护口令" else "Passphrase",
+        supportingMessage = if (isZh) {
+            "此 .gugubackup 存档包含受口令保护的 API 密钥保险箱，请输入导出口令以完整恢复。"
+        } else {
+            "This .gugubackup archive contains an encrypted API vault. Enter the passphrase to restore."
         },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    text = if (isZh) "此 .gugubackup 存档包含受口令保护的 API 密钥保险箱，请输入导出口令以完整恢复。"
-                    else "This .gugubackup archive contains an encrypted API vault. Enter the passphrase to restore.",
-                    color = c.muted,
-                    fontSize = 13.sp,
-                    lineHeight = 18.sp,
-                )
-                GuTextField(
-                    value = passphraseDraft,
-                    onValueChange = { passphraseDraft = it },
-                    placeholder = if (isZh) "请输入备份保护口令" else "Passphrase",
-                    isError = !errorMessage.isNullOrBlank(),
-                    visualTransformation = if (showPassphrase) {
-                        VisualTransformation.None
-                    } else {
-                        PasswordVisualTransformation()
-                    },
-                    trailingIcon = {
-                        IconButton(onClick = { showPassphrase = !showPassphrase }) {
-                            Icon(
-                                imageVector = if (showPassphrase) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                                contentDescription = null,
-                                tint = c.muted,
-                                modifier = Modifier.size(18.dp),
-                            )
-                        }
-                    },
-                )
-                if (!errorMessage.isNullOrBlank()) {
-                    Text(
-                        text = errorMessage,
-                        color = c.danger,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium,
-                    )
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = { onConfirm(passphraseDraft) },
-                enabled = !isBusy && passphraseDraft.isNotBlank(),
-            ) {
-                Text(
-                    text = if (isZh) "解密并恢复" else "Unlock & Restore",
-                    color = c.primary,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss, enabled = !isBusy) {
-                Text(strings.common.cancel, color = c.muted)
-            }
-        },
+        errorMessage = errorMessage,
+        isPassword = true,
+        singleLine = true,
+        isBusy = isBusy,
     )
 }
 
@@ -1581,14 +1508,13 @@ private fun WebDavSyncSheet(
         )
     }
 
-    ModalBottomSheet(
+    GuModalBottomSheet(
         onDismissRequest = {
             onSaveSettings(currentDraftConfig, passwordDraft, passphraseDraft)
             onDismiss()
         },
         sheetState = sheetState,
-        containerColor = c.page,
-        dragHandle = { GuModalDragHandle() },
+        applyStatusBarsPadding = false,
     ) {
         Column(
             modifier = Modifier
@@ -1665,41 +1591,19 @@ private fun WebDavSyncSheet(
                             label = if (isZh) "账号 / 邮箱" else "Username",
                             placeholder = if (isZh) "例如：user@example.com" else "Username",
                         )
-                        GuTextField(
+                        GuPasswordField(
                             value = passwordDraft,
                             onValueChange = { passwordDraft = it },
                             label = if (isZh) "应用专属密码" else "App Password",
                             placeholder = if (isZh) "坚果云请前往账户安全生成应用密码" else "App-specific password",
-                            visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
-                            trailingIcon = {
-                                IconButton(onClick = { showPassword = !showPassword }) {
-                                    Icon(
-                                        imageVector = if (showPassword) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                                        contentDescription = null,
-                                        tint = c.muted,
-                                        modifier = Modifier.size(18.dp),
-                                    )
-                                }
-                            },
                         )
-                        GuTextField(
+                        GuPasswordField(
                             value = passphraseDraft,
                             onValueChange = { passphraseDraft = it },
                             label = if (isZh) "云端加密口令 (E2EE Passphrase)" else "Cloud Encryption Passphrase",
                             placeholder = if (isZh) "本地加密密钥，丢失无法从云端找回" else "Secret passphrase for encryption",
                             leadingIcon = {
                                 Icon(Icons.Default.Lock, contentDescription = null, tint = c.muted, modifier = Modifier.size(18.dp))
-                            },
-                            visualTransformation = if (showPassphrase) VisualTransformation.None else PasswordVisualTransformation(),
-                            trailingIcon = {
-                                IconButton(onClick = { showPassphrase = !showPassphrase }) {
-                                    Icon(
-                                        imageVector = if (showPassphrase) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                                        contentDescription = null,
-                                        tint = c.muted,
-                                        modifier = Modifier.size(18.dp),
-                                    )
-                                }
                             },
                         )
                     }
@@ -1847,11 +1751,9 @@ private fun AboutUpdateSheet(
     val updateChannels = UpdateChannel.entries
     val updateChannelIdx = updateChannels.indexOf(updateChannel).coerceAtLeast(0)
 
-    ModalBottomSheet(
+    GuModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = c.page,
-        dragHandle = { GuModalDragHandle() },
     ) {
         Column(
             modifier = Modifier

@@ -677,10 +677,7 @@ fun GuSheetHeader(
                 )
             }
         }
-        HorizontalDivider(
-            thickness = 0.5.dp,
-            color = c.border.copy(alpha = 0.45f),
-        )
+        GuHairlineDivider(alpha = 0.45f)
     }
 }
 
@@ -766,15 +763,17 @@ fun GuCompactSearchBar(
     placeholder: String,
     modifier: Modifier = Modifier,
     clearContentDescription: String = "Clear",
+    containerColor: Color = LocalAppTheme.current.colors.surfaceSoft,
+    cornerRadius: Dp = 11.dp,
 ) {
     val c = LocalAppTheme.current.colors
-    val shape = RoundedCornerShape(11.dp)
+    val shape = RoundedCornerShape(cornerRadius)
     Row(
         modifier = modifier
             .fillMaxWidth()
             .height(42.dp)
             .clip(shape)
-            .background(c.surfaceSoft)
+            .background(containerColor)
             .padding(start = 12.dp, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),

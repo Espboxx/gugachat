@@ -80,8 +80,9 @@ import com.gugachat.app.core.theme.GuButton
 import com.gugachat.app.core.theme.GuCard
 import com.gugachat.app.core.theme.GuCompactSearchBar
 import com.gugachat.app.core.theme.GuEmptyState
+import com.gugachat.app.core.theme.GuLinearProgressBar
 import com.gugachat.app.core.theme.GuMetaText
-import com.gugachat.app.core.theme.GuModalDragHandle
+import com.gugachat.app.core.theme.GuModalBottomSheet
 import com.gugachat.app.core.theme.GuPill
 import com.gugachat.app.core.theme.GuPopupMenu
 import com.gugachat.app.core.theme.GuSectionHeader
@@ -199,12 +200,9 @@ fun ChatMemorySheet(
     }
 
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(
+    GuModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = c.page,
-        dragHandle = { GuModalDragHandle() },
-        modifier = Modifier.statusBarsPadding(),
     ) {
         Column(
             modifier = Modifier
@@ -953,14 +951,12 @@ fun ChatMemorySheet(
                                     )
                                 }
                                 if (recallBudget > 0) {
-                                    LinearProgressIndicator(
-                                        progress = { recallRatio },
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(3.dp)
-                                            .clip(RoundedCornerShape(999.dp)),
+                                    GuLinearProgressBar(
+                                        progress = recallRatio,
+                                        height = 3.dp,
                                         color = if (recallOverCap) c.warning else c.primary,
                                         trackColor = c.surfaceSoft,
+                                        modifier = Modifier.fillMaxWidth(),
                                     )
                                 }
                             }

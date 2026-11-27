@@ -115,6 +115,8 @@ import com.gugachat.app.core.theme.GuIconTile
 import com.gugachat.app.core.theme.GuMetaText
 import com.gugachat.app.core.theme.GuModelAvatar
 import com.gugachat.app.core.theme.GuTextField
+import com.gugachat.app.core.theme.GuTextInputDialog
+import com.gugachat.app.core.theme.GuVariantSwipePill
 import com.gugachat.app.core.theme.LocalAppTheme
 import com.gugachat.app.domain.chat.ChatAttachmentMeta
 import com.gugachat.app.domain.chat.ChatMessage
@@ -328,79 +330,36 @@ fun ChatMessageList(
     }
 
     if (editTarget != null) {
-        AlertDialog(
-            onDismissRequest = { editTarget = null },
-            shape = RoundedCornerShape(22.dp),
-            containerColor = c.surfaceElevated,
-            title = { Text(strings.chat.editResend, color = c.ink, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold) },
-            text = {
-                GuTextField(
-                    value = editBuffer,
-                    onValueChange = { editBuffer = it },
-                    singleLine = false,
-                    minLines = 3,
-                    maxLines = 6,
-                )
+        GuTextInputDialog(
+            title = strings.chat.editResend,
+            value = editBuffer,
+            onValueChange = { editBuffer = it },
+            confirmText = strings.chat.send,
+            cancelText = strings.common.cancel,
+            onConfirm = {
+                onEditUserMessage(editTarget!!.id, editBuffer)
+                editTarget = null
             },
-            confirmButton = {
-                GuButton(
-                    onClick = {
-                        onEditUserMessage(editTarget!!.id, editBuffer)
-                        editTarget = null
-                    },
-                    enabled = editBuffer.isNotBlank(),
-                    compact = true,
-                ) {
-                    Text(strings.chat.send, fontWeight = FontWeight.Bold)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { editTarget = null }) {
-                    Text(strings.common.cancel, color = c.muted, fontWeight = FontWeight.SemiBold)
-                }
-            },
+            onDismiss = { editTarget = null },
+            minLines = 3,
+            maxLines = 6,
         )
     }
 
     if (editAssistantTarget != null) {
-        AlertDialog(
-            onDismissRequest = { editAssistantTarget = null },
-            shape = RoundedCornerShape(22.dp),
-            containerColor = c.surfaceElevated,
-            title = {
-                Text(
-                    text = if (mode == ConversationMode.rp) strings.rp.editReplyTitle else strings.common.edit,
-                    color = c.ink,
-                    fontSize = 17.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                )
+        GuTextInputDialog(
+            title = if (mode == ConversationMode.rp) strings.rp.editReplyTitle else strings.common.edit,
+            value = editAssistantBuffer,
+            onValueChange = { editAssistantBuffer = it },
+            confirmText = strings.common.save,
+            cancelText = strings.common.cancel,
+            onConfirm = {
+                onEditAssistantMessage(editAssistantTarget!!.id, editAssistantBuffer)
+                editAssistantTarget = null
             },
-            text = {
-                GuTextField(
-                    value = editAssistantBuffer,
-                    onValueChange = { editAssistantBuffer = it },
-                    singleLine = false,
-                    minLines = 4,
-                    maxLines = 10,
-                )
-            },
-            confirmButton = {
-                GuButton(
-                    onClick = {
-                        onEditAssistantMessage(editAssistantTarget!!.id, editAssistantBuffer)
-                        editAssistantTarget = null
-                    },
-                    enabled = editAssistantBuffer.isNotBlank(),
-                    compact = true,
-                ) {
-                    Text(strings.common.save, fontWeight = FontWeight.Bold)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { editAssistantTarget = null }) {
-                    Text(strings.common.cancel, color = c.muted, fontWeight = FontWeight.SemiBold)
-                }
-            },
+            onDismiss = { editAssistantTarget = null },
+            minLines = 4,
+            maxLines = 10,
         )
     }
 
@@ -2317,47 +2276,11 @@ private fun VariantSwipePill(
     total: Int,
     onSwitch: (Int) -> Unit,
 ) {
-    val c = LocalAppTheme.current.colors
-    Row(
-        modifier = Modifier
-            .height(30.dp)
-            .clip(RoundedCornerShape(999.dp))
-            .background(c.surfaceSoft),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
-            modifier = Modifier
-                .size(width = 26.dp, height = 30.dp)
-                .clip(CircleShape)
-                .clickable(enabled = index > 0) { onSwitch((index - 1).coerceAtLeast(0)) },
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                Icons.Default.ChevronLeft,
-                contentDescription = null,
-                tint = if (index > 0) c.ink else c.muted.copy(alpha = 0.35f),
-                modifier = Modifier.size(15.dp),
-            )
-        }
-        GuMetaText(
-            text = "${index + 1}/$total",
-            color = c.ink,
-        )
-        Box(
-            modifier = Modifier
-                .size(width = 26.dp, height = 30.dp)
-                .clip(CircleShape)
-                .clickable(enabled = index < total - 1) { onSwitch((index + 1).coerceAtMost(total - 1)) },
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                Icons.Default.ChevronRight,
-                contentDescription = null,
-                tint = if (index < total - 1) c.ink else c.muted.copy(alpha = 0.35f),
-                modifier = Modifier.size(15.dp),
-            )
-        }
-    }
+    GuVariantSwipePill(
+        index = index,
+        total = total,
+        onSwitch = onSwitch,
+    )
 }
 
 @Composable

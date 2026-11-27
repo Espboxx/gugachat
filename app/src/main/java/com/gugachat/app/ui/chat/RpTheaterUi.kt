@@ -120,9 +120,10 @@ import com.gugachat.app.core.theme.GuBadgeVariant
 import com.gugachat.app.core.theme.GuButton
 import com.gugachat.app.core.theme.GuButtonVariant
 import com.gugachat.app.core.theme.GuMetaText
-import com.gugachat.app.core.theme.GuModalDragHandle
+import com.gugachat.app.core.theme.GuModalBottomSheet
 import com.gugachat.app.core.theme.GuSheetHeader
 import com.gugachat.app.core.theme.GuTextField
+import com.gugachat.app.core.theme.GuVariantSwipePill
 import com.gugachat.app.core.theme.LocalAppTheme
 import com.gugachat.app.domain.chat.ChatMessage
 import com.gugachat.app.domain.chat.ConversationMode
@@ -2935,48 +2936,17 @@ private fun StageVariantSwipePill(
     accentColor: Color = Color(0xFFFDE68A),
     onSwitch: (Int) -> Unit,
 ) {
-    Surface(
-        shape = RoundedCornerShape(999.dp),
-        color = Color(0xD4101522),
+    GuVariantSwipePill(
+        index = index,
+        total = total,
+        onSwitch = onSwitch,
+        containerColor = Color(0xD4101522),
+        arrowColor = Color(0xFFF3F6FC),
+        disabledArrowColor = Color(0x48CBD5E1),
+        labelColor = accentColor,
         border = BorderStroke(0.5.dp, Color(0x48E2E8F0)),
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(horizontal = 2.dp),
-        ) {
-            IconButton(
-                onClick = { onSwitch((index - 1).coerceAtLeast(0)) },
-                enabled = index > 0,
-                modifier = Modifier.size(24.dp),
-            ) {
-                Icon(
-                    Icons.Default.ChevronLeft,
-                    contentDescription = null,
-                    tint = if (index > 0) Color(0xFFF3F6FC) else Color(0x48CBD5E1),
-                    modifier = Modifier.size(15.dp),
-                )
-            }
-            Text(
-                text = "${index + 1}/$total",
-                color = accentColor,
-                fontSize = 10.5.sp,
-                fontWeight = FontWeight.SemiBold,
-                fontFamily = FontFamily.Monospace,
-            )
-            IconButton(
-                onClick = { onSwitch((index + 1).coerceAtMost(total - 1)) },
-                enabled = index < total - 1,
-                modifier = Modifier.size(24.dp),
-            ) {
-                Icon(
-                    Icons.Default.ChevronRight,
-                    contentDescription = null,
-                    tint = if (index < total - 1) Color(0xFFF3F6FC) else Color(0x48CBD5E1),
-                    modifier = Modifier.size(15.dp),
-                )
-            }
-        }
-    }
+        monospace = true,
+    )
 }
 
 @Composable
@@ -3194,13 +3164,11 @@ private fun TheaterHistoryLogSheet(
     val sheetBg = if (c.page.alpha < 0.95f) Color(0xFF0E1320) else c.page
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    ModalBottomSheet(
+    GuModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = sheetBg,
         scrimColor = Color(0x8C060912),
-        dragHandle = { GuModalDragHandle() },
-        modifier = Modifier.statusBarsPadding(),
     ) {
         val dialogView = LocalView.current
         SideEffect {
@@ -3333,12 +3301,9 @@ internal fun RpGreetingPickerSheet(
     val isZh = strings.language == AppLanguage.ZH
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    ModalBottomSheet(
+    GuModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = c.page,
-        dragHandle = { GuModalDragHandle() },
-        modifier = Modifier.statusBarsPadding(),
     ) {
         Column(
             modifier = Modifier

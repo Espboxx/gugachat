@@ -93,6 +93,9 @@ import com.gugachat.app.core.theme.GuButton
 import com.gugachat.app.core.theme.GuButtonVariant
 import com.gugachat.app.core.theme.GuCard
 import com.gugachat.app.core.theme.GuGroupedCard
+import com.gugachat.app.core.theme.GuPasswordField
+import com.gugachat.app.core.theme.GuStatusBanner
+import com.gugachat.app.core.theme.GuStatusTone
 import com.gugachat.app.core.theme.GuIconTile
 import com.gugachat.app.core.theme.GuSegmentedControl
 import com.gugachat.app.core.theme.GuTextField
@@ -714,22 +717,11 @@ fun LoginScreen(
                                 ),
                             )
                             Spacer(Modifier.height(10.dp))
-                            GuTextField(
+                            GuPasswordField(
                                 value = state.password,
                                 onValueChange = viewModel::updatePassword,
                                 label = strings.auth.passwordLabel,
                                 placeholder = strings.auth.passwordPlaceholder,
-                                visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                                trailingIcon = {
-                                    IconButton(onClick = { passwordVisible = !passwordVisible }) {
-                                        Icon(
-                                            imageVector = if (passwordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                                            contentDescription = null,
-                                            tint = c.muted,
-                                            modifier = Modifier.size(19.dp),
-                                        )
-                                    }
-                                },
                                 keyboardOptions = KeyboardOptions(
                                     keyboardType = KeyboardType.Password,
                                     imeAction = if (state.activeTab == AuthFormTab.LOGIN) ImeAction.Done else ImeAction.Next,
@@ -994,37 +986,11 @@ private fun InlineErrorBanner(
     message: String,
     modifier: Modifier = Modifier,
 ) {
-    val c = LocalAppTheme.current.colors
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(10.dp),
-        color = c.dangerBg,
-        border = null,
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.Top,
-            horizontalArrangement = Arrangement.spacedBy(7.dp),
-        ) {
-            Icon(
-                imageVector = Icons.Default.ErrorOutline,
-                contentDescription = null,
-                tint = c.danger,
-                modifier = Modifier
-                    .padding(top = 1.dp)
-                    .size(15.dp),
-            )
-            Text(
-                text = message,
-                color = c.danger,
-                fontSize = 12.sp,
-                lineHeight = 17.sp,
-                modifier = Modifier.weight(1f),
-            )
-        }
-    }
+    GuStatusBanner(
+        message = message,
+        tone = GuStatusTone.ERROR,
+        modifier = modifier,
+    )
 }
 
 @Composable

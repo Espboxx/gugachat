@@ -130,63 +130,16 @@ fun <T> GuSearchableListBox(
             shadowElevation = if (theme.isDark) 0.dp else 0.8.dp,
         ) {
             Column(modifier = Modifier.fillMaxWidth()) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(42.dp)
-                        .background(c.surface)
-                        .padding(start = 12.dp, end = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Search,
-                        contentDescription = null,
-                        tint = if (query.isNotEmpty()) c.primary else c.muted,
-                        modifier = Modifier.size(18.dp),
-                    )
-                    Box(
-                        modifier = Modifier.weight(1f),
-                        contentAlignment = Alignment.CenterStart,
-                    ) {
-                        if (query.isEmpty()) {
-                            Text(
-                                text = searchPlaceholder,
-                                color = c.muted,
-                                fontSize = 13.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                        BasicTextField(
-                            value = query,
-                            onValueChange = onQueryChange,
-                            singleLine = true,
-                            textStyle = TextStyle(
-                                color = c.ink,
-                                fontSize = 13.5.sp,
-                                fontWeight = FontWeight.Medium,
-                            ),
-                            cursorBrush = SolidColor(c.primary),
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    }
-                    if (query.isNotEmpty()) {
-                        IconButton(
-                            onClick = { onQueryChange("") },
-                            modifier = Modifier.size(36.dp),
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = strings.common.clear,
-                                tint = c.muted,
-                                modifier = Modifier.size(16.dp),
-                            )
-                        }
-                    }
-                }
+                GuCompactSearchBar(
+                    value = query,
+                    onValueChange = onQueryChange,
+                    placeholder = searchPlaceholder,
+                    clearContentDescription = strings.common.clear,
+                    containerColor = c.surface,
+                    cornerRadius = 0.dp,
+                )
 
-                HorizontalDivider(thickness = 0.5.dp, color = c.border.copy(alpha = 0.45f))
+                GuHairlineDivider(alpha = 0.45f)
 
                 Box(
                     modifier = Modifier

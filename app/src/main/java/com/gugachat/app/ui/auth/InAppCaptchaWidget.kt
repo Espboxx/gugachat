@@ -170,17 +170,12 @@ private fun createConfiguredCaptchaWebView(
         ViewGroup.LayoutParams.MATCH_PARENT,
         ViewGroup.LayoutParams.MATCH_PARENT,
     )
-    val cookies = CookieManager.getInstance()
-    cookies.setAcceptCookie(true)
-    cookies.setAcceptThirdPartyCookies(this, true)
-
-    settings.javaScriptEnabled = true
-    settings.domStorageEnabled = true
-    settings.databaseEnabled = true
-    settings.javaScriptCanOpenWindowsAutomatically = true
-    settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
-    settings.useWideViewPort = false
-    settings.loadWithOverviewMode = false
+    configureAuthWebViewDefaults(
+        webView = this,
+        wideViewport = false,
+        mixedContentCompatibility = true,
+        allowPopupWindows = true,
+    )
 
     setBackgroundColor(Color.TRANSPARENT)
     isVerticalScrollBarEnabled = false
@@ -204,10 +199,7 @@ private fun createConfiguredCaptchaWebView(
 }
 
 private fun releaseCaptchaWebView(wv: WebView) {
-    wv.removeJavascriptInterface(InAppCaptchaHtmlBuilder.JS_BRIDGE_NAME)
-    wv.stopLoading()
-    wv.loadUrl("about:blank")
-    wv.destroy()
+    destroyAuthWebView(wv, jsBridgeName = InAppCaptchaHtmlBuilder.JS_BRIDGE_NAME)
 }
 
 /**
@@ -490,61 +482,39 @@ private fun ActionCaptchaDialog(
         }
     }
 
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(
-            usePlatformDefaultWidth = false,
-            decorFitsSystemWindows = false,
-        ),
+    GuFullscreenWebDialogScaffold(
+        onDismiss = onDismiss,
+        headerContent = {
+            IconButton(onClick = onDismiss, modifier = Modifier.size(44.dp)) {
+                Icon(Icons.Default.Close, contentDescription = strings.common.close, tint = c.ink)
+            }
+            Text(
+                text = strings.auth.captchaSectionTitle,
+                color = c.ink,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.ExtraBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            IconButton(onClick = { reloadNonce++ }, modifier = Modifier.size(44.dp)) {
+                Icon(Icons.Default.Refresh, contentDescription = strings.common.refresh, tint = c.ink)
+            }
+        },
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(c.page)
-                .navigationBarsPadding(),
-        ) {
-            GuAwningHeader(includeStatusBarPadding = true) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(56.dp)
-                        .padding(horizontal = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    IconButton(onClick = onDismiss, modifier = Modifier.size(44.dp)) {
-                        Icon(Icons.Default.Close, contentDescription = strings.common.close, tint = c.ink)
-                    }
-                    Text(
-                        text = strings.auth.captchaSectionTitle,
-                        color = c.ink,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f),
-                    )
-                    IconButton(onClick = { reloadNonce++ }, modifier = Modifier.size(44.dp)) {
-                        Icon(Icons.Default.Refresh, contentDescription = strings.common.refresh, tint = c.ink)
-                    }
-                }
-            }
-
-            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                AndroidView(
-                    modifier = Modifier.fillMaxSize(),
-                    factory = { ctx ->
-                        createConfiguredCaptchaWebView(
-                            context = ctx,
-                            bridge = bridge,
-                            serverHost = serverHost,
-                        ).also { webViewRef = it }
-                    },
-                    onRelease = { wv ->
-                        releaseCaptchaWebView(wv)
-                        webViewRef = null
-                    },
-                )
-            }
-        }
+        AndroidView(
+            modifier = Modifier.fillMaxSize(),
+            factory = { ctx ->
+                createConfiguredCaptchaWebView(
+                    context = ctx,
+                    bridge = bridge,
+                    serverHost = serverHost,
+                ).also { webViewRef = it }
+            },
+            onRelease = { wv ->
+                releaseCaptchaWebView(wv)
+                webViewRef = null
+            },
+        )
     }
 }

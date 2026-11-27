@@ -94,9 +94,11 @@ import com.gugachat.app.core.theme.GuBadgeVariant
 import com.gugachat.app.core.theme.GuButton
 import com.gugachat.app.core.theme.GuButtonVariant
 import com.gugachat.app.core.theme.GuCard
+import com.gugachat.app.core.theme.GuCollapsibleSearchBar
 import com.gugachat.app.core.theme.GuCompactSearchBar
 import com.gugachat.app.core.theme.GuConfirmDialog
 import com.gugachat.app.core.theme.GuEmptyState
+import com.gugachat.app.core.theme.GuHorizontalFadeChipStrip
 import com.gugachat.app.core.theme.GuIconTile
 import com.gugachat.app.core.theme.GuMetaText
 import com.gugachat.app.core.theme.LocalAppTheme
@@ -285,64 +287,20 @@ fun GalleryTabContent(
             .fillMaxSize()
             .background(c.page),
     ) {
-        AnimatedVisibility(visible = showSearchBar || state.searchQuery.isNotEmpty()) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 12.dp, end = 6.dp, top = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                GuCompactSearchBar(
-                    value = state.searchQuery,
-                    onValueChange = viewModel::setSearchQuery,
-                    placeholder = strings.images.searchPlaceholder,
-                    clearContentDescription = strings.common.clear,
-                    modifier = Modifier.weight(1f),
-                )
-                IconButton(
-                    onClick = {
-                        if (state.searchQuery.isNotEmpty()) {
-                            viewModel.setSearchQuery("")
-                        }
-                        onCloseSearchBar()
-                    },
-                    modifier = Modifier.size(38.dp),
-                ) {
-                    Icon(
-                        Icons.Default.Close,
-                        contentDescription = strings.common.close,
-                        tint = c.muted,
-                        modifier = Modifier.size(18.dp),
-                    )
-                }
-            }
-        }
+        GuCollapsibleSearchBar(
+            visible = showSearchBar,
+            query = state.searchQuery,
+            onQueryChange = viewModel::setSearchQuery,
+            placeholder = strings.images.searchPlaceholder,
+            onClose = onCloseSearchBar,
+            clearContentDescription = strings.common.clear,
+            closeContentDescription = strings.common.close,
+        )
 
         // Streamlined 32dp borderless filter capsule strip
-        LazyRow(
-            state = filterListState,
-            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(40.dp)
-                .drawWithContent {
-                    drawContent()
-                    if (filterListState.canScrollForward) {
-                        val fadeWidth = 24.dp.toPx()
-                        drawRect(
-                            brush = Brush.horizontalGradient(
-                                colors = listOf(Color.Transparent, c.page),
-                                startX = size.width - fadeWidth,
-                                endX = size.width,
-                            ),
-                            topLeft = Offset(size.width - fadeWidth, 0f),
-                            size = Size(fadeWidth, size.height),
-                        )
-                    }
-                },
+        GuHorizontalFadeChipStrip(
+            listState = filterListState,
+            modifier = Modifier.height(40.dp),
         ) {
             items(filterItems, key = { it.first }) { (key, label) ->
                 val selected = state.activeFilter == key

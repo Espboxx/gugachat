@@ -53,7 +53,7 @@ import com.gugachat.app.core.storage.LocalMediaPathResolver
 import com.gugachat.app.core.theme.GuCard
 import com.gugachat.app.core.theme.GuIconTile
 import com.gugachat.app.core.theme.GuMetaText
-import com.gugachat.app.core.theme.GuModalDragHandle
+import com.gugachat.app.core.theme.GuModalBottomSheet
 import com.gugachat.app.core.theme.GuSheetHeader
 import com.gugachat.app.core.theme.LocalAppTheme
 import com.gugachat.app.data.local.CharacterCardEntity
@@ -79,12 +79,9 @@ fun NewSessionChooserSheet(
         (if (recentCards.isNotEmpty()) recentCards else vmCards.orEmpty()).take(4)
     }
 
-    ModalBottomSheet(
+    GuModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = c.page,
-        dragHandle = { GuModalDragHandle() },
-        modifier = Modifier.statusBarsPadding(),
     ) {
         Column(
             modifier = Modifier
