@@ -79,7 +79,6 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.i18n.LocalAppStrings
 import com.gugachat.app.core.i18n.fmt
@@ -148,13 +147,15 @@ fun ChatParamsSheet(
     onSave: (String, ChatParams) -> Unit,
     onCompactNow: () -> Unit,
     onDismiss: () -> Unit,
+    promptPresets: List<PromptPresetEntity> = emptyList(),
+    boundPromptPreset: PromptPresetEntity? = null,
+    boundPresetId: String? = null,
+    presetActions: ChatParamsActions? = null,
 ) {
     val strings = LocalAppStrings.current
     val theme = LocalAppTheme.current
     val c = theme.colors
     val isZh = strings.language == AppLanguage.ZH
-    val chatVm = LocalChatViewModel.current
-    val chatState = chatVm?.ui?.collectAsStateWithLifecycle()?.value
 
     var activeTab by remember { mutableIntStateOf(0) } // 0=Persona&Sampling, 1=ContextBudget, 2=Advanced&Cache
     var showingPresetSubpage by remember { mutableStateOf(false) }
@@ -392,11 +393,11 @@ fun ChatParamsSheet(
         ) { inPresetSubpage ->
             if (inPresetSubpage) {
                 PresetBlocksSubpage(
-                    presets = chatState?.promptPresets.orEmpty(),
-                    boundPresetId = chatState?.activeConversation?.presetId,
-                    onSelectPreset = { id -> chatVm?.selectConversationPreset(id) },
+                    presets = promptPresets,
+                    boundPresetId = boundPresetId,
+                    onSelectPreset = { id -> presetActions?.onSelectPreset?.invoke(id) },
                     onToggleBlock = { presetId, identifier, idx ->
-                        chatVm?.togglePromptPresetBlockEnabled(presetId, identifier, idx)
+                        presetActions?.onTogglePresetBlock?.invoke(presetId, identifier, idx)
                     },
                     onBack = { showingPresetSubpage = false },
                 )
@@ -512,7 +513,7 @@ fun ChatParamsSheet(
                             )
                         }
 
-                        val boundPreset = chatState?.boundPromptPreset
+                        val boundPreset = boundPromptPreset
                         val presetSubtitle = if (boundPreset != null) {
                             val blockCount = runCatching {
                                 AppJson.decodeFromString(ListSerializer(PromptPresetBlock.serializer()), boundPreset.blocksJson)
@@ -520,7 +521,7 @@ fun ChatParamsSheet(
                             }.getOrDefault(0)
                             if (isZh) "${boundPreset.name} · 已启用 $blockCount 个提示槽位" else "${boundPreset.name} · $blockCount active blocks"
                         } else {
-                            val avail = chatState?.promptPresets?.size ?: 0
+                            val avail = promptPresets.size
                             if (avail > 0) {
                                 if (isZh) "未挂载预设（点击从 $avail 套预设中选择）" else "None (tap to pick from $avail presets)"
                             } else {

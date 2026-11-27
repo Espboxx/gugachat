@@ -122,7 +122,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.gugachat.app.core.storage.LocalMediaPathResolver
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
@@ -172,6 +171,7 @@ import com.gugachat.app.core.theme.GuSwitchRow
 import com.gugachat.app.core.theme.GuTextField
 import com.gugachat.app.core.theme.LocalAppTheme
 import com.gugachat.app.data.local.CharacterCardEntity
+import com.gugachat.app.data.local.ConversationWorldbookCrossRef
 import com.gugachat.app.data.local.PersonaEntity
 import com.gugachat.app.data.local.WorldbookEntity
 import com.gugachat.app.domain.chat.NovelLoreEntry
@@ -493,6 +493,12 @@ fun RpStudioSheet(
     onExportCardJson: (Uri) -> Unit,
     onExportCardPng: (Uri) -> Unit,
     onDismiss: () -> Unit,
+    boundCharacterCard: CharacterCardEntity? = null,
+    personas: List<PersonaEntity> = emptyList(),
+    boundPersonaId: String? = null,
+    worldbooks: List<WorldbookEntity> = emptyList(),
+    mountedWorldbookRefs: List<ConversationWorldbookCrossRef> = emptyList(),
+    assetActions: RpStudioAssetActions? = null,
 ) {
     val strings = LocalAppStrings.current
     val theme = LocalAppTheme.current
@@ -627,6 +633,10 @@ fun RpStudioSheet(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .weight(1f),
+                                    boundCharacterCard = boundCharacterCard,
+                                    personas = personas,
+                                    boundPersonaId = boundPersonaId,
+                                    assetActions = assetActions,
                                     onUpdatePlayer = { pName, pPersona ->
                                         onUpdateConfig {
                                             it.copy(
@@ -687,6 +697,9 @@ fun RpStudioSheet(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .weight(1f),
+                                    worldbooks = worldbooks,
+                                    mountedWorldbookRefs = mountedWorldbookRefs,
+                                    assetActions = assetActions,
                                     onSetPlayStyle = onSetPlayStyle,
                                     onUpdateConfig = onUpdateConfig,
                                     onPickSceneImage = {
@@ -782,6 +795,7 @@ fun RpStudioSheet(
                     is StudioRoute.LoreEditor -> {
                         RpLoreEditorSubpage(
                             initial = currentRoute.entry,
+                            onSaveV2LoreEntry = assetActions?.onSaveV2LoreEntry,
                             onBack = { route = StudioRoute.Main },
                             onSaveNew = { cat, title, keywords, content, alwaysActive ->
                                 onAddLore(cat, title, keywords, content, alwaysActive)

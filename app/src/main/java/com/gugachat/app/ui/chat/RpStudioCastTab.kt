@@ -122,7 +122,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.gugachat.app.core.storage.LocalMediaPathResolver
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
@@ -199,6 +198,10 @@ internal fun RpCastSection(
     rp: RpConfig,
     isGeneratingArt: Boolean,
     modifier: Modifier = Modifier,
+    boundCharacterCard: CharacterCardEntity? = null,
+    personas: List<PersonaEntity> = emptyList(),
+    boundPersonaId: String? = null,
+    assetActions: RpStudioAssetActions? = null,
     onUpdatePlayer: (name: String, persona: String) -> Unit,
     onAddNpc: () -> Unit,
     onOpenNpcDetail: (RpCharacter) -> Unit,
@@ -210,11 +213,7 @@ internal fun RpCastSection(
     val c = theme.colors
     val ctx = LocalContext.current
     val isZh = strings.language == AppLanguage.ZH
-    val chatVm = LocalChatViewModel.current
-    val chatState = chatVm?.ui?.collectAsStateWithLifecycle()?.value
-    val boundCard = chatState?.boundCharacterCard
-    val personas = chatState?.personas.orEmpty()
-    val boundPersonaId = chatState?.activeConversation?.personaId
+    val boundCard = boundCharacterCard
 
     var playerExpanded by remember { mutableStateOf(false) }
     var pNameDraft by remember(rp.playerName) { mutableStateOf(rp.playerName) }
@@ -329,7 +328,7 @@ internal fun RpCastSection(
             }
         }
 
-        if (personas.isNotEmpty() && chatVm != null) {
+        if (personas.isNotEmpty() && assetActions != null) {
             item(key = "__persona_switcher__") {
                 GuGroupedCard(modifier = Modifier.fillMaxWidth()) {
                     Column(
@@ -349,14 +348,14 @@ internal fun RpCastSection(
                                 GuPill(
                                     label = if (isZh) "会话自设" else "Session Default",
                                     selected = boundPersonaId == null,
-                                    onClick = { chatVm.selectConversationPersona(null) },
+                                    onClick = { assetActions.onSelectPersona(null) },
                                 )
                             }
                             items(personas, key = { it.id }) { p ->
                                 GuPill(
                                     label = p.name.ifBlank { if (isZh) "身份" else "Persona" },
                                     selected = boundPersonaId == p.id,
-                                    onClick = { chatVm.selectConversationPersona(p.id) },
+                                    onClick = { assetActions.onSelectPersona(p.id) },
                                 )
                             }
                         }
@@ -365,7 +364,7 @@ internal fun RpCastSection(
             }
         }
 
-        if (boundCard != null) {
+        if (boundCard != null && assetActions != null) {
             item(key = "__sync_bound_card__") {
                 GuGroupedCard(modifier = Modifier.fillMaxWidth()) {
                     GuSettingsRow(
@@ -375,7 +374,7 @@ internal fun RpCastSection(
                         iconTint = c.primarySoftInk,
                         iconBg = c.primarySoft,
                         showChevron = true,
-                        onClick = { chatVm.syncBoundCharacterCardFields() },
+                        onClick = { assetActions.onSyncBoundCharacterCard() },
                     )
                 }
             }

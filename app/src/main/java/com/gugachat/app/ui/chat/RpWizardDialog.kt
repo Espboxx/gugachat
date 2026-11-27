@@ -122,7 +122,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.gugachat.app.core.storage.LocalMediaPathResolver
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
@@ -205,16 +204,16 @@ fun RpWizardDialog(
         playerPersona: String,
     ) -> Unit,
     onImportCardUri: (Uri) -> Unit,
+    globalCards: List<CharacterCardEntity> = emptyList(),
+    personas: List<PersonaEntity> = emptyList(),
+    onCreateFromCharacterCard: ((String) -> Unit)? = null,
 ) {
     val strings = LocalAppStrings.current
     val theme = LocalAppTheme.current
     val c = theme.colors
     val ctx = LocalContext.current
     val isZh = strings.language == AppLanguage.ZH
-    val chatVm = LocalChatViewModel.current
-    val chatState = chatVm?.ui?.collectAsStateWithLifecycle()?.value
-    val globalCards = chatState?.characterCards.orEmpty()
-    val defaultPersona = chatState?.personas?.firstOrNull { it.isDefault }
+    val defaultPersona = personas.firstOrNull { it.isDefault }
 
     val firstPreset = RpPresets.ALL.first()
     var selectedPreset by remember { mutableStateOf(firstPreset.id) }
@@ -770,8 +769,8 @@ fun RpWizardDialog(
                 }
                 GuButton(
                     onClick = {
-                        if (selectedGlobalCard != null && chatVm != null) {
-                            chatVm.createRpSessionFromCharacterCard(selectedGlobalCard.id)
+                        if (selectedGlobalCard != null && onCreateFromCharacterCard != null) {
+                            onCreateFromCharacterCard(selectedGlobalCard.id)
                         } else {
                             onCreateFromPreset(
                                 selectedPreset,

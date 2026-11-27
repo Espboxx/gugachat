@@ -2,7 +2,6 @@ package com.gugachat.app.ui.chat
 
 import android.content.ContentResolver
 import android.net.Uri
-import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.gugachat.app.AppContainer
@@ -80,8 +79,6 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
-
-val LocalChatViewModel = staticCompositionLocalOf<ChatViewModel?> { null }
 
 data class PendingScannedPdf(
     val fileName: String,

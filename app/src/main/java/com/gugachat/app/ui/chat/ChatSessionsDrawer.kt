@@ -75,7 +75,6 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.gugachat.app.R
 import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.i18n.LocalAppStrings
@@ -115,11 +114,7 @@ fun ChatSessionsDrawerContent(
     val theme = LocalAppTheme.current
     val c = theme.colors
     val isZh = strings.language == AppLanguage.ZH
-    val chatVm = LocalChatViewModel.current
-    val vmStreamingIds = chatVm?.ui?.collectAsStateWithLifecycle()?.value?.streamingConversationIds
-    val activeStreamingIds = remember(streamingConversationIds, vmStreamingIds) {
-        streamingConversationIds + vmStreamingIds.orEmpty()
-    }
+    val activeStreamingIds = streamingConversationIds
     val streamPulseTransition = rememberInfiniteTransition(label = "drawer_stream_pulse")
     val streamPulseAlpha by streamPulseTransition.animateFloat(
         initialValue = 0.35f,

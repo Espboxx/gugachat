@@ -85,7 +85,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.i18n.LocalAppStrings
 import com.gugachat.app.core.theme.GuInlineStepper
@@ -138,6 +137,8 @@ fun RpWorkspaceScreen(
     moreMenuContent: @Composable () -> Unit,
     onToggleTheaterMode: () -> Unit,
     onSetTheaterMode: (Boolean) -> Unit,
+    activeGreetingVariants: List<String> = emptyList(),
+    greetingActions: RpGreetingActions? = null,
     onOpenStudio: (Int) -> Unit,
     onQuickSave: () -> Unit,
     onUpdateAuthorNote: (String) -> Unit,
@@ -194,16 +195,14 @@ fun RpWorkspaceScreen(
     var showGreetingPicker by remember { mutableStateOf(false) }
     var streamScrollHide by remember(rp.title) { mutableStateOf(false) }
 
-    val chatVm = LocalChatViewModel.current
-    val chatState = chatVm?.ui?.collectAsStateWithLifecycle()?.value
     val activeMsgs = remember(messages) { TimelineReconciler.activeMessages(messages) }
     val activeUserTurnCount = remember(activeMsgs) { activeMsgs.count { it.role == "user" } }
     val seq1GreetingMsg = remember(activeMsgs) {
         activeMsgs.firstOrNull { it.role == "assistant" && it.seq == 1 }
     }
-    val greetingPreviews = remember(seq1GreetingMsg?.variants, chatState?.activeGreetingVariants) {
+    val greetingPreviews = remember(seq1GreetingMsg?.variants, activeGreetingVariants) {
         val fromMsg = seq1GreetingMsg?.variants.orEmpty().map { it.content }.filter { it.isNotBlank() }
-        if (fromMsg.size > 1) fromMsg else chatState?.activeGreetingVariants.orEmpty()
+        if (fromMsg.size > 1) fromMsg else activeGreetingVariants
     }
     val activeGreetingIdx = (seq1GreetingMsg?.activeVariantIndex ?: 0)
         .coerceIn(0, (greetingPreviews.size - 1).coerceAtLeast(0))
@@ -218,8 +217,8 @@ fun RpWorkspaceScreen(
             activeIndex = activeGreetingIdx,
             onSelect = { idx ->
                 showGreetingPicker = false
-                if (chatVm != null) {
-                    chatVm.selectGreetingVariant(idx)
+                if (greetingActions != null) {
+                    greetingActions.onSelectGreetingVariant(idx)
                 } else if (seq1GreetingMsg != null) {
                     onSwitchVariant(seq1GreetingMsg.id, idx)
                 }
@@ -393,6 +392,8 @@ fun RpWorkspaceScreen(
                                 isComposerExpanded = showTheaterComposer,
                                 onToggleComposer = { showTheaterComposer = !showTheaterComposer },
                                 onOpenQuickControl = { showQuickPopover = true },
+                                activeGreetingVariants = activeGreetingVariants,
+                                greetingActions = greetingActions,
                                 modifier = Modifier.fillMaxSize(),
                             )
                         } else {

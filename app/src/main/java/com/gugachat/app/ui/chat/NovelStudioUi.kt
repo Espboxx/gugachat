@@ -105,7 +105,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.rememberAsyncImagePainter
 import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.i18n.LocalAppStrings
@@ -601,6 +600,8 @@ fun NovelStudioSheet(
     onExportMd: (android.net.Uri, Boolean) -> Unit,
     onToast: (String) -> Unit = {},
     onDismiss: () -> Unit,
+    isGeneratingCover: Boolean = false,
+    extraActions: NovelStudioExtraActions? = null,
 ) {
     val strings = LocalAppStrings.current
     val theme = LocalAppTheme.current
@@ -664,9 +665,6 @@ fun NovelStudioSheet(
     val hasAssistantProse = latestAssistantProse.isNotBlank()
     val activeCh = chapters.firstOrNull { it.id == novel.activeChapterId } ?: chapters.lastOrNull()
     val totalBookWords = remember(chapters) { chapters.sumOf { it.wordCount } }
-    val chatVm = LocalChatViewModel.current
-    val chatState = chatVm?.ui?.collectAsStateWithLifecycle()?.value
-    val isGeneratingCover = chatState?.isGeneratingRpArt == true
 
     val exportTxtLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
         if (uri != null) onExportTxt(uri, exportIncludeLore)
@@ -675,10 +673,10 @@ fun NovelStudioSheet(
         if (uri != null) onExportMd(uri, exportIncludeLore)
     }
     val exportEpubLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/epub+zip")) { uri ->
-        if (uri != null) chatVm?.exportNovelEpubToUri(uri, ctx.contentResolver, includeLore = exportIncludeLore)
+        if (uri != null) extraActions?.onExportEpub?.invoke(uri, exportIncludeLore)
     }
     val pickCoverLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        if (uri != null) chatVm?.bindNovelCoverImage(uri, ctx.contentResolver)
+        if (uri != null) extraActions?.onBindCoverImage?.invoke(uri)
     }
     val importLoreLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) onImportLorebook(uri)
@@ -1317,8 +1315,8 @@ fun NovelStudioSheet(
                                                             verticalArrangement = Arrangement.spacedBy(6.dp),
                                                         ) {
                                                             GuButton(
-                                                                onClick = { chatVm?.generateNovelCoverArt() },
-                                                                enabled = chatVm != null && !isGeneratingCover,
+                                                                onClick = { extraActions?.onGenerateCoverArt?.invoke() },
+                                                                enabled = extraActions != null && !isGeneratingCover,
                                                                 loading = isGeneratingCover,
                                                                 compact = true,
                                                                 variant = GuButtonVariant.HONEY,
@@ -1333,7 +1331,7 @@ fun NovelStudioSheet(
                                                                         PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
                                                                     )
                                                                 },
-                                                                enabled = chatVm != null,
+                                                                enabled = extraActions != null,
                                                                 compact = true,
                                                                 variant = GuButtonVariant.SUBTLE,
                                                             ) {
@@ -1343,7 +1341,8 @@ fun NovelStudioSheet(
                                                             }
                                                             if (coverFile != null) {
                                                                 GuButton(
-                                                                    onClick = { chatVm?.clearNovelCoverImage() },
+                                                                    onClick = { extraActions?.onClearCoverImage?.invoke() },
+                                                                    enabled = extraActions != null,
                                                                     compact = true,
                                                                     variant = GuButtonVariant.SECONDARY,
                                                                 ) {
@@ -1624,7 +1623,7 @@ fun NovelStudioSheet(
                                                     onClick = {
                                                         exportEpubLauncher.launch(NovelExport.sanitizeFileName(novel.title, "epub"))
                                                     },
-                                                    enabled = chatVm != null,
+                                                    enabled = extraActions != null,
                                                     variant = GuButtonVariant.HONEY,
                                                     modifier = Modifier.fillMaxWidth(),
                                                 ) {

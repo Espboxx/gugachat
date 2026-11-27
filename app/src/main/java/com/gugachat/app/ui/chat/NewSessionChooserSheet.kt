@@ -45,7 +45,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.rememberAsyncImagePainter
 import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.i18n.LocalAppStrings
@@ -73,10 +72,8 @@ fun NewSessionChooserSheet(
     val ctx = LocalContext.current
     val isZh = strings.language == AppLanguage.ZH
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val chatVm = LocalChatViewModel.current
-    val vmCards = chatVm?.ui?.collectAsStateWithLifecycle()?.value?.characterCards
-    val effectiveRecentCards = remember(recentCards, vmCards) {
-        (if (recentCards.isNotEmpty()) recentCards else vmCards.orEmpty()).take(4)
+    val effectiveRecentCards = remember(recentCards) {
+        recentCards.take(4)
     }
 
     GuModalBottomSheet(
@@ -152,12 +149,8 @@ fun NewSessionChooserSheet(
                                 }
                                 Surface(
                                     onClick = {
-                                        if (chatVm != null) {
-                                            chatVm.createRpSessionFromCharacterCard(card.id)
-                                            onDismiss()
-                                        } else {
-                                            onSelectCard(card.id)
-                                        }
+                                        onSelectCard(card.id)
+                                        onDismiss()
                                     },
                                     shape = RoundedCornerShape(999.dp),
                                     color = c.surface,

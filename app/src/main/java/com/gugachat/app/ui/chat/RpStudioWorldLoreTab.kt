@@ -122,7 +122,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.gugachat.app.core.storage.LocalMediaPathResolver
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
@@ -172,6 +171,7 @@ import com.gugachat.app.core.theme.GuSwitchRow
 import com.gugachat.app.core.theme.GuTextField
 import com.gugachat.app.core.theme.LocalAppTheme
 import com.gugachat.app.data.local.CharacterCardEntity
+import com.gugachat.app.data.local.ConversationWorldbookCrossRef
 import com.gugachat.app.data.local.PersonaEntity
 import com.gugachat.app.data.local.WorldbookEntity
 import com.gugachat.app.domain.chat.NovelLoreEntry
@@ -201,6 +201,9 @@ internal fun RpWorldAndLoreSection(
     triggeredLoreIds: Set<String>,
     isGeneratingArt: Boolean,
     modifier: Modifier = Modifier,
+    worldbooks: List<WorldbookEntity> = emptyList(),
+    mountedWorldbookRefs: List<ConversationWorldbookCrossRef> = emptyList(),
+    assetActions: RpStudioAssetActions? = null,
     onSetPlayStyle: (RpPlayStyle) -> Unit,
     onUpdateConfig: ((RpConfig) -> RpConfig) -> Unit,
     onPickSceneImage: () -> Unit,
@@ -220,8 +223,6 @@ internal fun RpWorldAndLoreSection(
     val c = theme.colors
     val ctx = LocalContext.current
     val isZh = strings.language == AppLanguage.ZH
-    val chatVm = LocalChatViewModel.current
-    val chatState = chatVm?.ui?.collectAsStateWithLifecycle()?.value
 
     var searchQuery by remember { mutableStateOf("") }
     var selectedCat by remember { mutableStateOf("all") }
@@ -230,8 +231,8 @@ internal fun RpWorldAndLoreSection(
     var worldSectionExpanded by remember { mutableStateOf(false) }
     var showWorldbookPicker by remember { mutableStateOf(false) }
 
-    val allWorldbooks = chatState?.worldbooks.orEmpty()
-    val mountedRefs = chatState?.mountedWorldbookRefs.orEmpty()
+    val allWorldbooks = worldbooks
+    val mountedRefs = mountedWorldbookRefs
     val mountedWorldbooks = remember(allWorldbooks, mountedRefs) {
         val byId = allWorldbooks.associateBy { it.id }
         mountedRefs.sortedBy { it.sortOrder }.mapNotNull { ref -> byId[ref.worldbookId]?.let { ref to it } }
@@ -280,7 +281,7 @@ internal fun RpWorldAndLoreSection(
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         // 0. Multi-Worldbook Mount Card (Global & Session Worldbooks)
-        if (chatVm != null && (allWorldbooks.isNotEmpty() || mountedWorldbooks.isNotEmpty())) {
+        if (assetActions != null && (allWorldbooks.isNotEmpty() || mountedWorldbooks.isNotEmpty())) {
             item(key = "__mounted_worldbooks__") {
                 GuGroupedCard(modifier = Modifier.fillMaxWidth()) {
                     Column(
@@ -329,7 +330,7 @@ internal fun RpWorldAndLoreSection(
                             ) {
                                 mountedWorldbooks.forEach { (ref, book) ->
                                     Surface(
-                                        onClick = { chatVm.toggleMountedWorldbookEnabled(book.id) },
+                                        onClick = { assetActions.onToggleMountedWorldbook(book.id) },
                                         shape = RoundedCornerShape(999.dp),
                                         color = if (ref.enabled) c.primarySoft else c.surfaceSoft,
                                     ) {
@@ -353,7 +354,7 @@ internal fun RpWorldAndLoreSection(
                                                 modifier = Modifier
                                                     .size(14.dp)
                                                     .clip(CircleShape)
-                                                    .clickable { chatVm.unmountWorldbook(book.id) },
+                                                    .clickable { assetActions.onUnmountWorldbook(book.id) },
                                             )
                                         }
                                     }
@@ -843,16 +844,16 @@ internal fun RpWorldAndLoreSection(
         }
     }
 
-    if (showWorldbookPicker && chatVm != null) {
+    if (showWorldbookPicker && assetActions != null) {
         RpWorldbookMountPickerSheet(
             worldbooks = allWorldbooks,
             mountedIds = mountedRefs.map { it.worldbookId }.toSet(),
             isZh = isZh,
             onMount = { wbId ->
-                chatVm.mountWorldbook(wbId)
+                assetActions.onMountWorldbook(wbId)
                 showWorldbookPicker = false
             },
-            onUnmount = { wbId -> chatVm.unmountWorldbook(wbId) },
+            onUnmount = { wbId -> assetActions.onUnmountWorldbook(wbId) },
             onDismiss = { showWorldbookPicker = false },
         )
     }
@@ -953,12 +954,26 @@ internal fun RpLoreEditorSubpage(
     onBack: () -> Unit,
     onSaveNew: (category: String, title: String, keywords: String, content: String, alwaysActive: Boolean) -> Unit,
     onSaveExisting: (NovelLoreEntry) -> Unit,
+    onSaveV2LoreEntry: ((
+        existingLegacyId: String?,
+        category: String,
+        title: String,
+        keywordsRaw: String,
+        secondaryKeysRaw: String,
+        selectiveLogic: Int,
+        useDepthInjection: Boolean,
+        depth: Int,
+        sticky: Int,
+        cooldown: Int,
+        delay: Int,
+        content: String,
+        alwaysActive: Boolean,
+    ) -> Unit)? = null,
 ) {
     val strings = LocalAppStrings.current
     val theme = LocalAppTheme.current
     val c = theme.colors
     val isZh = strings.language == AppLanguage.ZH
-    val chatVm = LocalChatViewModel.current
 
     var category by remember(initial?.id) { mutableStateOf(initial?.category ?: "character") }
     var title by remember(initial?.id) { mutableStateOf(initial?.title.orEmpty()) }
@@ -983,21 +998,21 @@ internal fun RpLoreEditorSubpage(
         delayTurns > 0
 
     fun submit() {
-        if (hasV2Triggers && chatVm != null) {
-            chatVm.saveV2LoreEntryForActiveConversation(
-                existingLegacyId = initial?.id,
-                category = category,
-                title = title,
-                keywordsRaw = keywords,
-                secondaryKeysRaw = secondaryKeysRaw,
-                selectiveLogic = selectiveLogic,
-                useDepthInjection = useDepthInjection,
-                depth = depth,
-                sticky = sticky,
-                cooldown = cooldown,
-                delay = delayTurns,
-                content = content,
-                alwaysActive = alwaysActive,
+        if (hasV2Triggers && onSaveV2LoreEntry != null) {
+            onSaveV2LoreEntry(
+                initial?.id,
+                category,
+                title,
+                keywords,
+                secondaryKeysRaw,
+                selectiveLogic,
+                useDepthInjection,
+                depth,
+                sticky,
+                cooldown,
+                delayTurns,
+                content,
+                alwaysActive,
             )
             onBack()
             return

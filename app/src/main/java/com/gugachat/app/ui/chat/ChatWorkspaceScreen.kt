@@ -73,6 +73,7 @@ fun ChatWorkspaceScreen(
     val strings = LocalAppStrings.current
     val outerTheme = LocalAppTheme.current
     val ctx = LocalContext.current
+    val actions = rememberChatWorkspaceActions(viewModel, ctx.contentResolver)
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val shell = LocalAppShellController.current
@@ -213,6 +214,11 @@ fun ChatWorkspaceScreen(
 
     if (showNewSessionSheet) {
         NewSessionChooserSheet(
+            recentCards = state.characterCards,
+            onSelectCard = { cardId ->
+                actions.session.onCreateRpFromCard(cardId)
+                showNewSessionSheet = false
+            },
             onSelectChat = {
                 showNewSessionSheet = false
                 viewModel.createNewChatSession()
@@ -240,6 +246,10 @@ fun ChatWorkspaceScreen(
             onSave = viewModel::updateConversationParams,
             onCompactNow = viewModel::triggerManualCompaction,
             onDismiss = { showParamsSheet = false },
+            promptPresets = state.promptPresets,
+            boundPromptPreset = state.boundPromptPreset,
+            boundPresetId = activeConv?.presetId,
+            presetActions = actions.params,
         )
     }
 
@@ -351,6 +361,8 @@ fun ChatWorkspaceScreen(
             onExportMd = { uri, includeLore -> viewModel.exportNovelToUri(uri, ctx.contentResolver, markdown = true, includeLore = includeLore) },
             onToast = { container.toastController.show(it) },
             onDismiss = { showNovelStudio = false },
+            isGeneratingCover = state.isGeneratingRpArt,
+            extraActions = actions.novelStudio,
         )
     }
 
@@ -367,6 +379,9 @@ fun ChatWorkspaceScreen(
                 )
             },
             onImportCardUri = { uri -> viewModel.importSillyTavernCardUri(uri, ctx.contentResolver) },
+            globalCards = state.characterCards,
+            personas = state.personas,
+            onCreateFromCharacterCard = actions.session.onCreateRpFromCard,
         )
     }
 
@@ -434,6 +449,12 @@ fun ChatWorkspaceScreen(
             onExportCardJson = { uri -> viewModel.exportRpCardJsonToUri(uri, ctx.contentResolver) },
             onExportCardPng = { uri -> viewModel.exportRpCardPngToUri(uri, ctx.contentResolver) },
             onDismiss = { showRpStudio = false },
+            boundCharacterCard = state.boundCharacterCard,
+            personas = state.personas,
+            boundPersonaId = activeConv?.personaId,
+            worldbooks = state.worldbooks,
+            mountedWorldbookRefs = state.mountedWorldbookRefs,
+            assetActions = actions.rpStudioAssets,
         )
     }
 
@@ -448,6 +469,7 @@ fun ChatWorkspaceScreen(
             onDismiss = { showDeepSeekImport = false },
             selectedGroupId = state.selectedGroupId,
             selectedModelId = state.selectedModelId,
+            onImportTavernAssetBytes = actions.session.onImportTavernAssetBytes,
         )
     }
 
@@ -768,6 +790,7 @@ fun ChatWorkspaceScreen(
             ChatSessionsDrawerContent(
                 conversations = state.conversations,
                 activeConversationId = activeConv?.id,
+                streamingConversationIds = state.streamingConversationIds,
                 onSelectConversation = viewModel::selectConversation,
                 onNewSession = { showNewSessionSheet = true },
                 onImportDeepSeek = { showDeepSeekImport = true },
@@ -876,6 +899,8 @@ fun ChatWorkspaceScreen(
                     moreMenuContent = moreMenu,
                     onToggleTheaterMode = viewModel::toggleRpTheaterMode,
                     onSetTheaterMode = viewModel::setRpTheaterMode,
+                    activeGreetingVariants = state.activeGreetingVariants,
+                    greetingActions = actions.rpGreeting,
                     onOpenStudio = { tabIdx ->
                         rpStudioInitialTab = tabIdx
                         showRpStudio = true

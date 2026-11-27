@@ -96,7 +96,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.gugachat.app.core.storage.LocalMediaPathResolver
 import com.gugachat.app.core.theme.GuModalDragHandle
 import com.gugachat.app.core.theme.GuSheetHeader
@@ -534,6 +533,8 @@ fun RpTheaterStageView(
     isComposerExpanded: Boolean = false,
     onToggleComposer: (() -> Unit)? = null,
     onOpenQuickControl: (() -> Unit)? = null,
+    activeGreetingVariants: List<String> = emptyList(),
+    greetingActions: RpGreetingActions? = null,
 ) {
     val strings = LocalAppStrings.current
     val appTheme = LocalAppTheme.current
@@ -558,15 +559,13 @@ fun RpTheaterStageView(
     val activeMessages = remember(messages) { TimelineReconciler.activeMessages(messages) }
     val latestAssistant = remember(activeMessages) { activeMessages.lastOrNull { it.role == "assistant" } }
     val latestVariant = latestAssistant?.activeVariant()
-    val chatVm = LocalChatViewModel.current
-    val chatState = chatVm?.ui?.collectAsStateWithLifecycle()?.value
     val activeUserTurnCount = remember(activeMessages) { activeMessages.count { it.role == "user" } }
     val seq1GreetingMsg = remember(activeMessages) {
         activeMessages.firstOrNull { it.role == "assistant" && it.seq == 1 }
     }
-    val greetingPreviews = remember(seq1GreetingMsg?.variants, chatState?.activeGreetingVariants) {
+    val greetingPreviews = remember(seq1GreetingMsg?.variants, activeGreetingVariants) {
         val fromMsg = seq1GreetingMsg?.variants.orEmpty().map { it.content }.filter { it.isNotBlank() }
-        if (fromMsg.size > 1) fromMsg else chatState?.activeGreetingVariants.orEmpty()
+        if (fromMsg.size > 1) fromMsg else activeGreetingVariants
     }
     val activeGreetingIdx = (seq1GreetingMsg?.activeVariantIndex ?: 0)
         .coerceIn(0, (greetingPreviews.size - 1).coerceAtLeast(0))
@@ -579,8 +578,8 @@ fun RpTheaterStageView(
             activeIndex = activeGreetingIdx,
             onSelect = { idx ->
                 showGreetingPickerSheet = false
-                if (chatVm != null) {
-                    chatVm.selectGreetingVariant(idx)
+                if (greetingActions != null) {
+                    greetingActions.onSelectGreetingVariant(idx)
                 } else if (seq1GreetingMsg != null) {
                     onSwitchVariant(seq1GreetingMsg.id, idx)
                 }

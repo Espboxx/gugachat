@@ -92,7 +92,6 @@ import com.gugachat.app.ui.auth.AuthViewModel
 import com.gugachat.app.ui.auth.LoginScreen
 import com.gugachat.app.ui.chat.ChatViewModel
 import com.gugachat.app.ui.chat.ChatWorkspaceScreen
-import com.gugachat.app.ui.chat.LocalChatViewModel
 import com.gugachat.app.ui.chat.resolveNovelPaperTheme
 import com.gugachat.app.ui.chat.resolveRpStageAccent
 import com.gugachat.app.ui.images.CreativeStudioScreen
@@ -377,7 +376,6 @@ private fun AuthenticatedShell(
 
     CompositionLocalProvider(
         LocalAppShellController provides shellController,
-        LocalChatViewModel provides chatVm,
     ) {
         Scaffold(
             containerColor = scaffoldContainerColor,

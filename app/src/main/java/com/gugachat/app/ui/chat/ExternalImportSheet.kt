@@ -87,6 +87,7 @@ import com.gugachat.app.core.theme.GuTextField
 import com.gugachat.app.core.theme.LocalAppTheme
 import com.gugachat.app.core.util.FuzzyMatcher
 import com.gugachat.app.data.api.DeepSeekLinkAuthRequiredException
+import com.gugachat.app.data.chat.AssetImportResult
 import com.gugachat.app.data.api.ExternalImportService
 import com.gugachat.app.domain.chat.ConversationMode
 import com.gugachat.app.domain.chat.ExternalImportBundle
@@ -117,6 +118,7 @@ fun ExternalImportSheet(
     onDismiss: () -> Unit,
     selectedGroupId: Long? = null,
     selectedModelId: String? = null,
+    onImportTavernAssetBytes: (suspend (ByteArray, String?) -> Boolean)? = null,
 ) {
     val strings = LocalAppStrings.current
     val theme = LocalAppTheme.current
@@ -162,8 +164,6 @@ fun ExternalImportSheet(
         ImportPlatformTab.OTHER -> ExternalImportSource.GENERIC
     }
 
-    val chatVm = LocalChatViewModel.current
-
     val filePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument(),
     ) { uri ->
@@ -190,10 +190,44 @@ fun ExternalImportSheet(
                     (activeTab == ImportPlatformTab.TAVERN || activeTab == ImportPlatformTab.OTHER) &&
                     TavernAssetCodec.parseJsonText(rawText, conversationId = "preview", fileName = displayName) != null
 
-                if (chatVm != null && (isBinaryTavernCard || isStandaloneWorldbookOrPreset)) {
-                    if (chatVm.importTavernAssetFromBytes(bytes, displayName)) {
-                        onDismiss()
-                        return@launch
+                if (isBinaryTavernCard || isStandaloneWorldbookOrPreset) {
+                    if (onImportTavernAssetBytes != null) {
+                        if (onImportTavernAssetBytes(bytes, displayName)) {
+                            onDismiss()
+                            return@launch
+                        }
+                    } else {
+                        val isZh = strings.language == AppLanguage.ZH
+                        val handled = when (
+                            val imported = container.assetImportCoordinator.importBytes(
+                                bytes = bytes,
+                                fileName = displayName,
+                            )
+                        ) {
+                            is AssetImportResult.CharacterCardImported -> {
+                                container.toastController.show(strings.rp.importSuccess.fmt("name" to imported.card.name))
+                                true
+                            }
+                            is AssetImportResult.WorldbookImported -> {
+                                container.toastController.show(
+                                    if (isZh) "已导入世界书「${imported.worldbook.name}」（${imported.entries.size} 条）到「创作 → 设定」"
+                                    else "Imported worldbook \"${imported.worldbook.name}\" (${imported.entries.size} entries)",
+                                )
+                                true
+                            }
+                            is AssetImportResult.PromptPresetImported -> {
+                                container.toastController.show(
+                                    if (isZh) "已导入预设「${imported.preset.name}」到「创作 → 设定」"
+                                    else "Imported preset \"${imported.preset.name}\" to library",
+                                )
+                                true
+                            }
+                            else -> false
+                        }
+                        if (handled) {
+                            onDismiss()
+                            return@launch
+                        }
                     }
                 }
                 val bundle = withContext(Dispatchers.Default) {
