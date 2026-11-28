@@ -736,6 +736,9 @@ class BackupAndWebDavSyncTest {
         assertEquals(null, decodedLegacySnap.defaultMinOutputRp)
         assertEquals(null, decodedLegacySnap.defaultMinOutputNovel)
         assertFalse(decodedLegacySnap.defaultAutoContinueShort)
+        assertEquals(0L, decodedLegacySnap.studioArtKeyId)
+        assertEquals("", decodedLegacySnap.studioArtModel)
+        assertEquals("", decodedLegacySnap.studioArtChannelName)
 
         // 2. Full v2 backup round-trip preserves ChatParams.minOutputChars/autoContinueShortReply + VaultSettingsSnapshot defaults
         val srcDb = FakeBackupDbGateway()
@@ -769,6 +772,9 @@ class BackupAndWebDavSyncTest {
             defaultMinOutputRp = 800,
             defaultMinOutputNovel = 1500,
             defaultAutoContinueShort = true,
+            studioArtKeyId = -12345L,
+            studioArtModel = "flux-kontext-pro",
+            studioArtChannelName = "My Relay · OpenAI Chat",
         )
         val srcVault = InMemoryVaultAdapter(
             VaultPayloadV2(
@@ -811,6 +817,9 @@ class BackupAndWebDavSyncTest {
         assertEquals(800, restoredSnap?.defaultMinOutputRp)
         assertEquals(1500, restoredSnap?.defaultMinOutputNovel)
         assertTrue(restoredSnap?.defaultAutoContinueShort == true)
+        assertEquals(-12345L, restoredSnap?.studioArtKeyId)
+        assertEquals("flux-kontext-pro", restoredSnap?.studioArtModel)
+        assertEquals("My Relay · OpenAI Chat", restoredSnap?.studioArtChannelName)
     }
 
     // ==================== 3. WebDavClient & WebDavSyncManager Tests ====================

@@ -63,12 +63,23 @@ data class RpStudioAssetActions(
 )
 
 @Immutable
+data class StudioArtModelActions(
+    val onOpenPicker: () -> Unit,
+    val onDismissPicker: () -> Unit,
+    val onRefreshChannels: () -> Unit,
+    val onSelectKey: (Long) -> Unit,
+    val onSaveSelection: (keyId: Long, modelId: String, channelName: String, runPending: Boolean) -> Unit,
+    val onClearSelection: () -> Unit,
+)
+
+@Immutable
 data class ChatWorkspaceActionBundle(
     val session: ChatSessionActions,
     val params: ChatParamsActions,
     val novelStudio: NovelStudioExtraActions,
     val rpGreeting: RpGreetingActions,
     val rpStudioAssets: RpStudioAssetActions,
+    val studioArtModel: StudioArtModelActions,
 )
 
 @Composable
@@ -110,6 +121,14 @@ fun rememberChatWorkspaceActions(
             onUnmountWorldbook = viewModel::unmountWorldbook,
             onToggleMountedWorldbook = viewModel::toggleMountedWorldbookEnabled,
             onSaveV2LoreEntry = viewModel::saveV2LoreEntryForActiveConversation,
+        ),
+        studioArtModel = StudioArtModelActions(
+            onOpenPicker = { viewModel.openStudioArtModelPicker(null) },
+            onDismissPicker = viewModel::dismissStudioArtModelPicker,
+            onRefreshChannels = viewModel::refreshStudioArtChannels,
+            onSelectKey = viewModel::loadStudioArtModelsForKey,
+            onSaveSelection = viewModel::saveStudioArtModelSelection,
+            onClearSelection = viewModel::clearStudioArtModelSelection,
         ),
     )
 }

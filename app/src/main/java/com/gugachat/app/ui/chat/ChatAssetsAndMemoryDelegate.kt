@@ -10,6 +10,7 @@ import com.gugachat.app.data.api.AppJson
 import com.gugachat.app.data.api.ExternalImportService
 import com.gugachat.app.data.chat.AssetImportResult
 import com.gugachat.app.data.chat.RetrievalCoordinator
+import com.gugachat.app.data.chat.StudioArtModelUnconfiguredException
 import com.gugachat.app.data.local.CharacterCardEntity
 import com.gugachat.app.data.local.ConversationWorldbookCrossRef
 import com.gugachat.app.data.local.PersonaEntity
@@ -1221,10 +1222,181 @@ internal class ChatAssetsAndMemoryDelegate(private val host: ChatViewModelHost) 
         }
     }
 
+    // ==================== Studio Art Model Selection ====================
+
+    fun openStudioArtModelPicker(pending: PendingStudioArtRequest? = null) {
+        host.uiFlow.update { st ->
+            st.copy(
+                studioArtModel = st.studioArtModel.copy(
+                    showPicker = true,
+                    pendingRequest = pending ?: st.studioArtModel.pendingRequest,
+                ),
+            )
+        }
+        refreshStudioArtChannels()
+    }
+
+    fun dismissStudioArtModelPicker() {
+        host.uiFlow.update { st ->
+            st.copy(
+                studioArtModel = st.studioArtModel.copy(
+                    showPicker = false,
+                    pendingRequest = null,
+                ),
+            )
+        }
+    }
+
+    fun refreshStudioArtChannels() {
+        host.scope.launch {
+            host.uiFlow.update { st ->
+                st.copy(studioArtModel = st.studioArtModel.copy(isLoadingChannels = true))
+            }
+            try {
+                val resolved = host.container.imageChannelResolver.resolveSelectableArtChannels()
+                val channels = resolved.allKeys
+                val initialSeedModels = channels.associate { key -> key.id to key.models }
+                host.uiFlow.update { st ->
+                    val merged = st.studioArtModel.modelsByKeyId.toMutableMap()
+                    initialSeedModels.forEach { (k, v) ->
+                        if (merged[k].isNullOrEmpty() && v.isNotEmpty()) merged[k] = v
+                    }
+                    st.copy(
+                        studioArtModel = st.studioArtModel.copy(
+                            channels = channels,
+                            modelsByKeyId = merged,
+                            isLoadingChannels = false,
+                        ),
+                    )
+                }
+                val cur = host.uiFlow.value.studioArtModel
+                val keyToLoad = channels.firstOrNull { it.id == cur.selectedKeyId && cur.selectedKeyId != 0L }
+                    ?: channels.firstOrNull { it.id == cur.galleryFallbackKeyId && cur.galleryFallbackKeyId != 0L }
+                    ?: channels.firstOrNull()
+                if (keyToLoad != null) {
+                    loadStudioArtModelsForKey(keyToLoad.id)
+                }
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (e: Throwable) {
+                host.uiFlow.update { st ->
+                    st.copy(studioArtModel = st.studioArtModel.copy(isLoadingChannels = false))
+                }
+                host.container.toastController.show(e.message ?: host.strings().common.unknownError, isError = true)
+            }
+        }
+    }
+
+    fun loadStudioArtModelsForKey(keyId: Long) {
+        if (keyId == 0L) return
+        val key = host.uiFlow.value.studioArtModel.channels.firstOrNull { it.id == keyId } ?: return
+        host.scope.launch {
+            host.uiFlow.update { st ->
+                st.copy(studioArtModel = st.studioArtModel.copy(loadingModelsKeyId = keyId))
+            }
+            try {
+                val sorted = host.container.imageChannelResolver.resolveModelsForKey(key)
+                host.uiFlow.update { st ->
+                    val nextLoading = if (st.studioArtModel.loadingModelsKeyId == keyId) null else st.studioArtModel.loadingModelsKeyId
+                    st.copy(
+                        studioArtModel = st.studioArtModel.copy(
+                            modelsByKeyId = st.studioArtModel.modelsByKeyId + (keyId to sorted),
+                            loadingModelsKeyId = nextLoading,
+                        ),
+                    )
+                }
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (_: Throwable) {
+                host.uiFlow.update { st ->
+                    val nextLoading = if (st.studioArtModel.loadingModelsKeyId == keyId) null else st.studioArtModel.loadingModelsKeyId
+                    st.copy(studioArtModel = st.studioArtModel.copy(loadingModelsKeyId = nextLoading))
+                }
+            }
+        }
+    }
+
+    fun saveStudioArtModelSelection(
+        keyId: Long,
+        modelId: String,
+        channelName: String,
+        runPending: Boolean = true,
+    ) {
+        val cleanModel = modelId.trim()
+        if (keyId == 0L || cleanModel.isEmpty()) {
+            host.container.toastController.show(host.strings().rp.aiArtModelRequiredToast, isError = true)
+            return
+        }
+        val cleanChannel = channelName.trim().ifBlank {
+            host.uiFlow.value.studioArtModel.channels.firstOrNull { it.id == keyId }?.name.orEmpty()
+        }
+        val pending = if (runPending) host.uiFlow.value.studioArtModel.pendingRequest else null
+        host.uiFlow.update { st ->
+            st.copy(
+                studioArtModel = st.studioArtModel.copy(
+                    selectedKeyId = keyId,
+                    selectedModelId = cleanModel,
+                    selectedChannelName = cleanChannel,
+                    showPicker = false,
+                    pendingRequest = null,
+                ),
+            )
+        }
+        host.scope.launch {
+            host.container.settingsStore.setStudioArtModelSelection(
+                keyId = keyId,
+                model = cleanModel,
+                channelName = cleanChannel,
+            )
+            if (pending == null) {
+                host.container.toastController.show(
+                    host.strings().rp.aiArtModelSavedToast.fmt("model" to cleanModel),
+                )
+            } else {
+                when (pending) {
+                    is PendingStudioArtRequest.RpSceneCg -> generateRpSceneCg(
+                        customHint = pending.customHint,
+                        saveToGallery = pending.saveToGallery,
+                        explicitKeyId = keyId,
+                        explicitModelId = cleanModel,
+                    )
+                    is PendingStudioArtRequest.RpCharacterSprite -> generateRpCharacterSprite(
+                        charId = pending.charId,
+                        expressionKey = pending.expressionKey,
+                        customHint = pending.customHint,
+                        explicitKeyId = keyId,
+                        explicitModelId = cleanModel,
+                    )
+                    PendingStudioArtRequest.NovelCover -> generateNovelCoverArt(
+                        explicitKeyId = keyId,
+                        explicitModelId = cleanModel,
+                    )
+                }
+            }
+        }
+    }
+
+    fun clearStudioArtModelSelection() {
+        host.uiFlow.update { st ->
+            st.copy(
+                studioArtModel = st.studioArtModel.copy(
+                    selectedKeyId = 0L,
+                    selectedModelId = "",
+                    selectedChannelName = "",
+                ),
+            )
+        }
+        host.scope.launch {
+            host.container.settingsStore.clearStudioArtModelSelection()
+        }
+    }
+
     fun generateRpCharacterSprite(
         charId: String,
         expressionKey: String = "neutral",
         customHint: String = "",
+        explicitKeyId: Long? = null,
+        explicitModelId: String? = null,
     ) {
         val st = host.uiFlow.value
         if (st.isGeneratingRpArt) return
@@ -1232,10 +1404,18 @@ internal class ChatAssetsAndMemoryDelegate(private val host: ChatViewModelHost) 
         val rp = conv.rp ?: return
         val character = rp.cast.firstOrNull { it.id == charId } ?: return
         val exprKey = expressionKey.trim().lowercase().ifEmpty { "neutral" }
+        val keyId = explicitKeyId ?: st.studioArtModel.selectedKeyId
+        val modelId = (explicitModelId ?: st.studioArtModel.selectedModelId).trim()
+        val pending = PendingStudioArtRequest.RpCharacterSprite(charId, exprKey, customHint)
+        if (keyId == 0L || modelId.isEmpty()) {
+            host.container.toastController.show(host.strings().rp.aiArtModelRequiredToast)
+            openStudioArtModelPicker(pending = pending)
+            return
+        }
         val exprLabel = host.strings().rp.expressionLabels[exprKey] ?: exprKey
-        val statusLabel = "${host.strings().rp.aiGeneratingArt} (${character.name} · $exprLabel)"
+        val statusLabel = "${host.strings().rp.aiGeneratingArt} (${character.name} · $exprLabel · $modelId)"
 
-        launchRpArtGeneration(statusLabel) {
+        launchRpArtGeneration(statusLabel, pendingOnUnconfigured = pending) {
             val prompt = RpEngine.buildPortraitImagePrompt(
                 rp = rp,
                 character = character,
@@ -1254,6 +1434,9 @@ internal class ChatAssetsAndMemoryDelegate(private val host: ChatViewModelHost) 
                 aspectRatio = "3:4",
                 referenceFilePath = refPath,
                 noChannelMessage = host.strings().rp.aiGenArtNoChannel,
+                modelUnconfiguredMessage = host.strings().rp.aiArtModelRequiredToast,
+                overrideKeyId = keyId,
+                overrideModelId = modelId,
             )
 
             val freshConv = chatDao.getConversationById(conv.id)?.toDomain() ?: conv
@@ -1282,21 +1465,34 @@ internal class ChatAssetsAndMemoryDelegate(private val host: ChatViewModelHost) 
     fun generateRpSceneCg(
         customHint: String = "",
         saveToGallery: Boolean = true,
+        explicitKeyId: Long? = null,
+        explicitModelId: String? = null,
     ) {
         val st = host.uiFlow.value
         if (st.isGeneratingRpArt) return
         val conv = st.activeConversation ?: return
         val rp = conv.rp ?: return
+        val keyId = explicitKeyId ?: st.studioArtModel.selectedKeyId
+        val modelId = (explicitModelId ?: st.studioArtModel.selectedModelId).trim()
+        val pending = PendingStudioArtRequest.RpSceneCg(customHint, saveToGallery)
+        if (keyId == 0L || modelId.isEmpty()) {
+            host.container.toastController.show(host.strings().rp.aiArtModelRequiredToast)
+            openStudioArtModelPicker(pending = pending)
+            return
+        }
         val sceneName = rp.state.scene.ifBlank { rp.title }
-        val statusLabel = "${host.strings().rp.aiGeneratingArt} ($sceneName)"
+        val statusLabel = "${host.strings().rp.aiGeneratingArt} ($sceneName · $modelId)"
 
-        launchRpArtGeneration(statusLabel) {
+        launchRpArtGeneration(statusLabel, pendingOnUnconfigured = pending) {
             val prompt = RpEngine.buildSceneImagePrompt(rp = rp, customHint = customHint)
             val generated = host.container.studioImageGenerationUseCase.generateAndSaveRpMedia(
                 prompt = prompt,
                 aspectRatio = "9:16",
                 referenceFilePath = null,
                 noChannelMessage = host.strings().rp.aiGenArtNoChannel,
+                modelUnconfiguredMessage = host.strings().rp.aiArtModelRequiredToast,
+                overrideKeyId = keyId,
+                overrideModelId = modelId,
             )
 
             val freshConv = chatDao.getConversationById(conv.id)?.toDomain() ?: conv
@@ -1367,14 +1563,24 @@ internal class ChatAssetsAndMemoryDelegate(private val host: ChatViewModelHost) 
         }
     }
 
-    fun generateNovelCoverArt() {
+    fun generateNovelCoverArt(
+        explicitKeyId: Long? = null,
+        explicitModelId: String? = null,
+    ) {
         val st = host.uiFlow.value
         if (st.isGeneratingRpArt) return
         val conv = st.activeConversation ?: return
         val novel = conv.novel ?: return
+        val keyId = explicitKeyId ?: st.studioArtModel.selectedKeyId
+        val modelId = (explicitModelId ?: st.studioArtModel.selectedModelId).trim()
+        if (keyId == 0L || modelId.isEmpty()) {
+            host.container.toastController.show(host.strings().rp.aiArtModelRequiredToast)
+            openStudioArtModelPicker(pending = PendingStudioArtRequest.NovelCover)
+            return
+        }
         val isZh = host.strings().language == AppLanguage.ZH
-        val statusLabel = if (isZh) "正在绘制书封 (${novel.title})" else "Generating cover (${novel.title})"
-        launchRpArtGeneration(statusLabel) {
+        val statusLabel = if (isZh) "正在绘制书封 (${novel.title} · $modelId)" else "Generating cover (${novel.title} · $modelId)"
+        launchRpArtGeneration(statusLabel, pendingOnUnconfigured = PendingStudioArtRequest.NovelCover) {
             val prompt = buildString {
                 append("Vertical book cover illustration, high quality literary artwork, no text, no watermark. ")
                 append("Title mood: ").append(novel.title).append(". ")
@@ -1387,6 +1593,9 @@ internal class ChatAssetsAndMemoryDelegate(private val host: ChatViewModelHost) 
                 aspectRatio = "3:4",
                 prefix = "novel_cover",
                 noChannelMessage = host.strings().rp.aiGenArtNoChannel,
+                modelUnconfiguredMessage = host.strings().rp.aiArtModelRequiredToast,
+                overrideKeyId = keyId,
+                overrideModelId = modelId,
             )
             val fresh = chatDao.getConversationById(conv.id)?.toDomain() ?: conv
             fresh.novel?.let { n ->
@@ -1472,6 +1681,7 @@ internal class ChatAssetsAndMemoryDelegate(private val host: ChatViewModelHost) 
 
     private fun launchRpArtGeneration(
         statusLabel: String,
+        pendingOnUnconfigured: PendingStudioArtRequest? = null,
         block: suspend () -> Unit,
     ) {
         host.scope.launch {
@@ -1480,6 +1690,11 @@ internal class ChatAssetsAndMemoryDelegate(private val host: ChatViewModelHost) 
                 block()
             } catch (e: CancellationException) {
                 throw e
+            } catch (e: StudioArtModelUnconfiguredException) {
+                host.container.toastController.show(e.message ?: host.strings().rp.aiArtModelRequiredToast)
+                if (pendingOnUnconfigured != null) {
+                    openStudioArtModelPicker(pending = pendingOnUnconfigured)
+                }
             } catch (e: Throwable) {
                 host.container.toastController.show(e.message ?: host.strings().common.unknownError, isError = true)
             } finally {

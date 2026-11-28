@@ -110,6 +110,8 @@ internal fun RpStateAndArchiveSection(
     onPickCgFromAlbum: () -> Unit,
     onSaveCurrentSceneAsCg: () -> Unit,
     onOpenCgDetail: (RpCgRecord) -> Unit,
+    studioArtModelState: StudioArtModelUiState = StudioArtModelUiState(),
+    onConfigureArtModel: (() -> Unit)? = null,
 ) {
     val strings = LocalAppStrings.current
     val theme = LocalAppTheme.current
@@ -866,6 +868,13 @@ internal fun RpStateAndArchiveSection(
             trailing = { GuBadge("${rp.state.unlockedCgs.size}", variant = GuBadgeVariant.BLUE) },
         )
         GuCard(modifier = Modifier.fillMaxWidth()) {
+            if (onConfigureArtModel != null) {
+                StudioArtModelStatusRow(
+                    state = studioArtModelState,
+                    onConfigure = onConfigureArtModel,
+                )
+                Spacer(Modifier.height(10.dp))
+            }
             FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),

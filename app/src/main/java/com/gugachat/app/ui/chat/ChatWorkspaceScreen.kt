@@ -354,6 +354,8 @@ fun ChatWorkspaceScreen(
             extraActions = actions.novelStudio,
             params = state.effectiveChatParams,
             onUpdateMinOutput = viewModel::updateMinOutputSettings,
+            studioArtModelState = state.studioArtModel,
+            studioArtModelActions = actions.studioArtModel,
         )
     }
 
@@ -449,6 +451,8 @@ fun ChatWorkspaceScreen(
             assetActions = actions.rpStudioAssets,
             params = state.effectiveChatParams,
             onUpdateMinOutput = viewModel::updateMinOutputSettings,
+            studioArtModelState = state.studioArtModel,
+            studioArtModelActions = actions.studioArtModel,
         )
     }
 

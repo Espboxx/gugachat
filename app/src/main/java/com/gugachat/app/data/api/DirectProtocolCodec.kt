@@ -816,6 +816,26 @@ object DirectProtocolCodec {
         baseUrl = baseUrl,
     ).isNotEmpty()
 
+    fun buildDirectImageModelDto(
+        protocol: ApiProtocol,
+        modelId: String,
+    ): OnlineImageModelDto {
+        val cleanId = modelId.trim()
+        val isDalle = cleanId.lowercase().startsWith("dall-e")
+        return OnlineImageModelDto(
+            id = cleanId,
+            provider = protocol.wireValue,
+            transport = "direct",
+            max_count = if (isDalle) 1 else 4,
+            max_reference_images = if (isDalle) 0 else 4,
+            aspect_ratios = listOf("auto", "1:1", "16:9", "9:16", "4:3", "3:4"),
+            resolutions = listOf("auto", "1K", "2K"),
+            supports_text_edit = !isDalle,
+            supports_mask_edit = !isDalle,
+            supports_outpaint = !isDalle,
+        )
+    }
+
     fun defaultImageModels(
         protocol: ApiProtocol,
         customModels: List<String> = emptyList(),
@@ -835,21 +855,7 @@ object DirectProtocolCodec {
             ApiProtocol.GEMINI -> (customImageModels + listOf("gemini-2.5-flash-image", "gemini-2.0-flash-preview-image-generation", "imagen-3.0-generate-002")).distinct()
             ApiProtocol.ANTHROPIC -> return emptyList()
         }
-        return baseIds.map { id ->
-            val isDalle = id.lowercase().startsWith("dall-e")
-            OnlineImageModelDto(
-                id = id,
-                provider = protocol.wireValue,
-                transport = "direct",
-                max_count = if (isDalle) 1 else 4,
-                max_reference_images = if (isDalle) 0 else 4,
-                aspect_ratios = listOf("auto", "1:1", "16:9", "9:16", "4:3", "3:4"),
-                resolutions = listOf("auto", "1K", "2K"),
-                supports_text_edit = !isDalle,
-                supports_mask_edit = !isDalle,
-                supports_outpaint = !isDalle,
-            )
-        }
+        return baseIds.map { id -> buildDirectImageModelDto(protocol = protocol, modelId = id) }
     }
 
     // ==================== Direct Image Request & Response Helpers ====================

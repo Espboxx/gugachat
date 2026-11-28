@@ -108,6 +108,9 @@ data class VaultSettingsSnapshot(
     val lastChatModel: String = "",
     val lastImageKeyId: Long = 0L,
     val lastImageModel: String = "",
+    val studioArtKeyId: Long = 0L,
+    val studioArtModel: String = "",
+    val studioArtChannelName: String = "",
     val directModeActive: Boolean = false,
     val hasChosenEntryMode: Boolean = false,
     val preferredEntryMode: String = "",
@@ -142,6 +145,9 @@ data class VaultSettingsSnapshot(
             lastChatModel = settings.lastChatModel,
             lastImageKeyId = settings.lastImageKeyId,
             lastImageModel = settings.lastImageModel,
+            studioArtKeyId = settings.studioArtKeyId,
+            studioArtModel = settings.studioArtModel,
+            studioArtChannelName = settings.studioArtChannelName,
             directModeActive = settings.directModeActive,
             hasChosenEntryMode = settings.hasChosenEntryMode,
             preferredEntryMode = settings.preferredEntryMode,
@@ -311,6 +317,13 @@ private class StoreBackedVaultAdapter(
         }
         if (snap.lastImageKeyId != 0L || snap.lastImageModel.isNotBlank()) {
             settingsStore.setLastImageSelection(snap.lastImageKeyId, snap.lastImageModel)
+        }
+        if (snap.studioArtKeyId != 0L && snap.studioArtModel.isNotBlank()) {
+            settingsStore.setStudioArtModelSelection(
+                keyId = snap.studioArtKeyId,
+                model = snap.studioArtModel,
+                channelName = snap.studioArtChannelName,
+            )
         }
         settingsStore.setDirectModeActive(snap.directModeActive)
         if (snap.hasChosenEntryMode && snap.preferredEntryMode.isNotBlank()) {

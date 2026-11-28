@@ -550,6 +550,8 @@ internal fun RpCharacterUnifiedSubpage(
     onPickExpressionSprite: (charId: String, expressionKey: String) -> Unit,
     onClearExpressionSprite: (charId: String, expressionKey: String) -> Unit,
     onGenerateExpressionSprite: (charId: String, expressionKey: String) -> Unit,
+    studioArtModelState: StudioArtModelUiState = StudioArtModelUiState(),
+    onConfigureArtModel: (() -> Unit)? = null,
 ) {
     val strings = LocalAppStrings.current
     val theme = LocalAppTheme.current
@@ -929,6 +931,12 @@ internal fun RpCharacterUnifiedSubpage(
                 title = strings.rp.expressionsTitle,
                 trailing = { GuBadge("$boundCount / 8", variant = GuBadgeVariant.BLUE) },
             )
+            if (onConfigureArtModel != null) {
+                StudioArtModelStatusRow(
+                    state = studioArtModelState,
+                    onConfigure = onConfigureArtModel,
+                )
+            }
             GuGroupedCard(modifier = Modifier.fillMaxWidth()) {
                 RpEngine.STANDARD_EXPRESSIONS.forEachIndexed { idx, exprKey ->
                     val boundPath = npc.expressionSprites.entries

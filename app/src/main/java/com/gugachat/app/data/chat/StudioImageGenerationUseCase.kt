@@ -22,6 +22,8 @@ data class GeneratedRpMediaResult(
     val absoluteFile: File,
 )
 
+class StudioArtModelUnconfiguredException(message: String) : IllegalStateException(message)
+
 /**
  * Shared image generation and local media storage coordinator for RP portraits/CGs
  * and Novel book covers. Uses [ImageChannelResolver] to merge server and custom endpoints
@@ -42,28 +44,27 @@ class StudioImageGenerationUseCase(
         referenceFilePath: String? = null,
         prefix: String = "ai",
         noChannelMessage: String = "No available image generation channel",
+        modelUnconfiguredMessage: String = noChannelMessage,
+        overrideKeyId: Long? = null,
+        overrideModelId: String? = null,
     ): GeneratedRpMediaResult {
-        val allKeys = imageChannelResolver.resolveAvailableChannels().allKeys
-
         val saved = settingsStore.currentSettings()
-        val orderedKeys = buildList {
-            allKeys.firstOrNull { it.id == saved.lastImageKeyId && saved.lastImageKeyId != 0L }?.let { add(it) }
-            allKeys.forEach { k -> if (none { it.id == k.id }) add(k) }
+        val targetKeyId = overrideKeyId ?: saved.studioArtKeyId
+        val targetModelId = (overrideModelId ?: saved.studioArtModel).trim()
+        val allKeys = if (targetKeyId != 0L && targetModelId.isNotEmpty()) {
+            imageChannelResolver.resolveSelectableArtChannels().allKeys
+        } else {
+            emptyList()
         }
-
-        var chosenKey: OnlineImageKeyDto? = null
-        var chosenModel: OnlineImageModelDto? = null
-        for (key in orderedKeys) {
-            val sortedModels = imageChannelResolver.resolveModelsForKey(key)
-            if (sortedModels.isNotEmpty()) {
-                chosenKey = key
-                chosenModel = sortedModels.firstOrNull { it.id == saved.lastImageModel } ?: sortedModels.first()
-                break
-            }
-        }
-        if (chosenKey == null || chosenModel == null) {
-            throw IllegalStateException(noChannelMessage)
-        }
+        val (chosenKey, chosenModel) = resolveConfiguredChannelAndModel(
+            targetKeyId = targetKeyId,
+            targetModelId = targetModelId,
+            availableKeys = allKeys,
+            resolveExplicitModel = { key, model ->
+                imageChannelResolver.resolveExplicitModelForKey(key = key, modelId = model)
+            },
+            modelUnconfiguredMessage = modelUnconfiguredMessage,
+        )
 
         val effectiveRatio = when {
             chosenModel.aspect_ratios.isEmpty() -> aspectRatio
@@ -178,5 +179,25 @@ class StudioImageGenerationUseCase(
         "image/png" -> "png"
         "image/webp" -> "webp"
         else -> "jpg"
+    }
+
+    companion object {
+        internal suspend fun resolveConfiguredChannelAndModel(
+            targetKeyId: Long,
+            targetModelId: String,
+            availableKeys: List<OnlineImageKeyDto>,
+            resolveExplicitModel: suspend (OnlineImageKeyDto, String) -> OnlineImageModelDto?,
+            modelUnconfiguredMessage: String = "Please configure an art generation model first",
+        ): Pair<OnlineImageKeyDto, OnlineImageModelDto> {
+            val cleanModelId = targetModelId.trim()
+            if (targetKeyId == 0L || cleanModelId.isEmpty()) {
+                throw StudioArtModelUnconfiguredException(modelUnconfiguredMessage)
+            }
+            val chosenKey = availableKeys.firstOrNull { it.id == targetKeyId }
+                ?: throw StudioArtModelUnconfiguredException(modelUnconfiguredMessage)
+            val chosenModel = resolveExplicitModel(chosenKey, cleanModelId)
+                ?: throw StudioArtModelUnconfiguredException(modelUnconfiguredMessage)
+            return chosenKey to chosenModel
+        }
     }
 }

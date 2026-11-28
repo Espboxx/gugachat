@@ -1,6 +1,7 @@
 package com.gugachat.app.data.chat
 
 import com.gugachat.app.core.storage.ApiProtocol
+import com.gugachat.app.core.storage.ApiProviderConfig
 import com.gugachat.app.data.api.GroupModelFreeQuotaStatusDto
 import com.gugachat.app.data.api.OnlineImageCapabilitiesDto
 import com.gugachat.app.data.api.OnlineImageKeyDto
@@ -82,5 +83,40 @@ class ImageChannelResolverTest {
         assertEquals(preset.protocol, applied.protocol)
         assertEquals(preset.displayName, applied.name)
         assertEquals(preset.baseUrl, applied.baseUrl)
+    }
+
+    @Test
+    fun filterSelectableCustomArtProviders_includesNonAnthropicEnabledProvidersWithoutPresetImageModels() {
+        val openaiRelayNoImg = ApiProviderConfig(
+            id = "p_relay",
+            name = "Third-party Relay",
+            protocol = ApiProtocol.OPENAI_CHAT,
+            baseUrl = "https://relay.example.com/v1",
+            apiKey = "sk-1",
+            customModels = listOf("deepseek-v3"),
+            enabled = true,
+        )
+        val gemini = ApiProviderConfig(
+            id = "p_gemini",
+            name = "Gemini Direct",
+            protocol = ApiProtocol.GEMINI,
+            baseUrl = "https://generativelanguage.googleapis.com",
+            apiKey = "g-1",
+            enabled = true,
+        )
+        val anthropic = ApiProviderConfig(
+            id = "p_claude",
+            name = "Claude Direct",
+            protocol = ApiProtocol.ANTHROPIC,
+            baseUrl = "https://api.anthropic.com",
+            apiKey = "a-1",
+            enabled = true,
+        )
+        val disabledOpenAi = openaiRelayNoImg.copy(id = "p_disabled", enabled = false)
+
+        val selectable = ImageChannelResolver.filterSelectableCustomArtProviders(
+            listOf(openaiRelayNoImg, gemini, anthropic, disabledOpenAi),
+        )
+        assertEquals(listOf("p_relay", "p_gemini"), selectable.map { it.id })
     }
 }

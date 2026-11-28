@@ -135,6 +135,7 @@ internal sealed interface NovelStudioSubPage {
     data class ChapterDetail(val chapterId: String) : NovelStudioSubPage
     data object FinishChapter : NovelStudioSubPage
     data class LoreEditor(val loreId: String?) : NovelStudioSubPage
+    data object ArtModelConfig : NovelStudioSubPage
 }
 
 internal val STUDIO_TARGET_WORD_STEPS = listOf(1500, 2500, 4000, 6000)
@@ -582,6 +583,8 @@ fun NovelStudioSheet(
     extraActions: NovelStudioExtraActions? = null,
     params: ChatParams = ChatParams(),
     onUpdateMinOutput: ((minChars: Int?, autoContinue: Boolean) -> Unit)? = null,
+    studioArtModelState: StudioArtModelUiState = StudioArtModelUiState(),
+    studioArtModelActions: StudioArtModelActions? = null,
 ) {
     val strings = LocalAppStrings.current
     val theme = LocalAppTheme.current
@@ -591,6 +594,14 @@ fun NovelStudioSheet(
 
     var tab by remember(initialTab) { mutableIntStateOf(initialTab.coerceIn(0, 3)) }
     var subPage by remember { mutableStateOf<NovelStudioSubPage?>(null) }
+
+    LaunchedEffect(studioArtModelState.showPicker) {
+        if (studioArtModelState.showPicker && subPage !is NovelStudioSubPage.ArtModelConfig) {
+            subPage = NovelStudioSubPage.ArtModelConfig
+        } else if (!studioArtModelState.showPicker && subPage is NovelStudioSubPage.ArtModelConfig) {
+            subPage = null
+        }
+    }
 
     // Tab 0 inline states (zero AlertDialogs!)
     var showAddChapterForm by remember { mutableStateOf(false) }
@@ -672,10 +683,16 @@ fun NovelStudioSheet(
 
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     GuModalBottomSheet(
-        onDismissRequest = onDismiss,
+        onDismissRequest = {
+            studioArtModelActions?.onDismissPicker()
+            onDismiss()
+        },
         sheetState = sheetState,
     ) {
         BackHandler(enabled = subPage != null) {
+            if (subPage is NovelStudioSubPage.ArtModelConfig) {
+                studioArtModelActions?.onDismissPicker()
+            }
             subPage = null
         }
 
@@ -762,6 +779,21 @@ fun NovelStudioSheet(
                                 subPage = null
                             },
                         )
+                    }
+
+                    NovelStudioSubPage.ArtModelConfig -> {
+                        if (studioArtModelActions != null) {
+                            StudioArtModelConfigPage(
+                                state = studioArtModelState,
+                                actions = studioArtModelActions,
+                                onBack = {
+                                    studioArtModelActions.onDismissPicker()
+                                    subPage = null
+                                },
+                            )
+                        } else {
+                            LaunchedEffect(Unit) { subPage = null }
+                        }
                     }
 
                     null -> {
@@ -1291,6 +1323,12 @@ fun NovelStudioSheet(
                                                             fontSize = 13.5.sp,
                                                             fontWeight = FontWeight.Bold,
                                                         )
+                                                        if (studioArtModelActions != null) {
+                                                            StudioArtModelStatusRow(
+                                                                state = studioArtModelState,
+                                                                onConfigure = { studioArtModelActions.onOpenPicker() },
+                                                            )
+                                                        }
                                                         FlowRow(
                                                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                                                             verticalArrangement = Arrangement.spacedBy(6.dp),

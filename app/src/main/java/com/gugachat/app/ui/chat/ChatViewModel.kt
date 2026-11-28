@@ -16,6 +16,8 @@ import com.gugachat.app.core.storage.AppSettings
 import com.gugachat.app.data.api.DirectProtocolCodec
 import com.gugachat.app.data.api.OnlineChatGroupDto
 import com.gugachat.app.data.api.OnlineChatModelDto
+import com.gugachat.app.data.api.OnlineImageKeyDto
+import com.gugachat.app.data.api.OnlineImageModelDto
 import com.gugachat.app.data.api.WireChatMessageDto
 import com.gugachat.app.data.chat.CampaignLaunchUseCase
 import com.gugachat.app.data.chat.ConversationForkUseCase
@@ -109,6 +111,35 @@ data class ChatShellChromeState(
     val isTheaterImmersive: Boolean = false,
 )
 
+sealed interface PendingStudioArtRequest {
+    data class RpSceneCg(val customHint: String, val saveToGallery: Boolean) : PendingStudioArtRequest
+    data class RpCharacterSprite(val charId: String, val expressionKey: String, val customHint: String) : PendingStudioArtRequest
+    data object NovelCover : PendingStudioArtRequest
+}
+
+data class StudioArtModelUiState(
+    val selectedKeyId: Long = 0L,
+    val selectedModelId: String = "",
+    val selectedChannelName: String = "",
+    val galleryFallbackKeyId: Long = 0L,
+    val galleryFallbackModelId: String = "",
+    val channels: List<OnlineImageKeyDto> = emptyList(),
+    val modelsByKeyId: Map<Long, List<OnlineImageModelDto>> = emptyMap(),
+    val isLoadingChannels: Boolean = false,
+    val loadingModelsKeyId: Long? = null,
+    val showPicker: Boolean = false,
+    val pendingRequest: PendingStudioArtRequest? = null,
+) {
+    val isConfigured: Boolean
+        get() = selectedKeyId != 0L && selectedModelId.isNotBlank()
+
+    fun resolvedChannelDisplayName(): String {
+        val live = channels.firstOrNull { it.id == selectedKeyId }?.name?.trim()
+        if (!live.isNullOrEmpty()) return live
+        return selectedChannelName.trim()
+    }
+}
+
 data class ChatUiState(
     val groups: List<OnlineChatGroupDto> = emptyList(),
     val models: List<OnlineChatModelDto> = emptyList(),
@@ -138,6 +169,7 @@ data class ChatUiState(
     val isRefreshingChoices: Boolean = false,
     val isGeneratingRpArt: Boolean = false,
     val rpArtStatusLabel: String = "",
+    val studioArtModel: StudioArtModelUiState = StudioArtModelUiState(),
     val isExtractingMemory: Boolean = false,
     val isCompacting: Boolean = false,
     val threePathDrafts: List<NovelDraftOption> = emptyList(),
@@ -227,6 +259,13 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         ChatUiState(
             activeRetrievalMode = container.settingsState.value.retrievalSettings.mode,
             vectorIndexProgress = container.retrievalCoordinator.indexProgress.value,
+            studioArtModel = StudioArtModelUiState(
+                selectedKeyId = container.settingsState.value.studioArtKeyId,
+                selectedModelId = container.settingsState.value.studioArtModel,
+                selectedChannelName = container.settingsState.value.studioArtChannelName,
+                galleryFallbackKeyId = container.settingsState.value.lastImageKeyId,
+                galleryFallbackModelId = container.settingsState.value.lastImageModel,
+            ),
         ),
     )
     val ui: StateFlow<ChatUiState> = _ui.asStateFlow()
@@ -590,6 +629,13 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                         defaultMinOutputChat = s.defaultMinOutputChat,
                         defaultAutoContinueShort = s.defaultAutoContinueShort,
                         activeRetrievalMode = s.retrievalSettings.mode,
+                        studioArtModel = it.studioArtModel.copy(
+                            selectedKeyId = s.studioArtKeyId,
+                            selectedModelId = s.studioArtModel,
+                            selectedChannelName = s.studioArtChannelName,
+                            galleryFallbackKeyId = s.lastImageKeyId,
+                            galleryFallbackModelId = s.lastImageModel,
+                        ),
                     )
                 }
                 if (prev == null ||
@@ -1900,6 +1946,20 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
 
     fun clearNovelCoverImage() = assetsAndMemoryDelegate.clearNovelCoverImage()
     fun generateNovelCoverArt() = assetsAndMemoryDelegate.generateNovelCoverArt()
+    fun openStudioArtModelPicker(pending: PendingStudioArtRequest? = null) =
+        assetsAndMemoryDelegate.openStudioArtModelPicker(pending)
+
+    fun dismissStudioArtModelPicker() = assetsAndMemoryDelegate.dismissStudioArtModelPicker()
+    fun refreshStudioArtChannels() = assetsAndMemoryDelegate.refreshStudioArtChannels()
+    fun loadStudioArtModelsForKey(keyId: Long) = assetsAndMemoryDelegate.loadStudioArtModelsForKey(keyId)
+    fun saveStudioArtModelSelection(
+        keyId: Long,
+        modelId: String,
+        channelName: String,
+        runPending: Boolean = true,
+    ) = assetsAndMemoryDelegate.saveStudioArtModelSelection(keyId, modelId, channelName, runPending)
+
+    fun clearStudioArtModelSelection() = assetsAndMemoryDelegate.clearStudioArtModelSelection()
 
     // ==================== Private Infrastructure Helpers ====================
 

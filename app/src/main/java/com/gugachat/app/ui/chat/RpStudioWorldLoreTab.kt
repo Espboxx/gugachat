@@ -132,6 +132,8 @@ internal fun RpWorldAndLoreSection(
     onDeleteLore: (String) -> Unit,
     params: ChatParams = ChatParams(),
     onUpdateMinOutput: ((minChars: Int?, autoContinue: Boolean) -> Unit)? = null,
+    studioArtModelState: StudioArtModelUiState = StudioArtModelUiState(),
+    onConfigureArtModel: (() -> Unit)? = null,
 ) {
     val strings = LocalAppStrings.current
     val theme = LocalAppTheme.current
@@ -581,6 +583,13 @@ internal fun RpWorldAndLoreSection(
                 // Scene Backdrop Card
                 GuSectionHeader(title = if (isZh) "场景 CG 背景图" else "Scene CG Backdrop")
                 GuCard(modifier = Modifier.fillMaxWidth()) {
+                    if (onConfigureArtModel != null) {
+                        StudioArtModelStatusRow(
+                            state = studioArtModelState,
+                            onConfigure = onConfigureArtModel,
+                        )
+                        Spacer(Modifier.height(10.dp))
+                    }
                     if (sceneFile != null) {
                         Image(
                             painter = rememberAsyncImagePainter(sceneFile),

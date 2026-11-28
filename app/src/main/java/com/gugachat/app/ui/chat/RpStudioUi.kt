@@ -356,6 +356,7 @@ internal sealed interface StudioRoute {
     data class LoreEditor(val entry: NovelLoreEntry?) : StudioRoute
     data class RegexEditor(val script: RpRegexScript, val isNew: Boolean) : StudioRoute
     data class CgViewer(val cgId: String) : StudioRoute
+    data class ArtModelConfig(val returnRoute: StudioRoute = Main) : StudioRoute
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -416,6 +417,8 @@ fun RpStudioSheet(
     assetActions: RpStudioAssetActions? = null,
     params: ChatParams = ChatParams(),
     onUpdateMinOutput: ((minChars: Int?, autoContinue: Boolean) -> Unit)? = null,
+    studioArtModelState: StudioArtModelUiState = StudioArtModelUiState(),
+    studioArtModelActions: StudioArtModelActions? = null,
 ) {
     val strings = LocalAppStrings.current
     val theme = LocalAppTheme.current
@@ -425,6 +428,17 @@ fun RpStudioSheet(
     val resolvedInitialTab = remember(initialTab) { initialTab.coerceIn(0, 3) }
     var tab by remember(resolvedInitialTab) { mutableIntStateOf(resolvedInitialTab) }
     var route by remember { mutableStateOf<StudioRoute>(StudioRoute.Main) }
+
+    LaunchedEffect(studioArtModelState.showPicker) {
+        if (studioArtModelState.showPicker && route !is StudioRoute.ArtModelConfig) {
+            route = StudioRoute.ArtModelConfig(returnRoute = route)
+        } else if (!studioArtModelState.showPicker) {
+            val currentArtRoute = route as? StudioRoute.ArtModelConfig
+            if (currentArtRoute != null) {
+                route = currentArtRoute.returnRoute
+            }
+        }
+    }
 
     // Photo / file launchers (live seamlessly without opening any nested Dialog)
     var avatarTargetCharId by remember { mutableStateOf<String?>(null) }
@@ -469,12 +483,21 @@ fun RpStudioSheet(
 
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     GuModalBottomSheet(
-        onDismissRequest = onDismiss,
+        onDismissRequest = {
+            studioArtModelActions?.onDismissPicker()
+            onDismiss()
+        },
         sheetState = sheetState,
         scrimColor = Color(0x8C060912),
     ) {
         BackHandler(enabled = route !is StudioRoute.Main) {
-            route = StudioRoute.Main
+            val artRoute = route as? StudioRoute.ArtModelConfig
+            if (artRoute != null) {
+                studioArtModelActions?.onDismissPicker()
+                route = artRoute.returnRoute
+            } else {
+                route = StudioRoute.Main
+            }
         }
         // Ensure status bar clock/icons never turn dark-on-dark above the sheet
         val dialogView = LocalView.current
@@ -603,6 +626,8 @@ fun RpStudioSheet(
                                     },
                                     onSaveCurrentSceneAsCg = { onSaveCurrentSceneAsCg(rp.state.scene) },
                                     onOpenCgDetail = { cg -> route = StudioRoute.CgViewer(cg.id) },
+                                    studioArtModelState = studioArtModelState,
+                                    onConfigureArtModel = { studioArtModelActions?.onOpenPicker() },
                                 )
 
                                 2 -> RpWorldAndLoreSection(
@@ -639,6 +664,8 @@ fun RpStudioSheet(
                                     onDeleteLore = onDeleteLore,
                                     params = params,
                                     onUpdateMinOutput = onUpdateMinOutput,
+                                    studioArtModelState = studioArtModelState,
+                                    onConfigureArtModel = { studioArtModelActions?.onOpenPicker() },
                                 )
 
                                 else -> RpStageDesignSection(
@@ -707,6 +734,8 @@ fun RpStudioSheet(
                             onGenerateExpressionSprite = { charId, exprKey ->
                                 onGenerateNpcSprite(charId, exprKey, "")
                             },
+                            studioArtModelState = studioArtModelState,
+                            onConfigureArtModel = { studioArtModelActions?.onOpenPicker() },
                         )
                     }
 
@@ -754,6 +783,21 @@ fun RpStudioSheet(
                                     route = StudioRoute.Main
                                 },
                             )
+                        }
+                    }
+
+                    is StudioRoute.ArtModelConfig -> {
+                        if (studioArtModelActions != null) {
+                            StudioArtModelConfigPage(
+                                state = studioArtModelState,
+                                actions = studioArtModelActions,
+                                onBack = {
+                                    studioArtModelActions.onDismissPicker()
+                                    route = currentRoute.returnRoute
+                                },
+                            )
+                        } else {
+                            LaunchedEffect(Unit) { route = currentRoute.returnRoute }
                         }
                     }
                 }

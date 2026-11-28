@@ -56,6 +56,9 @@ data class AppSettings(
     val lastChatModel: String = "",
     val lastImageKeyId: Long = 0L,
     val lastImageModel: String = "",
+    val studioArtKeyId: Long = 0L,
+    val studioArtModel: String = "",
+    val studioArtChannelName: String = "",
     val directModeActive: Boolean = false,
     val hasChosenEntryMode: Boolean = false,
     val preferredEntryMode: String = "",
@@ -97,6 +100,9 @@ class SettingsStore(private val context: Context) {
         val LAST_CHAT_MODEL = stringPreferencesKey("last_chat_model")
         val LAST_IMAGE_KEY_ID = longPreferencesKey("last_image_key_id")
         val LAST_IMAGE_MODEL = stringPreferencesKey("last_image_model")
+        val STUDIO_ART_KEY_ID = longPreferencesKey("studio_art_key_id")
+        val STUDIO_ART_MODEL = stringPreferencesKey("studio_art_model")
+        val STUDIO_ART_CHANNEL_NAME = stringPreferencesKey("studio_art_channel_name")
         val DIRECT_MODE_ACTIVE = booleanPreferencesKey("direct_mode_active")
         val HAS_CHOSEN_ENTRY_MODE = booleanPreferencesKey("has_chosen_entry_mode")
         val PREFERRED_ENTRY_MODE = stringPreferencesKey("preferred_entry_mode")
@@ -134,6 +140,9 @@ class SettingsStore(private val context: Context) {
             lastChatModel = prefs[Keys.LAST_CHAT_MODEL].orEmpty(),
             lastImageKeyId = prefs[Keys.LAST_IMAGE_KEY_ID] ?: 0L,
             lastImageModel = prefs[Keys.LAST_IMAGE_MODEL].orEmpty(),
+            studioArtKeyId = prefs[Keys.STUDIO_ART_KEY_ID] ?: 0L,
+            studioArtModel = prefs[Keys.STUDIO_ART_MODEL].orEmpty(),
+            studioArtChannelName = prefs[Keys.STUDIO_ART_CHANNEL_NAME].orEmpty(),
             directModeActive = prefs[Keys.DIRECT_MODE_ACTIVE] ?: false,
             hasChosenEntryMode = prefs[Keys.HAS_CHOSEN_ENTRY_MODE] ?: false,
             preferredEntryMode = prefs[Keys.PREFERRED_ENTRY_MODE].orEmpty(),
@@ -205,6 +214,26 @@ class SettingsStore(private val context: Context) {
             it[Keys.LAST_IMAGE_KEY_ID] = keyId
             it[Keys.LAST_IMAGE_MODEL] = model
         }
+    }
+
+    suspend fun setStudioArtModelSelection(keyId: Long, model: String, channelName: String = "") {
+        val cleanModel = model.trim()
+        val cleanChannel = channelName.trim()
+        context.settingsDataStore.edit {
+            if (keyId == 0L || cleanModel.isEmpty()) {
+                it.remove(Keys.STUDIO_ART_KEY_ID)
+                it.remove(Keys.STUDIO_ART_MODEL)
+                it.remove(Keys.STUDIO_ART_CHANNEL_NAME)
+            } else {
+                it[Keys.STUDIO_ART_KEY_ID] = keyId
+                it[Keys.STUDIO_ART_MODEL] = cleanModel
+                it[Keys.STUDIO_ART_CHANNEL_NAME] = cleanChannel
+            }
+        }
+    }
+
+    suspend fun clearStudioArtModelSelection() {
+        setStudioArtModelSelection(0L, "", "")
     }
 
     suspend fun setDirectModeActive(active: Boolean) {
