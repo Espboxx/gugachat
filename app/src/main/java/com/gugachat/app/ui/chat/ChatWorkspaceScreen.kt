@@ -391,6 +391,7 @@ fun ChatWorkspaceScreen(
             triggeredLoreIds = state.waterline.triggeredLoreIds.toSet(),
             saveSlots = state.rpSaveSlots,
             initialTab = rpStudioInitialTab,
+            isStreaming = state.isStreaming,
             isGeneratingArt = state.isGeneratingRpArt,
             artStatusLabel = state.rpArtStatusLabel,
             onAdjustAffinity = viewModel::updateRpCharacterAffinity,

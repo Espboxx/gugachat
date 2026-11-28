@@ -3,6 +3,7 @@ package com.gugachat.app.ui.chat
 import androidx.room.withTransaction
 import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.i18n.fmt
+import com.gugachat.app.data.chat.ConversationForkUseCase
 import com.gugachat.app.data.local.toDomain
 import com.gugachat.app.data.local.toEntity
 import com.gugachat.app.domain.chat.ConversationMode
@@ -57,7 +58,7 @@ internal class RpStudioDelegate(private val host: ChatViewModelHost) {
                     modelId = st.selectedModelId,
                 )
             }
-            host.uiFlow.update { it.copy(draftDiceRoll = null) }
+            host.uiFlow.update { it.copy(draftText = "", draftAttachments = emptyList(), draftDiceRoll = null) }
             host.activeConvIdFlow.value = convId
         }
     }
@@ -77,7 +78,7 @@ internal class RpStudioDelegate(private val host: ChatViewModelHost) {
                     modelId = st.selectedModelId,
                 )
             }
-            host.uiFlow.update { it.copy(draftDiceRoll = null) }
+            host.uiFlow.update { it.copy(draftText = "", draftAttachments = emptyList(), draftDiceRoll = null) }
             host.activeConvIdFlow.value = convId
         }
     }
@@ -99,95 +100,96 @@ internal class RpStudioDelegate(private val host: ChatViewModelHost) {
         val conv = st.activeConversation ?: return
         if (host.container.chatStreamManager.isStreaming(conv.id)) return
         val (groupId, modelId) = host.oneShotRunner.resolveGroupAndModel(conv) ?: return
-        val rp = conv.rp
-        val novel = conv.novel
-        if (conv.mode == ConversationMode.rp && rp != null) {
-            host.scope.launch {
-                val allMsgs = chatDao.getMessagesForConversation(conv.id).map { it.toDomain() }
+        if (!host.tryAcquireConversationMutation(conv.id)) return
+
+        host.scope.launch {
+            try {
+                if (host.container.chatStreamManager.isStreaming(conv.id)) return@launch
+                val freshConv = chatDao.getConversationById(conv.id)?.toDomain() ?: conv
+                val allMsgs = chatDao.getMessagesForConversation(freshConv.id).map { it.toDomain() }
                 val activeMsgs = TimelineReconciler.activeMessages(allMsgs)
-                val lastAssistant = activeMsgs.lastOrNull { it.role == "assistant" && it.status != "error" }
-                val loreMatch = NovelEngine.matchNovelLore(
-                    lore = st.novelLore,
-                    recentMessages = activeMsgs,
-                    draftText = instruction,
-                    chapterOutline = "",
-                    loreTokenBudget = rp.loreTokenBudget,
-                    activeTipSeq = activeMsgs.maxOfOrNull { it.seq } ?: 0,
-                    presentEntities = rp.cast.filter { it.inScene }.map { it.name },
-                    sceneTitle = rp.state.scene,
-                )
-                val wireDtos = RpEngine.buildContinueMessages(
-                    rp = rp,
-                    recentMessages = activeMsgs,
-                    instruction = instruction,
-                    constantLore = loreMatch.constant,
-                    triggeredLore = loreMatch.triggered,
-                )
-                host.launchCompletionForConversation(
-                    conv = conv.copy(groupId = groupId, model = modelId),
-                    existingMessageForVariant = lastAssistant,
-                    continuePrefixText = lastAssistant?.content,
-                    overrideMessages = wireDtos,
-                )
-            }
-        } else if (conv.mode == ConversationMode.novel && novel != null) {
-            host.scope.launch {
-                val allMsgs = chatDao.getMessagesForConversation(conv.id).map { it.toDomain() }
-                val activeMsgs = TimelineReconciler.activeMessages(allMsgs)
-                val lastAssistant = activeMsgs.lastOrNull { it.role == "assistant" && it.status != "error" }
-                val chapters = chatDao.getNovelChaptersForConversation(conv.id).map { it.toDomain() }
-                val activeChapter = chapters.firstOrNull { it.id == novel.activeChapterId } ?: chapters.maxByOrNull { it.order }
-                val loreList = st.novelLore
-                val loreMatch = NovelEngine.matchNovelLore(
-                    lore = loreList,
-                    recentMessages = activeMsgs,
-                    draftText = instruction,
-                    chapterOutline = activeChapter?.outline.orEmpty(),
-                    loreTokenBudget = novel.loreTokenBudget,
-                    activeTipSeq = activeMsgs.maxOfOrNull { it.seq } ?: 0,
-                    presentEntities = novel.currentStatus?.present.orEmpty(),
-                    sceneTitle = novel.currentStatus?.location,
-                )
-                val wireDtos = NovelEngine.buildContinueMessages(
-                    novel = novel,
-                    activeChapter = activeChapter,
-                    recentMessages = activeMsgs,
-                    constantLore = loreMatch.constant,
-                    triggeredLore = loreMatch.triggered,
-                    existingLoreTitles = loreList.map { it.title },
-                    previousChapters = chapters,
-                    instruction = instruction,
-                )
-                host.launchCompletionForConversation(
-                    conv = conv.copy(groupId = groupId, model = modelId),
-                    existingMessageForVariant = lastAssistant,
-                    continuePrefixText = lastAssistant?.content?.let { NovelExport.stripInternalTags(it) },
-                    overrideMessages = wireDtos,
-                )
-            }
-        } else if (conv.mode == ConversationMode.chat) {
-            host.scope.launch {
-                val allMsgs = chatDao.getMessagesForConversation(conv.id).map { it.toDomain() }
-                val activeMsgs = TimelineReconciler.activeMessages(allMsgs)
-                val lastAssistant = activeMsgs.lastOrNull { it.role == "assistant" && it.status != "error" }
+                val lastAssistant = TimelineReconciler.latestTipAssistant(activeMsgs)
+                    ?.takeIf { it.status != "error" }
                     ?: return@launch
-                val lastUserText = activeMsgs.lastOrNull { it.role == "user" }?.content
-                val isEnglish = OutputLengthPolicy.isEnglishPreference(
-                    recentUserText = lastUserText,
-                    appLanguageIsEnglish = host.container.settingsState.value.language == AppLanguage.EN,
-                )
-                val wireDtos = OutputLengthPolicy.buildStandardChatContinueMessages(
-                    conv = conv,
-                    activeMessages = activeMsgs,
-                    instruction = instruction,
-                    isEnglish = isEnglish,
-                )
-                host.launchCompletionForConversation(
-                    conv = conv.copy(groupId = groupId, model = modelId),
-                    existingMessageForVariant = lastAssistant,
-                    continuePrefixText = lastAssistant.content,
-                    overrideMessages = wireDtos,
-                )
+
+                val rp = freshConv.rp
+                val novel = freshConv.novel
+                if (freshConv.mode == ConversationMode.rp && rp != null) {
+                    val loreList = chatDao.getNovelLoreForConversation(freshConv.id).map { it.toDomain() }
+                    val loreMatch = NovelEngine.matchNovelLore(
+                        lore = loreList,
+                        recentMessages = activeMsgs,
+                        draftText = instruction,
+                        chapterOutline = "",
+                        loreTokenBudget = rp.loreTokenBudget,
+                        activeTipSeq = activeMsgs.maxOfOrNull { it.seq } ?: 0,
+                        presentEntities = rp.cast.filter { it.inScene }.map { it.name },
+                        sceneTitle = rp.state.scene,
+                    )
+                    val wireDtos = RpEngine.buildContinueMessages(
+                        rp = rp,
+                        recentMessages = activeMsgs,
+                        instruction = instruction,
+                        constantLore = loreMatch.constant,
+                        triggeredLore = loreMatch.triggered,
+                    )
+                    host.launchCompletionForConversation(
+                        conv = freshConv.copy(groupId = groupId, model = modelId),
+                        existingMessageForVariant = lastAssistant,
+                        continuePrefixText = lastAssistant.content,
+                        overrideMessages = wireDtos,
+                    )
+                } else if (freshConv.mode == ConversationMode.novel && novel != null) {
+                    val chapters = chatDao.getNovelChaptersForConversation(freshConv.id).map { it.toDomain() }
+                    val activeChapter = chapters.firstOrNull { it.id == novel.activeChapterId } ?: chapters.maxByOrNull { it.order }
+                    val loreList = chatDao.getNovelLoreForConversation(freshConv.id).map { it.toDomain() }
+                    val loreMatch = NovelEngine.matchNovelLore(
+                        lore = loreList,
+                        recentMessages = activeMsgs,
+                        draftText = instruction,
+                        chapterOutline = activeChapter?.outline.orEmpty(),
+                        loreTokenBudget = novel.loreTokenBudget,
+                        activeTipSeq = activeMsgs.maxOfOrNull { it.seq } ?: 0,
+                        presentEntities = novel.currentStatus?.present.orEmpty(),
+                        sceneTitle = novel.currentStatus?.location,
+                    )
+                    val wireDtos = NovelEngine.buildContinueMessages(
+                        novel = novel,
+                        activeChapter = activeChapter,
+                        recentMessages = activeMsgs,
+                        constantLore = loreMatch.constant,
+                        triggeredLore = loreMatch.triggered,
+                        existingLoreTitles = loreList.map { it.title },
+                        previousChapters = chapters,
+                        instruction = instruction,
+                    )
+                    host.launchCompletionForConversation(
+                        conv = freshConv.copy(groupId = groupId, model = modelId),
+                        existingMessageForVariant = lastAssistant,
+                        continuePrefixText = NovelExport.stripInternalTags(lastAssistant.content),
+                        overrideMessages = wireDtos,
+                    )
+                } else if (freshConv.mode == ConversationMode.chat) {
+                    val lastUserText = activeMsgs.lastOrNull { it.role == "user" }?.content
+                    val isEnglish = OutputLengthPolicy.isEnglishPreference(
+                        recentUserText = lastUserText,
+                        appLanguageIsEnglish = host.container.settingsState.value.language == AppLanguage.EN,
+                    )
+                    val wireDtos = OutputLengthPolicy.buildStandardChatContinueMessages(
+                        conv = freshConv,
+                        activeMessages = activeMsgs,
+                        instruction = instruction,
+                        isEnglish = isEnglish,
+                    )
+                    host.launchCompletionForConversation(
+                        conv = freshConv.copy(groupId = groupId, model = modelId),
+                        existingMessageForVariant = lastAssistant,
+                        continuePrefixText = lastAssistant.content,
+                        overrideMessages = wireDtos,
+                    )
+                }
+            } finally {
+                host.releaseConversationMutation(conv.id)
             }
         }
     }
@@ -283,14 +285,14 @@ internal class RpStudioDelegate(private val host: ChatViewModelHost) {
 
     fun triggerRpChoice(choice: RpChoice, bypassLock: Boolean = false) {
         val st = host.uiFlow.value
-        if (st.isStreaming) return
+        val conv = st.activeConversation
+        if (st.isStreaming || (conv != null && host.container.chatStreamManager.isStreaming(conv.id))) return
         val groupId = st.selectedGroupId
         val modelId = st.selectedModelId
         if (groupId == null || modelId.isNullOrBlank()) {
             host.container.toastController.show(host.strings().chat.selectGroupAndModelFirst, isError = true)
             return
         }
-        val conv = st.activeConversation
         val rp = conv?.rp
         if (rp != null) {
             val eval = RpEngine.evaluateChoiceCondition(choice, rp)
@@ -303,32 +305,56 @@ internal class RpStudioDelegate(private val host: ChatViewModelHost) {
             }
         }
 
+        val lockKey = conv?.id ?: ChatViewModel.NEW_CONV_MUTATION_KEY
+        if (!host.tryAcquireConversationMutation(lockKey)) return
+
         val roll = if (!choice.skillCheck.isNullOrBlank() && rp != null) {
             RpEngine.rollForChoice(choice, rp)
         } else {
             null
         }
-
         val cost = choice.costGold ?: 0
-        if (conv != null && rp != null && cost > 0 && rp.state.gold >= cost) {
-            host.scope.launch {
-                val updatedRp = rp.copy(
-                    state = rp.state.copy(gold = (rp.state.gold - cost).coerceAtLeast(0)),
-                )
-                val updatedConv = conv.copy(rp = updatedRp, updatedAt = System.currentTimeMillis())
-                chatDao.upsertConversation(updatedConv.toEntity())
-                host.uiFlow.update {
-                    it.copy(
-                        activeConversation = updatedConv,
-                        draftRpKind = choice.inputKind,
-                        draftDiceRoll = roll,
-                    ).withDerivedBindings()
+
+        host.scope.launch {
+            try {
+                if (conv != null && host.container.chatStreamManager.isStreaming(conv.id)) return@launch
+                if (conv != null && rp != null && cost > 0) {
+                    val updatedConv = host.container.database.withTransaction {
+                        val fresh = chatDao.getConversationById(conv.id)?.toDomain() ?: conv
+                        val freshRp = fresh.rp ?: rp
+                        if (freshRp.state.gold >= cost) {
+                            val nextRp = freshRp.copy(
+                                state = freshRp.state.copy(gold = (freshRp.state.gold - cost).coerceAtLeast(0)),
+                            )
+                            val nextConv = fresh.copy(rp = nextRp, updatedAt = System.currentTimeMillis())
+                            chatDao.upsertConversation(nextConv.toEntity())
+                            nextConv
+                        } else {
+                            null
+                        }
+                    }
+                    if (updatedConv != null) {
+                        host.uiFlow.update {
+                            it.copy(
+                                activeConversation = updatedConv,
+                                draftRpKind = choice.inputKind,
+                                draftDiceRoll = roll,
+                            ).withDerivedBindings()
+                        }
+                    } else {
+                        host.uiFlow.update { it.copy(draftRpKind = choice.inputKind, draftDiceRoll = roll) }
+                    }
+                } else {
+                    host.uiFlow.update { it.copy(draftRpKind = choice.inputKind, draftDiceRoll = roll) }
                 }
-                host.sendMessage(overrideText = choice.actionText)
+                host.sendMessageWhileLocked(
+                    overrideText = choice.actionText,
+                    overrideRpKind = choice.inputKind,
+                    overrideDiceRoll = roll,
+                )
+            } finally {
+                host.releaseConversationMutation(lockKey)
             }
-        } else {
-            host.uiFlow.update { it.copy(draftRpKind = choice.inputKind, draftDiceRoll = roll) }
-            host.sendMessage(overrideText = choice.actionText)
         }
     }
 
@@ -514,16 +540,25 @@ internal class RpStudioDelegate(private val host: ChatViewModelHost) {
     fun createRpSaveSlot(name: String, note: String = "") {
         val st = host.uiFlow.value
         val conv = st.activeConversation ?: return
-        val rp = conv.rp ?: return
+        if (host.container.chatStreamManager.isStreaming(conv.id)) return
+        if (conv.rp == null) return
         host.scope.launch {
+            if (host.container.chatStreamManager.isStreaming(conv.id)) return@launch
+            val freshConv = chatDao.getConversationById(conv.id)?.toDomain() ?: conv
+            val freshRp = freshConv.rp ?: return@launch
+            val freshMsgs = chatDao.getMessagesForConversation(conv.id)
+                .map { it.toDomain() }
+                .filter { it.status != "streaming" }
+            val freshLedger = chatDao.getMemoryLedgerForConversation(conv.id).map { it.toDomain() }
+            val freshEpisodes = chatDao.getMemoryEpisodesForConversation(conv.id).map { it.toDomain() }
             val slot = RpEngine.createSaveSlot(
                 conversationId = conv.id,
                 name = name,
                 note = note.trim(),
-                rp = rp,
-                messages = st.messages,
-                ledger = st.memoryLedger,
-                episodes = st.memoryEpisodes,
+                rp = freshRp,
+                messages = freshMsgs,
+                ledger = freshLedger,
+                episodes = freshEpisodes,
             )
             chatDao.upsertRpSaveSlot(slot.toEntity())
             host.container.toastController.show(host.strings().rp.quickSaved.fmt("name" to slot.name))
@@ -533,17 +568,26 @@ internal class RpStudioDelegate(private val host: ChatViewModelHost) {
     fun overwriteRpSaveSlot(slotId: String) {
         val st = host.uiFlow.value
         val conv = st.activeConversation ?: return
-        val rp = conv.rp ?: return
+        if (host.container.chatStreamManager.isStreaming(conv.id)) return
+        if (conv.rp == null) return
         val existing = st.rpSaveSlots.firstOrNull { it.id == slotId } ?: return
         host.scope.launch {
+            if (host.container.chatStreamManager.isStreaming(conv.id)) return@launch
+            val freshConv = chatDao.getConversationById(conv.id)?.toDomain() ?: conv
+            val freshRp = freshConv.rp ?: return@launch
+            val freshMsgs = chatDao.getMessagesForConversation(conv.id)
+                .map { it.toDomain() }
+                .filter { it.status != "streaming" }
+            val freshLedger = chatDao.getMemoryLedgerForConversation(conv.id).map { it.toDomain() }
+            val freshEpisodes = chatDao.getMemoryEpisodesForConversation(conv.id).map { it.toDomain() }
             val fresh = RpEngine.createSaveSlot(
                 conversationId = conv.id,
                 name = existing.name,
                 note = existing.note,
-                rp = rp,
-                messages = st.messages,
-                ledger = st.memoryLedger,
-                episodes = st.memoryEpisodes,
+                rp = freshRp,
+                messages = freshMsgs,
+                ledger = freshLedger,
+                episodes = freshEpisodes,
             ).copy(id = existing.id)
             chatDao.upsertRpSaveSlot(fresh.toEntity())
             host.container.toastController.show(host.strings().rp.saveOverwrittenToast.fmt("name" to existing.name))
@@ -558,24 +602,86 @@ internal class RpStudioDelegate(private val host: ChatViewModelHost) {
 
     fun loadRpSaveSlotRewind(slot: RpSaveSlot) {
         val conv = host.uiFlow.value.activeConversation ?: return
+        if (!host.tryAcquireConversationMutation(conv.id)) return
         host.scope.launch {
-            host.container.database.withTransaction {
-                val fresh = chatDao.getConversationById(conv.id)?.toDomain() ?: conv
-                chatDao.deleteMessagesForConversation(conv.id)
-                chatDao.deleteMemoryLedgerForConversation(conv.id)
-                chatDao.deleteMemoryEpisodesForConversation(conv.id)
-                chatDao.deleteMemoryEmbeddingsForConversation(conv.id)
-                chatDao.upsertMessages(slot.activeMessagesSnapshot.map { it.copy(conversationId = conv.id).toEntity() })
-                if (slot.ledgerItems.isNotEmpty()) {
-                    chatDao.upsertMemoryLedgerList(slot.ledgerItems.map { it.copy(conversationId = conv.id).toEntity() })
+            try {
+                host.container.chatStreamManager.cancelStreamAndWait(conv.id)
+                host.container.chatStreamManager.clearLastCommittedMessage(conv.id)
+                host.container.database.withTransaction {
+                    val now = System.currentTimeMillis()
+                    val fresh = chatDao.getConversationById(conv.id)?.toDomain() ?: conv
+                    val currentLore = chatDao.getNovelLoreForConversation(conv.id).map { it.toDomain() }
+                    val cleanMsgs = TimelineReconciler.activeMessages(slot.activeMessagesSnapshot)
+                        .filter { it.status != "streaming" }
+                    val cleanLedger = slot.ledgerItems.filter { !it.stale }
+                    val cleanEpisodes = slot.episodes.filter { !it.stale }
+
+                    val reconciledLore = currentLore.map { entry ->
+                        when {
+                            entry.validFromSeq > slot.messageSeq && !entry.alwaysActive ->
+                                entry.copy(stale = true, supersededAtSeq = slot.messageSeq, updatedAt = now)
+                            entry.validFromSeq <= slot.messageSeq &&
+                                entry.stale &&
+                                entry.supersededAtSeq != null &&
+                                entry.supersededAtSeq > slot.messageSeq ->
+                                entry.copy(stale = false, supersededAtSeq = null, updatedAt = now)
+                            else -> entry
+                        }
+                    }
+
+                    val (nextSummarizedUntil, nextArchivedSummary) = ConversationForkUseCase.computeForkedCompactionBounds(
+                        sourceConv = fresh,
+                        filteredEpisodes = cleanEpisodes,
+                        cutoffSeq = slot.messageSeq,
+                    )
+                    val nextParams = if (fresh.params.activeWindowStartSeq != null &&
+                        fresh.params.activeWindowStartSeq > slot.messageSeq
+                    ) {
+                        fresh.params.copy(activeWindowStartSeq = null)
+                    } else {
+                        fresh.params
+                    }
+
+                    chatDao.deleteMessagesForConversation(conv.id)
+                    chatDao.deleteMemoryLedgerForConversation(conv.id)
+                    chatDao.deleteMemoryEpisodesForConversation(conv.id)
+                    chatDao.deleteMemoryEmbeddingsForConversation(conv.id)
+                    if (cleanMsgs.isNotEmpty()) {
+                        chatDao.upsertMessages(cleanMsgs.map { it.copy(conversationId = conv.id).toEntity() })
+                    }
+                    if (cleanLedger.isNotEmpty()) {
+                        chatDao.upsertMemoryLedgerList(cleanLedger.map { it.copy(conversationId = conv.id).toEntity() })
+                    }
+                    if (cleanEpisodes.isNotEmpty()) {
+                        chatDao.upsertMemoryEpisodes(cleanEpisodes.map { it.copy(conversationId = conv.id).toEntity() })
+                    }
+                    if (reconciledLore.isNotEmpty()) {
+                        chatDao.upsertNovelLoreList(reconciledLore.map { it.toEntity() })
+                    }
+                    chatDao.upsertConversation(
+                        fresh.copy(
+                            rp = slot.rpConfig,
+                            params = nextParams,
+                            archivedSummary = nextArchivedSummary,
+                            summarizedUntilSeq = nextSummarizedUntil,
+                            loreTimedStatesJson = "{}",
+                            updatedAt = now,
+                        ).toEntity(),
+                    )
                 }
-                if (slot.episodes.isNotEmpty()) {
-                    chatDao.upsertMemoryEpisodes(slot.episodes.map { it.copy(conversationId = conv.id).toEntity() })
+                host.uiFlow.update {
+                    it.copy(
+                        draftText = "",
+                        draftAttachments = emptyList(),
+                        draftDiceRoll = null,
+                        mutedRecallKeys = emptySet(),
+                    )
                 }
-                chatDao.upsertConversation(fresh.copy(rp = slot.rpConfig, updatedAt = System.currentTimeMillis()).toEntity())
+                host.scheduleIndexing(conv.id)
+                host.container.toastController.show(host.strings().rp.loadedRewindToast.fmt("name" to slot.name))
+            } finally {
+                host.releaseConversationMutation(conv.id)
             }
-            host.scheduleIndexing(conv.id)
-            host.container.toastController.show(host.strings().rp.loadedRewindToast.fmt("name" to slot.name))
         }
     }
 
@@ -583,7 +689,7 @@ internal class RpStudioDelegate(private val host: ChatViewModelHost) {
         val conv = host.uiFlow.value.activeConversation ?: return
         host.scope.launch {
             val forkedConv = host.container.conversationForkUseCase.branchFromRpSaveSlot(conv, slot)
-            host.uiFlow.update { it.copy(draftDiceRoll = null) }
+            host.uiFlow.update { it.copy(draftText = "", draftAttachments = emptyList(), draftDiceRoll = null) }
             host.activeConvIdFlow.value = forkedConv.id
             host.container.toastController.show(host.strings().rp.saveBranchedToast.fmt("name" to slot.name))
         }

@@ -1176,7 +1176,7 @@ object RpEngine {
         ledger: List<MemoryLedgerItem>,
         episodes: List<MemoryEpisode>,
     ): RpSaveSlot {
-        val active = TimelineReconciler.activeMessages(messages)
+        val active = TimelineReconciler.activeMessages(messages).filter { it.status != "streaming" }
         val tipSeq = active.maxOfOrNull { it.seq } ?: 0
         return RpSaveSlot(
             id = UUID.randomUUID().toString(),
@@ -1186,8 +1186,8 @@ object RpEngine {
             createdAt = System.currentTimeMillis(),
             messageSeq = tipSeq,
             rpConfig = rp,
-            ledgerItems = ledger,
-            episodes = episodes,
+            ledgerItems = ledger.filter { !it.stale },
+            episodes = episodes.filter { !it.stale },
             activeMessagesSnapshot = active,
         )
     }

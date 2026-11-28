@@ -291,7 +291,7 @@ fun ChatMessageList(
         }
     }
 
-    val latestAssistantId = remember(active) { active.lastOrNull { it.role == "assistant" }?.id }
+    val latestAssistantId = remember(active) { TimelineReconciler.latestTipAssistant(active)?.id }
 
     Box(modifier = modifier.fillMaxSize()) {
         LazyColumn(

@@ -434,7 +434,7 @@ internal fun UserMessageActionsRow(
         UserMicroActionChip(
             icon = Icons.Default.AccountTree,
             label = if (isZh) "分支" else strings.novel.branchBtn,
-            enabled = true,
+            enabled = !isStreaming,
             tint = c.muted,
             onClick = onBranch,
         )
@@ -1468,7 +1468,7 @@ internal fun AssistantFooterRow(
                     modifier = Modifier.size(15.dp),
                 )
             }
-            IconButton(onClick = onBranch, modifier = Modifier.size(34.dp)) {
+            IconButton(onClick = onBranch, enabled = !isStreaming, modifier = Modifier.size(34.dp)) {
                 Icon(
                     Icons.Default.AccountTree,
                     contentDescription = strings.novel.branchBtn,

@@ -74,6 +74,20 @@ object ChatBackupCodec {
             chatDao.clearAllConversations()
             memDao.clearAll()
             memoryEmbeddingDao?.deleteAll()
+        } else if (payload.conversations.isNotEmpty()) {
+            payload.conversations
+                .map { it.id }
+                .distinct()
+                .chunked(200)
+                .forEach { chunk ->
+                    chatDao.deleteMessagesForConversations(chunk)
+                    chatDao.deleteNovelChaptersForConversations(chunk)
+                    chatDao.deleteNovelLoreForConversations(chunk)
+                    chatDao.deleteMemoryLedgerForConversations(chunk)
+                    chatDao.deleteMemoryEpisodesForConversations(chunk)
+                    chatDao.deleteRpSaveSlotsForConversations(chunk)
+                    chatDao.deleteMemoryEmbeddingsForConversations(chunk)
+                }
         }
         if (payload.conversations.isNotEmpty()) {
             chatDao.upsertConversations(payload.conversations.map { it.toEntity() })

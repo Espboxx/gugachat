@@ -338,7 +338,7 @@ internal class ChatAssetsAndMemoryDelegate(private val host: ChatViewModelHost) 
                             )
                         }
                         res.firstConversationId?.let { cid ->
-                            host.uiFlow.update { it.copy(draftDiceRoll = null) }
+                            host.uiFlow.update { it.copy(draftText = "", draftAttachments = emptyList(), draftDiceRoll = null) }
                             host.activeConvIdFlow.value = cid
                         }
                         val title = prepared.firstOrNull()?.conversation?.title.orEmpty()
@@ -592,6 +592,7 @@ internal class ChatAssetsAndMemoryDelegate(private val host: ChatViewModelHost) 
     fun selectGreetingVariant(index: Int) {
         host.scope.launch {
             val conv = host.uiFlow.value.activeConversation ?: return@launch
+            if (host.container.chatStreamManager.isStreaming(conv.id)) return@launch
             val card = conv.characterCardId?.let { assetDao.getCharacterCardById(it) }
             val persona = conv.personaId?.let { assetDao.getPersonaById(it) }
             refreshOpeningGreetingMessage(
@@ -606,6 +607,7 @@ internal class ChatAssetsAndMemoryDelegate(private val host: ChatViewModelHost) 
     fun selectConversationPersona(personaId: String?) {
         host.scope.launch {
             val activeId = host.activeConvIdFlow.value ?: host.uiFlow.value.activeConversation?.id ?: return@launch
+            if (host.container.chatStreamManager.isStreaming(activeId)) return@launch
             val fresh = chatDao.getConversationById(activeId)?.toDomain() ?: return@launch
             val normalizedId = personaId?.trim()?.takeIf { it.isNotEmpty() }
             val updated = fresh.copy(personaId = normalizedId, updatedAt = System.currentTimeMillis())
@@ -884,6 +886,7 @@ internal class ChatAssetsAndMemoryDelegate(private val host: ChatViewModelHost) 
         val isZh = host.strings().language == AppLanguage.ZH
         host.scope.launch {
             val activeId = host.activeConvIdFlow.value ?: host.uiFlow.value.activeConversation?.id ?: return@launch
+            if (host.container.chatStreamManager.isStreaming(activeId)) return@launch
             val fresh = chatDao.getConversationById(activeId)?.toDomain() ?: return@launch
             val rp = fresh.rp ?: return@launch
             val card = fresh.characterCardId?.let { assetDao.getCharacterCardById(it) } ?: return@launch
@@ -972,10 +975,35 @@ internal class ChatAssetsAndMemoryDelegate(private val host: ChatViewModelHost) 
             ?: conv.rp?.playerName?.trim()?.takeIf { it.isNotEmpty() }
             ?: "旅人"
 
+        // When explicitly picking an existing variant from the greeting picker and the message
+        // already holds at least all card greetings, switch in-place to preserve manual edits and
+        // any AI-regenerated extra variants.
+        if (selectedVariantIndex != null &&
+            greetingMsg.variants.size >= rawGreetings.size &&
+            selectedVariantIndex in greetingMsg.variants.indices
+        ) {
+            val chosen = greetingMsg.variants[selectedVariantIndex]
+            chatDao.upsertMessage(
+                greetingMsg.copy(
+                    content = chosen.content,
+                    reasoning = chosen.reasoning,
+                    reasoningDurationMs = chosen.reasoningDurationMs ?: chosen.usage?.reasoningDurationMs,
+                    usage = chosen.usage,
+                    model = chosen.model ?: greetingMsg.model,
+                    status = "done",
+                    error = null,
+                    rpChoices = chosen.rpChoices,
+                    activeVariantIndex = selectedVariantIndex,
+                    tokenEstimate = ContextBuilder.estimateMessageTokens(chosen.content),
+                ).toEntity(),
+            )
+            return
+        }
+
         val baseRp = conv.rp
         val leadSpeaker = baseRp?.cast?.firstOrNull { !it.isPlayer }?.name?.takeIf { it.isNotBlank() } ?: charName
         val now = System.currentTimeMillis()
-        val variants = rawGreetings.mapIndexed { idx, raw ->
+        val cardVariants = rawGreetings.mapIndexed { idx, raw ->
             val withRpMacros = if (baseRp != null) {
                 val effectiveCast = if (baseRp.cast.any { !it.isPlayer }) {
                     baseRp.cast
@@ -998,6 +1026,12 @@ internal class ChatAssetsAndMemoryDelegate(private val host: ChatViewModelHost) 
                 rpSpeakerName = prev?.rpSpeakerName ?: leadSpeaker,
             )
         }
+        val extraVariants = if (greetingMsg.variants.size > rawGreetings.size) {
+            greetingMsg.variants.drop(rawGreetings.size)
+        } else {
+            emptyList()
+        }
+        val variants = cardVariants + extraVariants
         val activeIdx = (selectedVariantIndex ?: greetingMsg.activeVariantIndex).coerceIn(0, variants.lastIndex)
         val selectedContent = variants[activeIdx].content
         chatDao.upsertMessage(
@@ -1378,7 +1412,7 @@ internal class ChatAssetsAndMemoryDelegate(private val host: ChatViewModelHost) 
                 modelId = st.selectedModelId,
             )
         }
-        host.uiFlow.update { it.copy(draftDiceRoll = null) }
+        host.uiFlow.update { it.copy(draftText = "", draftAttachments = emptyList(), draftDiceRoll = null) }
         host.activeConvIdFlow.value = convId
     }
 

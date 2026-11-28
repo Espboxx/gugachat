@@ -97,6 +97,7 @@ import com.gugachat.app.domain.chat.RpSaveSlot
 internal fun RpStateAndArchiveSection(
     rp: RpConfig,
     saveSlots: List<RpSaveSlot>,
+    isStreaming: Boolean = false,
     isGeneratingArt: Boolean,
     modifier: Modifier = Modifier,
     onUpdateState: ((RpGameState) -> RpGameState) -> Unit,
@@ -704,6 +705,7 @@ internal fun RpStateAndArchiveSection(
                     saveName = ""
                     saveNote = ""
                 },
+                enabled = !isStreaming,
                 compact = true,
                 modifier = Modifier.fillMaxWidth(),
             ) {
@@ -782,8 +784,10 @@ internal fun RpStateAndArchiveSection(
                                         confirmText = strings.rp.loadRewindBtn,
                                         cancelText = strings.common.cancel,
                                         onConfirm = {
-                                            confirmRewindSlotId = null
-                                            onLoadSaveSlot(slot)
+                                            if (!isStreaming) {
+                                                confirmRewindSlotId = null
+                                                onLoadSaveSlot(slot)
+                                            }
                                         },
                                         onCancel = { confirmRewindSlotId = null },
                                     )
@@ -808,6 +812,7 @@ internal fun RpStateAndArchiveSection(
                                                 confirmDeleteSlotId = null
                                                 confirmRewindSlotId = slot.id
                                             },
+                                            enabled = !isStreaming,
                                             compact = true,
                                             variant = GuButtonVariant.HONEY,
                                             modifier = Modifier.heightIn(min = 32.dp),
@@ -828,6 +833,7 @@ internal fun RpStateAndArchiveSection(
                                         }
                                         GuButton(
                                             onClick = { onOverwriteSaveSlot(slot.id) },
+                                            enabled = !isStreaming,
                                             compact = true,
                                             variant = GuButtonVariant.SECONDARY,
                                             modifier = Modifier.heightIn(min = 32.dp),

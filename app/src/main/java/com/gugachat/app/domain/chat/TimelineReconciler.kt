@@ -19,6 +19,9 @@ object TimelineReconciler {
             .filter { it.deletedAt == null && it.supersededAtSeq == null }
             .sortedBy { it.seq }
 
+    fun latestTipAssistant(activeMessages: List<ChatMessage>): ChatMessage? =
+        activeMessages.lastOrNull()?.takeIf { it.role == "assistant" }
+
     fun findActiveTipSeq(messages: List<ChatMessage>): Int =
         activeMessages(messages).maxOfOrNull { it.seq } ?: 0
 
@@ -101,10 +104,13 @@ object TimelineReconciler {
             }
         }
 
+        val maxAllMsgSeq = messages.maxOfOrNull { it.seq } ?: 0
         val updatedChapters = chapters.map { ch ->
+            val startsPastCutoff = if (inclusiveOfCutoff) ch.startSeq >= cutoffSeq else ch.startSeq > cutoffSeq
             when {
-                ch.startSeq >= cutoffSeq -> ch.copy(
+                startsPastCutoff -> ch.copy(
                     status = if (ch.order == 1) "writing" else "draft",
+                    startSeq = if (ch.order == 1) ch.startSeq else maxAllMsgSeq + ch.order * 1000,
                     summary = "",
                     wordCount = 0,
                     endSeq = null,
@@ -175,10 +181,28 @@ object TimelineReconciler {
             conversation.params
         }
         val nextArchived = if (clearSummary) "" else conversation.archivedSummary
+        val nextNovel = conversation.novel?.let { novel ->
+            if (result.chapters.isEmpty()) {
+                novel
+            } else {
+                val sortedChapters = result.chapters.sortedBy { it.order }
+                val restoredActiveChapterId = sortedChapters
+                    .filter { it.status != "draft" && it.startSeq <= result.newTipSeq }
+                    .maxByOrNull { it.order }?.id
+                    ?: sortedChapters.firstOrNull { it.status != "draft" }?.id
+                    ?: sortedChapters.firstOrNull()?.id
+                if (restoredActiveChapterId != null && restoredActiveChapterId != novel.activeChapterId) {
+                    novel.copy(activeChapterId = restoredActiveChapterId)
+                } else {
+                    novel
+                }
+            }
+        }
 
         if (nextSummarized == conversation.summarizedUntilSeq &&
             nextArchived == conversation.archivedSummary &&
-            nextParams == conversation.params
+            nextParams == conversation.params &&
+            nextNovel == conversation.novel
         ) {
             return conversation
         }
@@ -186,6 +210,7 @@ object TimelineReconciler {
             summarizedUntilSeq = nextSummarized,
             archivedSummary = nextArchived,
             params = nextParams,
+            novel = nextNovel,
             updatedAt = System.currentTimeMillis(),
         )
     }

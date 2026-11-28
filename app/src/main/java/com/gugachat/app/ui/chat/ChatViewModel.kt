@@ -18,6 +18,7 @@ import com.gugachat.app.data.api.OnlineChatGroupDto
 import com.gugachat.app.data.api.OnlineChatModelDto
 import com.gugachat.app.data.api.WireChatMessageDto
 import com.gugachat.app.data.chat.CampaignLaunchUseCase
+import com.gugachat.app.data.chat.ConversationForkUseCase
 import com.gugachat.app.data.chat.RetrievalCoordinator
 import com.gugachat.app.data.chat.StreamLaunchRequest
 import com.gugachat.app.data.chat.V4ConversationAssets
@@ -66,7 +67,6 @@ import com.gugachat.app.domain.chat.RpVisualTheme
 import com.gugachat.app.domain.chat.TimelineReconciler
 import com.gugachat.app.domain.chat.UserMemory
 import com.gugachat.app.domain.chat.VectorIndexProgress
-import com.gugachat.app.domain.chat.activeVariant
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -87,7 +87,9 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 
 data class PendingScannedPdf(
     val fileName: String,
@@ -263,6 +265,17 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
 
     private var waterlineJob: Job? = null
     private var loadModelsJob: Job? = null
+    private val inFlightMutationConvIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
+    @Volatile
+    private var isBranchPrefilledDraft: Boolean = false
+
+    internal fun tryAcquireConversationMutation(convId: String): Boolean =
+        inFlightMutationConvIds.add(convId)
+
+    internal fun releaseConversationMutation(convId: String) {
+        inFlightMutationConvIds.remove(convId)
+    }
 
     @Volatile
     private var cachedV4AssetsKey: V4AssetsCacheKey? = null
@@ -281,6 +294,15 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         override fun updateDraftText(text: String) = this@ChatViewModel.updateDraftText(text)
         override fun setDraftNovelKind(kind: NovelInputKind) = this@ChatViewModel.setDraftNovelKind(kind)
         override fun sendMessage(overrideText: String?) = this@ChatViewModel.sendMessage(overrideText)
+        override suspend fun sendMessageWhileLocked(
+            overrideText: String,
+            overrideRpKind: RpInputKind?,
+            overrideDiceRoll: RpDiceRoll?,
+        ) = this@ChatViewModel.sendMessageWhileLocked(overrideText, overrideRpKind, overrideDiceRoll)
+        override fun tryAcquireConversationMutation(convId: String): Boolean =
+            this@ChatViewModel.tryAcquireConversationMutation(convId)
+        override fun releaseConversationMutation(convId: String) =
+            this@ChatViewModel.releaseConversationMutation(convId)
         override fun launchCompletionForConversation(
             conv: ChatConversation,
             existingMessageForVariant: ChatMessage?,
@@ -738,6 +760,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     // ==================== Draft & Attachment Actions ====================
 
     fun updateDraftText(text: String) {
+        isBranchPrefilledDraft = false
         _ui.update { it.copy(draftText = text) }
         scheduleWaterlineRecompute(debounceMs = 180L)
     }
@@ -769,6 +792,9 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
 
     fun selectConversation(convId: String) {
         val changed = _activeConvId.value != convId
+        if (changed) {
+            isBranchPrefilledDraft = false
+        }
         _activeConvId.value = convId
         val rawConv = _ui.value.conversations.firstOrNull { it.id == convId }
         val conv = rawConv?.let { c ->
@@ -780,6 +806,8 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                 activeConversation = conv ?: it.activeConversation,
                 isStreaming = activeSession?.isStreaming == true,
                 streamingStatusHint = activeSession?.statusHint,
+                draftText = if (changed) "" else it.draftText,
+                draftAttachments = if (changed) emptyList() else it.draftAttachments,
                 draftDiceRoll = null,
                 threePathDrafts = if (changed) emptyList() else it.threePathDrafts,
                 outlineChatReply = if (changed) "" else it.outlineChatReply,
@@ -828,7 +856,8 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                 updatedAt = now,
             )
             chatDao.upsertConversation(conv.toEntity())
-            _ui.update { it.copy(draftDiceRoll = null) }
+            isBranchPrefilledDraft = false
+            _ui.update { it.copy(draftText = "", draftAttachments = emptyList(), draftDiceRoll = null) }
             _activeConvId.value = conv.id
         }
     }
@@ -1013,26 +1042,127 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         val groupId = _ui.value.selectedGroupId
         val modelId = _ui.value.selectedModelId
         if (groupId == null || modelId.isNullOrBlank()) {
-            container.toastController.show("Please select a group and model first", isError = true)
+            container.toastController.show(strings().chat.selectGroupAndModelFirst, isError = true)
             return
         }
-        val text = (overrideText ?: _ui.value.draftText).trim()
-        val attachments = if (overrideText == null) _ui.value.draftAttachments else emptyList()
+        val st = _ui.value
+        val text = (overrideText ?: st.draftText).trim()
+        val attachments = if (overrideText == null) st.draftAttachments else emptyList()
         if (text.isEmpty() && attachments.isEmpty()) return
 
         if (attachments.any { it.isImage }) {
-            val activeModel = _ui.value.models.firstOrNull { it.id == modelId }
+            val activeModel = st.models.firstOrNull { it.id == modelId }
             if (activeModel != null && !activeModel.supports_vision) {
                 container.toastController.show(strings().attachments.visionSendBlocked, isError = true)
                 return
             }
         }
 
+        val lockKey = targetConvId ?: NEW_CONV_MUTATION_KEY
+        if (!tryAcquireConversationMutation(lockKey)) return
+
+        val capturedNovelKind = st.draftNovelKind
+        val capturedRpKind = st.draftRpKind
+        val capturedDiceRoll = st.draftDiceRoll
+
+        // Clear draft promptly before async DB work so rapid double-taps cannot re-send the same text
+        if (overrideText == null) {
+            isBranchPrefilledDraft = false
+            _ui.update { cur ->
+                cur.copy(
+                    draftText = "",
+                    draftAttachments = emptyList(),
+                    attachmentsById = cur.attachmentsById + attachments.associateBy { it.id },
+                    draftDiceRoll = null,
+                )
+            }
+        } else {
+            val clearPrefilled = isBranchPrefilledDraft || st.draftText.trim() == text
+            if (clearPrefilled) isBranchPrefilledDraft = false
+            _ui.update { cur ->
+                cur.copy(
+                    draftText = if (clearPrefilled) "" else cur.draftText,
+                    draftAttachments = if (clearPrefilled) emptyList() else cur.draftAttachments,
+                    draftDiceRoll = null,
+                )
+            }
+        }
+
         viewModelScope.launch {
-            val conv = ensureActiveConversation()
-            if (chatStreamManager.isStreaming(conv.id)) return@launch
-            val effectiveText = if (conv.mode == ConversationMode.rp && conv.rp != null && conv.rp.regexScripts.isNotEmpty() && text.isNotEmpty()) {
-                val hasNonDisplayUserScripts = conv.rp.regexScripts.any { s ->
+            try {
+                executeSendMessageLocked(
+                    text = text,
+                    attachments = attachments,
+                    groupId = groupId,
+                    modelId = modelId,
+                    novelKind = capturedNovelKind,
+                    rpKind = capturedRpKind,
+                    diceRoll = capturedDiceRoll,
+                )
+            } finally {
+                releaseConversationMutation(lockKey)
+            }
+        }
+    }
+
+    internal suspend fun sendMessageWhileLocked(
+        overrideText: String,
+        overrideRpKind: RpInputKind? = null,
+        overrideDiceRoll: RpDiceRoll? = null,
+    ) {
+        val st = _ui.value
+        val groupId = st.selectedGroupId
+        val modelId = st.selectedModelId
+        if (groupId == null || modelId.isNullOrBlank()) {
+            container.toastController.show(strings().chat.selectGroupAndModelFirst, isError = true)
+            return
+        }
+        val text = overrideText.trim()
+        if (text.isEmpty()) return
+        val rpKind = overrideRpKind ?: st.draftRpKind
+        val diceRoll = overrideDiceRoll ?: st.draftDiceRoll
+        val clearPrefilled = isBranchPrefilledDraft || st.draftText.trim() == text
+        if (clearPrefilled) isBranchPrefilledDraft = false
+        _ui.update { cur ->
+            cur.copy(
+                draftText = if (clearPrefilled) "" else cur.draftText,
+                draftAttachments = if (clearPrefilled) emptyList() else cur.draftAttachments,
+                draftDiceRoll = null,
+            )
+        }
+        executeSendMessageLocked(
+            text = text,
+            attachments = emptyList(),
+            groupId = groupId,
+            modelId = modelId,
+            novelKind = st.draftNovelKind,
+            rpKind = rpKind,
+            diceRoll = diceRoll,
+        )
+    }
+
+    private suspend fun executeSendMessageLocked(
+        text: String,
+        attachments: List<ChatAttachmentMeta>,
+        groupId: Long,
+        modelId: String,
+        novelKind: NovelInputKind,
+        rpKind: RpInputKind,
+        diceRoll: RpDiceRoll?,
+    ) {
+        val conv = ensureActiveConversation()
+        if (chatStreamManager.isStreaming(conv.id)) return
+        val isEn = container.settingsState.value.language == AppLanguage.EN
+
+        val updatedConv = container.database.withTransaction {
+            val freshConv = chatDao.getConversationById(conv.id)?.toDomain() ?: conv
+            val effectiveText = if (
+                freshConv.mode == ConversationMode.rp &&
+                freshConv.rp != null &&
+                freshConv.rp.regexScripts.isNotEmpty() &&
+                text.isNotEmpty()
+            ) {
+                val hasNonDisplayUserScripts = freshConv.rp.regexScripts.any { s ->
                     s.enabled &&
                         (s.placement.equals("user_input", ignoreCase = true) || s.placement.equals("both", ignoreCase = true)) &&
                         (!s.markdownOnly || s.promptOnly)
@@ -1040,10 +1170,10 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                 if (hasNonDisplayUserScripts) {
                     RpRegexEngine.applyScripts(
                         text = text,
-                        scripts = conv.rp.regexScripts,
+                        scripts = freshConv.rp.regexScripts,
                         placement = "user_input",
                         forDisplay = false,
-                        rp = conv.rp,
+                        rp = freshConv.rp,
                     ).ifBlank { text }
                 } else {
                     text
@@ -1051,7 +1181,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             } else {
                 text
             }
-            val curMsgs = chatDao.getMessagesForConversation(conv.id).map { it.toDomain() }
+            val curMsgs = chatDao.getMessagesForConversation(freshConv.id).map { it.toDomain() }
             val nextSeq = (curMsgs.maxOfOrNull { it.seq } ?: 0) + 1
             val now = System.currentTimeMillis()
             val imgCount = attachments.count { it.isImage }
@@ -1059,50 +1189,39 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
 
             val userMsg = ChatMessage(
                 id = UUID.randomUUID().toString(),
-                conversationId = conv.id,
+                conversationId = freshConv.id,
                 role = "user",
                 content = effectiveText,
                 createdAt = now,
                 seq = nextSeq,
                 attachmentIds = attachments.map { it.id },
-                inputKind = if (conv.mode == ConversationMode.novel) _ui.value.draftNovelKind else null,
-                rpInputKind = if (conv.mode == ConversationMode.rp) _ui.value.draftRpKind else null,
-                rpDiceRoll = if (conv.mode == ConversationMode.rp) _ui.value.draftDiceRoll else null,
+                inputKind = if (freshConv.mode == ConversationMode.novel) novelKind else null,
+                rpInputKind = if (freshConv.mode == ConversationMode.rp) rpKind else null,
+                rpDiceRoll = if (freshConv.mode == ConversationMode.rp) diceRoll else null,
                 status = "done",
                 tokenEstimate = ContextBuilder.estimateMessageTokens(effectiveText, imgCount) + fileTokSum,
             )
             chatDao.upsertMessage(userMsg.toEntity())
 
-            val updatedTitle = if (conv.mode == ConversationMode.chat && conv.title == "新对话") {
+            val updatedTitle = if (freshConv.mode == ConversationMode.chat && freshConv.title == "新对话") {
                 when {
                     effectiveText.isNotBlank() ->
-                        effectiveText.lineSequence().firstOrNull()?.take(22)?.trim().orEmpty().ifBlank { conv.title }
+                        effectiveText.lineSequence().firstOrNull()?.take(22)?.trim().orEmpty().ifBlank { freshConv.title }
                     attachments.any { it.isFile } ->
-                        attachments.first { it.isFile }.fileName.take(22).ifBlank { conv.title }
+                        attachments.first { it.isFile }.fileName.take(22).ifBlank { freshConv.title }
                     attachments.isNotEmpty() ->
-                        if (container.settingsState.value.language == AppLanguage.EN) "Image Chat" else "图片对话"
-                    else -> conv.title
+                        if (isEn) "Image Chat" else "图片对话"
+                    else -> freshConv.title
                 }
             } else {
-                conv.title
+                freshConv.title
             }
-            val updatedConv = conv.copy(title = updatedTitle, groupId = groupId, model = modelId, updatedAt = now)
-            chatDao.upsertConversation(updatedConv.toEntity())
-
-            if (overrideText == null) {
-                _ui.update { st ->
-                    st.copy(
-                        draftText = "",
-                        draftAttachments = emptyList(),
-                        attachmentsById = st.attachmentsById + attachments.associateBy { it.id },
-                        draftDiceRoll = null,
-                    )
-                }
-            } else {
-                _ui.update { it.copy(draftDiceRoll = null) }
-            }
-            launchCompletionForConversation(updatedConv)
+            val nextConv = freshConv.copy(title = updatedTitle, groupId = groupId, model = modelId, updatedAt = now)
+            chatDao.upsertConversation(nextConv.toEntity())
+            nextConv
         }
+
+        launchCompletionForConversation(updatedConv)
     }
 
     fun stopStreaming() {
@@ -1111,85 +1230,148 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun regenerateFromAssistant(assistantMsgId: String) {
+        val conv = _ui.value.activeConversation ?: return
+        if (chatStreamManager.isStreaming(conv.id)) return
+        val (groupId, modelId) = oneShotRunner.resolveGroupAndModel(conv) ?: return
+        if (!tryAcquireConversationMutation(conv.id)) return
+
         viewModelScope.launch {
-            val conv = _ui.value.activeConversation ?: return@launch
-            if (chatStreamManager.isStreaming(conv.id)) return@launch
-            val msgs = chatDao.getMessagesForConversation(conv.id).map { it.toDomain() }
-            val target = msgs.firstOrNull { it.id == assistantMsgId } ?: return@launch
-            val reconciled = TimelineReconciler.reconcileOnRollback(
-                cutoffSeq = target.seq,
-                inclusiveOfCutoff = true,
-                messages = msgs,
-                ledgerItems = _ui.value.memoryLedger,
-                loreEntries = _ui.value.novelLore,
-                episodes = _ui.value.memoryEpisodes,
-                chapters = _ui.value.novelChapters,
-                summarizedUntilSeq = conv.summarizedUntilSeq,
-                activeWindowStartSeq = conv.params.activeWindowStartSeq,
-            )
-            val rolledConv = persistReconciliation(conv, reconciled)
-            val convForGen = when {
-                rolledConv.mode == ConversationMode.rp && rolledConv.rp != null -> {
-                    val prevAssistant = msgs
-                        .filter { it.role == "assistant" && it.seq < target.seq && it.deletedAt == null && it.supersededAtSeq == null }
-                        .maxByOrNull { it.seq }
-                    val prevVar = prevAssistant?.activeVariant()
-                    if (prevVar != null && (prevVar.rpStateSnapshot != null || prevVar.rpCastSnapshot != null)) {
-                        rolledConv.copy(
-                            rp = rolledConv.rp.copy(
-                                state = prevVar.rpStateSnapshot ?: rolledConv.rp.state,
-                                cast = prevVar.rpCastSnapshot ?: rolledConv.rp.cast,
-                            ),
-                        )
-                    } else {
-                        rolledConv
-                    }
+            try {
+                if (chatStreamManager.isStreaming(conv.id)) return@launch
+                val prepared = container.database.withTransaction {
+                    val freshConv = chatDao.getConversationById(conv.id)?.toDomain() ?: return@withTransaction null
+                    val msgs = chatDao.getMessagesForConversation(freshConv.id).map { it.toDomain() }
+                    val target = msgs.firstOrNull { it.id == assistantMsgId } ?: return@withTransaction null
+                    val ledger = chatDao.getMemoryLedgerForConversation(freshConv.id).map { it.toDomain() }
+                    val lore = chatDao.getNovelLoreForConversation(freshConv.id).map { it.toDomain() }
+                    val episodes = chatDao.getMemoryEpisodesForConversation(freshConv.id).map { it.toDomain() }
+                    val chapters = chatDao.getNovelChaptersForConversation(freshConv.id).map { it.toDomain() }
+
+                    val reconciled = TimelineReconciler.reconcileOnRollback(
+                        cutoffSeq = target.seq,
+                        inclusiveOfCutoff = true,
+                        messages = msgs,
+                        ledgerItems = ledger,
+                        loreEntries = lore,
+                        episodes = episodes,
+                        chapters = chapters,
+                        summarizedUntilSeq = freshConv.summarizedUntilSeq,
+                        activeWindowStartSeq = freshConv.params.activeWindowStartSeq,
+                    )
+                    if (reconciled.messages.isNotEmpty()) chatDao.upsertMessages(reconciled.messages.map { it.toEntity() })
+                    if (reconciled.ledgerItems.isNotEmpty()) chatDao.upsertMemoryLedgerList(reconciled.ledgerItems.map { it.toEntity() })
+                    if (reconciled.loreEntries.isNotEmpty()) chatDao.upsertNovelLoreList(reconciled.loreEntries.map { it.toEntity() })
+                    if (reconciled.episodes.isNotEmpty()) chatDao.upsertMemoryEpisodes(reconciled.episodes.map { it.toEntity() })
+                    if (reconciled.chapters.isNotEmpty()) chatDao.upsertNovelChapters(reconciled.chapters.map { it.toEntity() })
+
+                    val rolledConv = TimelineReconciler.applyRollbackToConversation(freshConv, reconciled)
+                    val keptActive = TimelineReconciler.activeMessages(reconciled.messages)
+                    val (restoredRp, restoredNovel) = ConversationForkUseCase.restoreModeStateAtCutoff(
+                        sourceConv = rolledConv,
+                        keptMsgs = keptActive,
+                        nextNovel = rolledConv.novel,
+                    )
+                    val convForGen = rolledConv.copy(
+                        rp = restoredRp,
+                        novel = restoredNovel,
+                        groupId = groupId,
+                        model = modelId,
+                        updatedAt = System.currentTimeMillis(),
+                    )
+                    chatDao.upsertConversation(convForGen.toEntity())
+                    convForGen to target
+                } ?: return@launch
+
+                val (convForGen, target) = prepared
+                if (convForGen.mode == ConversationMode.novel) {
+                    novelStudioDelegate.syncNovelChapterWordCounts(convForGen.id)
                 }
-                rolledConv.mode == ConversationMode.novel && rolledConv.novel != null -> {
-                    val prevAssistant = msgs
-                        .filter { it.role == "assistant" && it.seq < target.seq && it.deletedAt == null && it.supersededAtSeq == null }
-                        .maxByOrNull { it.seq }
-                    val prevVar = prevAssistant?.activeVariant()
-                    if (prevVar?.novelStatusSnapshot != null) {
-                        rolledConv.copy(novel = rolledConv.novel.copy(currentStatus = prevVar.novelStatusSnapshot))
-                    } else {
-                        rolledConv
-                    }
-                }
-                else -> rolledConv
+                launchCompletionForConversation(
+                    conv = convForGen,
+                    existingMessageForVariant = if (convForGen.mode == ConversationMode.rp || convForGen.mode == ConversationMode.novel) target else null,
+                )
+            } finally {
+                releaseConversationMutation(conv.id)
             }
-            if (rolledConv.mode == ConversationMode.novel) {
-                novelStudioDelegate.syncNovelChapterWordCounts(rolledConv.id)
-            }
-            launchCompletionForConversation(
-                conv = convForGen,
-                existingMessageForVariant = if (rolledConv.mode == ConversationMode.rp || rolledConv.mode == ConversationMode.novel) target else null,
-            )
         }
     }
 
     fun editAndResendUserMessage(userMsgId: String, newText: String) {
-        if (newText.isBlank()) return
+        val cleanText = newText.trim()
+        if (cleanText.isEmpty()) return
+        val conv = _ui.value.activeConversation ?: return
+        if (chatStreamManager.isStreaming(conv.id)) return
+        val (groupId, modelId) = oneShotRunner.resolveGroupAndModel(conv) ?: return
+        if (!tryAcquireConversationMutation(conv.id)) return
+
         viewModelScope.launch {
-            val conv = _ui.value.activeConversation ?: return@launch
-            if (chatStreamManager.isStreaming(conv.id)) return@launch
-            val msgs = chatDao.getMessagesForConversation(conv.id).map { it.toDomain() }
-            val target = msgs.firstOrNull { it.id == userMsgId } ?: return@launch
-            val reconciled = TimelineReconciler.reconcileOnRollback(
-                cutoffSeq = target.seq,
-                inclusiveOfCutoff = false,
-                messages = msgs.map {
-                    if (it.id == userMsgId) it.copy(content = newText.trim(), editedAt = System.currentTimeMillis()) else it
-                },
-                ledgerItems = _ui.value.memoryLedger,
-                loreEntries = _ui.value.novelLore,
-                episodes = _ui.value.memoryEpisodes,
-                chapters = _ui.value.novelChapters,
-                summarizedUntilSeq = conv.summarizedUntilSeq,
-                activeWindowStartSeq = conv.params.activeWindowStartSeq,
-            )
-            val rolledConv = persistReconciliation(conv, reconciled)
-            launchCompletionForConversation(rolledConv)
+            try {
+                if (chatStreamManager.isStreaming(conv.id)) return@launch
+                val convForGen = container.database.withTransaction {
+                    val freshConv = chatDao.getConversationById(conv.id)?.toDomain() ?: return@withTransaction null
+                    val msgs = chatDao.getMessagesForConversation(freshConv.id).map { it.toDomain() }
+                    val target = msgs.firstOrNull { it.id == userMsgId } ?: return@withTransaction null
+                    val ledger = chatDao.getMemoryLedgerForConversation(freshConv.id).map { it.toDomain() }
+                    val lore = chatDao.getNovelLoreForConversation(freshConv.id).map { it.toDomain() }
+                    val episodes = chatDao.getMemoryEpisodesForConversation(freshConv.id).map { it.toDomain() }
+                    val chapters = chatDao.getNovelChaptersForConversation(freshConv.id).map { it.toDomain() }
+
+                    val now = System.currentTimeMillis()
+                    val attachmentTokOverhead = (target.tokenEstimate - ContextBuilder.estimateMessageTokens(target.content))
+                        .coerceAtLeast(0)
+                    val editedMsgs = msgs.map {
+                        if (it.id == userMsgId) {
+                            it.copy(
+                                content = cleanText,
+                                editedAt = now,
+                                tokenEstimate = ContextBuilder.estimateMessageTokens(cleanText) + attachmentTokOverhead,
+                            )
+                        } else {
+                            it
+                        }
+                    }
+                    val reconciled = TimelineReconciler.reconcileOnRollback(
+                        cutoffSeq = target.seq,
+                        inclusiveOfCutoff = false,
+                        messages = editedMsgs,
+                        ledgerItems = ledger,
+                        loreEntries = lore,
+                        episodes = episodes,
+                        chapters = chapters,
+                        summarizedUntilSeq = freshConv.summarizedUntilSeq,
+                        activeWindowStartSeq = freshConv.params.activeWindowStartSeq,
+                    )
+                    if (reconciled.messages.isNotEmpty()) chatDao.upsertMessages(reconciled.messages.map { it.toEntity() })
+                    if (reconciled.ledgerItems.isNotEmpty()) chatDao.upsertMemoryLedgerList(reconciled.ledgerItems.map { it.toEntity() })
+                    if (reconciled.loreEntries.isNotEmpty()) chatDao.upsertNovelLoreList(reconciled.loreEntries.map { it.toEntity() })
+                    if (reconciled.episodes.isNotEmpty()) chatDao.upsertMemoryEpisodes(reconciled.episodes.map { it.toEntity() })
+                    if (reconciled.chapters.isNotEmpty()) chatDao.upsertNovelChapters(reconciled.chapters.map { it.toEntity() })
+
+                    val rolledConv = TimelineReconciler.applyRollbackToConversation(freshConv, reconciled)
+                    val keptActive = TimelineReconciler.activeMessages(reconciled.messages)
+                    val (restoredRp, restoredNovel) = ConversationForkUseCase.restoreModeStateAtCutoff(
+                        sourceConv = rolledConv,
+                        keptMsgs = keptActive,
+                        nextNovel = rolledConv.novel,
+                    )
+                    val nextConv = rolledConv.copy(
+                        rp = restoredRp,
+                        novel = restoredNovel,
+                        groupId = groupId,
+                        model = modelId,
+                        updatedAt = now,
+                    )
+                    chatDao.upsertConversation(nextConv.toEntity())
+                    nextConv
+                } ?: return@launch
+
+                if (convForGen.mode == ConversationMode.novel) {
+                    novelStudioDelegate.syncNovelChapterWordCounts(convForGen.id)
+                }
+                launchCompletionForConversation(convForGen)
+            } finally {
+                releaseConversationMutation(conv.id)
+            }
         }
     }
 
@@ -1225,65 +1407,204 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun deleteMessage(msgId: String) {
+        val conv = _ui.value.activeConversation ?: return
+        if (chatStreamManager.isStreaming(conv.id)) return
+        if (!tryAcquireConversationMutation(conv.id)) return
+
         viewModelScope.launch {
-            val conv = _ui.value.activeConversation ?: return@launch
-            if (chatStreamManager.isStreaming(conv.id)) return@launch
-            val msgs = chatDao.getMessagesForConversation(conv.id).map { it.toDomain() }
-            val updated = TimelineReconciler.softDeleteMessage(msgId, msgs)
-            chatDao.upsertMessages(updated.map { it.toEntity() })
-            if (conv.mode == ConversationMode.novel) {
-                novelStudioDelegate.syncNovelChapterWordCounts(conv.id)
+            try {
+                if (chatStreamManager.isStreaming(conv.id)) return@launch
+                val isNovel = container.database.withTransaction {
+                    val freshConv = chatDao.getConversationById(conv.id)?.toDomain() ?: return@withTransaction false
+                    val msgs = chatDao.getMessagesForConversation(freshConv.id).map { it.toDomain() }
+                    val target = msgs.firstOrNull { it.id == msgId && it.deletedAt == null } ?: return@withTransaction false
+                    val activeBefore = TimelineReconciler.activeMessages(msgs)
+                    val wasTipAssistant = TimelineReconciler.latestTipAssistant(activeBefore)?.id == target.id
+
+                    val now = System.currentTimeMillis()
+                    val updatedMsgs = TimelineReconciler.softDeleteMessage(msgId, msgs)
+                    chatDao.upsertMessages(updatedMsgs.map { it.toEntity() })
+
+                    val activeAfter = TimelineReconciler.activeMessages(updatedMsgs)
+                    val newTipSeq = activeAfter.maxOfOrNull { it.seq } ?: 0
+
+                    if (wasTipAssistant && (freshConv.mode == ConversationMode.rp || freshConv.mode == ConversationMode.novel)) {
+                        val staleLedger = chatDao.getMemoryLedgerForConversation(freshConv.id)
+                            .map { it.toDomain() }
+                            .filter { !it.locked && !it.stale && it.validFromSeq == target.seq }
+                            .map { it.copy(stale = true, supersededAtSeq = target.seq, updatedAt = now) }
+                        if (staleLedger.isNotEmpty()) {
+                            chatDao.upsertMemoryLedgerList(staleLedger.map { it.toEntity() })
+                        }
+                        val staleLore = chatDao.getNovelLoreForConversation(freshConv.id)
+                            .map { it.toDomain() }
+                            .filter { !it.alwaysActive && !it.stale && it.validFromSeq == target.seq }
+                            .map { it.copy(stale = true, supersededAtSeq = target.seq, updatedAt = now) }
+                        if (staleLore.isNotEmpty()) {
+                            chatDao.upsertNovelLoreList(staleLore.map { it.toEntity() })
+                        }
+                    }
+
+                    var nextConv = freshConv
+                    if (newTipSeq < nextConv.summarizedUntilSeq) {
+                        val episodes = chatDao.getMemoryEpisodesForConversation(freshConv.id).map { it.toDomain() }
+                        val nextSummarized = episodes
+                            .filter { !it.stale && it.toSeq <= newTipSeq }
+                            .maxOfOrNull { it.toSeq } ?: 0
+                        nextConv = nextConv.copy(
+                            summarizedUntilSeq = nextSummarized,
+                            archivedSummary = if (nextSummarized == 0) "" else nextConv.archivedSummary,
+                        )
+                    }
+                    if (nextConv.params.activeWindowStartSeq != null &&
+                        nextConv.params.activeWindowStartSeq > newTipSeq
+                    ) {
+                        nextConv = nextConv.copy(params = nextConv.params.copy(activeWindowStartSeq = null))
+                    }
+                    if (wasTipAssistant && (nextConv.mode == ConversationMode.rp || nextConv.mode == ConversationMode.novel)) {
+                        val (restoredRp, restoredNovel) = ConversationForkUseCase.restoreModeStateAtCutoff(
+                            sourceConv = nextConv,
+                            keptMsgs = activeAfter,
+                            nextNovel = nextConv.novel,
+                        )
+                        nextConv = nextConv.copy(rp = restoredRp, novel = restoredNovel)
+                    }
+                    if (nextConv != freshConv) {
+                        chatDao.upsertConversation(nextConv.copy(updatedAt = now).toEntity())
+                    }
+                    nextConv.mode == ConversationMode.novel
+                }
+                if (isNovel) {
+                    novelStudioDelegate.syncNovelChapterWordCounts(conv.id)
+                }
+            } finally {
+                releaseConversationMutation(conv.id)
             }
         }
     }
 
     fun branchFromMessage(msgId: String) {
+        val conv = _ui.value.activeConversation ?: return
+        if (chatStreamManager.isStreaming(conv.id)) return
+        if (!tryAcquireConversationMutation(conv.id)) return
+
         viewModelScope.launch {
-            val conv = _ui.value.activeConversation ?: return@launch
-            val forkedConv = container.conversationForkUseCase.branchFromMessage(conv, msgId) ?: return@launch
-            _activeConvId.value = forkedConv.id
-            val toast = if (conv.mode == ConversationMode.novel) {
-                strings().novel.branchCreated.fmt("title" to forkedConv.title)
-            } else {
-                "Branch created"
+            try {
+                if (chatStreamManager.isStreaming(conv.id)) return@launch
+                val titleSuffix = if (container.settingsState.value.language == AppLanguage.EN) " (Branch)" else " (分支)"
+                val result = container.conversationForkUseCase.branchFromMessage(
+                    sourceConv = conv,
+                    targetMsgId = msgId,
+                    titleSuffix = titleSuffix,
+                ) ?: return@launch
+                val forkedConv = result.conversation
+                val prefill = result.prefillUserMessage
+                val prefillAttachments = if (prefill != null && prefill.attachmentIds.isNotEmpty()) {
+                    val loadedMap = container.attachmentStore.loadAttachmentsMap(prefill.attachmentIds)
+                    withContext(Dispatchers.IO) {
+                        prefill.attachmentIds.mapNotNull { id ->
+                            val meta = loadedMap[id] ?: return@mapNotNull null
+                            val hasLocal = meta.localPath.isNotBlank() && File(meta.localPath).exists()
+                            val hasText = meta.textPath.isNotBlank() && File(meta.textPath).exists()
+                            if (hasLocal || hasText) meta else null
+                        }
+                    }
+                } else {
+                    emptyList()
+                }
+                val enrichedForked = enrichConversationWithBoundCardMedia(
+                    forkedConv,
+                    _ui.value.characterCards.firstOrNull { it.id == forkedConv.characterCardId },
+                )
+                isBranchPrefilledDraft = prefill != null
+                _activeConvId.value = forkedConv.id
+                _ui.update { st ->
+                    st.copy(
+                        activeConversation = enrichedForked,
+                        isStreaming = false,
+                        streamingStatusHint = null,
+                        draftText = prefill?.content ?: "",
+                        draftRpKind = prefill?.rpInputKind ?: st.draftRpKind,
+                        draftNovelKind = prefill?.inputKind ?: st.draftNovelKind,
+                        draftAttachments = if (prefill != null) prefillAttachments else emptyList(),
+                        attachmentsById = if (prefillAttachments.isNotEmpty()) {
+                            st.attachmentsById + prefillAttachments.associateBy { it.id }
+                        } else {
+                            st.attachmentsById
+                        },
+                        draftDiceRoll = null,
+                        threePathDrafts = emptyList(),
+                        outlineChatReply = "",
+                        polishResult = "",
+                        mutedRecallKeys = emptySet(),
+                    ).withDerivedBindings()
+                }
+                container.toastController.show(strings().novel.branchCreated.fmt("title" to forkedConv.title))
+            } finally {
+                releaseConversationMutation(conv.id)
             }
-            container.toastController.show(toast)
         }
     }
 
     fun switchMessageVariant(msgId: String, variantIndex: Int) {
+        val conv = _ui.value.activeConversation ?: return
+        if (chatStreamManager.isStreaming(conv.id)) return
+        if (!tryAcquireConversationMutation(conv.id)) return
+
         viewModelScope.launch {
-            val conv = _ui.value.activeConversation ?: return@launch
-            if (chatStreamManager.isStreaming(conv.id)) return@launch
-            val msgs = chatDao.getMessagesForConversation(conv.id).map { it.toDomain() }
-            val msg = msgs.firstOrNull { it.id == msgId } ?: return@launch
-            val variant = msg.variants.getOrNull(variantIndex) ?: return@launch
-            val updatedMsg = msg.copy(
-                content = variant.content,
-                reasoning = variant.reasoning,
-                usage = variant.usage,
-                rpChoices = variant.rpChoices,
-                novelChoices = variant.novelChoices,
-                activeVariantIndex = variantIndex,
-                tokenEstimate = ContextBuilder.estimateMessageTokens(variant.content),
-            )
-            chatDao.upsertMessage(updatedMsg.toEntity())
-            if (conv.mode == ConversationMode.rp && conv.rp != null &&
-                (variant.rpStateSnapshot != null || variant.rpCastSnapshot != null || variant.rpChoices.isNotEmpty())
-            ) {
-                val updatedRp = conv.rp.copy(
-                    state = variant.rpStateSnapshot ?: conv.rp.state,
-                    cast = variant.rpCastSnapshot ?: conv.rp.cast,
-                    pendingChoices = variant.rpChoices,
-                )
-                chatDao.upsertConversation(conv.copy(rp = updatedRp, updatedAt = System.currentTimeMillis()).toEntity())
-            } else if (conv.mode == ConversationMode.novel && conv.novel != null) {
-                val updatedNovel = conv.novel.copy(
-                    currentStatus = variant.novelStatusSnapshot ?: conv.novel.currentStatus,
-                    pendingChoices = variant.novelChoices.ifEmpty { conv.novel.pendingChoices },
-                )
-                chatDao.upsertConversation(conv.copy(novel = updatedNovel, updatedAt = System.currentTimeMillis()).toEntity())
-                novelStudioDelegate.syncNovelChapterWordCounts(conv.id)
+            try {
+                if (chatStreamManager.isStreaming(conv.id)) return@launch
+                val isNovel = container.database.withTransaction {
+                    val freshConv = chatDao.getConversationById(conv.id)?.toDomain() ?: return@withTransaction false
+                    val msgs = chatDao.getMessagesForConversation(freshConv.id).map { it.toDomain() }
+                    val msg = msgs.firstOrNull { it.id == msgId } ?: return@withTransaction false
+                    val variant = msg.variants.getOrNull(variantIndex) ?: return@withTransaction false
+                    val updatedMsg = msg.copy(
+                        content = variant.content,
+                        reasoning = variant.reasoning,
+                        reasoningDurationMs = variant.reasoningDurationMs ?: variant.usage?.reasoningDurationMs,
+                        usage = variant.usage,
+                        model = variant.model ?: msg.model,
+                        status = "done",
+                        error = null,
+                        rpChoices = variant.rpChoices,
+                        novelChoices = variant.novelChoices,
+                        activeVariantIndex = variantIndex,
+                        tokenEstimate = ContextBuilder.estimateMessageTokens(variant.content),
+                    )
+                    chatDao.upsertMessage(updatedMsg.toEntity())
+
+                    val isLatestActiveAssistant = TimelineReconciler.activeMessages(msgs)
+                        .lastOrNull { it.role == "assistant" }?.id == msg.id
+                    if (isLatestActiveAssistant) {
+                        if (freshConv.mode == ConversationMode.rp && freshConv.rp != null &&
+                            (variant.rpStateSnapshot != null || variant.rpCastSnapshot != null || variant.rpChoices.isNotEmpty())
+                        ) {
+                            val updatedRp = freshConv.rp.copy(
+                                state = variant.rpStateSnapshot ?: freshConv.rp.state,
+                                cast = variant.rpCastSnapshot ?: freshConv.rp.cast,
+                                pendingChoices = variant.rpChoices,
+                            )
+                            chatDao.upsertConversation(
+                                freshConv.copy(rp = updatedRp, updatedAt = System.currentTimeMillis()).toEntity(),
+                            )
+                        } else if (freshConv.mode == ConversationMode.novel && freshConv.novel != null) {
+                            val updatedNovel = freshConv.novel.copy(
+                                currentStatus = variant.novelStatusSnapshot ?: freshConv.novel.currentStatus,
+                                pendingChoices = variant.novelChoices.ifEmpty { freshConv.novel.pendingChoices },
+                            )
+                            chatDao.upsertConversation(
+                                freshConv.copy(novel = updatedNovel, updatedAt = System.currentTimeMillis()).toEntity(),
+                            )
+                        }
+                    }
+                    freshConv.mode == ConversationMode.novel
+                }
+                if (isNovel) {
+                    novelStudioDelegate.syncNovelChapterWordCounts(conv.id)
+                }
+            } finally {
+                releaseConversationMutation(conv.id)
             }
         }
     }
@@ -1634,23 +1955,6 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         return conv
     }
 
-    private suspend fun persistReconciliation(
-        conv: ChatConversation,
-        res: com.gugachat.app.domain.chat.TimelineReconciliationResult,
-    ): ChatConversation = container.database.withTransaction {
-        if (res.messages.isNotEmpty()) chatDao.upsertMessages(res.messages.map { it.toEntity() })
-        if (res.ledgerItems.isNotEmpty()) chatDao.upsertMemoryLedgerList(res.ledgerItems.map { it.toEntity() })
-        if (res.loreEntries.isNotEmpty()) chatDao.upsertNovelLoreList(res.loreEntries.map { it.toEntity() })
-        if (res.episodes.isNotEmpty()) chatDao.upsertMemoryEpisodes(res.episodes.map { it.toEntity() })
-        if (res.chapters.isNotEmpty()) chatDao.upsertNovelChapters(res.chapters.map { it.toEntity() })
-        val freshConv = chatDao.getConversationById(conv.id)?.toDomain() ?: conv
-        val rolledConv = TimelineReconciler.applyRollbackToConversation(freshConv, res)
-        if (rolledConv != freshConv) {
-            chatDao.upsertConversation(rolledConv.toEntity())
-        }
-        rolledConv
-    }
-
     private fun buildV4AssetsCacheKey(
         conv: ChatConversation,
         st: ChatUiState,
@@ -1754,5 +2058,9 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             database = container.database,
             conversationId = convId,
         )
+    }
+
+    companion object {
+        internal const val NEW_CONV_MUTATION_KEY = "__new_conversation__"
     }
 }

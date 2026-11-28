@@ -33,6 +33,13 @@ internal interface ChatViewModelHost {
     fun updateDraftText(text: String)
     fun setDraftNovelKind(kind: com.gugachat.app.domain.chat.NovelInputKind)
     fun sendMessage(overrideText: String? = null)
+    suspend fun sendMessageWhileLocked(
+        overrideText: String,
+        overrideRpKind: com.gugachat.app.domain.chat.RpInputKind? = null,
+        overrideDiceRoll: com.gugachat.app.domain.chat.RpDiceRoll? = null,
+    )
+    fun tryAcquireConversationMutation(convId: String): Boolean
+    fun releaseConversationMutation(convId: String)
     fun launchCompletionForConversation(
         conv: ChatConversation,
         existingMessageForVariant: ChatMessage? = null,

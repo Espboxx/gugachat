@@ -363,13 +363,18 @@ class ChatStreamManager internal constructor(
     val lastWaterlineByConv: StateFlow<Map<String, com.gugachat.app.domain.chat.BuiltChatContext>> = _lastWaterlineByConv.asStateFlow()
 
     fun isStreaming(conversationId: String): Boolean =
-        _activeSessions.value[conversationId]?.isStreaming == true
+        synchronized(jobsLock) { activeJobs[conversationId]?.isActive == true } ||
+            _activeSessions.value[conversationId]?.isStreaming == true
 
     fun clearCommittedBridge(conversationId: String, messageId: String) {
         _lastCommittedMessages.update { cur ->
             val existing = cur[conversationId]
             if (existing?.id == messageId) cur - conversationId else cur
         }
+    }
+
+    fun clearLastCommittedMessage(conversationId: String) {
+        _lastCommittedMessages.update { it - conversationId }
     }
 
     suspend fun recoverOrphanStreams() {
@@ -772,7 +777,8 @@ class ChatStreamManager internal constructor(
                 var actualLen = OutputLengthPolicy.countEffectiveLength(accumulatedRaw, activeConv.mode)
                 val triggerThreshold = OutputLengthPolicy.shortReplyThreshold(minOutputChars)
                 if (actualLen > 0 && actualLen < triggerThreshold) {
-                    val lastUserText = allMsgs.lastOrNull { it.role == "user" && it.deletedAt == null }?.content
+                    val lastUserText = TimelineReconciler.activeMessages(allMsgs)
+                        .lastOrNull { it.role == "user" }?.content
                     val isEnglish = OutputLengthPolicy.isEnglishPreference(lastUserText, isAppEnglish())
                     val baseMessages = wireRequest.messages
                     for (pass in 1..OutputLengthPolicy.MAX_AUTO_CONTINUE_PASSES) {
@@ -975,6 +981,7 @@ class ChatStreamManager internal constructor(
                 rpChoices = existingMessage.rpChoices,
                 novelStatusSnapshot = conv.novel?.currentStatus,
                 novelChoices = existingMessage.novelChoices,
+                reasoningDurationMs = existingMessage.reasoningDurationMs ?: existingMessage.usage?.reasoningDurationMs,
             ),
         )
     }
@@ -984,6 +991,29 @@ class ChatStreamManager internal constructor(
         private const val DB_SNAPSHOT_INTERVAL_MS = 1000L
         private const val KEEP_ALIVE_THROTTLE_MS = 500L
         private const val KEEP_ALIVE_CHAR_STEP = 120
+
+        internal fun resolveChatModeVariants(
+            assistantTemplate: ChatMessage,
+            finalContent: String,
+            reasoning: String,
+            usage: MessageUsage?,
+            continuePrefixText: String?,
+            now: Long,
+        ): List<MessageVariant> {
+            if (continuePrefixText == null && assistantTemplate.variants.isEmpty()) {
+                return assistantTemplate.variants
+            }
+            val newVariant = MessageVariant(
+                id = UUID.randomUUID().toString(),
+                content = finalContent,
+                reasoning = reasoning,
+                createdAt = now,
+                usage = usage,
+                model = assistantTemplate.model,
+                reasoningDurationMs = usage?.reasoningDurationMs ?: assistantTemplate.reasoningDurationMs,
+            )
+            return assistantTemplate.variants + newVariant
+        }
 
         fun combineContinueText(prefix: String?, streamed: String): String {
             val cleanPrefix = prefix?.trimEnd().orEmpty()
@@ -1155,6 +1185,7 @@ private class RoomStreamPersistenceGateway(
                     model = assistantTemplate.model,
                     novelStatusSnapshot = nextStatus,
                     novelChoices = novelChoices,
+                    reasoningDurationMs = usage?.reasoningDurationMs,
                 )
                 updatedVariants = assistantTemplate.variants + newVariant
             } else if (nextConv.mode == ConversationMode.rp && nextConv.rp != null) {
@@ -1212,20 +1243,32 @@ private class RoomStreamPersistenceGateway(
                     rpDeltas = outcome.turnDeltas,
                     rpSpeakerName = resolvedSpeaker,
                     rpEndingUnlocked = outcome.unlockedEnding,
+                    reasoningDurationMs = usage?.reasoningDurationMs,
                 )
                 updatedVariants = assistantTemplate.variants + newVariant
                 outcome.unlockedEnding?.let { ending ->
                     unlockedBannerText = "[${ending.code}] ${ending.title}"
                 }
+            } else if (nextConv.mode == ConversationMode.chat) {
+                updatedVariants = ChatStreamManager.resolveChatModeVariants(
+                    assistantTemplate = assistantTemplate,
+                    finalContent = finalContent,
+                    reasoning = reasoning,
+                    usage = usage,
+                    continuePrefixText = continuePrefixText,
+                    now = now,
+                )
             }
 
             val finalMsg = assistantTemplate.copy(
                 content = finalContent,
                 reasoning = reasoning,
+                reasoningDurationMs = usage?.reasoningDurationMs,
                 usage = usage,
                 rpChoices = rpChoices,
                 novelChoices = novelChoices,
                 status = "done",
+                error = null,
                 tokenEstimate = ContextBuilder.estimateMessageTokens(finalContent),
                 variants = updatedVariants,
                 activeVariantIndex = if (updatedVariants.isNotEmpty()) updatedVariants.lastIndex else 0,

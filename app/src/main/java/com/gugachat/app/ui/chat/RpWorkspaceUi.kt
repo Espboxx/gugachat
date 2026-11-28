@@ -197,12 +197,17 @@ fun RpWorkspaceScreen(
         activeMsgs.firstOrNull { it.role == "assistant" && it.seq == 1 }
     }
     val greetingPreviews = remember(seq1GreetingMsg?.variants, activeGreetingVariants) {
-        val fromMsg = seq1GreetingMsg?.variants.orEmpty().map { it.content }.filter { it.isNotBlank() }
-        if (fromMsg.size > 1) fromMsg else activeGreetingVariants
+        if (seq1GreetingMsg == null) {
+            emptyList()
+        } else {
+            val fromMsg = seq1GreetingMsg.variants.map { it.content }.filter { it.isNotBlank() }
+            if (fromMsg.size > 1) fromMsg else activeGreetingVariants
+        }
     }
     val activeGreetingIdx = (seq1GreetingMsg?.activeVariantIndex ?: 0)
         .coerceIn(0, (greetingPreviews.size - 1).coerceAtLeast(0))
     val showStreamGreetingPill = !rp.theaterMode &&
+        seq1GreetingMsg != null &&
         activeUserTurnCount == 0 &&
         greetingPreviews.size > 1 &&
         !isStreaming

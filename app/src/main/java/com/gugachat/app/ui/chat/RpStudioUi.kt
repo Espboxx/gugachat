@@ -366,6 +366,7 @@ fun RpStudioSheet(
     triggeredLoreIds: Set<String>,
     saveSlots: List<RpSaveSlot>,
     initialTab: Int = 0,
+    isStreaming: Boolean = false,
     isGeneratingArt: Boolean = false,
     artStatusLabel: String = "",
     onAdjustAffinity: (String, Int) -> Unit,
@@ -579,6 +580,7 @@ fun RpStudioSheet(
                                 1 -> RpStateAndArchiveSection(
                                     rp = rp,
                                     saveSlots = saveSlots,
+                                    isStreaming = isStreaming,
                                     isGeneratingArt = isGeneratingArt,
                                     modifier = Modifier
                                         .fillMaxWidth()

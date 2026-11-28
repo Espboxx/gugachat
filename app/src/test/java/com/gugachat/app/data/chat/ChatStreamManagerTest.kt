@@ -15,6 +15,7 @@ import com.gugachat.app.domain.chat.ConversationMode
 import com.gugachat.app.domain.chat.LoreTimedEntryState
 import com.gugachat.app.domain.chat.MemoryEpisode
 import com.gugachat.app.domain.chat.MessageUsage
+import com.gugachat.app.domain.chat.MessageVariant
 import com.gugachat.app.domain.chat.WorldbookEvalResult
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -816,6 +817,184 @@ class ChatStreamManagerTest {
                 awaitUntil { manager.lastCommittedMessages.value.containsKey("conv_low_delta") && manager.activeSessions.value.isEmpty() }
                 assertEquals(2, calls.get()) // stopped after pass 1 of auto-continue
             }
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun resolveChatModeVariants_appendsContinuedVariantAndUpdatesActiveVariantIndex() {
+        val v0 = MessageVariant(id = "v0", content = "Part1", createdAt = 10L, model = "m1")
+        val v1 = MessageVariant(id = "v1", content = "Alt1", createdAt = 20L, model = "m1")
+        val template = ChatMessage(
+            id = "a1",
+            conversationId = "c_chat",
+            role = "assistant",
+            content = "Part1",
+            model = "m1",
+            createdAt = 10L,
+            seq = 2,
+            variants = listOf(v0, v1),
+            activeVariantIndex = 0,
+        )
+
+        val continuedVariants = ChatStreamManager.resolveChatModeVariants(
+            assistantTemplate = template,
+            finalContent = "Part1\n\nPart2",
+            reasoning = "think",
+            usage = MessageUsage(completionTokens = 40, reasoningDurationMs = 1200L),
+            continuePrefixText = "Part1",
+            now = 99L,
+        )
+        assertEquals(3, continuedVariants.size)
+        assertEquals("Part1\n\nPart2", continuedVariants.last().content)
+        assertEquals(1200L, continuedVariants.last().reasoningDurationMs)
+        assertEquals(2, continuedVariants.lastIndex)
+
+        // Normal first-turn chat message without variants or continue stays empty
+        val plainTemplate = ChatMessage(
+            id = "a2",
+            conversationId = "c_chat",
+            role = "assistant",
+            content = "",
+            model = "m1",
+            createdAt = 30L,
+            seq = 4,
+        )
+        val plainVariants = ChatStreamManager.resolveChatModeVariants(
+            assistantTemplate = plainTemplate,
+            finalContent = "Hello!",
+            reasoning = "",
+            usage = null,
+            continuePrefixText = null,
+            now = 100L,
+        )
+        assertTrue(plainVariants.isEmpty())
+    }
+
+    @Test
+    fun isStreamingReflectsActiveJobImmediatelyAndClearLastCommittedMessageClearsBridge() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            val blockGetMessages = CompletableDeferred<Unit>()
+            val persistence = object : StreamPersistenceGateway {
+                override suspend fun getMessages(convId: String): List<ChatMessage> {
+                    blockGetMessages.await()
+                    return emptyList()
+                }
+                override suspend fun upsertMessageSnapshot(msg: ChatMessage) = Unit
+                override suspend fun saveCompactionOutcome(conv: ChatConversation, outcome: CompactionOutcome) = emptyList<MemoryEpisode>()
+                override suspend fun finalizeTurnTransaction(
+                    convId: String,
+                    fallbackConv: ChatConversation,
+                    assistantTemplate: ChatMessage,
+                    rawContent: String,
+                    reasoning: String,
+                    usage: MessageUsage?,
+                    continuePrefixText: String?,
+                    worldbookResult: WorldbookEvalResult?,
+                    updatedTokenCalibration: Double?,
+                    onEndingUnlockedToast: ((String) -> Unit)?,
+                ): Pair<ChatConversation, ChatMessage> = fallbackConv to assistantTemplate.copy(content = rawContent, status = "done")
+                override suspend fun abortOrphanStreamingMessages() = Unit
+            }
+            val completion = object : StreamCompletionGateway {
+                override suspend fun streamOnce(
+                    request: OnlineChatCompletionRequestDto,
+                    onTextDelta: (String) -> Unit,
+                    onReasoningDelta: (String) -> Unit,
+                    onUsageSet: (MessageUsage) -> Unit,
+                    onRetryAttempt: (Int, Int, Throwable) -> Unit,
+                    onResetForRetry: () -> Unit,
+                ) {
+                    onTextDelta("done")
+                }
+            }
+            val manager = ChatStreamManager(
+                scope = scope,
+                keepAlive = FakeKeepAliveGateway(),
+                contextGateway = FakeContextGateway(),
+                completionGateway = completion,
+                persistenceGateway = persistence,
+            )
+
+            assertTrue(manager.startStream(StreamLaunchRequest(sampleConv("conv_race"), 1L, "m1")))
+            // Before getMessages finishes (activeSessions is still empty!), isStreaming MUST already be true
+            assertTrue(manager.activeSessions.value["conv_race"] == null)
+            assertTrue(manager.isStreaming("conv_race"))
+
+            blockGetMessages.complete(Unit)
+            awaitUntil { !manager.isStreaming("conv_race") && manager.lastCommittedMessages.value.containsKey("conv_race") }
+
+            manager.clearLastCommittedMessage("conv_race")
+            assertFalse(manager.lastCommittedMessages.value.containsKey("conv_race"))
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun autoContinueLanguageDetection_ignoresSupersededUserMessages() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            val persistence = FakePersistenceGateway()
+            persistence.messagesByConv["conv_lang"] = mutableListOf(
+                ChatMessage(
+                    id = "u_active_zh",
+                    conversationId = "conv_lang",
+                    role = "user",
+                    content = "请用中文写一段故事",
+                    createdAt = 1L,
+                    seq = 1,
+                ),
+                ChatMessage(
+                    id = "u_superseded_en",
+                    conversationId = "conv_lang",
+                    role = "user",
+                    content = "Please write an English essay about space travel",
+                    createdAt = 2L,
+                    seq = 2,
+                    supersededAtSeq = 2,
+                ),
+            )
+            val capturedRequests = CopyOnWriteArrayList<OnlineChatCompletionRequestDto>()
+            val completion = object : StreamCompletionGateway {
+                override suspend fun streamOnce(
+                    request: OnlineChatCompletionRequestDto,
+                    onTextDelta: (String) -> Unit,
+                    onReasoningDelta: (String) -> Unit,
+                    onUsageSet: (MessageUsage) -> Unit,
+                    onRetryAttempt: (Int, Int, Throwable) -> Unit,
+                    onResetForRetry: () -> Unit,
+                ) {
+                    capturedRequests += request
+                    if (capturedRequests.size == 1) {
+                        onTextDelta("短回复。")
+                    } else {
+                        onTextDelta("这是一段足够长的中文续写内容，确保能够一次达到字数要求。".repeat(12))
+                    }
+                }
+            }
+            val manager = ChatStreamManager(
+                scope = scope,
+                keepAlive = FakeKeepAliveGateway(),
+                contextGateway = FakeContextGateway(),
+                completionGateway = completion,
+                persistenceGateway = persistence,
+                isAppEnglish = { false },
+            )
+            val conv = sampleConv("conv_lang").copy(
+                params = ChatParams(minOutputChars = 200, autoContinueShortReply = true),
+            )
+            assertTrue(manager.startStream(StreamLaunchRequest(conv, 1L, "m1")))
+            awaitUntil { !manager.isStreaming("conv_lang") && manager.lastCommittedMessages.value.containsKey("conv_lang") }
+
+            assertEquals(2, capturedRequests.size)
+            val nudgeContent = capturedRequests[1].messages.last().content.toString()
+            assertTrue(
+                "Nudge should be Chinese (ignoring superseded English user msg), got: $nudgeContent",
+                nudgeContent.contains("请紧接上文继续") && !nudgeContent.contains("Continue seamlessly"),
+            )
         } finally {
             scope.cancel()
         }

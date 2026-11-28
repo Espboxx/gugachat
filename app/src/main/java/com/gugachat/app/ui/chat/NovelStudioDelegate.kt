@@ -110,7 +110,7 @@ internal class NovelStudioDelegate(private val host: ChatViewModelHost) {
                 chatDao.upsertNovelChapter(ch1.toEntity())
                 if (lore.isNotEmpty()) chatDao.upsertNovelLoreList(lore.map { it.toEntity() })
             }
-            host.uiFlow.update { it.copy(draftDiceRoll = null) }
+            host.uiFlow.update { it.copy(draftText = "", draftAttachments = emptyList(), draftDiceRoll = null) }
             host.activeConvIdFlow.value = convId
             host.container.toastController.show(host.strings().novel.wizardCreated.fmt("title" to bookTitle))
         }
@@ -231,7 +231,7 @@ internal class NovelStudioDelegate(private val host: ChatViewModelHost) {
                     chatDao.upsertMessage(openingMsg.toEntity())
                 }
             }
-            host.uiFlow.update { it.copy(draftDiceRoll = null) }
+            host.uiFlow.update { it.copy(draftText = "", draftAttachments = emptyList(), draftDiceRoll = null) }
             host.activeConvIdFlow.value = convId
             host.container.toastController.show(host.strings().novel.wizardCreated.fmt("title" to bookTitle))
             onCompleted()
@@ -271,43 +271,61 @@ internal class NovelStudioDelegate(private val host: ChatViewModelHost) {
         val conv = host.uiFlow.value.activeConversation ?: return
         if (conv.novel == null) return
         host.scope.launch {
-            host.container.database.withTransaction {
-                val fresh = chatDao.getConversationById(conv.id)?.toDomain() ?: conv
-                val freshNovel = fresh.novel ?: return@withTransaction
-                val now = System.currentTimeMillis()
-                val chapters = chatDao.getNovelChaptersForConversation(fresh.id).map { it.toDomain() }
-                val nextOrder = (chapters.maxOfOrNull { it.order } ?: 0) + 1
-                val tip = TimelineReconciler.findActiveTipSeq(chatDao.getMessagesForConversation(fresh.id).map { it.toDomain() })
-
-                val activeCh = chapters.firstOrNull { it.id == freshNovel.activeChapterId } ?: chapters.maxByOrNull { it.order }
-                if (activeCh != null && (markPreviousDone || activateImmediately)) {
-                    val closedEnd = if (tip >= activeCh.startSeq) tip else activeCh.endSeq
-                    chatDao.upsertNovelChapter(
-                        activeCh.copy(
-                            status = if (markPreviousDone) "done" else activeCh.status,
-                            endSeq = closedEnd,
-                            updatedAt = now,
-                        ).toEntity(),
-                    )
-                }
-
-                val ch = NovelChapter(
-                    id = UUID.randomUUID().toString(),
-                    conversationId = fresh.id,
-                    order = nextOrder,
-                    title = title.trim().ifBlank { "第${nextOrder}章" },
-                    outline = outline.trim(),
-                    status = if (activateImmediately) "writing" else "draft",
-                    startSeq = tip + 1,
-                    createdAt = now,
-                    updatedAt = now,
-                )
-                chatDao.upsertNovelChapter(ch.toEntity())
-                if (activateImmediately) {
-                    chatDao.upsertConversation(fresh.copy(novel = freshNovel.copy(activeChapterId = ch.id), updatedAt = now).toEntity())
-                }
-            }
+            addOrSelectNovelChapterSuspend(
+                convId = conv.id,
+                fallbackConv = conv,
+                title = title,
+                outline = outline,
+                markPreviousDone = markPreviousDone,
+                activateImmediately = activateImmediately,
+            )
             syncNovelChapterWordCounts(conv.id)
+        }
+    }
+
+    private suspend fun addOrSelectNovelChapterSuspend(
+        convId: String,
+        fallbackConv: ChatConversation,
+        title: String,
+        outline: String,
+        markPreviousDone: Boolean,
+        activateImmediately: Boolean,
+    ) {
+        host.container.database.withTransaction {
+            val fresh = chatDao.getConversationById(convId)?.toDomain() ?: fallbackConv
+            val freshNovel = fresh.novel ?: return@withTransaction
+            val now = System.currentTimeMillis()
+            val chapters = chatDao.getNovelChaptersForConversation(fresh.id).map { it.toDomain() }
+            val nextOrder = (chapters.maxOfOrNull { it.order } ?: 0) + 1
+            val tip = TimelineReconciler.findActiveTipSeq(chatDao.getMessagesForConversation(fresh.id).map { it.toDomain() })
+
+            val activeCh = chapters.firstOrNull { it.id == freshNovel.activeChapterId } ?: chapters.maxByOrNull { it.order }
+            if (activeCh != null && (markPreviousDone || activateImmediately)) {
+                val closedEnd = if (tip >= activeCh.startSeq) tip else activeCh.endSeq
+                chatDao.upsertNovelChapter(
+                    activeCh.copy(
+                        status = if (markPreviousDone) "done" else activeCh.status,
+                        endSeq = closedEnd,
+                        updatedAt = now,
+                    ).toEntity(),
+                )
+            }
+
+            val ch = NovelChapter(
+                id = UUID.randomUUID().toString(),
+                conversationId = fresh.id,
+                order = nextOrder,
+                title = title.trim().ifBlank { "第${nextOrder}章" },
+                outline = outline.trim(),
+                status = if (activateImmediately) "writing" else "draft",
+                startSeq = tip + 1,
+                createdAt = now,
+                updatedAt = now,
+            )
+            chatDao.upsertNovelChapter(ch.toEntity())
+            if (activateImmediately) {
+                chatDao.upsertConversation(fresh.copy(novel = freshNovel.copy(activeChapterId = ch.id), updatedAt = now).toEntity())
+            }
         }
     }
 
@@ -335,20 +353,20 @@ internal class NovelStudioDelegate(private val host: ChatViewModelHost) {
                 val fresh = chatDao.getConversationById(conv.id)?.toDomain() ?: conv
                 val freshNovel = fresh.novel ?: return@withTransaction false
                 val chapters = chatDao.getNovelChaptersForConversation(fresh.id).map { it.toDomain() }
-                if (chapters.size <= 1) return@withTransaction false
-                chatDao.deleteNovelChapter(chapterId)
-                val remaining = chapters.filterNot { it.id == chapterId }.sortedBy { it.order }
                 val now = System.currentTimeMillis()
-                val reindexed = remaining.mapIndexed { idx, ch ->
-                    ch.copy(order = idx + 1, updatedAt = now)
-                }
+                val (reindexed, fallbackActiveId) = removeChapterAndCloseGap(
+                    chapters = chapters,
+                    chapterId = chapterId,
+                    currentActiveChapterId = freshNovel.activeChapterId,
+                    now = now,
+                ) ?: return@withTransaction false
+                chatDao.deleteNovelChapter(chapterId)
                 if (reindexed.isNotEmpty()) {
                     chatDao.upsertNovelChapters(reindexed.map { it.toEntity() })
                 }
                 if (freshNovel.activeChapterId == chapterId) {
-                    val nextActive = reindexed.lastOrNull()?.id
                     chatDao.upsertConversation(
-                        fresh.copy(novel = freshNovel.copy(activeChapterId = nextActive), updatedAt = now).toEntity(),
+                        fresh.copy(novel = freshNovel.copy(activeChapterId = fallbackActiveId), updatedAt = now).toEntity(),
                     )
                 }
                 true
@@ -404,14 +422,19 @@ internal class NovelStudioDelegate(private val host: ChatViewModelHost) {
                 if (autoRecap) generateChapterRecap(activeCh.id)
             }
         } else {
-            addOrSelectNovelChapter(
-                title = nextTitle,
-                outline = nextOutline,
-                markPreviousDone = true,
-                activateImmediately = true,
-            )
-            if (autoRecap && currentActiveId != null) {
-                generateChapterRecap(currentActiveId)
+            host.scope.launch {
+                addOrSelectNovelChapterSuspend(
+                    convId = conv.id,
+                    fallbackConv = conv,
+                    title = nextTitle,
+                    outline = nextOutline,
+                    markPreviousDone = true,
+                    activateImmediately = true,
+                )
+                syncNovelChapterWordCounts(conv.id)
+                if (autoRecap && currentActiveId != null) {
+                    generateChapterRecap(currentActiveId)
+                }
             }
         }
     }
@@ -435,7 +458,15 @@ internal class NovelStudioDelegate(private val host: ChatViewModelHost) {
             val res = host.oneShotRunner.completeOnce(gid, model, prompt, temperature = 0.4, maxTokens = 400)
             val summary = res.content.trim()
             if (summary.isNotEmpty()) {
-                chatDao.upsertNovelChapter(target.copy(summary = summary, updatedAt = System.currentTimeMillis()).toEntity())
+                host.container.database.withTransaction {
+                    val freshTarget = chatDao.getNovelChaptersForConversation(conv.id)
+                        .map { it.toDomain() }
+                        .firstOrNull { it.id == chapterId }
+                        ?: return@withTransaction
+                    chatDao.upsertNovelChapter(
+                        freshTarget.copy(summary = summary, updatedAt = System.currentTimeMillis()).toEntity(),
+                    )
+                }
                 host.container.toastController.show(host.strings().novel.recapGenerated)
             }
         }
@@ -938,5 +969,65 @@ internal class NovelStudioDelegate(private val host: ChatViewModelHost) {
             updatedAt = now,
         )
         item.copy(estimatedTokens = NovelEngine.estimateLoreTokens(item))
+    }
+
+    companion object {
+        /**
+         * Removes [chapterId] from [chapters], closes the resulting `[prev.endSeq, next.startSeq]`
+         * gap so deleted chapter prose stays in the adjacent chapter instead of becoming trailing
+         * orphans, reindexes `order`, and returns the updated chapters plus the fallback active
+         * chapter ID when the active chapter was deleted.
+         */
+        internal fun removeChapterAndCloseGap(
+            chapters: List<NovelChapter>,
+            chapterId: String,
+            currentActiveChapterId: String?,
+            now: Long = System.currentTimeMillis(),
+        ): Pair<List<NovelChapter>, String?>? {
+            if (chapters.size <= 1) return null
+            val sorted = chapters.sortedBy { it.order }
+            val targetIdx = sorted.indexOfFirst { it.id == chapterId }
+            if (targetIdx < 0) return null
+
+            val deletedCh = sorted[targetIdx]
+            val mutable = sorted.toMutableList()
+            mutable.removeAt(targetIdx)
+
+            val fallbackIdx = (targetIdx - 1).coerceAtLeast(0).coerceAtMost(mutable.lastIndex)
+            val isDeletingActive = currentActiveChapterId == chapterId
+
+            if (targetIdx > 0) {
+                val prev = mutable[targetIdx - 1]
+                val next = mutable.getOrNull(targetIdx)
+                val mergedEndSeq = when {
+                    deletedCh.endSeq != null -> deletedCh.endSeq
+                    next != null && next.status != "draft" -> (next.startSeq - 1).coerceAtLeast(prev.startSeq)
+                    else -> null
+                }
+                val nextPrevStatus = if (mergedEndSeq == null && (isDeletingActive || prev.status == "done")) {
+                    "writing"
+                } else {
+                    prev.status
+                }
+                mutable[targetIdx - 1] = prev.copy(
+                    endSeq = mergedEndSeq,
+                    status = nextPrevStatus,
+                    updatedAt = now,
+                )
+            } else {
+                val next = mutable[0]
+                mutable[0] = next.copy(
+                    startSeq = minOf(next.startSeq, deletedCh.startSeq),
+                    status = if (next.status == "draft") "writing" else next.status,
+                    updatedAt = now,
+                )
+            }
+
+            val reindexed = mutable.mapIndexed { idx, ch ->
+                ch.copy(order = idx + 1, updatedAt = now)
+            }
+            val fallbackActiveId = reindexed.getOrNull(fallbackIdx)?.id ?: reindexed.lastOrNull()?.id
+            return reindexed to fallbackActiveId
+        }
     }
 }

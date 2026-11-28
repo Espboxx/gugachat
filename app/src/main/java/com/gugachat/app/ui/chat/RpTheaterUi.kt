@@ -514,12 +514,16 @@ fun RpTheaterStageView(
         activeMessages.firstOrNull { it.role == "assistant" && it.seq == 1 }
     }
     val greetingPreviews = remember(seq1GreetingMsg?.variants, activeGreetingVariants) {
-        val fromMsg = seq1GreetingMsg?.variants.orEmpty().map { it.content }.filter { it.isNotBlank() }
-        if (fromMsg.size > 1) fromMsg else activeGreetingVariants
+        if (seq1GreetingMsg == null) {
+            emptyList()
+        } else {
+            val fromMsg = seq1GreetingMsg.variants.map { it.content }.filter { it.isNotBlank() }
+            if (fromMsg.size > 1) fromMsg else activeGreetingVariants
+        }
     }
     val activeGreetingIdx = (seq1GreetingMsg?.activeVariantIndex ?: 0)
         .coerceIn(0, (greetingPreviews.size - 1).coerceAtLeast(0))
-    val showGreetingSwitcher = activeUserTurnCount == 0 && greetingPreviews.size > 1 && !isStreaming
+    val showGreetingSwitcher = seq1GreetingMsg != null && activeUserTurnCount == 0 && greetingPreviews.size > 1 && !isStreaming
     var showGreetingPickerSheet by remember { mutableStateOf(false) }
 
     if (showGreetingPickerSheet && greetingPreviews.size > 1) {
@@ -637,6 +641,7 @@ fun RpTheaterStageView(
                         val hasChoicesOverlay = !isStreaming &&
                             !isEditingReply &&
                             !isComposerExpanded &&
+                            activeMessages.lastOrNull()?.role == "assistant" &&
                             (stageChoices.isNotEmpty() || isRefreshingChoices || (rp.enableChoices && latestAssistant != null))
 
                         val spritesWithFiles = remember(stageCharacters) {
