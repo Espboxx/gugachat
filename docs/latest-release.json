@@ -1,26 +1,26 @@
 {
-  "tag_name": "v0.4.1",
-  "version_name": "0.4.1",
-  "name": "GuGuChat v0.4.1",
-  "published_at": "2026-11-27T16:45:43Z",
-  "html_url": "https://github.com/Espboxx/gugachat/releases/tag/v0.4.1",
+  "tag_name": "v0.4.2",
+  "version_name": "0.4.2",
+  "name": "GuGuChat v0.4.2",
+  "published_at": "2026-11-28T10:28:33Z",
+  "html_url": "https://github.com/Espboxx/gugachat/releases/tag/v0.4.2",
   "cn_download_page": "",
-  "apk_name": "GuGuChat-v0.4.1-arm64-v8a.apk",
-  "apk_size": 26451960,
-  "apk_sha256": "9b3a75cb2cd40cfab8a51ec0818effd816b8391596febc76eeb1e5b8cc11039c",
-  "apk_url": "https://github.com/Espboxx/gugachat/releases/download/v0.4.1/GuGuChat-v0.4.1-arm64-v8a.apk",
+  "apk_name": "GuGuChat-v0.4.2-arm64-v8a.apk",
+  "apk_size": 26464000,
+  "apk_sha256": "f459c82b482d88149d7db9238d3404398aadbaacd4aa834ed151ee9dcadd5a3a",
+  "apk_url": "https://github.com/Espboxx/gugachat/releases/download/v0.4.2/GuGuChat-v0.4.2-arm64-v8a.apk",
   "abi_apks": {
     "arm64-v8a": {
-      "apk_name": "GuGuChat-v0.4.1-arm64-v8a.apk",
-      "apk_size": 26451960,
-      "apk_sha256": "9b3a75cb2cd40cfab8a51ec0818effd816b8391596febc76eeb1e5b8cc11039c",
-      "apk_url": "https://github.com/Espboxx/gugachat/releases/download/v0.4.1/GuGuChat-v0.4.1-arm64-v8a.apk"
+      "apk_name": "GuGuChat-v0.4.2-arm64-v8a.apk",
+      "apk_size": 26464000,
+      "apk_sha256": "f459c82b482d88149d7db9238d3404398aadbaacd4aa834ed151ee9dcadd5a3a",
+      "apk_url": "https://github.com/Espboxx/gugachat/releases/download/v0.4.2/GuGuChat-v0.4.2-arm64-v8a.apk"
     },
     "x86_64": {
-      "apk_name": "GuGuChat-v0.4.1-x86_64.apk",
-      "apk_size": 29149084,
-      "apk_sha256": "d3c40042c65fab4f77de6dcd61c1672d78f862916ba682a94c265ee579707223",
-      "apk_url": "https://github.com/Espboxx/gugachat/releases/download/v0.4.1/GuGuChat-v0.4.1-x86_64.apk"
+      "apk_name": "GuGuChat-v0.4.2-x86_64.apk",
+      "apk_size": 29161124,
+      "apk_sha256": "da9a9a63ab1014e84ccf55180389c290625af54f41ceb22927b1e94c2b0887b2",
+      "apk_url": "https://github.com/Espboxx/gugachat/releases/download/v0.4.2/GuGuChat-v0.4.2-x86_64.apk"
     }
   },
   "cn_apk_urls": [],
@@ -31,5 +31,5 @@
     "https://gh-proxy.org/",
     "https://ghfast.top/"
   ],
-  "body": "## GuGuChat v0.4.1\n\n### 下载包选择说明\n- **`GuGuChat-v0.4.1-arm64-v8a.apk`（26,451,960 字节 / 约 25.2 MB，手机/平板真机推荐）**：适用于绝大多数安卓真机，内置自动更新按设备 ABI 自动匹配。\n- **`GuGuChat-v0.4.1-x86_64.apk`（29,149,084 字节 / 约 27.8 MB，电脑模拟器推荐）**：适用于 MuMu / 雷电 / AVD x86_64 等电脑安卓模拟器及 x86 平板。\n\n### 本次更新内容\n\n#### 1. 全部 8 个内置剧本新增 10 位专属视觉小说角色立绘\n- 为 8 个内置官方剧本中的全部 10 位核心角色补齐了统一 2:3 精致半身立绘（`768x1152` 轻量 WebP 打包，整包仅增加约 `0.79 MB`）：\n  - **凤仪天下 · 深宫权谋**：萧景珩、沈清欢（双人同台立绘）\n  - **霓虹深夜酒馆 · 羁绊物语**：江晚柠\n  - **剑与魔法冒险**：莱拉·晨星、加里克（双人同台立绘）\n  - **赛博朋克谍战**：夜莺 (Vesper)\n  - **江湖武侠风云**：苏挽月\n  - **蒸汽克苏鲁秘辛**：伊芙琳修女\n  - **星际佣兵团**：凯·机械师\n  - **现代日常恋爱物语**：林栀\n- **全场景立绘渲染打通**：「创作 → 角色」官方剧本海报网格、剧本开局详情弹窗、RP 新建向导卡片、全屏剧场半身羽化舞台、顶部角色头像芯片与手账预览均即开即显真实立绘。\n\n#### 2. 全屏剧场舞台构图优化与内置资产全链路支持\n- **剧场立绘锚点抬升优化**：调整全屏剧场舞台立绘纵向锚点，多分支选项展开时角色面部与头饰依然完整露出在选项条上方，不再被遮挡。\n- **内置资产 URI 统一支持**：升级 `LocalMediaPathResolver` 支持 `file:///android_asset/` 安全解析与图片加载；`.gugubackup` 备份与 WebDAV 云同步自动原样透传内置立绘路径（零额外流量）；导出内置剧本为 SillyTavern `.png` 角色卡时自动嵌入真实立绘封面。"
+  "body": "## GuGuChat v0.4.2\n\n### 下载包选择说明\n- **`GuGuChat-v0.4.2-arm64-v8a.apk`（26,464,000 字节 / 约 25.2 MB，手机/平板真机推荐）**：适用于绝大多数安卓真机，内置自动更新按设备 ABI 自动匹配。\n- **`GuGuChat-v0.4.2-x86_64.apk`（29,161,124 字节 / 约 27.8 MB，电脑模拟器推荐）**：适用于 MuMu / 雷电 / AVD x86_64 等电脑安卓模拟器及 x86 平板。\n\n### 本次更新内容\n\n#### 1. 独立全屏模型切换页面（彻底告别误触下滑关闭）\n- 将聊天 / 角色扮演（RP）/ 长篇小说三模式共用的模型与分组选择器由底部弹窗重构为**独立全屏页面**，进入时自动隐藏底部导航栏并适配主题背景，滑动分组栏或下拉列表均不会再误关闭页面。\n- **更高效的分组与模型浏览**：顶部单行横向分组条支持自动定位当前选中分组与右侧渐变滚动提示；分组较多时点击右侧「全部 ⌄」即可一键展开多行网格视图直达目标分组，点选后自动收起；新增切换分组加载进度条与当前模型自动滚动定位。\n\n#### 2. 兼容 UU 世界书导出格式（`worldInfoEntries`）\n- 全面支持导入 UU 独立导出的世界书 JSON（`worldInfoEntries` / `world_info_entries`），完整解析 `title`、`keys`、`constant` 常驻标记、`disabled` 状态及同名分段词条。\n- 在「创作 → 设定」导入后自动入库并触发向量索引建库，同时打通外部导入归类识别。\n\n#### 3. 架构精简、稳定性修复与流式热路径优化\n- **协议与缓存修复**：修复跨协议 `@D` 深度注入标记透传（恢复 Anthropic 断点 2 / Responses / Gemini 提示词缓存命中），补全 Gemini `assistantPrefill` 合并与安全 JSON 解析；消除图片加载与 401 单飞刷新共享调度器死锁，强化 WebDAV 断网重试与断点续传分片校验。\n- **流式与渲染加速**：优化 `ChatStreamManager` 结束锁与多会话水位线隔离；为上下文召回、正则引擎与世界书扫描引入缓存，消除重复清洗与正则编译开销；统一底部弹窗与子页返回键处理、加固数据库事务原子性与流式备份批量查询。"
 }
