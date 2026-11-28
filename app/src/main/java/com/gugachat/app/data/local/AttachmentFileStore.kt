@@ -16,7 +16,10 @@ import com.gugachat.app.domain.chat.FileTextExtractor
 import com.gugachat.app.domain.chat.PdfExtractionResult
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.text.PDFTextStripper
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -133,6 +136,8 @@ class AttachmentFileStore(
             )
             attachmentDao.upsert(entity)
             AttachmentSaveResult.Success(entity.toDomain())
+        } catch (ce: CancellationException) {
+            throw ce
         } catch (e: Throwable) {
             AttachmentSaveResult.Error(e.message?.takeIf { it.isNotBlank() } ?: "文件解析失败")
         }
@@ -144,9 +149,31 @@ class AttachmentFileStore(
     ): List<ChatAttachmentMeta> = withContext(Dispatchers.IO) {
         val tempPdf = File(cameraCacheDir, "scan_${UUID.randomUUID()}.pdf")
         try {
-            context.contentResolver.openInputStream(uri)?.use { ins ->
-                FileOutputStream(tempPdf).use { fos -> ins.copyTo(fos) }
+            val declaredSize = queryFileSize(uri)
+            if (declaredSize > MAX_DOCUMENT_BYTES) {
+                return@withContext emptyList()
+            }
+            val copied = context.contentResolver.openInputStream(uri)?.use { ins ->
+                FileOutputStream(tempPdf).use { fos ->
+                    val buf = ByteArray(16 * 1024)
+                    var total = 0L
+                    while (true) {
+                        currentCoroutineContext().ensureActive()
+                        val n = ins.read(buf)
+                        if (n <= 0) break
+                        total += n
+                        if (total > MAX_DOCUMENT_BYTES) {
+                            return@use false
+                        }
+                        fos.write(buf, 0, n)
+                    }
+                    fos.flush()
+                    true
+                }
             } ?: return@withContext emptyList()
+            if (!copied) {
+                return@withContext emptyList()
+            }
 
             val pfd = android.os.ParcelFileDescriptor.open(tempPdf, android.os.ParcelFileDescriptor.MODE_READ_ONLY)
             val rendered = ArrayList<ChatAttachmentMeta>()
@@ -155,6 +182,7 @@ class AttachmentFileStore(
                     val count = min(renderer.pageCount, maxPages.coerceIn(1, 6))
                     val baseName = queryDisplayName(uri).substringBeforeLast('.').ifBlank { "pdf" }
                     for (i in 0 until count) {
+                        currentCoroutineContext().ensureActive()
                         renderer.openPage(i).use { page ->
                             val targetW = 1280
                             val scale = targetW.toFloat() / max(1, page.width).toFloat()
@@ -179,6 +207,8 @@ class AttachmentFileStore(
                 }
             }
             rendered
+        } catch (ce: CancellationException) {
+            throw ce
         } catch (_: Throwable) {
             emptyList()
         } finally {

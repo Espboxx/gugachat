@@ -31,6 +31,30 @@ data class RpStatusWidgetTemplate(
 )
 
 object RpRegexEngine {
+    private const val MAX_REGEX_CACHE_SIZE = 128
+
+    private data class RegexCacheKey(
+        val pattern: String,
+        val options: Set<RegexOption>,
+    )
+
+    private val regexCacheLock = Any()
+    private val compiledRegexCache = object : LinkedHashMap<RegexCacheKey, Regex>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<RegexCacheKey, Regex>?): Boolean =
+            size > MAX_REGEX_CACHE_SIZE
+    }
+
+    private fun compileCachedRegex(pattern: String, options: Set<RegexOption>): Regex {
+        val key = RegexCacheKey(pattern, options)
+        synchronized(regexCacheLock) {
+            compiledRegexCache[key]?.let { return it }
+        }
+        val compiled = Regex(pattern, options)
+        return synchronized(regexCacheLock) {
+            compiledRegexCache.getOrPut(key) { compiled }
+        }
+    }
+
     private val VALID_JS_FLAGS_RE = Regex("^[gimsuydv]*$")
     private val FENCE_LINE_RE = Regex("^[ \\t]*(`{3,}|~{3,})([^\\n\\r]*)$")
     private val EXTERNAL_SCRIPT_PAIR_RE = Regex(
@@ -524,7 +548,7 @@ object RpRegexEngine {
             }
 
             current = try {
-                val regex = Regex(pattern, options)
+                val regex = compileCachedRegex(pattern, options)
                 if (isGlobal) {
                     regex.replace(current) { m -> expandReplacement(replaceTemplate, m, script.trimStrings) }
                 } else {

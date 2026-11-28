@@ -2,6 +2,7 @@ package com.gugachat.app.ui.chat
 
 import android.content.ContentResolver
 import android.net.Uri
+import androidx.room.withTransaction
 import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.i18n.fmt
 import com.gugachat.app.core.storage.LocalMediaPathResolver
@@ -21,6 +22,7 @@ import com.gugachat.app.domain.chat.NovelInputKind
 import com.gugachat.app.domain.chat.NovelLoreEntry
 import com.gugachat.app.domain.chat.NovelPresets
 import com.gugachat.app.domain.chat.TimelineReconciler
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -100,9 +102,11 @@ internal class NovelStudioDelegate(private val host: ChatViewModelHost) {
                 updatedAt = now,
             )
             val lore = buildDefaultStarterLore(convId, preset.starterLore, now)
-            chatDao.upsertConversation(conv.toEntity())
-            chatDao.upsertNovelChapter(ch1.toEntity())
-            if (lore.isNotEmpty()) chatDao.upsertNovelLoreList(lore.map { it.toEntity() })
+            host.container.database.withTransaction {
+                chatDao.upsertConversation(conv.toEntity())
+                chatDao.upsertNovelChapter(ch1.toEntity())
+                if (lore.isNotEmpty()) chatDao.upsertNovelLoreList(lore.map { it.toEntity() })
+            }
             host.uiFlow.update { it.copy(draftDiceRoll = null) }
             host.activeConvIdFlow.value = convId
             host.container.toastController.show(host.strings().novel.wizardCreated.fmt("title" to bookTitle))
@@ -195,30 +199,32 @@ internal class NovelStudioDelegate(private val host: ChatViewModelHost) {
             )
             val lore = genesis?.starterLore?.ifEmpty { null }
                 ?: buildDefaultStarterLore(convId, preset.starterLore, now)
-            chatDao.upsertConversation(conv.toEntity())
-            chatDao.upsertNovelChapter(ch1.toEntity())
-            if (lore.isNotEmpty()) chatDao.upsertNovelLoreList(lore.map { it.toEntity() })
-            if (openingProse.isNotBlank()) {
-                val openingMsg = ChatMessage(
-                    id = UUID.randomUUID().toString(),
-                    conversationId = convId,
-                    role = "assistant",
-                    content = openingProse,
-                    model = model,
-                    createdAt = now,
-                    seq = 1,
-                    status = "done",
-                    tokenEstimate = ContextBuilder.estimateMessageTokens(openingProse),
-                    variants = listOf(
-                        MessageVariant(
-                            id = UUID.randomUUID().toString(),
-                            content = openingProse,
-                            createdAt = now,
-                            model = model,
+            host.container.database.withTransaction {
+                chatDao.upsertConversation(conv.toEntity())
+                chatDao.upsertNovelChapter(ch1.toEntity())
+                if (lore.isNotEmpty()) chatDao.upsertNovelLoreList(lore.map { it.toEntity() })
+                if (openingProse.isNotBlank()) {
+                    val openingMsg = ChatMessage(
+                        id = UUID.randomUUID().toString(),
+                        conversationId = convId,
+                        role = "assistant",
+                        content = openingProse,
+                        model = model,
+                        createdAt = now,
+                        seq = 1,
+                        status = "done",
+                        tokenEstimate = ContextBuilder.estimateMessageTokens(openingProse),
+                        variants = listOf(
+                            MessageVariant(
+                                id = UUID.randomUUID().toString(),
+                                content = openingProse,
+                                createdAt = now,
+                                model = model,
+                            ),
                         ),
-                    ),
-                )
-                chatDao.upsertMessage(openingMsg.toEntity())
+                    )
+                    chatDao.upsertMessage(openingMsg.toEntity())
+                }
             }
             host.uiFlow.update { it.copy(draftDiceRoll = null) }
             host.activeConvIdFlow.value = convId
@@ -258,39 +264,43 @@ internal class NovelStudioDelegate(private val host: ChatViewModelHost) {
         activateImmediately: Boolean = true,
     ) {
         val conv = host.uiFlow.value.activeConversation ?: return
-        val novel = conv.novel ?: return
+        if (conv.novel == null) return
         host.scope.launch {
-            val now = System.currentTimeMillis()
-            val chapters = chatDao.getNovelChaptersForConversation(conv.id).map { it.toDomain() }
-            val nextOrder = (chapters.maxOfOrNull { it.order } ?: 0) + 1
-            val tip = TimelineReconciler.findActiveTipSeq(chatDao.getMessagesForConversation(conv.id).map { it.toDomain() })
+            host.container.database.withTransaction {
+                val fresh = chatDao.getConversationById(conv.id)?.toDomain() ?: conv
+                val freshNovel = fresh.novel ?: return@withTransaction
+                val now = System.currentTimeMillis()
+                val chapters = chatDao.getNovelChaptersForConversation(fresh.id).map { it.toDomain() }
+                val nextOrder = (chapters.maxOfOrNull { it.order } ?: 0) + 1
+                val tip = TimelineReconciler.findActiveTipSeq(chatDao.getMessagesForConversation(fresh.id).map { it.toDomain() })
 
-            val activeCh = chapters.firstOrNull { it.id == novel.activeChapterId } ?: chapters.maxByOrNull { it.order }
-            if (activeCh != null && (markPreviousDone || activateImmediately)) {
-                val closedEnd = if (tip >= activeCh.startSeq) tip else activeCh.endSeq
-                chatDao.upsertNovelChapter(
-                    activeCh.copy(
-                        status = if (markPreviousDone) "done" else activeCh.status,
-                        endSeq = closedEnd,
-                        updatedAt = now,
-                    ).toEntity(),
+                val activeCh = chapters.firstOrNull { it.id == freshNovel.activeChapterId } ?: chapters.maxByOrNull { it.order }
+                if (activeCh != null && (markPreviousDone || activateImmediately)) {
+                    val closedEnd = if (tip >= activeCh.startSeq) tip else activeCh.endSeq
+                    chatDao.upsertNovelChapter(
+                        activeCh.copy(
+                            status = if (markPreviousDone) "done" else activeCh.status,
+                            endSeq = closedEnd,
+                            updatedAt = now,
+                        ).toEntity(),
+                    )
+                }
+
+                val ch = NovelChapter(
+                    id = UUID.randomUUID().toString(),
+                    conversationId = fresh.id,
+                    order = nextOrder,
+                    title = title.trim().ifBlank { "第${nextOrder}章" },
+                    outline = outline.trim(),
+                    status = if (activateImmediately) "writing" else "draft",
+                    startSeq = tip + 1,
+                    createdAt = now,
+                    updatedAt = now,
                 )
-            }
-
-            val ch = NovelChapter(
-                id = UUID.randomUUID().toString(),
-                conversationId = conv.id,
-                order = nextOrder,
-                title = title.trim().ifBlank { "第${nextOrder}章" },
-                outline = outline.trim(),
-                status = if (activateImmediately) "writing" else "draft",
-                startSeq = tip + 1,
-                createdAt = now,
-                updatedAt = now,
-            )
-            chatDao.upsertNovelChapter(ch.toEntity())
-            if (activateImmediately) {
-                chatDao.upsertConversation(conv.copy(novel = novel.copy(activeChapterId = ch.id), updatedAt = now).toEntity())
+                chatDao.upsertNovelChapter(ch.toEntity())
+                if (activateImmediately) {
+                    chatDao.upsertConversation(fresh.copy(novel = freshNovel.copy(activeChapterId = ch.id), updatedAt = now).toEntity())
+                }
             }
             syncNovelChapterWordCounts(conv.id)
         }
@@ -314,24 +324,33 @@ internal class NovelStudioDelegate(private val host: ChatViewModelHost) {
 
     fun deleteNovelChapter(chapterId: String) {
         val conv = host.uiFlow.value.activeConversation ?: return
-        val novel = conv.novel ?: return
+        if (conv.novel == null) return
         host.scope.launch {
-            val chapters = chatDao.getNovelChaptersForConversation(conv.id).map { it.toDomain() }
-            if (chapters.size <= 1) return@launch
-            chatDao.deleteNovelChapter(chapterId)
-            val remaining = chapters.filterNot { it.id == chapterId }.sortedBy { it.order }
-            val now = System.currentTimeMillis()
-            val reindexed = remaining.mapIndexed { idx, ch ->
-                ch.copy(order = idx + 1, updatedAt = now)
+            val deleted = host.container.database.withTransaction {
+                val fresh = chatDao.getConversationById(conv.id)?.toDomain() ?: conv
+                val freshNovel = fresh.novel ?: return@withTransaction false
+                val chapters = chatDao.getNovelChaptersForConversation(fresh.id).map { it.toDomain() }
+                if (chapters.size <= 1) return@withTransaction false
+                chatDao.deleteNovelChapter(chapterId)
+                val remaining = chapters.filterNot { it.id == chapterId }.sortedBy { it.order }
+                val now = System.currentTimeMillis()
+                val reindexed = remaining.mapIndexed { idx, ch ->
+                    ch.copy(order = idx + 1, updatedAt = now)
+                }
+                if (reindexed.isNotEmpty()) {
+                    chatDao.upsertNovelChapters(reindexed.map { it.toEntity() })
+                }
+                if (freshNovel.activeChapterId == chapterId) {
+                    val nextActive = reindexed.lastOrNull()?.id
+                    chatDao.upsertConversation(
+                        fresh.copy(novel = freshNovel.copy(activeChapterId = nextActive), updatedAt = now).toEntity(),
+                    )
+                }
+                true
             }
-            if (reindexed.isNotEmpty()) {
-                chatDao.upsertNovelChapters(reindexed.map { it.toEntity() })
+            if (deleted) {
+                syncNovelChapterWordCounts(conv.id)
             }
-            if (novel.activeChapterId == chapterId) {
-                val nextActive = reindexed.lastOrNull()?.id
-                chatDao.upsertConversation(conv.copy(novel = novel.copy(activeChapterId = nextActive), updatedAt = now).toEntity())
-            }
-            syncNovelChapterWordCounts(conv.id)
         }
     }
 
@@ -352,26 +371,30 @@ internal class NovelStudioDelegate(private val host: ChatViewModelHost) {
         }
         if (nextPlannedDraft != null && activeCh != null) {
             host.scope.launch {
-                val now = System.currentTimeMillis()
-                val tip = TimelineReconciler.findActiveTipSeq(chatDao.getMessagesForConversation(conv.id).map { it.toDomain() })
-                chatDao.upsertNovelChapter(
-                    activeCh.copy(
-                        status = "done",
-                        endSeq = if (tip >= activeCh.startSeq) tip else activeCh.endSeq,
-                        updatedAt = now,
-                    ).toEntity(),
-                )
-                chatDao.upsertNovelChapter(
-                    nextPlannedDraft.copy(
-                        status = "writing",
-                        startSeq = tip + 1,
-                        endSeq = null,
-                        updatedAt = now,
-                    ).toEntity(),
-                )
-                chatDao.upsertConversation(
-                    conv.copy(novel = novel.copy(activeChapterId = nextPlannedDraft.id), updatedAt = now).toEntity(),
-                )
+                host.container.database.withTransaction {
+                    val fresh = chatDao.getConversationById(conv.id)?.toDomain() ?: conv
+                    val freshNovel = fresh.novel ?: return@withTransaction
+                    val now = System.currentTimeMillis()
+                    val tip = TimelineReconciler.findActiveTipSeq(chatDao.getMessagesForConversation(fresh.id).map { it.toDomain() })
+                    chatDao.upsertNovelChapter(
+                        activeCh.copy(
+                            status = "done",
+                            endSeq = if (tip >= activeCh.startSeq) tip else activeCh.endSeq,
+                            updatedAt = now,
+                        ).toEntity(),
+                    )
+                    chatDao.upsertNovelChapter(
+                        nextPlannedDraft.copy(
+                            status = "writing",
+                            startSeq = tip + 1,
+                            endSeq = null,
+                            updatedAt = now,
+                        ).toEntity(),
+                    )
+                    chatDao.upsertConversation(
+                        fresh.copy(novel = freshNovel.copy(activeChapterId = nextPlannedDraft.id), updatedAt = now).toEntity(),
+                    )
+                }
                 syncNovelChapterWordCounts(conv.id)
                 if (autoRecap) generateChapterRecap(activeCh.id)
             }
@@ -416,31 +439,36 @@ internal class NovelStudioDelegate(private val host: ChatViewModelHost) {
     fun selectActiveChapter(chapterId: String) {
         host.scope.launch {
             val activeId = host.uiFlow.value.activeConversation?.id ?: return@launch
-            val conv = chatDao.getConversationById(activeId)?.toDomain() ?: return@launch
-            val novel = conv.novel ?: return@launch
-            val chapters = chatDao.getNovelChaptersForConversation(conv.id).map { it.toDomain() }
-            val target = chapters.firstOrNull { it.id == chapterId } ?: return@launch
-            val now = System.currentTimeMillis()
-            if (target.status == "draft" && target.wordCount == 0) {
-                val tip = TimelineReconciler.findActiveTipSeq(chatDao.getMessagesForConversation(conv.id).map { it.toDomain() })
-                val prevActive = chapters.firstOrNull { it.id == novel.activeChapterId && it.id != target.id }
-                if (prevActive != null && prevActive.endSeq == null && tip >= prevActive.startSeq) {
-                    chatDao.upsertNovelChapter(prevActive.copy(endSeq = tip, updatedAt = now).toEntity())
+            val switched = host.container.database.withTransaction {
+                val conv = chatDao.getConversationById(activeId)?.toDomain() ?: return@withTransaction false
+                val novel = conv.novel ?: return@withTransaction false
+                val chapters = chatDao.getNovelChaptersForConversation(conv.id).map { it.toDomain() }
+                val target = chapters.firstOrNull { it.id == chapterId } ?: return@withTransaction false
+                val now = System.currentTimeMillis()
+                if (target.status == "draft" && target.wordCount == 0) {
+                    val tip = TimelineReconciler.findActiveTipSeq(chatDao.getMessagesForConversation(conv.id).map { it.toDomain() })
+                    val prevActive = chapters.firstOrNull { it.id == novel.activeChapterId && it.id != target.id }
+                    if (prevActive != null && prevActive.endSeq == null && tip >= prevActive.startSeq) {
+                        chatDao.upsertNovelChapter(prevActive.copy(endSeq = tip, updatedAt = now).toEntity())
+                    }
+                    chatDao.upsertNovelChapter(
+                        target.copy(
+                            status = "writing",
+                            startSeq = tip + 1,
+                            endSeq = null,
+                            updatedAt = now,
+                        ).toEntity(),
+                    )
                 }
-                chatDao.upsertNovelChapter(
-                    target.copy(
-                        status = "writing",
-                        startSeq = tip + 1,
-                        endSeq = null,
-                        updatedAt = now,
-                    ).toEntity(),
+                chatDao.upsertConversation(
+                    conv.copy(novel = novel.copy(activeChapterId = chapterId), updatedAt = now).toEntity(),
                 )
+                true
             }
-            chatDao.upsertConversation(
-                conv.copy(novel = novel.copy(activeChapterId = chapterId), updatedAt = now).toEntity(),
-            )
-            syncNovelChapterWordCounts(conv.id)
-            host.scheduleWaterline()
+            if (switched) {
+                syncNovelChapterWordCounts(activeId)
+                host.scheduleWaterline()
+            }
         }
     }
 
@@ -746,29 +774,31 @@ internal class NovelStudioDelegate(private val host: ChatViewModelHost) {
                 host.container.toastController.show(host.strings().common.unknownError, isError = true)
                 return@launchWithGroupModelAndFlag
             }
-            val msgs = chatDao.getMessagesForConversation(conv.id).map { it.toDomain() }
-            val lastAssistant = TimelineReconciler.activeMessages(msgs).lastOrNull { it.role == "assistant" }
-            if (lastAssistant != null) {
-                val updatedVariants = if (lastAssistant.variants.isNotEmpty()) {
-                    val activeIdx = lastAssistant.activeVariantIndex.coerceIn(0, lastAssistant.variants.lastIndex)
-                    lastAssistant.variants.mapIndexed { idx, v ->
-                        if (idx == activeIdx) v.copy(novelChoices = newChoices) else v
+            host.container.database.withTransaction {
+                val msgs = chatDao.getMessagesForConversation(conv.id).map { it.toDomain() }
+                val lastAssistant = TimelineReconciler.activeMessages(msgs).lastOrNull { it.role == "assistant" }
+                if (lastAssistant != null) {
+                    val updatedVariants = if (lastAssistant.variants.isNotEmpty()) {
+                        val activeIdx = lastAssistant.activeVariantIndex.coerceIn(0, lastAssistant.variants.lastIndex)
+                        lastAssistant.variants.mapIndexed { idx, v ->
+                            if (idx == activeIdx) v.copy(novelChoices = newChoices) else v
+                        }
+                    } else {
+                        lastAssistant.variants
                     }
-                } else {
-                    lastAssistant.variants
+                    chatDao.upsertMessage(
+                        lastAssistant.copy(novelChoices = newChoices, variants = updatedVariants).toEntity(),
+                    )
                 }
-                chatDao.upsertMessage(
-                    lastAssistant.copy(novelChoices = newChoices, variants = updatedVariants).toEntity(),
+                val freshConv = chatDao.getConversationById(conv.id)?.toDomain() ?: conv
+                val freshNovel = freshConv.novel ?: novel
+                chatDao.upsertConversation(
+                    freshConv.copy(
+                        novel = freshNovel.copy(pendingChoices = newChoices),
+                        updatedAt = System.currentTimeMillis(),
+                    ).toEntity(),
                 )
             }
-            val freshConv = chatDao.getConversationById(conv.id)?.toDomain() ?: conv
-            val freshNovel = freshConv.novel ?: novel
-            chatDao.upsertConversation(
-                freshConv.copy(
-                    novel = freshNovel.copy(pendingChoices = newChoices),
-                    updatedAt = System.currentTimeMillis(),
-                ).toEntity(),
-            )
         }
     }
 
@@ -835,6 +865,8 @@ internal class NovelStudioDelegate(private val host: ChatViewModelHost) {
                     contentResolver.openOutputStream(uri)?.use { it.write(text.toByteArray(Charsets.UTF_8)) }
                 }
                 host.container.toastController.show(host.strings().novel.exportDone)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 host.container.toastController.show(e.message ?: "Export failed", isError = true)
             }
@@ -875,6 +907,8 @@ internal class NovelStudioDelegate(private val host: ChatViewModelHost) {
                         ?: error("Failed to open output stream")
                 }
                 host.container.toastController.show(host.strings().novel.exportDone)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 host.container.toastController.show(e.message ?: "Export failed", isError = true)
             }

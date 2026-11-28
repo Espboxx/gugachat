@@ -1212,6 +1212,7 @@ class BackupAndWebDavSyncTest {
             override suspend fun getAllConversations() = conversations.values.sortedWith(compareByDescending<ConversationEntity> { it.pinned }.thenByDescending { it.updatedAt })
             override suspend fun getConversationsPaged(limit: Int, offset: Int) = conversations.values.sortedBy { it.id }.drop(offset).take(limit)
             override suspend fun getConversationById(id: String) = conversations[id]
+            override suspend fun getConversationsByIds(ids: List<String>) = ids.distinct().mapNotNull { conversations[it] }
             override suspend fun upsertConversation(entity: ConversationEntity) { conversations[entity.id] = entity }
             override suspend fun upsertConversations(entities: List<ConversationEntity>) { entities.forEach { conversations[it.id] = it } }
             override suspend fun deleteConversation(id: String) { conversations.remove(id) }
@@ -1226,6 +1227,10 @@ class BackupAndWebDavSyncTest {
                 messages.replaceAll { _, m -> if (m.status == "streaming") m.copy(status = "aborted") else m }
             }
             override suspend fun deleteMessagesForConversation(convId: String) { messages.entries.removeIf { it.value.conversationId == convId } }
+            override suspend fun deleteMessagesForConversations(convIds: List<String>) {
+                val set = convIds.toHashSet()
+                messages.entries.removeIf { it.value.conversationId in set }
+            }
 
             override fun observeNovelChapters(convId: String): Flow<List<NovelChapterEntity>> = MutableStateFlow(emptyList())
             override suspend fun getNovelChaptersForConversation(convId: String) = novelChapters.values.filter { it.conversationId == convId }.sortedBy { it.sortOrder }
@@ -1235,6 +1240,10 @@ class BackupAndWebDavSyncTest {
             override suspend fun upsertNovelChapters(entities: List<NovelChapterEntity>) { entities.forEach { novelChapters[it.id] = it } }
             override suspend fun deleteNovelChapter(id: String) { novelChapters.remove(id) }
             override suspend fun deleteNovelChaptersForConversation(convId: String) { novelChapters.entries.removeIf { it.value.conversationId == convId } }
+            override suspend fun deleteNovelChaptersForConversations(convIds: List<String>) {
+                val set = convIds.toHashSet()
+                novelChapters.entries.removeIf { it.value.conversationId in set }
+            }
 
             override fun observeNovelLore(convId: String): Flow<List<NovelLoreEntity>> = MutableStateFlow(emptyList())
             override suspend fun getNovelLoreForConversation(convId: String) = novelLore.values.filter { it.conversationId == convId }
@@ -1244,6 +1253,10 @@ class BackupAndWebDavSyncTest {
             override suspend fun upsertNovelLoreList(entities: List<NovelLoreEntity>) { entities.forEach { novelLore[it.id] = it } }
             override suspend fun deleteNovelLore(id: String) { novelLore.remove(id) }
             override suspend fun deleteNovelLoreForConversation(convId: String) { novelLore.entries.removeIf { it.value.conversationId == convId } }
+            override suspend fun deleteNovelLoreForConversations(convIds: List<String>) {
+                val set = convIds.toHashSet()
+                novelLore.entries.removeIf { it.value.conversationId in set }
+            }
 
             override fun observeMemoryLedger(convId: String): Flow<List<MemoryLedgerEntity>> = MutableStateFlow(emptyList())
             override suspend fun getMemoryLedgerForConversation(convId: String) = memoryLedger.values.filter { it.conversationId == convId }
@@ -1253,6 +1266,10 @@ class BackupAndWebDavSyncTest {
             override suspend fun upsertMemoryLedgerList(entities: List<MemoryLedgerEntity>) { entities.forEach { memoryLedger[it.id] = it } }
             override suspend fun deleteMemoryLedger(id: String) { memoryLedger.remove(id) }
             override suspend fun deleteMemoryLedgerForConversation(convId: String) { memoryLedger.entries.removeIf { it.value.conversationId == convId } }
+            override suspend fun deleteMemoryLedgerForConversations(convIds: List<String>) {
+                val set = convIds.toHashSet()
+                memoryLedger.entries.removeIf { it.value.conversationId in set }
+            }
 
             override fun observeMemoryEpisodes(convId: String): Flow<List<MemoryEpisodeEntity>> = MutableStateFlow(emptyList())
             override suspend fun getMemoryEpisodesForConversation(convId: String) = memoryEpisodes.values.filter { it.conversationId == convId }
@@ -1262,6 +1279,10 @@ class BackupAndWebDavSyncTest {
             override suspend fun upsertMemoryEpisodes(entities: List<MemoryEpisodeEntity>) { entities.forEach { memoryEpisodes[it.id] = it } }
             override suspend fun deleteMemoryEpisode(id: String) { memoryEpisodes.remove(id) }
             override suspend fun deleteMemoryEpisodesForConversation(convId: String) { memoryEpisodes.entries.removeIf { it.value.conversationId == convId } }
+            override suspend fun deleteMemoryEpisodesForConversations(convIds: List<String>) {
+                val set = convIds.toHashSet()
+                memoryEpisodes.entries.removeIf { it.value.conversationId in set }
+            }
 
             override fun observeRpSaveSlots(convId: String): Flow<List<RpSaveSlotEntity>> = MutableStateFlow(emptyList())
             override suspend fun getRpSaveSlotsForConversation(convId: String) = rpSaveSlots.values.filter { it.conversationId == convId }
@@ -1271,9 +1292,17 @@ class BackupAndWebDavSyncTest {
             override suspend fun upsertRpSaveSlots(entities: List<RpSaveSlotEntity>) { entities.forEach { rpSaveSlots[it.id] = it } }
             override suspend fun deleteRpSaveSlot(id: String) { rpSaveSlots.remove(id) }
             override suspend fun deleteRpSaveSlotsForConversation(convId: String) { rpSaveSlots.entries.removeIf { it.value.conversationId == convId } }
+            override suspend fun deleteRpSaveSlotsForConversations(convIds: List<String>) {
+                val set = convIds.toHashSet()
+                rpSaveSlots.entries.removeIf { it.value.conversationId in set }
+            }
 
             override suspend fun deleteConversationWorldbooksForConversation(convId: String) { convWorldbooks.entries.removeIf { it.key.first == convId } }
             override suspend fun deleteMemoryEmbeddingsForConversation(convId: String) { embeddings.entries.removeIf { it.value.conversationId == convId } }
+            override suspend fun deleteMemoryEmbeddingsForConversations(convIds: List<String>) {
+                val set = convIds.toHashSet()
+                embeddings.entries.removeIf { it.value.conversationId in set }
+            }
 
             override suspend fun clearAllConversations() { conversations.clear() }
             override suspend fun clearAllMessages() { messages.clear() }
@@ -1288,6 +1317,7 @@ class BackupAndWebDavSyncTest {
             override fun observeAll(): Flow<List<UserMemoryEntity>> = MutableStateFlow(emptyList())
             override suspend fun getAll() = userMemories.values.toList()
             override suspend fun getPaged(limit: Int, offset: Int) = userMemories.values.sortedBy { it.id }.drop(offset).take(limit)
+            override suspend fun getByIds(ids: List<String>) = ids.distinct().mapNotNull { userMemories[it] }
             override suspend fun upsert(entity: UserMemoryEntity) { userMemories[entity.id] = entity }
             override suspend fun upsertAll(entities: List<UserMemoryEntity>) { entities.forEach { userMemories[it.id] = it } }
             override suspend fun deleteById(id: String) { userMemories.remove(id) }
@@ -1312,6 +1342,7 @@ class BackupAndWebDavSyncTest {
             override suspend fun getAllCharacterCards() = characterCards.values.toList()
             override suspend fun getCharacterCardsPaged(limit: Int, offset: Int) = characterCards.values.sortedBy { it.id }.drop(offset).take(limit)
             override suspend fun getCharacterCardById(id: String) = characterCards[id]
+            override suspend fun getCharacterCardsByIds(ids: List<String>) = ids.distinct().mapNotNull { characterCards[it] }
             override suspend fun getCardByFingerprint(fingerprint: String) = characterCards.values.firstOrNull { it.contentFingerprint == fingerprint }
             override suspend fun upsertCharacterCard(entity: CharacterCardEntity) { characterCards[entity.id] = entity }
             override suspend fun upsertCharacterCards(entities: List<CharacterCardEntity>) { entities.forEach { characterCards[it.id] = it } }
@@ -1324,6 +1355,7 @@ class BackupAndWebDavSyncTest {
             override suspend fun getGlobalEnabledWorldbooks() = worldbooks.values.filter { it.globalEnabled }
             override suspend fun getWorldbooksPaged(limit: Int, offset: Int) = worldbooks.values.sortedBy { it.id }.drop(offset).take(limit)
             override suspend fun getWorldbookById(id: String) = worldbooks[id]
+            override suspend fun getWorldbooksByIds(ids: List<String>) = ids.distinct().mapNotNull { worldbooks[it] }
             override suspend fun getWorldbookByFingerprint(fingerprint: String) = worldbooks.values.firstOrNull { it.contentFingerprint == fingerprint }
             override suspend fun upsertWorldbook(entity: WorldbookEntity) { worldbooks[entity.id] = entity }
             override suspend fun upsertWorldbooks(entities: List<WorldbookEntity>) { entities.forEach { worldbooks[it.id] = it } }
@@ -1335,16 +1367,22 @@ class BackupAndWebDavSyncTest {
             override suspend fun getEnabledEntriesForWorldbooks(worldbookIds: List<String>) = worldbookEntries.values.filter { it.worldbookId in worldbookIds && it.enabled }
             override suspend fun getWorldbookEntriesPaged(limit: Int, offset: Int) = worldbookEntries.values.sortedWith(compareBy({ it.worldbookId }, { it.id })).drop(offset).take(limit)
             override suspend fun getWorldbookEntryById(id: String) = worldbookEntries[id]
+            override suspend fun getWorldbookEntriesByIds(ids: List<String>) = ids.distinct().mapNotNull { worldbookEntries[it] }
             override suspend fun upsertWorldbookEntry(entity: WorldbookEntryEntity) { worldbookEntries[entity.id] = entity }
             override suspend fun upsertWorldbookEntries(entities: List<WorldbookEntryEntity>) { entities.forEach { worldbookEntries[it.id] = it } }
             override suspend fun deleteWorldbookEntry(id: String) { worldbookEntries.remove(id) }
             override suspend fun deleteEntriesForWorldbook(worldbookId: String) { worldbookEntries.entries.removeIf { it.value.worldbookId == worldbookId } }
+            override suspend fun deleteEntriesForWorldbooks(worldbookIds: List<String>) {
+                val set = worldbookIds.toHashSet()
+                worldbookEntries.entries.removeIf { it.value.worldbookId in set }
+            }
             override suspend fun clearAllWorldbookEntries() { worldbookEntries.clear() }
 
             override fun observePersonas(): Flow<List<PersonaEntity>> = MutableStateFlow(emptyList())
             override suspend fun getAllPersonas() = personas.values.toList()
             override suspend fun getPersonasPaged(limit: Int, offset: Int) = personas.values.sortedBy { it.id }.drop(offset).take(limit)
             override suspend fun getPersonaById(id: String) = personas[id]
+            override suspend fun getPersonasByIds(ids: List<String>) = ids.distinct().mapNotNull { personas[it] }
             override suspend fun getDefaultPersona() = personas.values.firstOrNull { it.isDefault }
             override suspend fun upsertPersona(entity: PersonaEntity) { personas[entity.id] = entity }
             override suspend fun upsertPersonas(entities: List<PersonaEntity>) { entities.forEach { personas[it.id] = it } }
@@ -1358,6 +1396,7 @@ class BackupAndWebDavSyncTest {
             override suspend fun getAllPromptPresets() = promptPresets.values.toList()
             override suspend fun getPromptPresetsPaged(limit: Int, offset: Int) = promptPresets.values.sortedBy { it.id }.drop(offset).take(limit)
             override suspend fun getPromptPresetById(id: String) = promptPresets[id]
+            override suspend fun getPromptPresetsByIds(ids: List<String>) = ids.distinct().mapNotNull { promptPresets[it] }
             override suspend fun getDefaultRpPromptPreset() = promptPresets.values.firstOrNull { it.isDefaultRp }
             override suspend fun upsertPromptPreset(entity: PromptPresetEntity) { promptPresets[entity.id] = entity }
             override suspend fun upsertPromptPresets(entities: List<PromptPresetEntity>) { entities.forEach { promptPresets[it.id] = it } }
@@ -1373,6 +1412,10 @@ class BackupAndWebDavSyncTest {
             override suspend fun getConversationWorldbooksPaged(limit: Int, offset: Int) = convWorldbooks.values.sortedWith(compareBy({ it.conversationId }, { it.worldbookId })).drop(offset).take(limit)
             override suspend fun upsertConversationWorldbooks(refs: List<ConversationWorldbookCrossRef>) { refs.forEach { convWorldbooks[it.conversationId to it.worldbookId] = it } }
             override suspend fun deleteConversationWorldbooks(convId: String) { convWorldbooks.entries.removeIf { it.key.first == convId } }
+            override suspend fun deleteConversationWorldbooksForConversations(convIds: List<String>) {
+                val set = convIds.toHashSet()
+                convWorldbooks.entries.removeIf { it.key.first in set }
+            }
             override suspend fun deleteWorldbookRefsByWorldbookId(worldbookId: String) { convWorldbooks.entries.removeIf { it.key.second == worldbookId } }
             override suspend fun clearAllConversationWorldbooks() { convWorldbooks.clear() }
         }

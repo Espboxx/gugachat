@@ -9,65 +9,46 @@ import com.gugachat.app.AppContainer
 import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.storage.LocalMediaPathResolver
 import com.gugachat.app.data.api.AppJson
+import com.gugachat.app.data.chat.RetrievalCoordinator
+import com.gugachat.app.data.chat.VectorMemoryIndex
 import com.gugachat.app.data.local.CharacterCardEntity
 import com.gugachat.app.data.local.ConversationWorldbookCrossRef
 import com.gugachat.app.data.local.PersonaEntity
 import com.gugachat.app.data.local.PromptPresetEntity
 import com.gugachat.app.data.local.WorldbookEntity
 import com.gugachat.app.data.local.WorldbookEntryEntity
-import com.gugachat.app.data.local.decodedAltGreetings
 import com.gugachat.app.data.local.decodedCast
-import com.gugachat.app.data.local.decodedExpressionSprites
-import com.gugachat.app.data.local.decodedRegexScripts
-import com.gugachat.app.data.local.decodedVisualTheme
 import com.gugachat.app.data.local.toDomain
-import com.gugachat.app.data.local.toEntity
-import com.gugachat.app.domain.chat.ChatConversation
-import com.gugachat.app.domain.chat.ChatMessage
-import com.gugachat.app.domain.chat.ChatParams
-import com.gugachat.app.domain.chat.ContextBuilder
-import com.gugachat.app.domain.chat.ConversationMode
 import com.gugachat.app.domain.chat.LegacyAssetHarvester
-import com.gugachat.app.domain.chat.MessageVariant
-import com.gugachat.app.domain.chat.NovelEngine
-import com.gugachat.app.domain.chat.NovelLoreEntry
 import com.gugachat.app.domain.chat.ParsedWorldbookV4
 import com.gugachat.app.domain.chat.PromptPresetBlock
 import com.gugachat.app.domain.chat.RpCardCodec
 import com.gugachat.app.domain.chat.RpCharacter
-import com.gugachat.app.domain.chat.RpConfig
-import com.gugachat.app.domain.chat.RpEngine
-import com.gugachat.app.domain.chat.RpGameState
 import com.gugachat.app.domain.chat.RpPlayStyle
 import com.gugachat.app.domain.chat.RpPresetTemplate
 import com.gugachat.app.domain.chat.RpRegexScript
-import com.gugachat.app.domain.chat.RpVisualTheme
-import com.gugachat.app.domain.chat.TavernAssetCodec
-import com.gugachat.app.data.chat.RetrievalCoordinator
-import com.gugachat.app.data.chat.VectorMemoryIndex
 import com.gugachat.app.domain.chat.TokenEstimator
 import com.gugachat.app.domain.chat.VectorIndexProgress
 import com.gugachat.app.domain.chat.WorldbookEngine
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonPrimitive
-import java.io.ByteArrayOutputStream
 import java.io.File
-import java.security.MessageDigest
 import java.util.UUID
 
 /**
@@ -123,6 +104,7 @@ class AssetHubViewModel(private val container: AppContainer) : ViewModel() {
     val ui: StateFlow<AssetHubUiState> = _ui.asStateFlow()
 
     private val activeWorldbookIdFlow = MutableStateFlow<String?>(null)
+    private var vectorStatusJob: Job? = null
 
     @Volatile
     private var userManuallySelectedSubtab = false
@@ -179,22 +161,35 @@ class AssetHubViewModel(private val container: AppContainer) : ViewModel() {
         }
 
         viewModelScope.launch {
+            var wasRunning = false
             container.retrievalCoordinator.indexProgress.collect { progress ->
                 _ui.update { it.copy(vectorIndexProgress = progress) }
-                if (!progress.running) {
+                if (wasRunning && !progress.running) {
                     refreshWorldbookVectorStatus(_ui.value.worldbooks)
                 }
+                wasRunning = progress.running
             }
         }
 
         viewModelScope.launch {
-            container.settingsState.collect { st ->
-                val saved = st.lastStudioSubtab
-                if (!userManuallySelectedSubtab && saved != null && saved in StudioRoutingPolicy.TAB_CHARACTERS..StudioRoutingPolicy.TAB_ATELIER) {
-                    _ui.update { it.copy(activeStudioSubtab = saved, initialSubtabResolved = true) }
+            container.settingsState
+                .map { it.lastStudioSubtab }
+                .distinctUntilChanged()
+                .collect { saved ->
+                    if (!userManuallySelectedSubtab && saved != null && saved in StudioRoutingPolicy.TAB_CHARACTERS..StudioRoutingPolicy.TAB_ATELIER) {
+                        _ui.update { it.copy(activeStudioSubtab = saved, initialSubtabResolved = true) }
+                    }
                 }
-                refreshWorldbookVectorStatus(_ui.value.worldbooks)
-            }
+        }
+
+        viewModelScope.launch {
+            container.settingsState
+                .map { it.retrievalSettings }
+                .distinctUntilChanged()
+                .drop(1)
+                .collect {
+                    refreshWorldbookVectorStatus(_ui.value.worldbooks)
+                }
         }
 
         viewModelScope.launch {
@@ -211,8 +206,13 @@ class AssetHubViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             val settings = withContext(Dispatchers.IO) { container.settingsStore.currentSettings() }
             val directCount = withContext(Dispatchers.IO) {
-                runCatching { container.directImageStore.list(search = null, filter = "all").all_total ?: 0 }
-                    .getOrDefault(0)
+                try {
+                    container.directImageStore.list(search = null, filter = "all").all_total ?: 0
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Throwable) {
+                    0
+                }
             }
             val cards = withContext(Dispatchers.IO) { assetDao.getAllCharacterCards() }
             if (!userManuallySelectedSubtab) {
@@ -232,10 +232,13 @@ class AssetHubViewModel(private val container: AppContainer) : ViewModel() {
 
             // Delay slightly so the initial Studio frame stays completely jank-free
             delay(180L)
-            runCatching {
+            try {
                 withContext(Dispatchers.IO) {
                     LegacyAssetHarvester.harvestIfNeeded(chatDao, assetDao)
                 }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Throwable) {
             }
             refreshLegacyLoreSessionCount()
         }
@@ -264,6 +267,8 @@ class AssetHubViewModel(private val container: AppContainer) : ViewModel() {
                 val summary = container.assetImportCoordinator.formatSettingImportSummary(imported, isZh)
                     ?: if (isZh) "已导入资产" else "Asset imported"
                 container.toastController.show(summary)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 container.toastController.show(
                     e.message ?: if (isZh) "角色卡导入失败" else "Card import failed",
@@ -397,6 +402,8 @@ class AssetHubViewModel(private val container: AppContainer) : ViewModel() {
                 container.toastController.show(
                     if (isZh) "已将 AI 立绘绑定到角色卡" else "Portrait attached to character card",
                 )
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 container.toastController.show(
                     e.message ?: if (isZh) "立绘保存失败" else "Failed to attach portrait",
@@ -491,6 +498,8 @@ class AssetHubViewModel(private val container: AppContainer) : ViewModel() {
                 val resultMsg = container.assetImportCoordinator.formatSettingImportSummary(imported, isZh)
                     ?: error(if (isZh) "未识别的世界书/预设/正则格式" else "Unrecognized setting JSON format")
                 container.toastController.show(resultMsg)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 container.toastController.show(
                     e.message ?: if (isZh) "设定导入失败" else "Setting import failed",
@@ -775,7 +784,12 @@ class AssetHubViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    fun togglePresetBlockEnabled(presetId: String, identifier: String, enabled: Boolean) {
+    fun togglePresetBlockEnabled(
+        presetId: String,
+        identifier: String,
+        enabled: Boolean,
+        index: Int? = null,
+    ) {
         viewModelScope.launch {
             withContext(Dispatchers.IO) {
                 val preset = assetDao.getPromptPresetById(presetId) ?: return@withContext
@@ -783,9 +797,17 @@ class AssetHubViewModel(private val container: AppContainer) : ViewModel() {
                     preset.blocksJson,
                     emptyList(),
                 )
-                val updated = blocks.map { b ->
-                    if (b.identifier == identifier) b.copy(enabled = enabled) else b
+                if (blocks.isEmpty()) return@withContext
+                val targetIdx = index ?: blocks.indexOfFirst { it.identifier == identifier }
+                if (targetIdx !in blocks.indices) return@withContext
+                val updated = blocks.mapIndexed { idx, b ->
+                    if (idx == targetIdx && (identifier.isBlank() || b.identifier == identifier)) {
+                        b.copy(enabled = enabled)
+                    } else {
+                        b
+                    }
                 }
+                if (updated == blocks) return@withContext
                 assetDao.upsertPromptPreset(
                     preset.copy(
                         blocksJson = AppJson.encodeToString(updated),
@@ -907,6 +929,8 @@ class AssetHubViewModel(private val container: AppContainer) : ViewModel() {
                         else "Extracted ${createdBooks.size} worldbook(s) from legacy sessions",
                     )
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 container.toastController.show(
                     e.message ?: if (isZh) "提炼失败" else "Extraction failed",
@@ -1003,11 +1027,12 @@ class AssetHubViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     private fun refreshWorldbookVectorStatus(books: List<WorldbookEntity>) {
+        vectorStatusJob?.cancel()
         if (books.isEmpty()) {
             _ui.update { it.copy(worldbookVectorReady = emptyMap()) }
             return
         }
-        viewModelScope.launch(Dispatchers.IO) {
+        vectorStatusJob = viewModelScope.launch(Dispatchers.IO) {
             val engine = container.retrievalCoordinator.resolveActiveEmbeddingEngine()
             if (engine == null) {
                 _ui.update { it.copy(worldbookVectorReady = emptyMap()) }
@@ -1015,19 +1040,28 @@ class AssetHubViewModel(private val container: AppContainer) : ViewModel() {
             }
             val map = HashMap<String, Boolean>(books.size)
             for (wb in books) {
+                ensureActive()
                 if (wb.entryCount == 0) {
                     map[wb.id] = false
                     continue
                 }
-                val rows = runCatching {
+                val rows = try {
                     embeddingDao.getHashesForProfile(
                         conversationId = VectorMemoryIndex.worldbookScopeId(wb.id),
                         profileKey = engine.profileKey,
                     )
-                }.getOrDefault(emptyList())
-                val enabledCount = runCatching {
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Throwable) {
+                    emptyList()
+                }
+                val enabledCount = try {
                     assetDao.getEnabledEntriesForWorldbooks(listOf(wb.id)).size
-                }.getOrDefault(wb.entryCount)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Throwable) {
+                    wb.entryCount
+                }
                 map[wb.id] = rows.isNotEmpty() && (enabledCount == 0 || rows.size >= enabledCount)
             }
             _ui.update { it.copy(worldbookVectorReady = map) }

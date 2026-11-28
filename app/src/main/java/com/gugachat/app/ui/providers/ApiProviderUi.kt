@@ -1,6 +1,5 @@
 package com.gugachat.app.ui.providers
 
-import android.content.Context
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -22,7 +21,6 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -45,7 +43,6 @@ import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.FolderZip
 import androidx.compose.material.icons.filled.Forum
@@ -59,7 +56,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -76,7 +72,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -106,7 +101,6 @@ import com.gugachat.app.core.theme.GuButton
 import com.gugachat.app.core.theme.GuButtonVariant
 import com.gugachat.app.core.theme.GuConfirmDialog
 import com.gugachat.app.core.theme.GuGroupedCard
-import com.gugachat.app.core.theme.GuHairlineDivider
 import com.gugachat.app.core.theme.GuHorizontalFadeOverlayStrip
 import com.gugachat.app.core.theme.GuIconTile
 import com.gugachat.app.core.theme.GuMetaText

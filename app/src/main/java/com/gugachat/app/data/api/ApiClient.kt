@@ -22,6 +22,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.Call
 import okhttp3.Callback
+import okhttp3.Dispatcher
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -57,7 +58,9 @@ class ApiClient(
 
     fun createAuthenticatedImageLoader(context: Context): ImageLoader {
         val imageClient = standardClient.newBuilder()
+            .dispatcher(Dispatcher())
             .readTimeout(60, TimeUnit.SECONDS)
+            .callTimeout(90, TimeUnit.SECONDS)
             .addInterceptor { chain ->
                 val orig = chain.request()
                 val reqUrl = orig.url.toString()
@@ -71,13 +74,13 @@ class ApiClient(
                 }
                 val response = chain.proceed(requestWithAuth)
                 if (response.code == 401 && matchesServer && !tokenStore.getRefreshToken().isNullOrBlank()) {
-                    response.close()
                     val refreshed = try {
                         runBlocking { refreshTokensSingleFlight(firstToken) }
                     } catch (_: Throwable) {
                         null
                     }
                     if (!refreshed.isNullOrBlank()) {
+                        response.close()
                         val retried = orig.newBuilder().header("Authorization", "Bearer $refreshed").build()
                         return@addInterceptor chain.proceed(retried)
                     }
@@ -288,6 +291,11 @@ class ApiClient(
             standardClient.awaitCall(req)
         } catch (e: IOException) {
             throw ApiException(0, "TOKEN_REFRESH_UNAVAILABLE", e.message ?: "Network error while refreshing token")
+        } catch (e: ApiException) {
+            if (e.status == 0 || e.code == "ERR_NETWORK") {
+                throw ApiException(0, "TOKEN_REFRESH_UNAVAILABLE", e.message ?: "Network error while refreshing token")
+            }
+            throw e
         }
 
         val (respCode, respSuccessful, bodyText) = withContext(Dispatchers.IO) {

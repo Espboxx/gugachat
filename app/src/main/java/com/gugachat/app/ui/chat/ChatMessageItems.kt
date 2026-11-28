@@ -1,8 +1,5 @@
 package com.gugachat.app.ui.chat
 
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.content.Context
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -13,55 +10,33 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.IntrinsicSize
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountTree
 import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.AutoStories
-import androidx.compose.material.icons.filled.Book
-import androidx.compose.material.icons.filled.Casino
-import androidx.compose.material.icons.filled.ChevronLeft
-import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ErrorOutline
-import androidx.compose.material.icons.filled.ImageSearch
-import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -70,15 +45,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -88,39 +57,22 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.rememberAsyncImagePainter
-import com.gugachat.app.R
 import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.i18n.LocalAppStrings
 import com.gugachat.app.core.theme.GuBadge
 import com.gugachat.app.core.theme.GuBadgeVariant
-import com.gugachat.app.core.theme.GuButton
-import com.gugachat.app.core.theme.GuButtonVariant
-import com.gugachat.app.core.theme.GuConfirmDialog
-import com.gugachat.app.core.theme.GuGroupedCard
-import com.gugachat.app.core.theme.GuIconTile
 import com.gugachat.app.core.theme.GuMetaText
 import com.gugachat.app.core.theme.GuModelAvatar
-import com.gugachat.app.core.theme.GuTextField
-import com.gugachat.app.core.theme.GuTextInputDialog
 import com.gugachat.app.core.theme.GuVariantSwipePill
 import com.gugachat.app.core.theme.LocalAppTheme
 import com.gugachat.app.domain.chat.ChatAttachmentMeta
 import com.gugachat.app.domain.chat.ChatMessage
-import com.gugachat.app.domain.chat.ContextWaterlineSummary
 import com.gugachat.app.domain.chat.ConversationMode
 import com.gugachat.app.domain.chat.FileContextBudgeter
 import com.gugachat.app.domain.chat.NovelChapter
@@ -131,9 +83,7 @@ import com.gugachat.app.domain.chat.RpChoice
 import com.gugachat.app.domain.chat.RpConfig
 import com.gugachat.app.domain.chat.RpEngine
 import com.gugachat.app.domain.chat.RpInputKind
-import com.gugachat.app.domain.chat.TimelineReconciler
 import com.gugachat.app.domain.chat.activeVariant
-import kotlinx.coroutines.launch
 import java.io.File
 
 @Composable
@@ -360,8 +310,12 @@ internal fun UserMessageBody(
         GuBadge(tagText, variant = GuBadgeVariant.BLUE)
     }
     if (msg.attachmentIds.isNotEmpty()) {
-        val imageIds = msg.attachmentIds.filter { id -> attachmentsById[id]?.isFile != true }
-        val fileMetas = msg.attachmentIds.mapNotNull { id -> attachmentsById[id]?.takeIf { it.isFile } }
+        val imageIds = remember(msg.attachmentIds, attachmentsById) {
+            msg.attachmentIds.filter { id -> attachmentsById[id]?.isFile != true }
+        }
+        val fileMetas = remember(msg.attachmentIds, attachmentsById) {
+            msg.attachmentIds.mapNotNull { id -> attachmentsById[id]?.takeIf { it.isFile } }
+        }
         val turnBudget = remember(effectiveLimitTokens) {
             FileContextBudgeter.computeFileTurnBudget(effectiveLimitTokens, 2000)
         }

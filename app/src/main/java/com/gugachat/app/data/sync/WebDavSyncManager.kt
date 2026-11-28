@@ -3,6 +3,7 @@ package com.gugachat.app.data.sync
 import com.gugachat.app.core.storage.WebDavSyncConfig
 import com.gugachat.app.data.api.AppJson
 import com.gugachat.app.data.local.AppDatabase
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -19,7 +20,6 @@ import java.io.FileOutputStream
 import java.nio.charset.StandardCharsets
 import java.security.GeneralSecurityException
 import java.util.zip.ZipEntry
-import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
 
 @Serializable
@@ -548,9 +548,13 @@ class WebDavSyncManager(
         creds: WebDavCredentials,
     ): Int {
         val snapshotsDirUrl = WebDavClient.resolveUrl(syncRootUrl, "$DIR_SNAPSHOTS/")
-        val items = runCatching {
+        val items = try {
             webDavClient.listDirectoryIfExists(snapshotsDirUrl, creds)
-        }.getOrDefault(emptyList())
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (_: Throwable) {
+            emptyList()
+        }
 
         val candidates = items
             .filter { !it.isCollection && SNAPSHOT_NAME_REGEX.matches(it.displayName) }
@@ -571,10 +575,13 @@ class WebDavSyncManager(
         var deleted = 0
         for (old in toDelete) {
             val url = WebDavClient.resolveUrl(snapshotsDirUrl, old.displayName)
-            runCatching {
+            try {
                 if (webDavClient.delete(url, creds, ignoreNotFound = true)) {
                     deleted += 1
                 }
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (_: Throwable) {
             }
         }
         return deleted

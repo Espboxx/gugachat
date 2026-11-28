@@ -1,14 +1,7 @@
 package com.gugachat.app.ui.chat
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -26,7 +19,6 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -36,27 +28,19 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.OpenInFull
 import androidx.compose.material.icons.filled.CloseFullscreen
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.WarningAmber
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -72,7 +56,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -94,11 +77,9 @@ import com.gugachat.app.core.theme.GuMetaText
 import com.gugachat.app.core.theme.GuModalBottomSheet
 import com.gugachat.app.core.theme.GuPill
 import com.gugachat.app.core.theme.GuPushPopContainer
-import com.gugachat.app.core.theme.GuSectionHeader
 import com.gugachat.app.core.theme.GuSegmentedControl
 import com.gugachat.app.core.theme.GuSettingsRow
 import com.gugachat.app.core.theme.GuSheetHeader
-import com.gugachat.app.core.theme.GuSubpageTopBar
 import com.gugachat.app.core.theme.GuSwitchRow
 import com.gugachat.app.core.theme.GuTextField
 import com.gugachat.app.core.theme.LocalAppTheme
@@ -111,7 +92,6 @@ import com.gugachat.app.domain.chat.PromptPresetBlock
 import kotlinx.coroutines.delay
 import kotlinx.serialization.builtins.ListSerializer
 import java.util.Locale
-import kotlin.math.abs
 import kotlin.math.roundToInt
 
 internal val PARAMS_MAX_OUTPUT_PRESETS: List<Pair<Int?, String>> = listOf(
@@ -159,10 +139,6 @@ fun ChatParamsSheet(
 
     var activeTab by remember { mutableIntStateOf(0) } // 0=Persona&Sampling, 1=ContextBudget, 2=Advanced&Cache
     var showingPresetSubpage by remember { mutableStateOf(false) }
-
-    BackHandler(enabled = showingPresetSubpage) {
-        showingPresetSubpage = false
-    }
 
     // Draft state initialized when sheet opens
     var promptDraft by remember { mutableStateOf(systemPrompt) }
@@ -382,6 +358,9 @@ fun ChatParamsSheet(
         },
         sheetState = sheetState,
     ) {
+        BackHandler(enabled = showingPresetSubpage) {
+            showingPresetSubpage = false
+        }
         GuPushPopContainer(
             showingSubpage = showingPresetSubpage,
             label = "params_preset_subpage",
@@ -514,11 +493,17 @@ fun ChatParamsSheet(
                         }
 
                         val boundPreset = boundPromptPreset
+                        val blockCount = remember(boundPreset?.id, boundPreset?.blocksJson) {
+                            if (boundPreset == null) {
+                                0
+                            } else {
+                                runCatching {
+                                    AppJson.decodeFromString(ListSerializer(PromptPresetBlock.serializer()), boundPreset.blocksJson)
+                                        .count { it.enabled && !it.marker }
+                                }.getOrDefault(0)
+                            }
+                        }
                         val presetSubtitle = if (boundPreset != null) {
-                            val blockCount = runCatching {
-                                AppJson.decodeFromString(ListSerializer(PromptPresetBlock.serializer()), boundPreset.blocksJson)
-                                    .count { it.enabled && !it.marker }
-                            }.getOrDefault(0)
                             if (isZh) "${boundPreset.name} · 已启用 $blockCount 个提示槽位" else "${boundPreset.name} · $blockCount active blocks"
                         } else {
                             val avail = promptPresets.size

@@ -265,8 +265,8 @@ internal object ContextZonePrefixBuilder {
                 if (card.systemPrompt.isNotBlank()) {
                     appendLine(card.systemPrompt.trim())
                 }
-                val rp = conv.rp
-                if (isRp && rp != null) {
+                if (isRp) {
+                    val rp = conv.rp!!
                     val styleTitle = RpEngine.playStyleTitle(rp.playStyle)
                     if (isNotEmpty()) appendLine()
                     appendLine("你正在主持$styleTitle《${rp.title.ifBlank { charName }}》。")

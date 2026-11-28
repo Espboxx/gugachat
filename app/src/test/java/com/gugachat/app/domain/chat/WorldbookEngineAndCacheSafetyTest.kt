@@ -8,6 +8,7 @@ import com.gugachat.app.data.api.DirectApiClient
 import com.gugachat.app.data.api.DirectProtocolCodec
 import com.gugachat.app.data.api.OnlineChatCompletionRequestDto
 import com.gugachat.app.data.api.WireChatMessageDto
+import com.gugachat.app.data.chat.ChatContextAssembler
 import com.gugachat.app.data.chat.RetrievalCoordinator
 import com.gugachat.app.data.chat.VectorMemoryIndex
 import com.gugachat.app.data.local.CharacterCardEntity
@@ -648,6 +649,23 @@ class WorldbookEngineAndCacheSafetyTest {
         )
         assertEquals(1, embedDocCalls) // 100% reused from cache!
 
+        // Repeat ensureIndexed on identical verified scope MUST skip loading fullRows with vectorBlobs from SQLite
+        val fullFetchesBeforeRepeat = dao.fullFetchCount
+        index.ensureIndexed(
+            targets = listOf(
+                VectorIndexTarget(
+                    ownerType = RetrievalCoordinator.OWNER_WORLDBOOK_ENTRY,
+                    ownerId = "wb_e1",
+                    conversationId = VectorMemoryIndex.worldbookScopeId("wb_shared"),
+                    canonicalText = sharedCanon,
+                ),
+            ),
+            engine = engine,
+            batchSize = 8,
+        )
+        assertEquals(fullFetchesBeforeRepeat, dao.fullFetchCount)
+        assertEquals(1, embedDocCalls)
+
         // 2) Reuse safety: pre-seed mismatched quantType ("fp16") and mismatched dim (32) rows;
         //    ensureIndexed MUST reject both stale rows and re-embed cleanly!
         val fp16Text = "旧版半精度条目标题\n需要迁移升级为INT8。"
@@ -838,17 +856,106 @@ class WorldbookEngineAndCacheSafetyTest {
         }
     }
 
+    @Test
+    fun chatContextAssemblerToWireDto_preservesIsDepthInjectionAcrossAllProtocols() {
+        val domainMessages = listOf(
+            WireChatMessage(role = "system", textContent = "Frozen System Prefix", isDepthInjection = false),
+            WireChatMessage(role = "user", textContent = "Turn 1 user"),
+            WireChatMessage(role = "assistant", textContent = "Turn 1 assistant"),
+            WireChatMessage(role = "system", textContent = "@D=1 Deep Lore Context", isDepthInjection = true),
+            WireChatMessage(
+                role = "system",
+                parts = listOf(WireChatContentPart(type = "text", text = "@D=1 Part Depth Context")),
+                isDepthInjection = true,
+            ),
+            WireChatMessage(role = "user", textContent = "Turn 2 user"),
+        )
+        val wireDtos = domainMessages.map { ChatContextAssembler.toWireDto(it) }
+        assertFalse(wireDtos[0].isDepthInjection)
+        assertTrue(wireDtos[3].isDepthInjection)
+        assertTrue(wireDtos[4].isDepthInjection)
+
+        val req = OnlineChatCompletionRequestDto(
+            group_id = -1L,
+            model = "claude-sonnet-4-5",
+            messages = wireDtos,
+            enablePromptCaching = true,
+        )
+
+        // 1) Anthropic: Breakpoint 2 pins Turn 1 assistant (index 1) BEFORE @D; depth messages stay in Turn 2 user as <depth_context>
+        val anthJson = AppJson.parseToJsonElement(
+            DirectProtocolCodec.buildAnthropicRequestJson(req, stream = true),
+        ).jsonObject
+        val anthSys = anthJson["system"]!!.jsonArray
+        assertEquals(1, anthSys.size)
+        assertEquals("Frozen System Prefix", anthSys[0].jsonObject["text"]?.jsonPrimitive?.content)
+        val anthTurns = anthJson["messages"]!!.jsonArray
+        assertEquals(3, anthTurns.size)
+        assertEquals(
+            "ephemeral",
+            anthTurns[1].jsonObject["content"]!!.jsonArray.last().jsonObject["cache_control"]?.jsonObject?.get("type")?.jsonPrimitive?.content,
+        )
+        val anthTurn2Texts = anthTurns[2].jsonObject["content"]!!.jsonArray.mapNotNull {
+            it.jsonObject["text"]?.jsonPrimitive?.content
+        }
+        assertTrue(anthTurn2Texts.any { it.contains("<depth_context>") && it.contains("@D=1 Deep Lore Context") })
+        assertTrue(anthTurn2Texts.any { it.contains("<depth_context>") && it.contains("@D=1 Part Depth Context") })
+
+        // 2) OpenAI Responses: @D NOT hoisted to `instructions`; kept in `input` as user <depth_context>
+        val respJson = AppJson.parseToJsonElement(
+            DirectProtocolCodec.buildOpenAIResponsesRequestJson(req.copy(model = "gpt-4.1"), stream = true),
+        ).jsonObject
+        assertEquals("Frozen System Prefix", respJson["instructions"]?.jsonPrimitive?.content)
+        val inputArr = respJson["input"]!!.jsonArray
+        val inputTexts = inputArr.flatMap { item ->
+            item.jsonObject["content"]!!.jsonArray.mapNotNull { it.jsonObject["text"]?.jsonPrimitive?.content }
+        }
+        assertTrue(inputTexts.any { it.contains("<depth_context>") && it.contains("@D=1 Deep Lore Context") })
+        assertTrue(inputTexts.any { it.contains("<depth_context>") && it.contains("@D=1 Part Depth Context") })
+
+        // 3) Gemini: @D NOT hoisted to `systemInstruction`; kept in `contents` cleanly
+        val gemJson = AppJson.parseToJsonElement(
+            DirectProtocolCodec.buildGeminiRequestJson(req.copy(model = "gemini-2.5-flash")),
+        ).jsonObject
+        val sysInstrText = gemJson["systemInstruction"]!!.jsonObject["parts"]!!.jsonArray[0].jsonObject["text"]!!.jsonPrimitive.content
+        assertEquals("Frozen System Prefix", sysInstrText)
+        assertFalse(sysInstrText.contains("@D=1"))
+        val gemContents = gemJson["contents"]!!.jsonArray
+        assertEquals(3, gemContents.size)
+        val gemTurn2Texts = gemContents[2].jsonObject["parts"]!!.jsonArray.mapNotNull {
+            it.jsonObject["text"]?.jsonPrimitive?.content
+        }
+        assertTrue(gemTurn2Texts.any { it.contains("<depth_context>") && it.contains("@D=1 Deep Lore Context") })
+        assertTrue(gemTurn2Texts.any { it.contains("<depth_context>") && it.contains("@D=1 Part Depth Context") })
+    }
+
+    @Test
+    fun novelExportIsStreamingInternalMeta_ignoresCompletedTagsBeforeProseAndDetectsPartial() {
+        assertFalse(NovelExport.isStreamingInternalMeta("<status_hud>{}</status_hud> trailing prose"))
+        assertFalse(NovelExport.isStreamingInternalMeta("<status_hud>{\"location\":\"大殿\"}</status_hud>"))
+        assertFalse(NovelExport.isStreamingInternalMeta("<choices>[\"A\",\"B\"]</choices>\n后续正文继续展开。"))
+
+        assertTrue(NovelExport.isStreamingInternalMeta("<status_hud>{\"location\":\"大殿\""))
+        assertTrue(NovelExport.isStreamingInternalMeta("<status_hud>{}</status_hud> trailing prose <choi"))
+        assertTrue(NovelExport.isStreamingInternalMeta("正文结尾。<lore_sy"))
+        assertTrue(NovelExport.isStreamingInternalMeta("<status_hud>{}</status_hud><choices>[\"A\"]"))
+    }
+
     private class InMemoryEmbeddingDao : MemoryEmbeddingDao {
         private val lock = Any()
         private val rows = LinkedHashMap<Triple<String, String, String>, MemoryEmbeddingEntity>()
+        @Volatile
+        var fullFetchCount: Int = 0
 
         override suspend fun getByConversationAndProfile(conversationId: String, profileKey: String): List<MemoryEmbeddingEntity> =
             synchronized(lock) {
+                fullFetchCount++
                 rows.values.filter { it.conversationId == conversationId && it.profileKey == profileKey }
             }
 
         override suspend fun getGlobalByProfile(profileKey: String): List<MemoryEmbeddingEntity> =
             synchronized(lock) {
+                fullFetchCount++
                 rows.values.filter { it.conversationId.isEmpty() && it.profileKey == profileKey }
             }
 

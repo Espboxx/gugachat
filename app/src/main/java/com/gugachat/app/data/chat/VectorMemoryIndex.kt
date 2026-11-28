@@ -49,9 +49,31 @@ class VectorMemoryIndex(
         val vectorBlob: ByteArray,
     )
 
+    private data class VerifiedEntryKey(
+        val ownerType: String,
+        val ownerId: String,
+        val conversationId: String,
+        val profileKey: String,
+    )
+
+    private data class VerifiedEntryMeta(
+        val contentHash: String,
+        val dim: Int,
+    )
+
     private val cacheLock = Any()
-    private val sliceCache = HashMap<CacheKey, FlatVectorSlice>()
-    private val contentVectorCache = HashMap<ContentVectorKey, CachedInt8Vector>()
+    private val sliceCache = object : LinkedHashMap<CacheKey, FlatVectorSlice>(17, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<CacheKey, FlatVectorSlice>?): Boolean =
+            size > MAX_SLICE_CACHE_SIZE
+    }
+    private val contentVectorCache = object : LinkedHashMap<ContentVectorKey, CachedInt8Vector>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<ContentVectorKey, CachedInt8Vector>?): Boolean =
+            size > MAX_CONTENT_VECTOR_CACHE_SIZE
+    }
+    private val verifiedEntryHashes = object : LinkedHashMap<VerifiedEntryKey, VerifiedEntryMeta>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<VerifiedEntryKey, VerifiedEntryMeta>?): Boolean =
+            size > MAX_VERIFIED_HASH_CACHE_SIZE
+    }
     private val knownDimByProfile = HashMap<String, Int>()
 
     private fun isValidInt8Row(row: MemoryEmbeddingEntity, expectedDim: Int?): Boolean {
@@ -77,6 +99,7 @@ class VectorMemoryIndex(
             if (fromAuthoritativeEmbed) {
                 if (activeDim != null && activeDim != dim) {
                     contentVectorCache.entries.removeAll { it.key.profileKey == profileKey }
+                    verifiedEntryHashes.entries.removeAll { it.key.profileKey == profileKey }
                 }
                 knownDimByProfile[profileKey] = dim
             } else {
@@ -137,32 +160,63 @@ class VectorMemoryIndex(
         }
 
         val existingRowsByOwner = HashMap<Pair<String, String>, MemoryEmbeddingEntity>()
-        val convIds = validTargets.map { it.first.conversationId }.distinct()
-        for (convId in convIds) {
+        val verifiedMatches = HashSet<Pair<String, String>>()
+        val knownDimBefore = synchronized(cacheLock) { knownDimByProfile[profileKey] }
+        val targetsByConv = validTargets.groupBy { it.first.conversationId }
+        for ((convId, convTargets) in targetsByConv) {
             currentCoroutineContext().ensureActive()
             val hashRows = withContext(Dispatchers.IO) {
                 dao.getHashesForProfile(convId, profileKey)
             }
-            if (hashRows.isNotEmpty()) {
-                val fullRows = withContext(Dispatchers.IO) {
-                    if (convId.isEmpty()) {
-                        dao.getGlobalByProfile(profileKey)
-                    } else {
-                        dao.getByConversationAndProfile(convId, profileKey)
+            if (hashRows.isEmpty()) continue
+            val hashByOwner = HashMap<Pair<String, String>, String>(hashRows.size * 2)
+            for (hr in hashRows) {
+                hashByOwner[hr.ownerType to hr.ownerId] = hr.contentHash
+            }
+            var needFullLoad = false
+            synchronized(cacheLock) {
+                val activeDim = knownDimByProfile[profileKey] ?: knownDimBefore
+                for ((target, hash) in convTargets) {
+                    val ownerKey = target.ownerType to target.ownerId
+                    if (hashByOwner[ownerKey] == hash) {
+                        val vKey = VerifiedEntryKey(
+                            ownerType = target.ownerType,
+                            ownerId = target.ownerId,
+                            conversationId = target.conversationId,
+                            profileKey = profileKey,
+                        )
+                        val meta = verifiedEntryHashes[vKey]
+                        val isVerified = meta != null &&
+                            meta.contentHash == hash &&
+                            (activeDim == null || meta.dim == activeDim)
+                        if (isVerified) {
+                            verifiedMatches.add(ownerKey)
+                        } else {
+                            needFullLoad = true
+                        }
                     }
                 }
-                for (row in fullRows) {
-                    existingRowsByOwner[row.ownerType to row.ownerId] = row
-                    if (isValidInt8Row(row, expectedDim = null)) {
-                        recordCachedVector(
-                            profileKey = profileKey,
-                            hash = row.contentHash,
-                            dim = row.dim,
-                            quantType = row.quantType,
-                            scale = row.scale,
-                            blob = row.vectorBlob,
-                        )
-                    }
+            }
+            if (!needFullLoad) continue
+
+            val fullRows = withContext(Dispatchers.IO) {
+                if (convId.isEmpty()) {
+                    dao.getGlobalByProfile(profileKey)
+                } else {
+                    dao.getByConversationAndProfile(convId, profileKey)
+                }
+            }
+            for (row in fullRows) {
+                existingRowsByOwner[row.ownerType to row.ownerId] = row
+                if (isValidInt8Row(row, expectedDim = null)) {
+                    recordCachedVector(
+                        profileKey = profileKey,
+                        hash = row.contentHash,
+                        dim = row.dim,
+                        quantType = row.quantType,
+                        scale = row.scale,
+                        blob = row.vectorBlob,
+                    )
                 }
             }
         }
@@ -170,11 +224,24 @@ class VectorMemoryIndex(
         val knownDimSnapshot = synchronized(cacheLock) { knownDimByProfile[profileKey] }
         val needProcess = ArrayList<Pair<VectorIndexTarget, String>>()
         for ((target, hash) in validTargets) {
-            val existing = existingRowsByOwner[target.ownerType to target.ownerId]
+            val ownerKey = target.ownerType to target.ownerId
+            if (ownerKey in verifiedMatches) continue
+            val existing = existingRowsByOwner[ownerKey]
             val existingMatches = existing != null &&
                 existing.contentHash == hash &&
                 isValidInt8Row(existing, expectedDim = knownDimSnapshot)
-            if (!existingMatches) {
+            if (existingMatches) {
+                synchronized(cacheLock) {
+                    verifiedEntryHashes[
+                        VerifiedEntryKey(
+                            ownerType = target.ownerType,
+                            ownerId = target.ownerId,
+                            conversationId = target.conversationId,
+                            profileKey = profileKey,
+                        ),
+                    ] = VerifiedEntryMeta(contentHash = hash, dim = existing!!.dim)
+                }
+            } else {
                 needProcess.add(target to hash)
             }
         }
@@ -217,6 +284,18 @@ class VectorMemoryIndex(
         if (reusedEntities.isNotEmpty()) {
             withContext(Dispatchers.IO) {
                 dao.upsertAll(reusedEntities)
+            }
+            synchronized(cacheLock) {
+                for (entity in reusedEntities) {
+                    verifiedEntryHashes[
+                        VerifiedEntryKey(
+                            ownerType = entity.ownerType,
+                            ownerId = entity.ownerId,
+                            conversationId = entity.conversationId,
+                            profileKey = profileKey,
+                        ),
+                    ] = VerifiedEntryMeta(contentHash = entity.contentHash, dim = entity.dim)
+                }
             }
             for (convId in dirtyReuseConvs) {
                 invalidateCache(conversationId = convId, profileKey = profileKey)
@@ -322,6 +401,18 @@ class VectorMemoryIndex(
             if (entities.isNotEmpty()) {
                 withContext(Dispatchers.IO) {
                     dao.upsertAll(entities)
+                }
+                synchronized(cacheLock) {
+                    for (entity in entities) {
+                        verifiedEntryHashes[
+                            VerifiedEntryKey(
+                                ownerType = entity.ownerType,
+                                ownerId = entity.ownerId,
+                                conversationId = entity.conversationId,
+                                profileKey = profileKey,
+                            ),
+                        ] = VerifiedEntryMeta(contentHash = entity.contentHash, dim = entity.dim)
+                    }
                 }
                 for (convId in dirtyConversations) {
                     invalidateCache(conversationId = convId, profileKey = profileKey)
@@ -472,6 +563,9 @@ class VectorMemoryIndex(
         withContext(Dispatchers.IO) {
             dao.deleteByOwner(ownerType, ownerId)
         }
+        synchronized(cacheLock) {
+            verifiedEntryHashes.entries.removeAll { it.key.ownerType == ownerType && it.key.ownerId == ownerId }
+        }
         invalidateCache(conversationId = conversationId, profileKey = null)
     }
 
@@ -482,6 +576,7 @@ class VectorMemoryIndex(
         invalidateCache(conversationId = null, profileKey = null)
         synchronized(cacheLock) {
             contentVectorCache.clear()
+            verifiedEntryHashes.clear()
             knownDimByProfile.clear()
         }
         queryCache.clear()
@@ -625,6 +720,12 @@ class VectorMemoryIndex(
                     vecIter.remove()
                 }
             }
+            val verifiedIter = verifiedEntryHashes.entries.iterator()
+            while (verifiedIter.hasNext()) {
+                if (verifiedIter.next().key.profileKey != activeProfileKey) {
+                    verifiedIter.remove()
+                }
+            }
             val dimIter = knownDimByProfile.entries.iterator()
             while (dimIter.hasNext()) {
                 if (dimIter.next().key != activeProfileKey) {
@@ -642,6 +743,9 @@ class VectorMemoryIndex(
 
         fun worldbookScopeId(worldbookId: String): String = "$WORLDBOOK_CONV_PREFIX${worldbookId.trim()}"
 
+        private const val MAX_SLICE_CACHE_SIZE = 16
+        private const val MAX_CONTENT_VECTOR_CACHE_SIZE = 1024
+        private const val MAX_VERIFIED_HASH_CACHE_SIZE = 4096
         private const val MAX_BATCH_RETRIES = 3
         private const val INITIAL_RETRY_DELAY_MS = 500L
         private const val MAX_RETRY_DELAY_MS = 4000L

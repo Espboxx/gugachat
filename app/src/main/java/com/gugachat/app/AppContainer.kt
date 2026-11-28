@@ -52,6 +52,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import java.util.concurrent.TimeUnit
 
 sealed interface AuthSessionState {
     data object Checking : AuthSessionState
@@ -133,7 +134,15 @@ class AppContainer(context: Context) {
         onChannelChanged = { ch -> setUpdateChannel(ch) },
     )
 
-    val localEmbeddingModelManager = LocalEmbeddingModelManager(appContext)
+    val localEmbeddingModelManager = LocalEmbeddingModelManager(
+        context = appContext,
+        httpClient = apiClient.standardClient.newBuilder()
+            .followRedirects(true)
+            .followSslRedirects(true)
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
+            .build(),
+    )
     val localOnnxEmbeddingEngine = LocalOnnxEmbeddingEngine(
         modelManager = localEmbeddingModelManager,
         activeModelIdProvider = { settingsState.value.retrievalSettings.localModelId },
@@ -148,7 +157,14 @@ class AppContainer(context: Context) {
         localOnnxEngine = localOnnxEmbeddingEngine,
         vectorMemoryIndex = vectorMemoryIndex,
     )
-    val webDavClient = WebDavClient(apiClient.standardClient)
+    val webDavClient = WebDavClient(
+        httpClient = apiClient.standardClient.newBuilder()
+            .readTimeout(90, TimeUnit.SECONDS)
+            .writeTimeout(120, TimeUnit.SECONDS)
+            .followRedirects(true)
+            .followSslRedirects(true)
+            .build(),
+    )
     val webDavSyncManager = WebDavSyncManager(webDavClient, database, appContext.filesDir, backupVaultAdapter)
     val chatContextAssembler = ChatContextAssembler(
         database = database,

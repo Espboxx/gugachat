@@ -26,9 +26,8 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -170,37 +169,42 @@ internal fun rememberScrollHideBottomBarConnection(
     topRevealAvailablePx: Float = 6f,
     usePreScroll: Boolean = false,
 ): NestedScrollConnection {
-    var accumPx by remember(enabled) { mutableFloatStateOf(0f) }
+    val currentEnabled by rememberUpdatedState(enabled)
+    val currentIsHidden by rememberUpdatedState(isHidden)
+    val currentOnHiddenChange by rememberUpdatedState(onHiddenChange)
+    val currentHideThresholdPx by rememberUpdatedState(hideThresholdPx)
+    val currentRevealThresholdPx by rememberUpdatedState(revealThresholdPx)
+    val currentTopRevealAvailablePx by rememberUpdatedState(topRevealAvailablePx)
+    val currentUsePreScroll by rememberUpdatedState(usePreScroll)
 
-    LaunchedEffect(enabled) {
-        if (!enabled) {
-            accumPx = 0f
-            if (isHidden) onHiddenChange(false)
-        }
-    }
-
-    fun processDelta(dy: Float) {
-        if (dy < -2f) {
-            if (accumPx > 0f) accumPx = 0f
-            accumPx += dy
-            if (accumPx <= -hideThresholdPx && !isHidden) {
-                onHiddenChange(true)
-                accumPx = 0f
-            }
-        } else if (dy > 2f) {
-            if (accumPx < 0f) accumPx = 0f
-            accumPx += dy
-            if (accumPx >= revealThresholdPx && isHidden) {
-                onHiddenChange(false)
-                accumPx = 0f
-            }
-        }
-    }
-
-    return remember(enabled, isHidden, hideThresholdPx, revealThresholdPx, topRevealAvailablePx, usePreScroll) {
+    val connection = remember {
         object : NestedScrollConnection {
+            private var accumPx = 0f
+
+            fun reset() {
+                accumPx = 0f
+            }
+
+            private fun processDelta(dy: Float) {
+                if (dy < -2f) {
+                    if (accumPx > 0f) accumPx = 0f
+                    accumPx += dy
+                    if (accumPx <= -currentHideThresholdPx && !currentIsHidden) {
+                        currentOnHiddenChange(true)
+                        accumPx = 0f
+                    }
+                } else if (dy > 2f) {
+                    if (accumPx < 0f) accumPx = 0f
+                    accumPx += dy
+                    if (accumPx >= currentRevealThresholdPx && currentIsHidden) {
+                        currentOnHiddenChange(false)
+                        accumPx = 0f
+                    }
+                }
+            }
+
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
-                if (usePreScroll && enabled) {
+                if (currentUsePreScroll && currentEnabled) {
                     processDelta(available.y)
                 }
                 return Offset.Zero
@@ -211,18 +215,18 @@ internal fun rememberScrollHideBottomBarConnection(
                 available: Offset,
                 source: NestedScrollSource,
             ): Offset {
-                if (!enabled) return Offset.Zero
-                if (usePreScroll) {
-                    if (consumed.y == 0f && available.y > topRevealAvailablePx && isHidden) {
-                        onHiddenChange(false)
+                if (!currentEnabled) return Offset.Zero
+                if (currentUsePreScroll) {
+                    if (consumed.y == 0f && available.y > currentTopRevealAvailablePx && currentIsHidden) {
+                        currentOnHiddenChange(false)
                         accumPx = 0f
                     }
                     return Offset.Zero
                 }
                 if (source != NestedScrollSource.UserInput) return Offset.Zero
-                if (consumed.y == 0f && available.y > topRevealAvailablePx) {
+                if (consumed.y == 0f && available.y > currentTopRevealAvailablePx) {
                     accumPx = 0f
-                    if (isHidden) onHiddenChange(false)
+                    if (currentIsHidden) currentOnHiddenChange(false)
                     return Offset.Zero
                 }
                 processDelta(consumed.y)
@@ -230,6 +234,15 @@ internal fun rememberScrollHideBottomBarConnection(
             }
         }
     }
+
+    LaunchedEffect(enabled) {
+        if (!enabled) {
+            connection.reset()
+            if (currentIsHidden) currentOnHiddenChange(false)
+        }
+    }
+
+    return connection
 }
 
 @Composable
@@ -253,6 +266,7 @@ internal fun ObserveListScrollHideBottomBar(
         var prevIndex = listState.firstVisibleItemIndex
         var prevOffset = listState.firstVisibleItemScrollOffset
         var accumDelta = 0
+        var prevCanBack: Boolean? = null
         snapshotFlow {
             Triple(
                 listState.isScrollInProgress,
@@ -262,6 +276,10 @@ internal fun ObserveListScrollHideBottomBar(
         }.collect { (scrolling, pos, edges) ->
             val (idx, offset) = pos
             val (canBack, canForward) = edges
+            if (prevCanBack != canBack) {
+                prevCanBack = canBack
+                onCanScrollBackwardChanged(canBack)
+            }
             val rawDelta = when {
                 idx > prevIndex -> 120
                 idx < prevIndex -> -120

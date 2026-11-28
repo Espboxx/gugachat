@@ -10,6 +10,7 @@ import com.gugachat.app.data.api.OnlineImageKeyDto
 import com.gugachat.app.data.api.OnlineImageModelDto
 import com.gugachat.app.data.api.OnlineImagesApi
 import com.gugachat.app.domain.chat.FreeQuotaUtils
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.StateFlow
 
 data class ResolvedImageChannels(
@@ -55,7 +56,11 @@ class ImageChannelResolver(
         val cap = if (isDirectOnly) {
             null
         } else {
-            runCatching { onlineImagesApi.capabilities() }.getOrElse { err ->
+            try {
+                onlineImagesApi.capabilities()
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (err: Throwable) {
                 if (throwOnAllEmptyServerError && customKeys.isEmpty()) throw err else null
             }
         }
@@ -63,7 +68,13 @@ class ImageChannelResolver(
     }
 
     suspend fun resolveModelsForKey(key: OnlineImageKeyDto): List<OnlineImageModelDto> {
-        val fetched = runCatching { onlineImagesApi.models(key.id) }.getOrElse { key.models }
+        val fetched = try {
+            onlineImagesApi.models(key.id)
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (_: Throwable) {
+            key.models
+        }
         return sortModelsWithFallback(fetched, key.models)
     }
 
@@ -71,7 +82,13 @@ class ImageChannelResolver(
         val customCount = customImageProviders().size
         val isDirectOnly = (authSession.value as? AuthSessionState.LoggedIn)?.isDirectApiOnly == true
         if (isDirectOnly) return customCount
-        val serverCount = runCatching { onlineImagesApi.capabilities().keys.size }.getOrNull()
+        val serverCount = try {
+            onlineImagesApi.capabilities().keys.size
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (_: Throwable) {
+            null
+        }
         return serverCount?.plus(customCount)
     }
 

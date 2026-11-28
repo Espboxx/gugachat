@@ -138,9 +138,10 @@ object LocalMediaPathResolver {
     ): Pair<String, File> {
         val dir = File(filesDir, "rp_media")
         if (!dir.exists()) dir.mkdirs()
+        val safePrefix = prefix.trim().replace(Regex("[^a-zA-Z0-9_-]"), "_").ifBlank { "media" }
         val safeExt = ext.trim().lowercase().replace(Regex("[^a-z0-9]"), "").ifBlank { "png" }
         val token = UUID.randomUUID().toString().let { if (shortUuid) it.take(12) else it }
-        val outFile = File(dir, "${prefix}_$token.$safeExt")
+        val outFile = File(dir, "${safePrefix}_$token.$safeExt")
         outFile.writeBytes(bytes)
         val rel = toRelativePath(filesDir.absolutePath, outFile.absolutePath) ?: "rp_media/${outFile.name}"
         return rel to outFile

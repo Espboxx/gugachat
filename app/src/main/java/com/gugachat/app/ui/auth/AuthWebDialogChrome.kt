@@ -42,7 +42,6 @@ internal fun configureAuthWebViewDefaults(
     webView.settings.apply {
         javaScriptEnabled = true
         domStorageEnabled = true
-        databaseEnabled = true
         javaScriptCanOpenWindowsAutomatically = allowPopupWindows
         if (mixedContentCompatibility) {
             mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE

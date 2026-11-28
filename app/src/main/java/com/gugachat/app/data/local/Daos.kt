@@ -21,6 +21,9 @@ interface ChatDao {
     @Query("SELECT * FROM conversations WHERE id = :id LIMIT 1")
     suspend fun getConversationById(id: String): ConversationEntity?
 
+    @Query("SELECT * FROM conversations WHERE id IN (:ids)")
+    suspend fun getConversationsByIds(ids: List<String>): List<ConversationEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertConversation(entity: ConversationEntity)
 
@@ -54,6 +57,9 @@ interface ChatDao {
     @Query("DELETE FROM messages WHERE conversationId = :convId")
     suspend fun deleteMessagesForConversation(convId: String)
 
+    @Query("DELETE FROM messages WHERE conversationId IN (:convIds)")
+    suspend fun deleteMessagesForConversations(convIds: List<String>)
+
     @Query("SELECT * FROM novel_chapters WHERE conversationId = :convId ORDER BY sortOrder ASC")
     fun observeNovelChapters(convId: String): Flow<List<NovelChapterEntity>>
 
@@ -77,6 +83,9 @@ interface ChatDao {
 
     @Query("DELETE FROM novel_chapters WHERE conversationId = :convId")
     suspend fun deleteNovelChaptersForConversation(convId: String)
+
+    @Query("DELETE FROM novel_chapters WHERE conversationId IN (:convIds)")
+    suspend fun deleteNovelChaptersForConversations(convIds: List<String>)
 
     @Query("SELECT * FROM novel_lore WHERE conversationId = :convId ORDER BY priority DESC, updatedAt DESC")
     fun observeNovelLore(convId: String): Flow<List<NovelLoreEntity>>
@@ -102,6 +111,9 @@ interface ChatDao {
     @Query("DELETE FROM novel_lore WHERE conversationId = :convId")
     suspend fun deleteNovelLoreForConversation(convId: String)
 
+    @Query("DELETE FROM novel_lore WHERE conversationId IN (:convIds)")
+    suspend fun deleteNovelLoreForConversations(convIds: List<String>)
+
     @Query("SELECT * FROM memory_ledger WHERE conversationId = :convId ORDER BY pinned DESC, updatedAt DESC")
     fun observeMemoryLedger(convId: String): Flow<List<MemoryLedgerEntity>>
 
@@ -125,6 +137,9 @@ interface ChatDao {
 
     @Query("DELETE FROM memory_ledger WHERE conversationId = :convId")
     suspend fun deleteMemoryLedgerForConversation(convId: String)
+
+    @Query("DELETE FROM memory_ledger WHERE conversationId IN (:convIds)")
+    suspend fun deleteMemoryLedgerForConversations(convIds: List<String>)
 
     @Query("SELECT * FROM memory_episodes WHERE conversationId = :convId ORDER BY level DESC, fromSeq ASC")
     fun observeMemoryEpisodes(convId: String): Flow<List<MemoryEpisodeEntity>>
@@ -150,6 +165,9 @@ interface ChatDao {
     @Query("DELETE FROM memory_episodes WHERE conversationId = :convId")
     suspend fun deleteMemoryEpisodesForConversation(convId: String)
 
+    @Query("DELETE FROM memory_episodes WHERE conversationId IN (:convIds)")
+    suspend fun deleteMemoryEpisodesForConversations(convIds: List<String>)
+
     @Query("SELECT * FROM rp_save_slots WHERE conversationId = :convId ORDER BY createdAt DESC")
     fun observeRpSaveSlots(convId: String): Flow<List<RpSaveSlotEntity>>
 
@@ -174,11 +192,17 @@ interface ChatDao {
     @Query("DELETE FROM rp_save_slots WHERE conversationId = :convId")
     suspend fun deleteRpSaveSlotsForConversation(convId: String)
 
+    @Query("DELETE FROM rp_save_slots WHERE conversationId IN (:convIds)")
+    suspend fun deleteRpSaveSlotsForConversations(convIds: List<String>)
+
     @Query("DELETE FROM conversation_worldbooks WHERE conversationId = :convId")
     suspend fun deleteConversationWorldbooksForConversation(convId: String)
 
     @Query("DELETE FROM memory_embeddings WHERE conversationId = :convId")
     suspend fun deleteMemoryEmbeddingsForConversation(convId: String)
+
+    @Query("DELETE FROM memory_embeddings WHERE conversationId IN (:convIds)")
+    suspend fun deleteMemoryEmbeddingsForConversations(convIds: List<String>)
 
     @Transaction
     suspend fun deleteConversationCascade(convId: String) {
@@ -225,6 +249,9 @@ interface UserMemoryDao {
 
     @Query("SELECT * FROM user_memories ORDER BY id ASC LIMIT :limit OFFSET :offset")
     suspend fun getPaged(limit: Int, offset: Int): List<UserMemoryEntity>
+
+    @Query("SELECT * FROM user_memories WHERE id IN (:ids)")
+    suspend fun getByIds(ids: List<String>): List<UserMemoryEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(entity: UserMemoryEntity)

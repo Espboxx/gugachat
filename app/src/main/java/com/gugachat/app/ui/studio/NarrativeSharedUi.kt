@@ -52,17 +52,18 @@ internal data class CardGradientSpec(
     val icon: ImageVector,
 )
 
+private val CARD_GRADIENT_PALETTES = listOf(
+    CardGradientSpec(Color(0xFF2E3B6E), Color(0xFF141830), Color(0xFF9FB8FF), Icons.Default.AutoStories),
+    CardGradientSpec(Color(0xFF5D2A42), Color(0xFF21101C), Color(0xFFF6B7CB), Icons.Default.TheaterComedy),
+    CardGradientSpec(Color(0xFF1F4E5F), Color(0xFF0E212B), Color(0xFF7BE0EA), Icons.Default.Public),
+    CardGradientSpec(Color(0xFF543C22), Color(0xFF22170D), Color(0xFFF6C67D), Icons.Default.EmojiEvents),
+    CardGradientSpec(Color(0xFF2C4A3B), Color(0xFF122019), Color(0xFF8BE2B6), Icons.Default.Landscape),
+    CardGradientSpec(Color(0xFF423266), Color(0xFF1A122E), Color(0xFFCBB6FF), Icons.Default.AutoAwesome),
+)
+
 internal fun resolveCardGradient(seed: String): CardGradientSpec {
-    val palettes = listOf(
-        CardGradientSpec(Color(0xFF2E3B6E), Color(0xFF141830), Color(0xFF9FB8FF), Icons.Default.AutoStories),
-        CardGradientSpec(Color(0xFF5D2A42), Color(0xFF21101C), Color(0xFFF6B7CB), Icons.Default.TheaterComedy),
-        CardGradientSpec(Color(0xFF1F4E5F), Color(0xFF0E212B), Color(0xFF7BE0EA), Icons.Default.Public),
-        CardGradientSpec(Color(0xFF543C22), Color(0xFF22170D), Color(0xFFF6C67D), Icons.Default.EmojiEvents),
-        CardGradientSpec(Color(0xFF2C4A3B), Color(0xFF122019), Color(0xFF8BE2B6), Icons.Default.Landscape),
-        CardGradientSpec(Color(0xFF423266), Color(0xFF1A122E), Color(0xFFCBB6FF), Icons.Default.AutoAwesome),
-    )
-    val idx = abs(seed.hashCode()) % palettes.size
-    return palettes[idx]
+    val idx = abs(seed.hashCode()) % CARD_GRADIENT_PALETTES.size
+    return CARD_GRADIENT_PALETTES[idx]
 }
 
 internal fun resolvePresetGradient(presetId: String): CardGradientSpec = when (presetId.lowercase()) {

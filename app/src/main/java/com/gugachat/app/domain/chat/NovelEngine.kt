@@ -115,6 +115,7 @@ object NovelEngine {
     private val LORE_SYNC_RE = Regex("<lore_sync>([\\s\\S]*?)</lore_sync>", RegexOption.IGNORE_CASE)
     private val CHAPTER_END_RE = Regex("<chapter_end>([\\s\\S]*?)</chapter_end>", RegexOption.IGNORE_CASE)
     private val CHOICES_RE = Regex("<choices>([\\s\\S]*?)</choices>", RegexOption.IGNORE_CASE)
+    private val CHOICE_BULLET_PREFIX_RE = Regex("^[-*•\\d.、)）]+\\s*")
 
     private val CANONICAL_LORE_COMPARATOR: Comparator<NovelLoreEntry> =
         compareByDescending<NovelLoreEntry> { it.priority }
@@ -865,7 +866,7 @@ object NovelEngine {
         val parsed = parseStringArrayJson(tagged ?: raw).take(4)
         if (parsed.isNotEmpty()) return parsed
         return raw.lineSequence()
-            .map { it.trim().replace(Regex("^[-*•\\d.、)）]+\\s*"), "").trim().trim('"', '“', '”') }
+            .map { it.trim().replace(CHOICE_BULLET_PREFIX_RE, "").trim().trim('"', '“', '”') }
             .filter { it.length in 4..80 && !it.startsWith("[") && !it.startsWith("{") }
             .distinct()
             .take(3)

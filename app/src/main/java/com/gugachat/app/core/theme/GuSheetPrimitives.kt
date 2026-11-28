@@ -76,7 +76,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -1047,19 +1047,22 @@ fun GuHorizontalFadeChipStrip(
         verticalAlignment = Alignment.CenterVertically,
         modifier = modifier
             .fillMaxWidth()
-            .drawWithContent {
-                drawContent()
-                if (listState.canScrollForward) {
-                    val w = fadeWidth.toPx()
-                    drawRect(
-                        brush = Brush.horizontalGradient(
-                            colors = listOf(Color.Transparent, fadeColor),
-                            startX = size.width - w,
-                            endX = size.width,
-                        ),
-                        topLeft = Offset(size.width - w, 0f),
-                        size = Size(w, size.height),
-                    )
+            .drawWithCache {
+                val w = fadeWidth.toPx()
+                val brush = Brush.horizontalGradient(
+                    colors = listOf(Color.Transparent, fadeColor),
+                    startX = size.width - w,
+                    endX = size.width,
+                )
+                onDrawWithContent {
+                    drawContent()
+                    if (listState.canScrollForward) {
+                        drawRect(
+                            brush = brush,
+                            topLeft = Offset(size.width - w, 0f),
+                            size = Size(w, size.height),
+                        )
+                    }
                 }
             },
         content = content,

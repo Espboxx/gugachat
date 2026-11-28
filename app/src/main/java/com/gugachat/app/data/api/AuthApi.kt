@@ -1,6 +1,7 @@
 package com.gugachat.app.data.api
 
 import com.gugachat.app.core.storage.TokenStore
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.JsonObject
 
 class AuthApi(
@@ -110,6 +111,8 @@ class AuthApi(
                     LogoutRequest(refresh_token = refreshToken),
                 )
                 client.postJson("/auth/logout", body, JsonObject.serializer())
+            } catch (ce: CancellationException) {
+                throw ce
             } catch (_: Throwable) {
                 // Clear local tokens regardless
             }

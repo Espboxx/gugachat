@@ -24,6 +24,17 @@ internal object ContextDepthInjector {
             reservedFixedTokens = pipe.prefix.systemTokens + pipe.dynamicOverhead,
         )
 
+        fun msgCost(msg: ChatMessage): Int = ContextRecallAssembler.resolveMemoizedMsgTokenCost(
+            msg = msg,
+            imageDecayed = msg.id in decayedImages,
+            fileDecayed = msg.id in decayedFiles,
+            attachmentsById = input.attachmentsById,
+            perTurnFileBudget = fileTurnBudget,
+            modelId = pipe.effectiveModelId,
+            conversation = conv,
+            cache = pipe.messageCacheById,
+        )
+
         val maxHistoryLimit = conv.params.maxHistoryMessages?.takeIf { it > 0 }
         val candidateWindow = if (maxHistoryLimit != null && active.size > maxHistoryLimit) {
             active.takeLast(maxHistoryLimit)
@@ -32,30 +43,12 @@ internal object ContextDepthInjector {
         }
 
         val msgCosts = IntArray(candidateWindow.size) { idx ->
-            val msg = candidateWindow[idx]
-            ContextBudgetPolicy.resolveMsgTokenCost(
-                msg = msg,
-                imageDecayed = msg.id in decayedImages,
-                fileDecayed = msg.id in decayedFiles,
-                attachmentsById = input.attachmentsById,
-                perTurnFileBudget = fileTurnBudget,
-                modelId = pipe.effectiveModelId,
-                conversation = conv,
-            )
+            msgCost(candidateWindow[idx])
         }
         var runningRawTokens = pipe.prefix.systemTokens + pipe.dynamicOverhead + msgCosts.sum()
         fun totalCalibratedTokens(): Int = (runningRawTokens * pipe.calibration).roundToInt()
         fun refreshMsgCost(idx: Int) {
-            val msg = candidateWindow[idx]
-            val newCost = ContextBudgetPolicy.resolveMsgTokenCost(
-                msg = msg,
-                imageDecayed = msg.id in decayedImages,
-                fileDecayed = msg.id in decayedFiles,
-                attachmentsById = input.attachmentsById,
-                perTurnFileBudget = fileTurnBudget,
-                modelId = pipe.effectiveModelId,
-                conversation = conv,
-            )
+            val newCost = msgCost(candidateWindow[idx])
             runningRawTokens += newCost - msgCosts[idx]
             msgCosts[idx] = newCost
         }
@@ -83,15 +76,7 @@ internal object ContextDepthInjector {
         for (i in active.indices.reversed()) {
             if (maxHistoryLimit != null && rawSelectedCount >= maxHistoryLimit) break
             val msg = active[i]
-            val rawCost = ContextBudgetPolicy.resolveMsgTokenCost(
-                msg = msg,
-                imageDecayed = msg.id in decayedImages,
-                fileDecayed = msg.id in decayedFiles,
-                attachmentsById = input.attachmentsById,
-                perTurnFileBudget = fileTurnBudget,
-                modelId = pipe.effectiveModelId,
-                conversation = conv,
-            )
+            val rawCost = msgCost(msg)
             val msgTok = (rawCost * pipe.calibration).roundToInt()
             if (rawSelectedCount > 0 && used + msgTok > pipe.effectiveLimitTokens) break
             used += msgTok
@@ -107,15 +92,7 @@ internal object ContextDepthInjector {
         var selectedRawHistory = 0
         var selectedRawFiles = 0
         for (msg in selected) {
-            selectedRawHistory += ContextBudgetPolicy.resolveMsgTokenCost(
-                msg = msg,
-                imageDecayed = msg.id in decayedImages,
-                fileDecayed = msg.id in decayedFiles,
-                attachmentsById = input.attachmentsById,
-                perTurnFileBudget = fileTurnBudget,
-                modelId = pipe.effectiveModelId,
-                conversation = conv,
-            )
+            selectedRawHistory += msgCost(msg)
             selectedRawFiles += ContextBudgetPolicy.resolveMsgFileTokens(
                 msg = msg,
                 fileDecayed = msg.id in decayedFiles,
@@ -194,7 +171,8 @@ internal object ContextDepthInjector {
 
         for (idx in selected.indices) {
             val msg = selected[idx]
-            val rawContent = ContextBudgetPolicy.cleanAssistantHistoryText(msg, conv)
+            val rawContent = pipe.messageCacheById[msg.id]?.cleanedText
+                ?: ContextBudgetPolicy.cleanAssistantHistoryText(msg, conv)
 
             val isFinalNovelUser = pipe.isNovel && idx == lastUserIdx
             val isFinalRpUser = pipe.isRp && idx == lastUserIdx

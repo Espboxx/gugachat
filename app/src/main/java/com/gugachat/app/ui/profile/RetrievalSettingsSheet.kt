@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -31,21 +30,15 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteSweep
-import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.RadioButtonChecked
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Storage
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -60,8 +53,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -80,7 +71,6 @@ import com.gugachat.app.core.theme.GuGroupedCard
 import com.gugachat.app.core.theme.GuHairlineDivider
 import com.gugachat.app.core.theme.GuIconTile
 import com.gugachat.app.core.theme.GuInlineStepper
-import com.gugachat.app.core.theme.GuLabeledStepperRow
 import com.gugachat.app.core.theme.GuLinearProgressBar
 import com.gugachat.app.core.theme.GuMetaText
 import com.gugachat.app.core.theme.GuModalBottomSheet
@@ -108,7 +98,6 @@ import com.gugachat.app.domain.chat.RemoteRerankConfig
 import com.gugachat.app.domain.chat.RetrievalMode
 import com.gugachat.app.domain.chat.RetrievalSettings
 import com.gugachat.app.domain.chat.VectorIndexProgress
-import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -159,7 +148,6 @@ fun RetrievalSettingsSheet(
     var lastDispatchedEmbedApiKey by remember { mutableStateOf(embedCfg.customApiKey) }
     var embedModelIdDraft by remember { mutableStateOf(embedCfg.modelId) }
     var lastDispatchedEmbedModelId by remember { mutableStateOf(embedCfg.modelId) }
-    var showEmbedApiKey by remember { mutableStateOf(false) }
 
     var rerankBaseUrlDraft by remember { mutableStateOf(rerankCfg.customBaseUrl) }
     var lastDispatchedRerankBaseUrl by remember { mutableStateOf(rerankCfg.customBaseUrl) }
@@ -167,7 +155,6 @@ fun RetrievalSettingsSheet(
     var lastDispatchedRerankApiKey by remember { mutableStateOf(rerankCfg.customApiKey) }
     var rerankModelIdDraft by remember { mutableStateOf(rerankCfg.modelId) }
     var lastDispatchedRerankModelId by remember { mutableStateOf(rerankCfg.modelId) }
-    var showRerankApiKey by remember { mutableStateOf(false) }
 
     LaunchedEffect(embedCfg.customBaseUrl) {
         if (embedCfg.customBaseUrl != lastDispatchedEmbedBaseUrl && embedCfg.customBaseUrl != embedBaseUrlDraft) {

@@ -1,6 +1,5 @@
 package com.gugachat.app.ui.chat
 
-import android.content.Context
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -30,12 +29,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.AutoStories
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Description
-import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Slideshow
@@ -133,7 +132,7 @@ private fun resolveFileStyle(fileName: String, isDark: Boolean): FileBadgeStyle 
             extLabel = label,
         )
         else -> FileBadgeStyle(
-            icon = Icons.Default.InsertDriveFile,
+            icon = Icons.AutoMirrored.Filled.InsertDriveFile,
             tint = if (isDark) Color(0xFF5EEAD4) else Color(0xFF0F766E),
             bg = if (isDark) Color(0x330F766E) else Color(0xFFCCFBF1),
             extLabel = label,

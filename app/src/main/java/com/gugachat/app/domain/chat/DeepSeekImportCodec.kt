@@ -32,7 +32,9 @@ data class DeepSeekImportBundle(
 
 object DeepSeekImportCodec {
     private const val MAX_JSON_ENTRY_BYTES = 64 * 1024 * 1024
+    private const val MAX_TOTAL_ZIP_EXTRACTED_BYTES = 96L * 1024L * 1024L
     private val URL_REGEX = Regex("""https?://[^\s<>"'`\u3000\uFF0C\u3002\uFF1B\uFF09\)]+""", RegexOption.IGNORE_CASE)
+    private val MARKDOWN_HEADING_PREFIX_RE = Regex("^#{1,6}\\s+")
 
     fun extractDownloadUrl(rawInput: String): String? {
         val match = URL_REGEX.find(rawInput.trim()) ?: return null
@@ -69,12 +71,17 @@ object DeepSeekImportCodec {
 
     fun parseZipBytes(zipBytes: ByteArray): DeepSeekImportBundle {
         val textEntries = LinkedHashMap<String, String>()
+        var totalExtractedBytes = 0L
         com.gugachat.app.core.util.StreamZipUtils.forEachZipEntry(zipBytes, skipMacOsMeta = false) { normName, zis ->
             val lower = normName.lowercase()
             if (!lower.contains("_files/") && (lower.endsWith(".json") || lower.endsWith(".csv"))) {
-                val content = com.gugachat.app.core.util.StreamZipUtils.run {
-                    zis.readBoundedUtf8(MAX_JSON_ENTRY_BYTES.toLong(), "导出文件体积过大（超过 64MB）")
-                }.removePrefix("\uFEFF").trim()
+                val remaining = (MAX_TOTAL_ZIP_EXTRACTED_BYTES - totalExtractedBytes).coerceAtLeast(0L)
+                val cap = minOf(MAX_JSON_ENTRY_BYTES.toLong(), remaining)
+                val rawBytes = com.gugachat.app.core.util.StreamZipUtils.run {
+                    zis.readBoundedBytesOrThrow(cap, "导出文件解压总体积过大（超过 96MB）")
+                }
+                totalExtractedBytes += rawBytes.size
+                val content = rawBytes.toString(Charsets.UTF_8).removePrefix("\uFEFF").trim()
                 if (content.isNotEmpty()) {
                     textEntries[normName] = content
                 }
@@ -240,7 +247,7 @@ object DeepSeekImportCodec {
             val convId = "ds_$sourceId"
             val firstUserSnippet = group.firstOrNull { it.role == "user" }?.content
                 ?.lineSequence()
-                ?.map { it.trim().replace(Regex("^#{1,6}\\s+"), "").trim() }
+                ?.map { it.trim().replace(MARKDOWN_HEADING_PREFIX_RE, "").trim() }
                 ?.firstOrNull { line ->
                     line.isNotEmpty() && !line.startsWith("```") && line.any { ch -> ch.isLetterOrDigit() }
                 }

@@ -101,6 +101,49 @@ object WorldbookEngine {
     const val LOGIC_AND_ALL = 3
 
     private const val MAX_ONE_HOP_RECURSION_ENTRIES = 8
+    private const val MAX_REGEX_CACHE_SIZE = 128
+
+    private data class RegexCacheKey(
+        val pattern: String,
+        val options: Set<RegexOption>,
+    )
+
+    private val regexCacheLock = Any()
+    private val compiledRegexCache = object : LinkedHashMap<RegexCacheKey, Regex>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<RegexCacheKey, Regex>?): Boolean =
+            size > MAX_REGEX_CACHE_SIZE
+    }
+
+    private fun compileCachedRegex(pattern: String, options: Set<RegexOption>): Regex {
+        val key = RegexCacheKey(pattern, options)
+        synchronized(regexCacheLock) {
+            compiledRegexCache[key]?.let { return it }
+        }
+        val compiled = Regex(pattern, options)
+        return synchronized(regexCacheLock) {
+            compiledRegexCache.getOrPut(key) { compiled }
+        }
+    }
+
+    internal data class PreparedScanText(
+        val raw: String,
+        val nfkc: String,
+        val nfkcLower: String,
+    ) {
+        companion object {
+            val EMPTY = PreparedScanText("", "", "")
+
+            fun fromRaw(raw: String): PreparedScanText {
+                if (raw.isEmpty()) return EMPTY
+                val nfkc = Normalizer.normalize(raw, Normalizer.Form.NFKC)
+                return PreparedScanText(
+                    raw = raw,
+                    nfkc = nfkc,
+                    nfkcLower = nfkc.lowercase(),
+                )
+            }
+        }
+    }
 
     private data class Candidate(
         val id: String,
@@ -184,13 +227,15 @@ object WorldbookEngine {
         val activeMessages = recentMessages
             .filter { it.deletedAt == null && it.role != "system" && it.content.isNotBlank() }
 
-        val scanTextCache = HashMap<Int, String>()
-        fun scanTextForDepth(depth: Int): String = scanTextCache.getOrPut(depth.coerceAtLeast(1)) {
-            buildScanText(
-                activeMessages = activeMessages,
-                draftText = draftText,
-                extraScanTexts = extraScanTexts,
-                scanDepth = depth.coerceAtLeast(1),
+        val scanTextCache = HashMap<Int, PreparedScanText>()
+        fun scanTextForDepth(depth: Int): PreparedScanText = scanTextCache.getOrPut(depth.coerceAtLeast(1)) {
+            PreparedScanText.fromRaw(
+                buildScanText(
+                    activeMessages = activeMessages,
+                    draftText = draftText,
+                    extraScanTexts = extraScanTexts,
+                    scanDepth = depth.coerceAtLeast(1),
+                ),
             )
         }
 
@@ -289,6 +334,20 @@ object WorldbookEngine {
                 .trim()
 
             if (recursionBuffer.isNotEmpty()) {
+                val preparedRecursion = PreparedScanText.fromRaw(recursionBuffer)
+                val combinedScanCache = HashMap<Int, PreparedScanText>()
+                fun combinedSecondaryForDepth(depth: Int): PreparedScanText =
+                    combinedScanCache.getOrPut(depth.coerceAtLeast(1)) {
+                        val base = scanTextForDepth(depth)
+                        PreparedScanText.fromRaw(
+                            buildString(base.raw.length + 1 + preparedRecursion.raw.length) {
+                                append(base.raw)
+                                append('\n')
+                                append(preparedRecursion.raw)
+                            },
+                        )
+                    }
+
                 val hopHits = ArrayList<TriggerHit>()
                 for (c in candidates) {
                     if (c.constant || c.id in activatedById) continue
@@ -302,14 +361,10 @@ object WorldbookEngine {
                         effectiveTurn <= prevState.cooldownUntilTurn
                     if (isInCooldown) continue
 
-                    val matchedInHop = matchPrimaryKeys(c, recursionBuffer)
+                    val matchedInHop = matchPrimaryKeys(c, preparedRecursion)
                     if (matchedInHop.isEmpty()) continue
 
-                    val combinedForSecondary = buildString {
-                        append(scanTextForDepth(c.scanDepth))
-                        append('\n')
-                        append(recursionBuffer)
-                    }
+                    val combinedForSecondary = combinedSecondaryForDepth(c.scanDepth)
                     if (!matchesSecondaryLogic(c, combinedForSecondary)) continue
                     if (!passesHashProbability(conversationId, effectiveTurn, c.id, c.probability)) continue
 
@@ -530,9 +585,23 @@ object WorldbookEngine {
         caseSensitive: Boolean,
         matchWholeWords: Boolean,
         useRegexKey: Boolean,
+    ): Boolean = matchesKey(
+        preparedScan = PreparedScanText.fromRaw(scanText),
+        rawKey = rawKey,
+        caseSensitive = caseSensitive,
+        matchWholeWords = matchWholeWords,
+        useRegexKey = useRegexKey,
+    )
+
+    internal fun matchesKey(
+        preparedScan: PreparedScanText,
+        rawKey: String,
+        caseSensitive: Boolean,
+        matchWholeWords: Boolean,
+        useRegexKey: Boolean,
     ): Boolean {
         val key = rawKey.trim()
-        if (key.isEmpty() || scanText.isEmpty()) return false
+        if (key.isEmpty() || preparedScan.raw.isEmpty()) return false
 
         if (useRegexKey) {
             val defaultFlags = if (caseSensitive) "" else "i"
@@ -548,21 +617,33 @@ object WorldbookEngine {
                 if ('s' in flags.lowercase()) add(RegexOption.DOT_MATCHES_ALL)
             }
             return runCatching {
-                Regex(pattern, options).containsMatchIn(scanText)
+                compileCachedRegex(pattern, options).containsMatchIn(preparedScan.raw)
             }.getOrDefault(false)
         }
 
-        val normHay = Normalizer.normalize(scanText, Normalizer.Form.NFKC)
+        val normHay = if (caseSensitive) preparedScan.nfkc else preparedScan.nfkcLower
         val normKey = Normalizer.normalize(key, Normalizer.Form.NFKC)
         if (normKey.isEmpty()) return false
 
         if (normKey.contains('&')) {
             val parts = normKey.split('&').map { it.trim() }.filter { it.isNotEmpty() }
             return parts.isNotEmpty() && parts.all { part ->
-                matchesPlainSingleKey(normHay, part, caseSensitive, matchWholeWords)
+                matchesPlainSingleKey(
+                    haystack = normHay,
+                    key = part,
+                    caseSensitive = caseSensitive,
+                    matchWholeWords = matchWholeWords,
+                    haystackAlreadyLowered = !caseSensitive,
+                )
             }
         }
-        return matchesPlainSingleKey(normHay, normKey, caseSensitive, matchWholeWords)
+        return matchesPlainSingleKey(
+            haystack = normHay,
+            key = normKey,
+            caseSensitive = caseSensitive,
+            matchWholeWords = matchWholeWords,
+            haystackAlreadyLowered = !caseSensitive,
+        )
     }
 
     private fun matchesPlainSingleKey(
@@ -570,10 +651,12 @@ object WorldbookEngine {
         key: String,
         caseSensitive: Boolean,
         matchWholeWords: Boolean,
+        haystackAlreadyLowered: Boolean = false,
     ): Boolean {
-        if (key.isEmpty() || haystack.length < key.length) return false
-        val hay = if (caseSensitive) haystack else haystack.lowercase()
+        if (key.isEmpty() || haystack.isEmpty()) return false
+        val hay = if (caseSensitive || haystackAlreadyLowered) haystack else haystack.lowercase()
         val target = if (caseSensitive) key else key.lowercase()
+        if (hay.length < target.length) return false
         if (!matchWholeWords) {
             return hay.contains(target)
         }
@@ -750,12 +833,12 @@ object WorldbookEngine {
         return parts.joinToString("\n")
     }
 
-    private fun matchPrimaryKeys(candidate: Candidate, scanText: String): List<String> {
-        if (candidate.primaryKeys.isEmpty() || scanText.isBlank()) return emptyList()
+    private fun matchPrimaryKeys(candidate: Candidate, preparedScan: PreparedScanText): List<String> {
+        if (candidate.primaryKeys.isEmpty() || preparedScan.raw.isBlank()) return emptyList()
         val matched = ArrayList<String>()
         for (rawKey in candidate.primaryKeys) {
             if (matchesKey(
-                    scanText = scanText,
+                    preparedScan = preparedScan,
                     rawKey = rawKey,
                     caseSensitive = candidate.caseSensitive,
                     matchWholeWords = candidate.matchWholeWords,
@@ -768,12 +851,12 @@ object WorldbookEngine {
         return matched.distinct()
     }
 
-    private fun matchesSecondaryLogic(candidate: Candidate, scanText: String): Boolean {
+    private fun matchesSecondaryLogic(candidate: Candidate, preparedScan: PreparedScanText): Boolean {
         val secKeys = candidate.secondaryKeys.filter { it.isNotBlank() }
         if (secKeys.isEmpty()) return true
         val hitCount = secKeys.count { secKey ->
             matchesKey(
-                scanText = scanText,
+                preparedScan = preparedScan,
                 rawKey = secKey,
                 caseSensitive = candidate.caseSensitive,
                 matchWholeWords = candidate.matchWholeWords,

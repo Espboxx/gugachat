@@ -14,6 +14,7 @@ import com.gugachat.app.core.storage.sanitizedForPlaintextStorage
 import com.gugachat.app.core.theme.ColorMode
 import com.gugachat.app.core.theme.ThemeStyle
 import com.gugachat.app.core.theme.UiScalePreset
+import com.gugachat.app.core.util.StreamZipUtils
 import com.gugachat.app.data.api.AppJson
 import com.gugachat.app.data.api.OnlineImageGenerationDto
 import com.gugachat.app.data.api.OnlineImagePresetDto
@@ -397,6 +398,8 @@ object BackupArchiveEngine {
     private const val MAX_LEGACY_JSON_BYTES = 128L * 1024L * 1024L
     private const val MAX_VAULT_BYTES = 16L * 1024L * 1024L
     private const val MAX_MANIFEST_BYTES = 32L * 1024L * 1024L
+    private const val MAX_UNPACKED_ARCHIVE_BYTES = 512L * 1024L * 1024L
+    private const val MAX_ARCHIVE_ENTRY_COUNT = 20_000
 
     const val MANIFEST_FILE = "manifest.json"
     const val VAULT_ENC_FILE = "vault.enc"
@@ -496,12 +499,7 @@ object BackupArchiveEngine {
                     tempRootDir = tempRootDir,
                 )
             }
-            if (outputFile.exists() && !outputFile.delete()) {
-                throw IllegalStateException("Cannot overwrite backup output file: ${outputFile.path}")
-            }
-            if (!tmpOut.renameTo(outputFile)) {
-                tmpOut.copyTo(outputFile, overwrite = true)
-            }
+            StreamZipUtils.atomicReplace(tmpOut, outputFile)
             ok = true
             manifest
         } finally {
@@ -870,8 +868,17 @@ object BackupArchiveEngine {
         val payload = ChatBackupCodec.decodePayload(rawJson)
         val chatDao = gateway.chatDao
         val memDao = gateway.userMemoryDao
+        val assetDao = gateway.assetDao
+        val embDao = gateway.memoryEmbeddingDao
         gateway.withTransaction {
-            ChatBackupCodec.restorePayloadInTransaction(chatDao, memDao, payload, replaceExisting)
+            ChatBackupCodec.restorePayloadInTransaction(
+                chatDao = chatDao,
+                memDao = memDao,
+                payload = payload,
+                replaceExisting = replaceExisting,
+                assetDao = assetDao,
+                memoryEmbeddingDao = embDao,
+            )
         }
         return BackupRestoreResult(
             formatVersion = 1,
@@ -886,10 +893,16 @@ object BackupArchiveEngine {
         stageDir.mkdirs()
         val canonicalStageDir = stageDir.canonicalFile
         val buf = ByteArray(IO_BUFFER_BYTES)
+        var entryCount = 0
+        var totalUnpackedBytes = 0L
 
         ZipInputStream(input).use { zis ->
             while (true) {
                 val entry = zis.nextEntry ?: break
+                entryCount += 1
+                if (entryCount > MAX_ARCHIVE_ENTRY_COUNT) {
+                    throw IllegalArgumentException("Backup archive exceeds maximum entry count ($MAX_ARCHIVE_ENTRY_COUNT)")
+                }
                 val normName = entry.name.replace('\\', '/').trimStart('/')
                 if (normName.isEmpty() || entry.isDirectory) {
                     zis.closeEntry()
@@ -910,7 +923,7 @@ object BackupArchiveEngine {
                 val maxEntryBytes = when {
                     normName == MANIFEST_FILE -> MAX_MANIFEST_BYTES
                     normName == VAULT_ENC_FILE || normName == VAULT_JSON_FILE -> MAX_VAULT_BYTES
-                    else -> Long.MAX_VALUE
+                    else -> MAX_UNPACKED_ARCHIVE_BYTES
                 }
                 BufferedOutputStream(FileOutputStream(targetFile), IO_BUFFER_BYTES).use { outs ->
                     while (true) {
@@ -919,6 +932,12 @@ object BackupArchiveEngine {
                         totalWritten += n
                         if (totalWritten > maxEntryBytes) {
                             throw IllegalArgumentException("Backup entry exceeds size limit: $normName")
+                        }
+                        totalUnpackedBytes += n
+                        if (totalUnpackedBytes > MAX_UNPACKED_ARCHIVE_BYTES) {
+                            throw IllegalArgumentException(
+                                "Backup archive exceeds cumulative unpacked size limit ($MAX_UNPACKED_ARCHIVE_BYTES bytes)",
+                            )
                         }
                         outs.write(buf, 0, n)
                     }
@@ -1026,12 +1045,7 @@ object BackupArchiveEngine {
                         outs.flush()
                     }
                 }
-                if (destFile.exists() && !destFile.delete()) {
-                    throw IllegalStateException("Failed to replace media file: ${ref.relPath}")
-                }
-                if (!tmp.renameTo(destFile)) {
-                    tmp.copyTo(destFile, overwrite = true)
-                }
+                StreamZipUtils.atomicReplace(tmp, destFile)
                 copied = true
                 mediaBlobsRestored += 1
             } finally {
@@ -1085,9 +1099,10 @@ object BackupArchiveEngine {
                     worldbooksCount += batch.size
                     batch.forEach { acceptedWorldbooks.add(it.id) }
                 } else {
+                    val existingById = fetchByIdsChunked(batch.map { it.id }, assetDao::getWorldbooksByIds) { it.id }
                     val toUpsert = ArrayList<WorldbookEntity>(batch.size)
                     for (wb in batch) {
-                        val local = assetDao.getWorldbookById(wb.id)
+                        val local = existingById[wb.id]
                         if (local == null || wb.updatedAt >= local.updatedAt) {
                             toUpsert.add(wb)
                             acceptedWorldbooks.add(wb.id)
@@ -1103,8 +1118,8 @@ object BackupArchiveEngine {
             }
 
             if (!replaceExisting && acceptedWorldbooks.isNotEmpty()) {
-                for (wbId in acceptedWorldbooks) {
-                    assetDao.deleteEntriesForWorldbook(wbId)
+                acceptedWorldbooks.toList().chunked(PAGE_SIZE).forEach { chunk ->
+                    assetDao.deleteEntriesForWorldbooks(chunk)
                 }
             }
 
@@ -1112,13 +1127,17 @@ object BackupArchiveEngine {
                 if (replaceExisting) {
                     assetDao.upsertWorldbookEntries(batch)
                 } else {
+                    val lookupIds = batch
+                        .filter { it.worldbookId !in acceptedWorldbooks && it.worldbookId !in skippedWorldbooks }
+                        .map { it.id }
+                    val existingById = fetchByIdsChunked(lookupIds, assetDao::getWorldbookEntriesByIds) { it.id }
                     val toUpsert = ArrayList<WorldbookEntryEntity>(batch.size)
                     for (entry in batch) {
                         when {
                             entry.worldbookId in acceptedWorldbooks -> toUpsert.add(entry)
                             entry.worldbookId in skippedWorldbooks -> Unit
                             else -> {
-                                val local = assetDao.getWorldbookEntryById(entry.id)
+                                val local = existingById[entry.id]
                                 if (local == null || entry.updatedAt >= local.updatedAt) {
                                     toUpsert.add(entry)
                                 }
@@ -1135,9 +1154,10 @@ object BackupArchiveEngine {
                     assetDao.upsertCharacterCards(resolved)
                     cardsCount += resolved.size
                 } else {
+                    val existingById = fetchByIdsChunked(resolved.map { it.id }, assetDao::getCharacterCardsByIds) { it.id }
                     val toUpsert = ArrayList<CharacterCardEntity>(resolved.size)
                     for (card in resolved) {
-                        val local = assetDao.getCharacterCardById(card.id)
+                        val local = existingById[card.id]
                         if (local == null || card.updatedAt >= local.updatedAt) {
                             toUpsert.add(card)
                         }
@@ -1155,9 +1175,10 @@ object BackupArchiveEngine {
                     assetDao.upsertPersonas(resolved)
                     personasCount += resolved.size
                 } else {
+                    val existingById = fetchByIdsChunked(resolved.map { it.id }, assetDao::getPersonasByIds) { it.id }
                     val toUpsert = ArrayList<PersonaEntity>(resolved.size)
                     for (persona in resolved) {
-                        val local = assetDao.getPersonaById(persona.id)
+                        val local = existingById[persona.id]
                         if (local == null || persona.updatedAt >= local.updatedAt) {
                             toUpsert.add(persona)
                         }
@@ -1174,9 +1195,10 @@ object BackupArchiveEngine {
                     assetDao.upsertPromptPresets(batch)
                     presetsCount += batch.size
                 } else {
+                    val existingById = fetchByIdsChunked(batch.map { it.id }, assetDao::getPromptPresetsByIds) { it.id }
                     val toUpsert = ArrayList<PromptPresetEntity>(batch.size)
                     for (preset in batch) {
-                        val local = assetDao.getPromptPresetById(preset.id)
+                        val local = existingById[preset.id]
                         if (local == null || preset.updatedAt >= local.updatedAt) {
                             toUpsert.add(preset)
                         }
@@ -1188,29 +1210,16 @@ object BackupArchiveEngine {
                 }
             }
 
-            // User memories: LWW by id/updatedAt (read existing once only if merge needed)
-            val existingMemUpdatedAt: Map<String, Long>? = if (replaceExisting) {
-                null
-            } else {
-                val map = HashMap<String, Long>()
-                var offset = 0
-                while (true) {
-                    val page = memDao.getPaged(PAGE_SIZE, offset)
-                    if (page.isEmpty()) break
-                    for (m in page) map[m.id] = m.updatedAt
-                    if (page.size < PAGE_SIZE) break
-                    offset += page.size
-                }
-                map
-            }
+            // User memories: LWW by id/updatedAt
             streamNdjsonBatches(File(tablesDir, "user_memories.ndjson"), UserMemoryEntity.serializer()) { batch ->
                 if (replaceExisting) {
                     memDao.upsertAll(batch)
                     memoriesCount += batch.size
                 } else {
+                    val existingById = fetchByIdsChunked(batch.map { it.id }, memDao::getByIds) { it.id }
                     val toUpsert = batch.filter { incoming ->
-                        val localUpdated = existingMemUpdatedAt?.get(incoming.id)
-                        localUpdated == null || incoming.updatedAt >= localUpdated
+                        val local = existingById[incoming.id]
+                        local == null || incoming.updatedAt >= local.updatedAt
                     }
                     if (toUpsert.isNotEmpty()) {
                         memDao.upsertAll(toUpsert)
@@ -1225,7 +1234,7 @@ object BackupArchiveEngine {
                 if (replaceExisting) {
                     attDao.upsertAll(resolved)
                 } else {
-                    val existingById = attDao.getByIds(resolved.map { it.id }).associateBy { it.id }
+                    val existingById = fetchByIdsChunked(resolved.map { it.id }, attDao::getByIds) { it.id }
                     val toUpsert = resolved.filter { incoming ->
                         val local = existingById[incoming.id]
                         local == null || !File(local.localPath).isFile
@@ -1244,23 +1253,30 @@ object BackupArchiveEngine {
                     resolved.forEach { winningConvIds.add(it.id) }
                     conversationsApplied += resolved.size
                 } else {
+                    val existingById = fetchByIdsChunked(resolved.map { it.id }, chatDao::getConversationsByIds) { it.id }
                     val toUpsert = ArrayList<ConversationEntity>(resolved.size)
+                    val replacedLocalConvIds = ArrayList<String>(resolved.size)
                     for (conv in resolved) {
-                        val local = chatDao.getConversationById(conv.id)
+                        val local = existingById[conv.id]
                         if (local == null || conv.updatedAt >= local.updatedAt) {
                             winningConvIds.add(conv.id)
                             if (local != null) {
-                                // Atomically wipe ALL children of replaced conversation before reinserting
-                                chatDao.deleteMessagesForConversation(conv.id)
-                                chatDao.deleteNovelChaptersForConversation(conv.id)
-                                chatDao.deleteNovelLoreForConversation(conv.id)
-                                chatDao.deleteMemoryLedgerForConversation(conv.id)
-                                chatDao.deleteMemoryEpisodesForConversation(conv.id)
-                                chatDao.deleteRpSaveSlotsForConversation(conv.id)
-                                assetDao.deleteConversationWorldbooks(conv.id)
-                                chatDao.deleteMemoryEmbeddingsForConversation(conv.id)
+                                replacedLocalConvIds.add(conv.id)
                             }
                             toUpsert.add(conv)
+                        }
+                    }
+                    if (replacedLocalConvIds.isNotEmpty()) {
+                        replacedLocalConvIds.distinct().chunked(PAGE_SIZE).forEach { chunk ->
+                            // Atomically wipe ALL children of replaced conversations before reinserting
+                            chatDao.deleteMessagesForConversations(chunk)
+                            chatDao.deleteNovelChaptersForConversations(chunk)
+                            chatDao.deleteNovelLoreForConversations(chunk)
+                            chatDao.deleteMemoryLedgerForConversations(chunk)
+                            chatDao.deleteMemoryEpisodesForConversations(chunk)
+                            chatDao.deleteRpSaveSlotsForConversations(chunk)
+                            assetDao.deleteConversationWorldbooksForConversations(chunk)
+                            chatDao.deleteMemoryEmbeddingsForConversations(chunk)
                         }
                     }
                     if (toUpsert.isNotEmpty()) {
@@ -1488,6 +1504,22 @@ object BackupArchiveEngine {
             total += n
         }
         return total
+    }
+
+    private suspend inline fun <T> fetchByIdsChunked(
+        ids: Iterable<String>,
+        crossinline queryChunk: suspend (List<String>) -> List<T>,
+        crossinline idOf: (T) -> String,
+    ): Map<String, T> {
+        val unique = ids.distinct()
+        if (unique.isEmpty()) return emptyMap()
+        val out = HashMap<String, T>(unique.size)
+        for (chunk in unique.chunked(PAGE_SIZE)) {
+            for (row in queryChunk(chunk)) {
+                out[idOf(row)] = row
+            }
+        }
+        return out
     }
 
     private fun readUtf8Bounded(input: InputStream, maxBytes: Long): String =
@@ -2037,12 +2069,7 @@ object BackupArchiveEngine {
         var ok = false
         try {
             tmp.writeText(content, StandardCharsets.UTF_8)
-            if (target.exists() && !target.delete()) {
-                throw IllegalStateException("Cannot overwrite ${target.name}")
-            }
-            if (!tmp.renameTo(target)) {
-                tmp.copyTo(target, overwrite = true)
-            }
+            StreamZipUtils.atomicReplace(tmp, target)
             ok = true
         } finally {
             if (!ok || tmp.exists()) tmp.delete()

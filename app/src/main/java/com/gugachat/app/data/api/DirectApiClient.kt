@@ -7,6 +7,7 @@ import com.gugachat.app.domain.chat.RemoteEmbeddingConfig
 import com.gugachat.app.domain.chat.RemoteRerankConfig
 import com.gugachat.app.domain.chat.RerankEngine
 import com.gugachat.app.domain.chat.recommendedMinCosineForRemoteModel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -55,7 +56,7 @@ class DirectApiClient(
     suspend fun listChatModels(provider: ApiProviderConfig): List<OnlineChatModelDto> {
         validateProvider(provider)
         val custom = provider.customModels.map { DirectProtocolCodec.inferChatModelMeta(it) }
-        val fetched = runCatching {
+        val fetched = try {
             val url = modelsEndpoint(provider)
             val req = buildGetRequest(provider, url)
             val resp = standardClient.awaitCall(req)
@@ -65,7 +66,11 @@ class DirectApiClient(
                     else DirectProtocolCodec.parseModelsJson(provider.protocol, r.body?.string().orEmpty())
                 }
             }
-        }.getOrDefault(emptyList())
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (_: Throwable) {
+            emptyList()
+        }
         return (custom + fetched).distinctBy { it.id }.ifEmpty {
             DirectProtocolCodec.defaultChatModels(provider.protocol)
         }

@@ -1,24 +1,16 @@
 package com.gugachat.app.ui.chat
 
-import android.content.Context
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -26,55 +18,34 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.ChevronLeft
-import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.ErrorOutline
-import androidx.compose.material.icons.filled.Forum
 import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Save
-import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -82,10 +53,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -95,50 +64,32 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalView
 import com.gugachat.app.core.storage.LocalMediaPathResolver
-import com.gugachat.app.core.theme.GuModalDragHandle
-import com.gugachat.app.core.theme.GuSheetHeader
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.DialogWindowProvider
 import androidx.compose.ui.zIndex
-import androidx.core.view.WindowCompat
 import coil.compose.rememberAsyncImagePainter
 import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.i18n.LocalAppStrings
 import com.gugachat.app.core.i18n.fmt
-import com.gugachat.app.core.theme.GuBadge
-import com.gugachat.app.core.theme.GuBadgeVariant
 import com.gugachat.app.core.theme.GuButton
-import com.gugachat.app.core.theme.GuButtonVariant
 import com.gugachat.app.core.theme.GuMetaText
-import com.gugachat.app.core.theme.GuModalBottomSheet
-import com.gugachat.app.core.theme.GuSheetHeader
 import com.gugachat.app.core.theme.GuTextField
-import com.gugachat.app.core.theme.GuVariantSwipePill
 import com.gugachat.app.core.theme.LocalAppTheme
 import com.gugachat.app.domain.chat.ChatMessage
 import com.gugachat.app.domain.chat.ConversationMode
 import com.gugachat.app.domain.chat.RpCharacter
 import com.gugachat.app.domain.chat.RpChoice
-import com.gugachat.app.domain.chat.RpChoiceEval
 import com.gugachat.app.domain.chat.RpConfig
-import com.gugachat.app.domain.chat.RpEndingRecord
 import com.gugachat.app.domain.chat.RpEngine
-import com.gugachat.app.domain.chat.RpInputKind
 import com.gugachat.app.domain.chat.RpPlayStyle
-import com.gugachat.app.domain.chat.RpTurnDelta
 import com.gugachat.app.domain.chat.RpVisualTheme
 import com.gugachat.app.domain.chat.TimelineReconciler
 import com.gugachat.app.domain.chat.activeVariant
-import java.io.File
 import kotlin.math.abs
 
 internal val PORTRAIT_GRADIENTS = listOf(
@@ -526,13 +477,11 @@ fun RpTheaterStageView(
     onFrontendAdjustAffinity: (String, Int) -> Unit = { _, _ -> },
     onToast: (String) -> Unit,
     externalHideUi: Boolean? = null,
-    onExternalHideUiChange: ((Boolean) -> Unit)? = null,
     externalShowHistory: Boolean? = null,
     onExternalShowHistoryChange: ((Boolean) -> Unit)? = null,
     modifier: Modifier = Modifier,
     isComposerExpanded: Boolean = false,
     onToggleComposer: (() -> Unit)? = null,
-    onOpenQuickControl: (() -> Unit)? = null,
     activeGreetingVariants: List<String> = emptyList(),
     greetingActions: RpGreetingActions? = null,
 ) {
@@ -560,6 +509,7 @@ fun RpTheaterStageView(
     val latestAssistant = remember(activeMessages) { activeMessages.lastOrNull { it.role == "assistant" } }
     val latestVariant = latestAssistant?.activeVariant()
     val activeUserTurnCount = remember(activeMessages) { activeMessages.count { it.role == "user" } }
+    val fallbackUserText = remember(activeMessages) { activeMessages.lastOrNull { it.role == "user" }?.content }
     val seq1GreetingMsg = remember(activeMessages) {
         activeMessages.firstOrNull { it.role == "assistant" && it.seq == 1 }
     }
@@ -689,6 +639,13 @@ fun RpTheaterStageView(
                             !isComposerExpanded &&
                             (stageChoices.isNotEmpty() || isRefreshingChoices || (rp.enableChoices && latestAssistant != null))
 
+                        val spritesWithFiles = remember(stageCharacters) {
+                            stageCharacters.filter { (_, ch) ->
+                                val path = RpEngine.resolveCharacterSpritePath(ch)
+                                LocalMediaPathResolver.resolveImageModel(ctx, path) != null
+                            }
+                        }
+
                         // Layer 1: Z-Axis Half-Body Sprite Stage (Zero 178dp rounded-box confinement!)
                         if (spriteLayout != "hidden") {
                             when (spriteLayout) {
@@ -715,17 +672,11 @@ fun RpTheaterStageView(
                                     }
                                 }
                                 else -> {
-                                    val spritesWithFiles = remember(stageCharacters) {
-                                        stageCharacters.filter { (_, ch) ->
-                                            val path = RpEngine.resolveCharacterSpritePath(ch)
-                                            LocalMediaPathResolver.resolveImageModel(ctx, path) != null
-                                        }
-                                    }
                                     if (spritesWithFiles.isNotEmpty()) {
                                         // Anchor full half-body stage below top HUD so character faces stay clear above choice buttons
                                         val spriteTopClearance = 44.dp
                                         val spriteHeightFraction = (theme.spriteHeightRatio + 0.50f).coerceIn(0.84f, 1.0f)
-                                        val stageActors = remember(spritesWithFiles) {
+                                        val stageActors = remember(spritesWithFiles, activeHighlightId) {
                                             if (spritesWithFiles.size <= 2) spritesWithFiles
                                             else {
                                                 // Prioritize active speaker + 1 companion for clean 1~2 half-body composition
@@ -742,42 +693,44 @@ fun RpTheaterStageView(
                                                 .fillMaxHeight(spriteHeightFraction),
                                         ) {
                                             stageActors.forEachIndexed { idx, (slot, char) ->
-                                                val isActive = char.id == activeHighlightId
-                                                val actorAlign = when {
-                                                    stageActors.size == 1 -> Alignment.BottomCenter
-                                                    slot == "left" || idx == 0 -> Alignment.BottomStart
-                                                    else -> Alignment.BottomEnd
-                                                }
-                                                val widthFraction = if (stageActors.size == 1) 0.78f else 0.58f
-                                                val zOrder = if (isActive) 2f else 1f
-                                                val targetScale = (if (isActive) 1.03f else 0.94f) * char.spriteScale.coerceIn(0.7f, 1.4f)
-                                                val animatedScale by animateFloatAsState(
-                                                    targetValue = targetScale,
-                                                    animationSpec = tween(durationMillis = 260),
-                                                    label = "zSpriteScale_${char.id}",
-                                                )
-                                                val animatedAlpha by animateFloatAsState(
-                                                    targetValue = if (isActive) 1.0f else 0.72f,
-                                                    animationSpec = tween(durationMillis = 260),
-                                                    label = "zSpriteAlpha_${char.id}",
-                                                )
+                                                key(char.id) {
+                                                    val isActive = char.id == activeHighlightId
+                                                    val actorAlign = when {
+                                                        stageActors.size == 1 -> Alignment.BottomCenter
+                                                        slot == "left" || idx == 0 -> Alignment.BottomStart
+                                                        else -> Alignment.BottomEnd
+                                                    }
+                                                    val widthFraction = if (stageActors.size == 1) 0.78f else 0.58f
+                                                    val zOrder = if (isActive) 2f else 1f
+                                                    val targetScale = (if (isActive) 1.03f else 0.94f) * char.spriteScale.coerceIn(0.7f, 1.4f)
+                                                    val animatedScale by animateFloatAsState(
+                                                        targetValue = targetScale,
+                                                        animationSpec = tween(durationMillis = 260),
+                                                        label = "zSpriteScale_${char.id}",
+                                                    )
+                                                    val animatedAlpha by animateFloatAsState(
+                                                        targetValue = if (isActive) 1.0f else 0.72f,
+                                                        animationSpec = tween(durationMillis = 260),
+                                                        label = "zSpriteAlpha_${char.id}",
+                                                    )
 
-                                                FeatherHalfBodySprite(
-                                                    character = char,
-                                                    onTap = { focusedNpcId = char.id },
-                                                    modifier = Modifier
-                                                        .align(actorAlign)
-                                                        .zIndex(zOrder)
-                                                        .fillMaxWidth(widthFraction)
-                                                        .fillMaxHeight()
-                                                        .graphicsLayer {
-                                                            scaleX = animatedScale
-                                                            scaleY = animatedScale
-                                                            alpha = animatedAlpha
-                                                            translationY = char.spriteOffsetY.dp.toPx()
-                                                            transformOrigin = TransformOrigin(0.5f, 1.0f)
-                                                        },
-                                                )
+                                                    FeatherHalfBodySprite(
+                                                        character = char,
+                                                        onTap = { focusedNpcId = char.id },
+                                                        modifier = Modifier
+                                                            .align(actorAlign)
+                                                            .zIndex(zOrder)
+                                                            .fillMaxWidth(widthFraction)
+                                                            .fillMaxHeight()
+                                                            .graphicsLayer {
+                                                                scaleX = animatedScale
+                                                                scaleY = animatedScale
+                                                                alpha = animatedAlpha
+                                                                translationY = char.spriteOffsetY.dp.toPx()
+                                                                transformOrigin = TransformOrigin(0.5f, 1.0f)
+                                                            },
+                                                    )
+                                                }
                                             }
                                         }
                                     } else {
@@ -849,11 +802,7 @@ fun RpTheaterStageView(
                                 }
                             }
 
-                            val hasSprites = stageCharacters.any { (_, ch) ->
-                                val path = RpEngine.resolveCharacterSpritePath(ch)
-                                LocalMediaPathResolver.resolveImageModel(ctx, path) != null
-                            }
-                            if (hasSprites && nonPlayerCast.size > 1 && spriteLayout == "stage") {
+                            if (spritesWithFiles.isNotEmpty() && nonPlayerCast.size > 1 && spriteLayout == "stage") {
                                 StageCastMiniStrip(
                                     allNpcs = nonPlayerCast,
                                     focusedNpcId = displayedNpc?.id,
@@ -892,7 +841,7 @@ fun RpTheaterStageView(
                             bodyFontSizeSp = bodyFontSizeSp,
                             isStreaming = isStreaming,
                             streamingStatusHint = streamingStatusHint,
-                            fallbackUserText = activeMessages.lastOrNull { it.role == "user" }?.content,
+                            fallbackUserText = fallbackUserText,
                             dialogueScrollState = dialogueScrollState,
                             isEditingReply = isEditingReply,
                             editBuffer = editBuffer,
@@ -1001,26 +950,24 @@ internal fun FeatherHalfBodySprite(
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
-                .drawWithContent {
-                    drawContent()
-                    drawRect(
-                        brush = Brush.horizontalGradient(
-                            0.0f to Color.Transparent,
-                            0.14f to Color.Black,
-                            0.86f to Color.Black,
-                            1.0f to Color.Transparent,
-                        ),
-                        blendMode = BlendMode.DstIn,
+                .drawWithCache {
+                    val hBrush = Brush.horizontalGradient(
+                        0.0f to Color.Transparent,
+                        0.14f to Color.Black,
+                        0.86f to Color.Black,
+                        1.0f to Color.Transparent,
                     )
-                    drawRect(
-                        brush = Brush.verticalGradient(
-                            0.0f to Color.Transparent,
-                            0.06f to Color.Black,
-                            0.64f to Color.Black,
-                            0.98f to Color.Transparent,
-                        ),
-                        blendMode = BlendMode.DstIn,
+                    val vBrush = Brush.verticalGradient(
+                        0.0f to Color.Transparent,
+                        0.06f to Color.Black,
+                        0.64f to Color.Black,
+                        0.98f to Color.Transparent,
                     )
+                    onDrawWithContent {
+                        drawContent()
+                        drawRect(brush = hBrush, blendMode = BlendMode.DstIn)
+                        drawRect(brush = vBrush, blendMode = BlendMode.DstIn)
+                    }
                 },
         )
     }
@@ -1268,6 +1215,8 @@ internal fun TheaterDialogueStageFrame(
                             ReasoningCard(
                                 reasoning = parsedReasoning,
                                 isStreaming = latestAssistant?.status == "streaming" && cleanBody.isEmpty(),
+                                messageKey = "${latestAssistant?.id}:${latestAssistant?.activeVariantIndex}",
+                                durationMs = latestAssistant?.reasoningDurationMs ?: latestAssistant?.usage?.reasoningDurationMs,
                             )
                         }
 
@@ -1481,17 +1430,23 @@ internal fun TheaterStageBackdrop(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Brush.verticalGradient(listOf(topCol, midCol, botCol)))
-                    .drawBehind {
+                    .drawWithCache {
+                        val bgBrush = Brush.verticalGradient(listOf(topCol, midCol, botCol))
                         val glowRadius = size.maxDimension * 0.68f
-                        if (glowRadius > 0f) {
-                            drawRect(
-                                brush = Brush.radialGradient(
-                                    colors = listOf(glowCol.copy(alpha = 0.28f), Color.Transparent),
-                                    center = Offset(size.width * 0.5f, size.height * 0.22f),
-                                    radius = glowRadius,
-                                ),
+                        val glowBrush = if (glowRadius > 0f) {
+                            Brush.radialGradient(
+                                colors = listOf(glowCol.copy(alpha = 0.28f), Color.Transparent),
+                                center = Offset(size.width * 0.5f, size.height * 0.22f),
+                                radius = glowRadius,
                             )
+                        } else {
+                            null
+                        }
+                        onDrawBehind {
+                            drawRect(brush = bgBrush)
+                            if (glowBrush != null) {
+                                drawRect(brush = glowBrush)
+                            }
                         }
                     },
             )
@@ -1501,19 +1456,24 @@ internal fun TheaterStageBackdrop(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .drawBehind {
+                    .drawWithCache {
                         val spotRadius = size.maxDimension * 0.52f
-                        if (spotRadius > 0f) {
-                            drawRect(
-                                brush = Brush.radialGradient(
-                                    colors = listOf(
-                                        stageAccent.copy(alpha = if (sceneModel != null) 0.16f else 0.22f),
-                                        Color.Transparent,
-                                    ),
-                                    center = Offset(size.width * spotlightXRatio, size.height * 0.34f),
-                                    radius = spotRadius,
+                        val spotBrush = if (spotRadius > 0f) {
+                            Brush.radialGradient(
+                                colors = listOf(
+                                    stageAccent.copy(alpha = if (sceneModel != null) 0.16f else 0.22f),
+                                    Color.Transparent,
                                 ),
+                                center = Offset(size.width * spotlightXRatio, size.height * 0.34f),
+                                radius = spotRadius,
                             )
+                        } else {
+                            null
+                        }
+                        onDrawBehind {
+                            if (spotBrush != null) {
+                                drawRect(brush = spotBrush)
+                            }
                         }
                     },
             )
@@ -1579,34 +1539,6 @@ internal fun resolveStageAtmosphere(rp: RpConfig): StageAtmosphere {
             StageAtmosphere(Color(0xFF2B1D16), Color(0xFF38241A), Color(0xFF140F0E), Color(0xFFF5B74B))
         else ->
             StageAtmosphere(Color(0xFF111C2D), Color(0xFF1A2A3E), Color(0xFF0B111C), Color(0xFF4ADE80))
-    }
-}
-
-internal val ACT_PREFIX_RE = Regex("^(第.{1,3}幕|Act\\s+\\d+)", RegexOption.IGNORE_CASE)
-
-internal fun formatRpActHeader(actNumber: Int, chapterTitle: String, isZh: Boolean): String {
-    val cleanTitle = chapterTitle.trim()
-    if (cleanTitle.isNotEmpty() && ACT_PREFIX_RE.containsMatchIn(cleanTitle)) {
-        return cleanTitle
-    }
-    val prefix = if (isZh) "第${actNumber}幕" else "Act $actNumber"
-    return if (cleanTitle.isNotEmpty()) "$prefix · $cleanTitle" else prefix
-}
-
-internal fun formatRpRoleLabel(role: String, isZh: Boolean): String {
-    val trimmed = role.trim()
-    if (trimmed.isEmpty()) return ""
-    return when (trimmed.lowercase()) {
-        "protagonist", "player", "lead" -> if (isZh) "主角" else "Protagonist"
-        "companion", "partner" -> if (isZh) "核心伙伴" else "Companion"
-        "romance", "heroine", "love_interest" -> if (isZh) "攻略角色" else "Romance"
-        "rival" -> if (isZh) "对手" else "Rival"
-        "ally" -> if (isZh) "盟友" else "Ally"
-        "mentor" -> if (isZh) "导师" else "Mentor"
-        "antagonist", "villain" -> if (isZh) "反派" else "Antagonist"
-        "mystery" -> if (isZh) "神秘人" else "Mystery"
-        "passerby", "minor", "extra", "npc" -> if (isZh) "路人" else "Passerby"
-        else -> trimmed
     }
 }
 
@@ -1747,7 +1679,7 @@ internal fun TheaterCastPortraitShowcase(
                         }
                     }
 
-                    val roleLabel = formatRpRoleLabel(focusedNpc.role, isZh)
+                    val roleLabel = localizeRpRole(focusedNpc.role, isZh)
                     val subtitle = listOf(roleLabel, focusedNpc.status.trim())
                         .filter { it.isNotEmpty() }
                         .joinToString(" · ")

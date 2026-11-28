@@ -4,6 +4,7 @@ import android.content.ContentResolver
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.room.withTransaction
 import com.gugachat.app.AppContainer
 import com.gugachat.app.AuthSessionState
 import com.gugachat.app.core.i18n.AppLanguage
@@ -18,6 +19,7 @@ import com.gugachat.app.data.api.OnlineChatModelDto
 import com.gugachat.app.data.api.WireChatMessageDto
 import com.gugachat.app.data.chat.RetrievalCoordinator
 import com.gugachat.app.data.chat.StreamLaunchRequest
+import com.gugachat.app.data.chat.V4ConversationAssets
 import com.gugachat.app.data.local.CharacterCardEntity
 import com.gugachat.app.data.local.ConversationWorldbookCrossRef
 import com.gugachat.app.data.local.PersonaEntity
@@ -63,18 +65,23 @@ import com.gugachat.app.domain.chat.TimelineReconciler
 import com.gugachat.app.domain.chat.UserMemory
 import com.gugachat.app.domain.chat.VectorIndexProgress
 import com.gugachat.app.domain.chat.activeVariant
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -84,6 +91,18 @@ data class PendingScannedPdf(
     val fileName: String,
     val pageCount: Int,
     val uri: Uri,
+)
+
+data class ChatShellChromeState(
+    val mode: ConversationMode = ConversationMode.chat,
+    val rpStageAccentHex: String = "",
+    val hasMessages: Boolean = false,
+    val pureReadingMode: Boolean = false,
+    val readerPaper: String = "cream",
+    val activeConvId: String? = null,
+    val isNovelWorkspace: Boolean = false,
+    val isRpWorkspace: Boolean = false,
+    val isTheaterImmersive: Boolean = false,
 )
 
 data class ChatUiState(
@@ -144,6 +163,9 @@ data class ChatUiState(
     val personas: List<PersonaEntity> = emptyList(),
     val promptPresets: List<PromptPresetEntity> = emptyList(),
     val mountedWorldbookRefs: List<ConversationWorldbookCrossRef> = emptyList(),
+    val boundCharacterCard: CharacterCardEntity? = null,
+    val boundPromptPreset: PromptPresetEntity? = null,
+    val activeGreetingVariants: List<String> = emptyList(),
 ) {
     val effectiveChatParams: ChatParams
         get() = activeConversation?.params ?: ChatParams(
@@ -152,22 +174,36 @@ data class ChatUiState(
             maxHistoryMessages = defaultMaxHistoryMessages,
         )
 
-    val boundCharacterCard: CharacterCardEntity?
-        get() = activeConversation?.characterCardId?.let { id -> characterCards.firstOrNull { it.id == id } }
-
-    val boundPromptPreset: PromptPresetEntity?
-        get() = activeConversation?.presetId?.let { id -> promptPresets.firstOrNull { it.id == id } }
-
-    val activeGreetingVariants: List<String>
-        get() {
-            val card = boundCharacterCard
-            if (card != null) {
-                val alts = card.decodedAltGreetings()
-                return (listOf(card.firstMes) + alts).map { it.trim() }.filter { it.isNotEmpty() }
-            }
-            val rp = activeConversation?.rp ?: return emptyList()
-            return (listOf(rp.greeting) + rp.alternateGreetings).map { it.trim() }.filter { it.isNotEmpty() }
+    internal fun withDerivedBindings(): ChatUiState {
+        val nextCard = activeConversation?.characterCardId?.let { id ->
+            characterCards.firstOrNull { it.id == id }
         }
+        val nextPreset = activeConversation?.presetId?.let { id ->
+            promptPresets.firstOrNull { it.id == id }
+        }
+        val nextGreetings = when {
+            nextCard != null -> (listOf(nextCard.firstMes) + nextCard.decodedAltGreetings())
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+            activeConversation?.rp != null -> (
+                listOf(activeConversation.rp.greeting) + activeConversation.rp.alternateGreetings
+            ).map { it.trim() }.filter { it.isNotEmpty() }
+            else -> emptyList()
+        }
+        return if (
+            nextCard == boundCharacterCard &&
+            nextPreset == boundPromptPreset &&
+            nextGreetings == activeGreetingVariants
+        ) {
+            this
+        } else {
+            copy(
+                boundCharacterCard = nextCard,
+                boundPromptPreset = nextPreset,
+                activeGreetingVariants = nextGreetings,
+            )
+        }
+    }
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -186,7 +222,46 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     )
     val ui: StateFlow<ChatUiState> = _ui.asStateFlow()
 
+    val shellChromeState: StateFlow<ChatShellChromeState> = _ui
+        .map { st ->
+            val conv = st.activeConversation
+            val isNovel = conv?.mode == ConversationMode.novel && conv.novel != null
+            val isRp = conv?.mode == ConversationMode.rp && conv.rp != null
+            ChatShellChromeState(
+                mode = conv?.mode ?: ConversationMode.chat,
+                rpStageAccentHex = conv?.rp?.visualTheme?.accentHex.orEmpty(),
+                hasMessages = st.messages.isNotEmpty(),
+                pureReadingMode = st.pureReadingMode,
+                readerPaper = st.readerPaper,
+                activeConvId = conv?.id,
+                isNovelWorkspace = isNovel,
+                isRpWorkspace = isRp,
+                isTheaterImmersive = isRp && conv?.rp?.theaterMode == true,
+            )
+        }
+        .distinctUntilChanged()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = ChatShellChromeState(),
+        )
+
+    private data class V4AssetsCacheKey(
+        val convId: String,
+        val characterCardId: String?,
+        val personaId: String?,
+        val presetId: String?,
+        val mountedWorldbooksFingerprint: String,
+    )
+
     private var waterlineJob: Job? = null
+    private var loadModelsJob: Job? = null
+
+    @Volatile
+    private var cachedV4AssetsKey: V4AssetsCacheKey? = null
+
+    @Volatile
+    private var cachedV4Assets: V4ConversationAssets? = null
 
     private val delegateHost: ChatViewModelHost = object : ChatViewModelHost {
         override val container: AppContainer get() = this@ChatViewModel.container
@@ -239,8 +314,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                 _activeConvId,
                 assetDao.observeCharacterCards(),
             ) { list, curId, cards ->
-                Triple(list.map { it.toDomain() }, curId, cards)
-            }.collect { (domainList, curId, cards) ->
+                val domainList = list.map { it.toDomain() }
                 val cardMap = cards.associateBy { it.id }
                 val matched = domainList.firstOrNull { it.id == curId }
                 val rawActive = when {
@@ -248,24 +322,28 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                     curId == null -> domainList.firstOrNull()
                     else -> _ui.value.activeConversation ?: domainList.firstOrNull()
                 }
-                if (curId == null && rawActive != null) {
-                    _activeConvId.value = rawActive.id
-                }
                 val active = rawActive?.let { conv ->
                     enrichConversationWithBoundCardMedia(conv, conv.characterCardId?.let { cardMap[it] })
                 }
-                val activeSession = active?.id?.let { chatStreamManager.activeSessions.value[it] }
-                _ui.update {
-                    it.copy(
-                        conversations = domainList,
-                        activeConversation = active,
-                        characterCards = cards,
-                        isStreaming = activeSession?.isStreaming == true,
-                        streamingStatusHint = activeSession?.statusHint,
-                    )
-                }
-                recomputeWaterline()
+                Triple(domainList, active, cards)
             }
+                .flowOn(Dispatchers.Default)
+                .collect { (domainList, active, cards) ->
+                    if (_activeConvId.value == null && active != null) {
+                        _activeConvId.value = active.id
+                    }
+                    val activeSession = active?.id?.let { chatStreamManager.activeSessions.value[it] }
+                    _ui.update {
+                        it.copy(
+                            conversations = domainList,
+                            activeConversation = active,
+                            characterCards = cards,
+                            isStreaming = activeSession?.isStreaming == true,
+                            streamingStatusHint = activeSession?.statusHint,
+                        ).withDerivedBindings()
+                    }
+                    recomputeWaterline()
+                }
         }
 
         viewModelScope.launch {
@@ -284,7 +362,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
 
         viewModelScope.launch {
             assetDao.observePromptPresets().collect { presets ->
-                _ui.update { it.copy(promptPresets = presets) }
+                _ui.update { it.copy(promptPresets = presets).withDerivedBindings() }
                 recomputeWaterline()
             }
         }
@@ -310,27 +388,43 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                 chatStreamManager.activeSessions,
                 _activeConvId,
             ) { sessions, curId ->
-                sessions to curId
-            }.collect { (sessions, curId) ->
-                val streamingIds = sessions.filterValues { it.isStreaming }.keys
+                val streamingIds = sessions.mapNotNullTo(HashSet()) { (k, v) -> if (v.isStreaming) k else null }
                 val targetId = curId ?: _ui.value.activeConversation?.id
                 val activeSession = targetId?.let { sessions[it] }
-                _ui.update {
-                    it.copy(
-                        streamingConversationIds = streamingIds,
-                        isStreaming = activeSession?.isStreaming == true,
-                        streamingStatusHint = activeSession?.statusHint,
-                    )
-                }
+                Triple(
+                    streamingIds,
+                    activeSession?.isStreaming == true,
+                    activeSession?.statusHint,
+                )
             }
+                .distinctUntilChanged()
+                .collect { (streamingIds, isStreaming, statusHint) ->
+                    _ui.update {
+                        it.copy(
+                            streamingConversationIds = streamingIds,
+                            isStreaming = isStreaming,
+                            streamingStatusHint = statusHint,
+                        )
+                    }
+                }
         }
 
         viewModelScope.launch {
-            chatStreamManager.lastWaterlineContext.collect { built ->
-                if (built != null) {
-                    _ui.update { it.copy(waterline = built.summary) }
+            chatStreamManager.lastWaterlineByConv
+                .map { byConv ->
+                    val viewedId = _activeConvId.value ?: _ui.value.activeConversation?.id
+                    viewedId?.let { it to byConv[it] }
                 }
-            }
+                .distinctUntilChanged()
+                .collect { pair ->
+                    val built = pair?.second
+                    val currentViewedId = _activeConvId.value ?: _ui.value.activeConversation?.id
+                    if (pair != null && pair.first == currentViewedId && built != null) {
+                        _ui.update { cur ->
+                            if (cur.waterline == built.summary) cur else cur.copy(waterline = built.summary)
+                        }
+                    }
+                }
         }
 
         viewModelScope.launch {
@@ -346,14 +440,16 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                 if (id == null) {
                     flowOf(Triple<String?, List<ChatMessage>, Pair<ChatMessage?, ChatMessage?>>(null, emptyList(), null to null))
                 } else {
-                    val dbFlow = chatDao.observeMessages(id).map { rows -> rows.map { r -> r.toDomain() } }
-                    combine(
-                        dbFlow,
-                        chatStreamManager.activeSessions,
-                        chatStreamManager.lastCommittedMessages,
-                    ) { dbMsgs, sessions, committed ->
-                        val live = sessions[id]?.streamingMessage
-                        val bridge = committed[id]
+                    val dbFlow = chatDao.observeMessages(id)
+                        .map { rows -> rows.map { r -> r.toDomain() } }
+                        .flowOn(Dispatchers.Default)
+                    val liveFlow = chatStreamManager.activeSessions
+                        .map { it[id]?.streamingMessage }
+                        .distinctUntilChanged()
+                    val bridgeFlow = chatStreamManager.lastCommittedMessages
+                        .map { it[id] }
+                        .distinctUntilChanged()
+                    combine(dbFlow, liveFlow, bridgeFlow) { dbMsgs, live, bridge ->
                         Triple(id, dbMsgs, live to bridge)
                     }
                 }
@@ -509,7 +605,11 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                         platform = p.protocol.wireValue,
                     )
                 }
-                val cap = if (isDirectOnly) null else runCatching { container.onlineChatApi.capabilities() }.getOrElse { err ->
+                val cap = if (isDirectOnly) null else try {
+                    container.onlineChatApi.capabilities()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (err: Throwable) {
                     if (customGroups.isEmpty()) throw err else null
                 }
                 val serverGroups = cap?.groups?.let { FreeQuotaUtils.sortChatGroupsByFreeQuota(it) }.orEmpty()
@@ -526,8 +626,17 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                     )
                 }
                 if (pickedGroupId != null) {
-                    loadModels(pickedGroupId)
+                    val activeModel = _ui.value.activeConversation
+                        ?.takeIf { it.groupId == pickedGroupId }
+                        ?.model
+                    loadModelsForGroup(
+                        groupId = pickedGroupId,
+                        preferredModelId = activeModel,
+                        persistConv = false,
+                    )
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 container.toastController.show(e.message ?: "Failed to load chat groups", isError = true)
             }
@@ -536,27 +645,47 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
 
     fun selectGroup(groupId: Long) {
         _ui.update { it.copy(selectedGroupId = groupId) }
-        viewModelScope.launch {
-            _ui.value.activeConversation?.let { conv ->
-                chatDao.upsertConversation(conv.copy(groupId = groupId, updatedAt = System.currentTimeMillis()).toEntity())
-            }
-            loadModels(groupId)
+        loadModelsJob?.cancel()
+        loadModelsJob = viewModelScope.launch {
+            loadModelsForGroup(
+                groupId = groupId,
+                preferredModelId = null,
+                persistConv = true,
+            )
         }
     }
 
-    private suspend fun loadModels(groupId: Long) {
+    private suspend fun loadModelsForGroup(
+        groupId: Long,
+        preferredModelId: String? = null,
+        persistConv: Boolean = true,
+    ) {
         try {
+            if (persistConv) {
+                _ui.value.activeConversation?.let { conv ->
+                    val fresh = chatDao.getConversationById(conv.id)?.toDomain() ?: conv
+                    chatDao.upsertConversation(
+                        fresh.copy(groupId = groupId, updatedAt = System.currentTimeMillis()).toEntity(),
+                    )
+                }
+            }
             val rawModels = container.onlineChatApi.models(groupId)
+            if (_ui.value.selectedGroupId != groupId) return
             val sorted = FreeQuotaUtils.sortChatModelsByFreeQuota(rawModels)
             val saved = container.settingsStore.currentSettings()
-            val chosen = sorted.firstOrNull { it.id == _ui.value.selectedModelId }?.id
+            val chosen = preferredModelId?.takeIf { it.isNotBlank() }?.let { pref ->
+                sorted.firstOrNull { it.id == pref }?.id ?: pref
+            }
+                ?: sorted.firstOrNull { it.id == _ui.value.selectedModelId }?.id
                 ?: sorted.firstOrNull { it.id == saved.lastChatModel }?.id
                 ?: sorted.firstOrNull()?.id
             _ui.update { it.copy(models = sorted, selectedModelId = chosen) }
-            if (chosen != null) {
+            if (persistConv && chosen != null) {
                 container.settingsStore.setLastChatSelection(groupId, chosen)
             }
             recomputeWaterline()
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Throwable) {
             container.toastController.show(e.message ?: "Failed to load models", isError = true)
         }
@@ -638,11 +767,24 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                 outlineChatReply = if (changed) "" else it.outlineChatReply,
                 polishResult = if (changed) "" else it.polishResult,
                 mutedRecallKeys = if (changed) emptySet() else it.mutedRecallKeys,
-            )
+            ).withDerivedBindings()
         }
         if (conv != null) {
             if (conv.groupId != null && conv.groupId != _ui.value.selectedGroupId) {
-                selectGroup(conv.groupId)
+                _ui.update {
+                    it.copy(
+                        selectedGroupId = conv.groupId,
+                        selectedModelId = conv.model?.takeIf { m -> m.isNotBlank() } ?: it.selectedModelId,
+                    )
+                }
+                loadModelsJob?.cancel()
+                loadModelsJob = viewModelScope.launch {
+                    loadModelsForGroup(
+                        groupId = conv.groupId,
+                        preferredModelId = conv.model,
+                        persistConv = false,
+                    )
+                }
             } else if (!conv.model.isNullOrBlank()) {
                 _ui.update { it.copy(selectedModelId = conv.model) }
             }
@@ -754,7 +896,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                     updatedAt = System.currentTimeMillis(),
                 )
                 chatDao.upsertConversation(updated.toEntity())
-                _ui.update { it.copy(activeConversation = updated) }
+                _ui.update { it.copy(activeConversation = updated).withDerivedBindings() }
                 recomputeWaterline()
             }
         }
@@ -903,11 +1045,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                 summarizedUntilSeq = conv.summarizedUntilSeq,
                 activeWindowStartSeq = conv.params.activeWindowStartSeq,
             )
-            persistReconciliation(reconciled)
-            val rolledConv = TimelineReconciler.applyRollbackToConversation(conv, reconciled)
-            if (rolledConv != conv) {
-                chatDao.upsertConversation(rolledConv.toEntity())
-            }
+            val rolledConv = persistReconciliation(conv, reconciled)
             val convForGen = when {
                 rolledConv.mode == ConversationMode.rp && rolledConv.rp != null -> {
                     val prevAssistant = msgs
@@ -968,11 +1106,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                 summarizedUntilSeq = conv.summarizedUntilSeq,
                 activeWindowStartSeq = conv.params.activeWindowStartSeq,
             )
-            persistReconciliation(reconciled)
-            val rolledConv = TimelineReconciler.applyRollbackToConversation(conv, reconciled)
-            if (rolledConv != conv) {
-                chatDao.upsertConversation(rolledConv.toEntity())
-            }
+            val rolledConv = persistReconciliation(conv, reconciled)
             launchCompletionForConversation(rolledConv)
         }
     }
@@ -1409,12 +1543,53 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         return conv
     }
 
-    private suspend fun persistReconciliation(res: com.gugachat.app.domain.chat.TimelineReconciliationResult) {
-        chatDao.upsertMessages(res.messages.map { it.toEntity() })
+    private suspend fun persistReconciliation(
+        conv: ChatConversation,
+        res: com.gugachat.app.domain.chat.TimelineReconciliationResult,
+    ): ChatConversation = container.database.withTransaction {
+        if (res.messages.isNotEmpty()) chatDao.upsertMessages(res.messages.map { it.toEntity() })
         if (res.ledgerItems.isNotEmpty()) chatDao.upsertMemoryLedgerList(res.ledgerItems.map { it.toEntity() })
         if (res.loreEntries.isNotEmpty()) chatDao.upsertNovelLoreList(res.loreEntries.map { it.toEntity() })
         if (res.episodes.isNotEmpty()) chatDao.upsertMemoryEpisodes(res.episodes.map { it.toEntity() })
         if (res.chapters.isNotEmpty()) chatDao.upsertNovelChapters(res.chapters.map { it.toEntity() })
+        val freshConv = chatDao.getConversationById(conv.id)?.toDomain() ?: conv
+        val rolledConv = TimelineReconciler.applyRollbackToConversation(freshConv, res)
+        if (rolledConv != freshConv) {
+            chatDao.upsertConversation(rolledConv.toEntity())
+        }
+        rolledConv
+    }
+
+    private fun buildV4AssetsCacheKey(
+        conv: ChatConversation,
+        st: ChatUiState,
+    ): V4AssetsCacheKey {
+        val convRefs = st.mountedWorldbookRefs.filter { it.conversationId == conv.id }
+        val mountedIds = convRefs.asSequence().filter { it.enabled }.mapTo(HashSet()) { it.worldbookId }
+        val relevantBooks = st.worldbooks.filter { it.globalEnabled || it.id in mountedIds }
+        val cardUpdated = conv.characterCardId?.let { id -> st.characterCards.firstOrNull { it.id == id }?.updatedAt }
+        val personaUpdated = conv.personaId?.let { id -> st.personas.firstOrNull { it.id == id }?.updatedAt }
+        val presetUpdated = conv.presetId?.let { id -> st.promptPresets.firstOrNull { it.id == id }?.updatedAt }
+        val fingerprint = buildString {
+            convRefs.forEach { ref ->
+                append(ref.worldbookId).append(':').append(ref.enabled).append(':')
+                    .append(ref.sortOrder).append(':').append(ref.updatedAt).append(';')
+            }
+            append('|')
+            relevantBooks.forEach { wb ->
+                append(wb.id).append(':').append(wb.globalEnabled).append(':')
+                    .append(wb.entryCount).append(':').append(wb.updatedAt).append(';')
+            }
+            append('|').append(cardUpdated).append(',').append(personaUpdated).append(',').append(presetUpdated)
+            append('|').append(conv.loreTimedStatesJson.hashCode())
+        }
+        return V4AssetsCacheKey(
+            convId = conv.id,
+            characterCardId = conv.characterCardId,
+            personaId = conv.personaId,
+            presetId = conv.presetId,
+            mountedWorldbooksFingerprint = fingerprint,
+        )
     }
 
     private fun recomputeWaterline() {
@@ -1436,7 +1611,15 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                 ?: effectiveModelId?.let { DirectProtocolCodec.inferChatModelMeta(it).context_window }
                 ?: 128000
             val extCal = assembler.lookupExternalCalibration(settings, effectiveGroupId, effectiveModelId)
-            val v4Assets = assembler.loadV4Assets(conv)
+            val cacheKey = buildV4AssetsCacheKey(conv, st)
+            val v4Assets = if (cacheKey == cachedV4AssetsKey && cachedV4Assets != null) {
+                cachedV4Assets!!
+            } else {
+                assembler.loadV4Assets(conv).also { loaded ->
+                    cachedV4AssetsKey = cacheKey
+                    cachedV4Assets = loaded
+                }
+            }
             val input = ContextBuildInput(
                 conversation = conv,
                 messages = st.messages,
@@ -1464,7 +1647,9 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             val wl = withContext(Dispatchers.Default) {
                 ContextBuilder.computeContextWaterline(input)
             }
-            _ui.update { it.copy(waterline = wl) }
+            if ((_activeConvId.value ?: _ui.value.activeConversation?.id) == conv.id) {
+                _ui.update { cur -> if (cur.waterline == wl) cur else cur.copy(waterline = wl) }
+            }
         }
     }
 

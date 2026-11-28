@@ -508,9 +508,10 @@ class ChatContextAssembler(
                             WireChatContentPartDto(type = "text", text = p.text.orEmpty())
                         }
                     },
+                    isDepthInjection = msg.isDepthInjection,
                 )
             } else {
-                WireChatMessageDto.text(msg.role, msg.textContent.orEmpty())
+                WireChatMessageDto.text(msg.role, msg.textContent.orEmpty(), isDepthInjection = msg.isDepthInjection)
             }
         }
     }

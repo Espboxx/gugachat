@@ -17,7 +17,6 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Book
 import androidx.compose.material.icons.filled.Bookmarks
 import androidx.compose.material.icons.filled.Casino
-import androidx.compose.material.icons.filled.FolderZip
 import androidx.compose.material.icons.filled.Forum
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Psychology
@@ -898,7 +897,6 @@ fun ChatWorkspaceScreen(
                     onOpenMoreMenu = { showMoreMenu = true },
                     moreMenuContent = moreMenu,
                     onToggleTheaterMode = viewModel::toggleRpTheaterMode,
-                    onSetTheaterMode = viewModel::setRpTheaterMode,
                     activeGreetingVariants = state.activeGreetingVariants,
                     greetingActions = actions.rpGreeting,
                     onOpenStudio = { tabIdx ->

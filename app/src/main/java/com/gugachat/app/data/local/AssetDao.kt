@@ -23,6 +23,9 @@ interface AssetDao {
     @Query("SELECT * FROM character_cards WHERE id = :id LIMIT 1")
     suspend fun getCharacterCardById(id: String): CharacterCardEntity?
 
+    @Query("SELECT * FROM character_cards WHERE id IN (:ids)")
+    suspend fun getCharacterCardsByIds(ids: List<String>): List<CharacterCardEntity>
+
     @Query("SELECT * FROM character_cards WHERE contentFingerprint = :fingerprint LIMIT 1")
     suspend fun getCardByFingerprint(fingerprint: String): CharacterCardEntity?
 
@@ -58,6 +61,9 @@ interface AssetDao {
     @Query("SELECT * FROM worldbooks WHERE id = :id LIMIT 1")
     suspend fun getWorldbookById(id: String): WorldbookEntity?
 
+    @Query("SELECT * FROM worldbooks WHERE id IN (:ids)")
+    suspend fun getWorldbooksByIds(ids: List<String>): List<WorldbookEntity>
+
     @Query("SELECT * FROM worldbooks WHERE contentFingerprint = :fingerprint LIMIT 1")
     suspend fun getWorldbookByFingerprint(fingerprint: String): WorldbookEntity?
 
@@ -90,6 +96,9 @@ interface AssetDao {
     @Query("SELECT * FROM worldbook_entries WHERE id = :id LIMIT 1")
     suspend fun getWorldbookEntryById(id: String): WorldbookEntryEntity?
 
+    @Query("SELECT * FROM worldbook_entries WHERE id IN (:ids)")
+    suspend fun getWorldbookEntriesByIds(ids: List<String>): List<WorldbookEntryEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertWorldbookEntry(entity: WorldbookEntryEntity)
 
@@ -101,6 +110,9 @@ interface AssetDao {
 
     @Query("DELETE FROM worldbook_entries WHERE worldbookId = :worldbookId")
     suspend fun deleteEntriesForWorldbook(worldbookId: String)
+
+    @Query("DELETE FROM worldbook_entries WHERE worldbookId IN (:worldbookIds)")
+    suspend fun deleteEntriesForWorldbooks(worldbookIds: List<String>)
 
     @Query("DELETE FROM worldbook_entries")
     suspend fun clearAllWorldbookEntries()
@@ -134,6 +146,9 @@ interface AssetDao {
     @Query("SELECT * FROM personas WHERE id = :id LIMIT 1")
     suspend fun getPersonaById(id: String): PersonaEntity?
 
+    @Query("SELECT * FROM personas WHERE id IN (:ids)")
+    suspend fun getPersonasByIds(ids: List<String>): List<PersonaEntity>
+
     @Query("SELECT * FROM personas WHERE isDefault = 1 LIMIT 1")
     suspend fun getDefaultPersona(): PersonaEntity?
 
@@ -165,6 +180,9 @@ interface AssetDao {
 
     @Query("SELECT * FROM prompt_presets WHERE id = :id LIMIT 1")
     suspend fun getPromptPresetById(id: String): PromptPresetEntity?
+
+    @Query("SELECT * FROM prompt_presets WHERE id IN (:ids)")
+    suspend fun getPromptPresetsByIds(ids: List<String>): List<PromptPresetEntity>
 
     @Query("SELECT * FROM prompt_presets WHERE isDefaultRp = 1 LIMIT 1")
     suspend fun getDefaultRpPromptPreset(): PromptPresetEntity?
@@ -208,6 +226,9 @@ interface AssetDao {
 
     @Query("DELETE FROM conversation_worldbooks WHERE conversationId = :convId")
     suspend fun deleteConversationWorldbooks(convId: String)
+
+    @Query("DELETE FROM conversation_worldbooks WHERE conversationId IN (:convIds)")
+    suspend fun deleteConversationWorldbooksForConversations(convIds: List<String>)
 
     @Query("DELETE FROM conversation_worldbooks WHERE worldbookId = :worldbookId")
     suspend fun deleteWorldbookRefsByWorldbookId(worldbookId: String)

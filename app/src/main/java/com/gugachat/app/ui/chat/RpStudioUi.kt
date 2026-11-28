@@ -14,95 +14,46 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.CallSplit
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.AutoStories
-import androidx.compose.material.icons.filled.Book
-import androidx.compose.material.icons.filled.BookmarkAdd
-import androidx.compose.material.icons.filled.Casino
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.CheckCircleOutline
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Code
-import androidx.compose.material.icons.filled.Collections
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.EmojiEvents
-import androidx.compose.material.icons.filled.ExpandLess
-import androidx.compose.material.icons.filled.ExpandMore
-import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Landscape
-import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Public
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Restore
-import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Theaters
-import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.LocalTextStyle
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -111,31 +62,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.TransformOrigin
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
-import com.gugachat.app.core.storage.LocalMediaPathResolver
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
 import androidx.core.view.WindowCompat
-import coil.compose.rememberAsyncImagePainter
 import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.i18n.LocalAppStrings
 import com.gugachat.app.core.i18n.RpStrings
@@ -143,32 +79,14 @@ import com.gugachat.app.core.i18n.fmt
 import com.gugachat.app.core.theme.AppColors
 import com.gugachat.app.core.theme.GuBadge
 import com.gugachat.app.core.theme.GuBadgeVariant
-import com.gugachat.app.core.theme.GuButton
-import com.gugachat.app.core.theme.GuButtonVariant
-import com.gugachat.app.core.theme.GuCard
-import com.gugachat.app.core.theme.GuCompactSearchBar
-import com.gugachat.app.core.theme.GuEmptyState
-import com.gugachat.app.core.theme.GuGroupedCard
-import com.gugachat.app.core.theme.GuHairlineDivider
-import com.gugachat.app.core.theme.GuIconTile
 import com.gugachat.app.core.theme.GuInlineDeleteConfirmStrip
-import com.gugachat.app.core.theme.GuInlineStepper
-import com.gugachat.app.core.theme.GuLabeledSliderRow
-import com.gugachat.app.core.theme.GuLinearProgressBar
-import com.gugachat.app.core.theme.GuMetaText
 import com.gugachat.app.core.theme.GuModalBottomSheet
-import com.gugachat.app.core.theme.GuPill
-import com.gugachat.app.core.theme.GuPushPopContainer
 import com.gugachat.app.core.theme.GuRemovableChip
-import com.gugachat.app.core.theme.GuSectionHeader
 import com.gugachat.app.core.theme.GuSegmentedControl
-import com.gugachat.app.core.theme.GuSettingsRow
 import com.gugachat.app.core.theme.GuSheetHeader
 import com.gugachat.app.core.theme.GuStatusBanner
 import com.gugachat.app.core.theme.GuStatusTone
 import com.gugachat.app.core.theme.GuSubpageTopBar
-import com.gugachat.app.core.theme.GuSwitchRow
-import com.gugachat.app.core.theme.GuTextField
 import com.gugachat.app.core.theme.LocalAppTheme
 import com.gugachat.app.data.local.CharacterCardEntity
 import com.gugachat.app.data.local.ConversationWorldbookCrossRef
@@ -179,19 +97,12 @@ import com.gugachat.app.domain.chat.RpCgRecord
 import com.gugachat.app.domain.chat.RpCharacter
 import com.gugachat.app.domain.chat.RpConfig
 import com.gugachat.app.domain.chat.RpEndingRecord
-import com.gugachat.app.domain.chat.RpEngine
 import com.gugachat.app.domain.chat.RpGameState
 import com.gugachat.app.domain.chat.RpPlayStyle
-import com.gugachat.app.domain.chat.RpPresets
-import com.gugachat.app.domain.chat.RpRegexEngine
 import com.gugachat.app.domain.chat.RpRegexScript
 import com.gugachat.app.domain.chat.RpSaveSlot
 import com.gugachat.app.domain.chat.RpVisualTheme
-import com.gugachat.app.domain.chat.WorldbookEngine
-import kotlinx.coroutines.delay
-import java.util.Locale
 import java.util.UUID
-import kotlin.math.roundToInt
 
 internal val RP_WORLDBOOK_CATEGORIES = listOf(
     "character",
@@ -249,8 +160,10 @@ internal fun endingBadgeVariant(code: String): GuBadgeVariant = when (code.upper
     else -> GuBadgeVariant.BLUE
 }
 
+private val EXPORT_FILENAME_SANITIZE_RE = Regex("[\\\\/:*?\"<>|\\s]+")
+
 internal fun sanitizeExportFileName(rawTitle: String, fallback: String): String {
-    val clean = rawTitle.trim().replace(Regex("[\\\\/:*?\"<>|\\s]+"), "_").trim('_').take(40)
+    val clean = rawTitle.trim().replace(EXPORT_FILENAME_SANITIZE_RE, "_").trim('_').take(40)
     return clean.ifBlank { fallback }
 }
 
@@ -509,10 +422,6 @@ fun RpStudioSheet(
     var tab by remember(resolvedInitialTab) { mutableIntStateOf(resolvedInitialTab) }
     var route by remember { mutableStateOf<StudioRoute>(StudioRoute.Main) }
 
-    BackHandler(enabled = route !is StudioRoute.Main) {
-        route = StudioRoute.Main
-    }
-
     // Photo / file launchers (live seamlessly without opening any nested Dialog)
     var avatarTargetCharId by remember { mutableStateOf<String?>(null) }
     val npcAvatarPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
@@ -560,6 +469,9 @@ fun RpStudioSheet(
         sheetState = sheetState,
         scrimColor = Color(0x8C060912),
     ) {
+        BackHandler(enabled = route !is StudioRoute.Main) {
+            route = StudioRoute.Main
+        }
         // Ensure status bar clock/icons never turn dark-on-dark above the sheet
         val dialogView = LocalView.current
         SideEffect {
@@ -629,7 +541,6 @@ fun RpStudioSheet(
                             when (tab) {
                                 0 -> RpCastSection(
                                     rp = rp,
-                                    isGeneratingArt = isGeneratingArt,
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .weight(1f),

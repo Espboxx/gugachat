@@ -8,10 +8,8 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
@@ -25,7 +23,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -33,13 +30,10 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -49,14 +43,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.MenuBook
-import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.AutoStories
-import androidx.compose.material.icons.filled.BookmarkAdd
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentCopy
@@ -64,8 +54,6 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.ExpandLess
-import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Landscape
 import androidx.compose.material.icons.filled.MenuBook
@@ -73,14 +61,11 @@ import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Security
-import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -116,36 +101,27 @@ import com.gugachat.app.core.theme.GuBadgeVariant
 import com.gugachat.app.core.theme.GuButton
 import com.gugachat.app.core.theme.GuButtonVariant
 import com.gugachat.app.core.theme.GuCard
-import com.gugachat.app.core.theme.GuCompactSearchBar
 import com.gugachat.app.core.theme.GuCompactSwitch
-import com.gugachat.app.core.theme.GuEmptyState
 import com.gugachat.app.core.theme.GuGroupedCard
-import com.gugachat.app.core.theme.GuHairlineDivider
 import com.gugachat.app.core.theme.GuIconTile
-import com.gugachat.app.core.theme.GuInlineDeleteConfirmStrip
 import com.gugachat.app.core.theme.GuLinearProgressBar
 import com.gugachat.app.core.theme.GuMetaText
 import com.gugachat.app.core.theme.GuModalBottomSheet
 import com.gugachat.app.core.theme.GuPill
-import com.gugachat.app.core.theme.GuPushPopContainer
 import com.gugachat.app.core.theme.GuSectionHeader
 import com.gugachat.app.core.theme.GuSegmentedControl
 import com.gugachat.app.core.theme.GuSheetHeader
-import com.gugachat.app.core.theme.GuSubpageTopBar
 import com.gugachat.app.core.theme.GuSwitchRow
 import com.gugachat.app.core.theme.GuTextField
 import com.gugachat.app.core.theme.LocalAppTheme
-import com.gugachat.app.core.util.FuzzyMatcher
 import com.gugachat.app.domain.chat.ChatMessage
 import com.gugachat.app.domain.chat.NovelChapter
 import com.gugachat.app.domain.chat.NovelConfig
 import com.gugachat.app.domain.chat.NovelDraftOption
-import com.gugachat.app.domain.chat.NovelEngine
 import com.gugachat.app.domain.chat.NovelExport
 import com.gugachat.app.domain.chat.NovelLoreEntry
 import com.gugachat.app.domain.chat.NovelPresets
 import com.gugachat.app.domain.chat.TimelineReconciler
-import java.util.Locale
 
 internal data class NovelGenreVisual(
     val startColor: Color,
@@ -810,6 +786,7 @@ fun NovelStudioSheet(
                             when (tab) {
                                 // ==================== TAB 0: CHAPTERS & BEATS ====================
                                 0 -> {
+                                    val sortedChapters = remember(chapters) { chapters.sortedBy { it.order } }
                                     LazyColumn(
                                         modifier = Modifier
                                             .fillMaxWidth()
@@ -952,7 +929,7 @@ fun NovelStudioSheet(
                                             }
                                         }
 
-                                        items(chapters.sortedBy { it.order }, key = { it.id }) { ch ->
+                                        items(sortedChapters, key = { it.id }) { ch ->
                                             val isActive = ch.id == novel.activeChapterId
                                             val isExpanded = expandedChapterId == ch.id
                                             val isConfirmingDelete = pendingDeleteChapterId == ch.id

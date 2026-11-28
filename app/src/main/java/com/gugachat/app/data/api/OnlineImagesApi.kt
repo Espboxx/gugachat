@@ -2,6 +2,9 @@ package com.gugachat.app.data.api
 
 import com.gugachat.app.core.storage.ApiProviderConfig
 import com.gugachat.app.data.local.DirectImageStore
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonObject
 import okhttp3.MediaType.Companion.toMediaType
@@ -140,16 +143,28 @@ class OnlineImagesApi(
             null
         }
         val resolvedRefs = input.referenceImages + input.referenceAssets.mapNotNull { ref ->
-            runCatching {
+            try {
                 val b = contentBytes(ref.generation_id, ref.image_index, variant = "original")
                 ImageBinaryUpload("ref_${ref.generation_id.take(6)}_${ref.image_index}.png", "image/png", b)
-            }.getOrNull()
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (_: Throwable) {
+                null
+            }
         }
 
         val effectiveInput = input.copy(referenceImages = resolvedRefs)
         val generated = direct.generateImages(provider, effectiveInput, sourceImageBytes = sourceBytes)
         val genId = "direct_${UUID.randomUUID()}"
-        val sourceGen = input.sourceGenerationId?.let { runCatching { get(it) }.getOrNull() }
+        val sourceGen = input.sourceGenerationId?.let { id ->
+            try {
+                get(id)
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (_: Throwable) {
+                null
+            }
+        }
         val rootId = sourceGen?.root_generation_id ?: sourceGen?.id
         val stub = OnlineImageGenerationDto(
             id = genId,
@@ -253,11 +268,13 @@ class OnlineImagesApi(
             body = body.toRequestBody(ApiClient.JSON_MEDIA_TYPE),
             client = client.streamingClient,
         )
-        return resp.use {
-            if (!it.isSuccessful) {
-                throw client.parseHttpError(it.code, it.body?.string().orEmpty())
+        return withContext(Dispatchers.IO) {
+            resp.use {
+                if (!it.isSuccessful) {
+                    throw client.parseHttpError(it.code, it.body?.string().orEmpty())
+                }
+                it.body?.bytes() ?: ByteArray(0)
             }
-            it.body?.bytes() ?: ByteArray(0)
         }
     }
 

@@ -1,5 +1,6 @@
 package com.gugachat.app.data.sync
 
+import com.gugachat.app.core.util.StreamZipUtils
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.EOFException
@@ -436,12 +437,7 @@ object SyncCryptoCodec {
                     decryptStreamWithKey(ins, outs, streamKey)
                 }
             }
-            if (dest.exists() && !dest.delete()) {
-                throw GeneralSecurityException("Unable to replace destination file: ${dest.name}")
-            }
-            if (!tmp.renameTo(dest)) {
-                tmp.copyTo(dest, overwrite = true)
-            }
+            StreamZipUtils.atomicReplace(tmp, dest)
             succeeded = true
         } finally {
             if (!succeeded || tmp.exists()) {

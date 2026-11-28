@@ -73,6 +73,8 @@ object VectorQuantizer {
     const val QUANT_INT8_UNIT = "int8_unit"
     const val QUANT_FP16 = "fp16"
 
+    private val WHITESPACE_COLLAPSE_RE = Regex("\\s+")
+
     fun l2Normalize(vec: FloatArray): FloatArray {
         val n = vec.size
         if (n == 0) return FloatArray(0)
@@ -162,7 +164,7 @@ object VectorQuantizer {
 
     fun normalizeCanonicalText(text: String): String =
         Normalizer.normalize(text, Normalizer.Form.NFKC)
-            .replace(Regex("\\s+"), " ")
+            .replace(WHITESPACE_COLLAPSE_RE, " ")
             .trim()
 }
 

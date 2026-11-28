@@ -15,8 +15,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.gugachat.app.AppContainer
 import com.gugachat.app.AuthSessionState
-import com.gugachat.app.data.api.AppJson
-import com.gugachat.app.data.api.DirectProtocolCodec
 import com.gugachat.app.data.api.ImageBinaryUpload
 import com.gugachat.app.data.api.OnlineImageGenerationDto
 import com.gugachat.app.data.api.OnlineImageKeyDto
@@ -27,7 +25,6 @@ import com.gugachat.app.data.api.OnlineImagePresetInputDto
 import com.gugachat.app.data.api.OnlineImageReferenceIdDto
 import com.gugachat.app.data.api.OnlineImageSubmitInput
 import com.gugachat.app.core.util.newIdempotencyKey
-import com.gugachat.app.domain.chat.FreeQuotaUtils
 import com.gugachat.app.domain.images.ImageEditMode
 import com.gugachat.app.domain.images.MaskPngEncoder
 import com.gugachat.app.domain.images.MaskStroke
@@ -36,6 +33,7 @@ import com.gugachat.app.domain.images.OnlineImageCanvasMath
 import com.gugachat.app.domain.images.OnlineImageNovelAI
 import com.gugachat.app.domain.images.OnlineImageStudioUtils
 import com.gugachat.app.domain.images.OutpaintAnchor
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -44,6 +42,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
@@ -107,6 +106,7 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
     val ui: StateFlow<ImageUiState> = _ui.asStateFlow()
 
     private var pollJob: Job? = null
+    private var loadKeyModelsJob: Job? = null
     private var pendingPortraitCallback: (suspend (ByteArray) -> Unit)? = null
     private var pendingPortraitGenId: String? = null
 
@@ -144,12 +144,15 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
                 }
 
                 if (preferredKey != null) {
+                    loadKeyModelsJob?.cancel()
                     loadModelsForKey(preferredKey)
                 } else {
                     _ui.update { it.copy(models = emptyList(), selectedModelId = null) }
                 }
                 loadPresets()
                 refreshGallery()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 _ui.update { it.copy(isLoadingCapabilities = false) }
                 container.toastController.show(e.message ?: "Failed to load image capabilities", isError = true)
@@ -158,41 +161,67 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun selectKey(keyId: Long) {
+        selectKeyInternal(keyId, preferredModelId = null, preserveNovelaiParams = false)
+    }
+
+    private fun selectKeyInternal(
+        keyId: Long,
+        preferredModelId: String?,
+        preserveNovelaiParams: Boolean,
+    ) {
         if (keyId == 0L) return
         val keyObj = _ui.value.keys.firstOrNull { it.id == keyId } ?: return
         _ui.update { it.copy(selectedKeyId = keyId) }
-        viewModelScope.launch { loadModelsForKey(keyObj) }
+        loadKeyModelsJob?.cancel()
+        loadKeyModelsJob = viewModelScope.launch {
+            loadModelsForKey(
+                key = keyObj,
+                preferredModelId = preferredModelId,
+                preserveNovelaiParams = preserveNovelaiParams,
+            )
+        }
     }
 
-    private suspend fun loadModelsForKey(key: OnlineImageKeyDto) {
+    private suspend fun loadModelsForKey(
+        key: OnlineImageKeyDto,
+        preferredModelId: String? = null,
+        preserveNovelaiParams: Boolean = false,
+    ) {
         val sortedModels = container.imageChannelResolver.resolveModelsForKey(key)
+        if (_ui.value.selectedKeyId != key.id) return
         val saved = container.settingsStore.currentSettings()
-        val chosen = sortedModels.firstOrNull { it.id == _ui.value.selectedModelId }
+        val cleanPreferred = preferredModelId?.trim()?.takeIf { it.isNotEmpty() }
+        val chosen = cleanPreferred?.let { pref -> sortedModels.firstOrNull { it.id == pref } }
+            ?: sortedModels.firstOrNull { it.id == _ui.value.selectedModelId }
             ?: sortedModels.firstOrNull { it.id == saved.lastImageModel }
             ?: sortedModels.firstOrNull()
+        val resolvedModelId = chosen?.id ?: cleanPreferred
         _ui.update { state ->
+            if (state.selectedKeyId != key.id) return@update state
             val prevModel = state.models.firstOrNull { it.id == state.selectedModelId }
-            val nextNai = if (OnlineImageStudioUtils.isNovelAIModel(chosen)) {
-                val targetVersion = OnlineImageNovelAI.detectVersion(
-                    chosen!!.id,
-                    chosen.parameter_schema?.upstream_model,
-                )
-                if (OnlineImageStudioUtils.isNovelAIModel(prevModel)) {
-                    OnlineImageNovelAI.adaptParamsForVersion(state.novelaiParams, targetVersion)
-                } else {
-                    OnlineImageNovelAI.defaultParamsForVersion(targetVersion)
+            val nextNai = when {
+                preserveNovelaiParams -> state.novelaiParams
+                OnlineImageStudioUtils.isNovelAIModel(chosen) -> {
+                    val targetVersion = OnlineImageNovelAI.detectVersion(
+                        chosen!!.id,
+                        chosen.parameter_schema?.upstream_model,
+                    )
+                    if (OnlineImageStudioUtils.isNovelAIModel(prevModel)) {
+                        OnlineImageNovelAI.adaptParamsForVersion(state.novelaiParams, targetVersion)
+                    } else {
+                        OnlineImageNovelAI.defaultParamsForVersion(targetVersion)
+                    }
                 }
-            } else {
-                state.novelaiParams
+                else -> state.novelaiParams
             }
             state.copy(
                 models = sortedModels,
-                selectedModelId = chosen?.id,
+                selectedModelId = resolvedModelId,
                 novelaiParams = nextNai,
             )
         }
-        if (chosen != null) {
-            container.settingsStore.setLastImageSelection(key.id, chosen.id)
+        if (resolvedModelId != null) {
+            container.settingsStore.setLastImageSelection(key.id, resolvedModelId)
         }
     }
 
@@ -325,12 +354,15 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
 
     fun openNovelAICreate() {
         val naiKey = _ui.value.keys.firstOrNull { k -> k.models.any { OnlineImageStudioUtils.isNovelAIModel(it) } }
-        if (naiKey != null && naiKey.id != _ui.value.selectedKeyId) {
-            selectKey(naiKey.id)
-        }
         val naiModel = _ui.value.models.firstOrNull { OnlineImageStudioUtils.isNovelAIModel(it) }
             ?: naiKey?.models?.firstOrNull { OnlineImageStudioUtils.isNovelAIModel(it) }
-        if (naiModel != null) {
+        if (naiKey != null && naiKey.id != _ui.value.selectedKeyId) {
+            selectKeyInternal(
+                keyId = naiKey.id,
+                preferredModelId = naiModel?.id,
+                preserveNovelaiParams = false,
+            )
+        } else if (naiModel != null) {
             selectModel(naiModel.id)
         }
         _ui.update { it.copy(showCreateSheet = true) }
@@ -402,6 +434,8 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
                     }
                 }
                 ensurePollingActive()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 _ui.update { it.copy(isSubmitting = false) }
                 container.toastController.show(e.message ?: "Submit failed", isError = true)
@@ -511,6 +545,8 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
                     )
                 }
                 ensurePollingActive()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 _ui.update { it.copy(isSubmitting = false) }
                 container.toastController.show(e.message ?: "Edit submit failed", isError = true)
@@ -578,6 +614,8 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
                 if (merged.any { OnlineImageStudioUtils.isActiveJobStatus(it.status) }) {
                     ensurePollingActive()
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 val search = _ui.value.searchQuery.trim().ifBlank { null }
                 val filter = _ui.value.activeFilter
@@ -627,6 +665,8 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
                         isLoadingMore = false,
                     )
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (_: Throwable) {
                 _ui.update { it.copy(isLoadingMore = false) }
             }
@@ -667,6 +707,8 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
                     )
                 }
                 ensurePollingActive()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 container.toastController.show(e.message ?: "Regenerate failed", isError = true)
             }
@@ -674,15 +716,13 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun reuseParamsToCreate(gen: OnlineImageGenerationDto) {
-        if (gen.api_key_id != 0L && gen.api_key_id != _ui.value.selectedKeyId) {
-            selectKey(gen.api_key_id)
-        }
         val parsedNai = gen.novelai?.let { raw ->
             runCatching { OnlineImageNovelAI.parseNovelAIParams(raw, modelId = gen.model) }.getOrNull()
         }
+        val targetModelId = gen.model.takeIf { it.isNotBlank() }
         _ui.update { state ->
             state.copy(
-                selectedModelId = gen.model.ifBlank { state.selectedModelId },
+                selectedModelId = targetModelId ?: state.selectedModelId,
                 prompt = gen.prompt,
                 count = gen.requested_count.coerceIn(1, 8),
                 aspectRatio = gen.aspect_ratio.ifBlank { "auto" },
@@ -692,16 +732,22 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
                 showCreateSheet = true,
             )
         }
+        if (gen.api_key_id != 0L && gen.api_key_id != _ui.value.selectedKeyId) {
+            selectKeyInternal(
+                keyId = gen.api_key_id,
+                preferredModelId = targetModelId,
+                preserveNovelaiParams = parsedNai != null,
+            )
+        }
     }
 
     fun deleteGeneration(id: String) {
         viewModelScope.launch {
             try {
                 container.onlineImagesApi.remove(id)
-                _ui.update { cur ->
+                val updated = _ui.updateAndGet { cur ->
                     val rem = cur.generations.filterNot { it.id == id }
                     val nextTotal = (cur.totalWorks - 1).coerceAtLeast(rem.size)
-                    container.updateImageWorksTotal(nextTotal)
                     cur.copy(
                         generations = rem,
                         totalWorks = nextTotal,
@@ -709,6 +755,9 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
                         selectedBatchIds = cur.selectedBatchIds - id,
                     )
                 }
+                container.updateImageWorksTotal(updated.totalWorks)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 container.toastController.show(e.message ?: "Delete failed", isError = true)
             }
@@ -740,9 +789,18 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             _ui.update { it.copy(isBatchBusy = true) }
             try {
-                ids.forEach { id -> runCatching { container.onlineImagesApi.remove(id) } }
+                ids.forEach { id ->
+                    try {
+                        container.onlineImagesApi.remove(id)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Throwable) {
+                    }
+                }
                 refreshGallery()
                 _ui.update { it.copy(batchMode = false, selectedBatchIds = emptySet(), isBatchBusy = false) }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 _ui.update { it.copy(isBatchBusy = false) }
                 container.toastController.show(e.message ?: "Batch delete failed", isError = true)
@@ -761,6 +819,8 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
                     contentResolver.openOutputStream(uri)?.use { it.write(bytes) } ?: error("Cannot write ZIP")
                 }
                 container.toastController.show(successToast)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 container.toastController.show(e.message ?: "ZIP download failed", isError = true)
             } finally {
@@ -794,6 +854,8 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
                     }
                 }
                 container.toastController.show(successToast)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 container.toastController.show(e.message ?: "Save failed", isError = true)
             }
@@ -816,6 +878,8 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 }
                 context.startActivity(Intent.createChooser(intent, "Share Image"))
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 container.toastController.show(e.message ?: "Share failed", isError = true)
             }
@@ -826,9 +890,12 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
 
     fun loadPresets() {
         viewModelScope.launch {
-            runCatching {
+            try {
                 val res = container.onlineImagesApi.listPresets()
                 _ui.update { it.copy(presets = res.items) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Throwable) {
             }
         }
     }
@@ -865,6 +932,8 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
                 val created = container.onlineImagesApi.createPreset(input)
                 _ui.update { cur -> cur.copy(presets = listOf(created) + cur.presets) }
                 container.toastController.show(successToast)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 container.toastController.show(e.message ?: "Save preset failed", isError = true)
             }
@@ -872,22 +941,27 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun applyPreset(preset: OnlineImagePresetDto, toastText: String) {
-        val targetKey = preset.api_key_id?.takeIf { it != 0L }
-        if (targetKey != null && targetKey != _ui.value.selectedKeyId) {
-            selectKey(targetKey)
-        }
         val parsedNai = preset.novelai?.let { raw ->
             runCatching { OnlineImageNovelAI.parseNovelAIParams(raw, modelId = preset.model) }.getOrNull()
         }
+        val targetModelId = preset.model.takeIf { it.isNotBlank() }
         _ui.update { state ->
             state.copy(
-                selectedModelId = preset.model.ifBlank { state.selectedModelId },
+                selectedModelId = targetModelId ?: state.selectedModelId,
                 aspectRatio = preset.aspect_ratio.ifBlank { "auto" },
                 resolution = preset.resolution.ifBlank { "auto" },
                 count = preset.requested_count.coerceIn(1, 8),
                 prompt = if (preset.include_prompt && !preset.prompt.isNullOrBlank()) preset.prompt else state.prompt,
                 novelaiParams = parsedNai ?: state.novelaiParams,
                 showPresetSheet = false,
+            )
+        }
+        val targetKey = preset.api_key_id?.takeIf { it != 0L }
+        if (targetKey != null && targetKey != _ui.value.selectedKeyId) {
+            selectKeyInternal(
+                keyId = targetKey,
+                preferredModelId = targetModelId,
+                preserveNovelaiParams = parsedNai != null,
             )
         }
         container.toastController.show(toastText)
@@ -899,6 +973,8 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
                 container.onlineImagesApi.deletePreset(id)
                 _ui.update { cur -> cur.copy(presets = cur.presets.filterNot { it.id == id }) }
                 container.toastController.show(toastText)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 container.toastController.show(e.message ?: "Delete preset failed", isError = true)
             }
@@ -913,7 +989,7 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
                 if (activeIds.isEmpty()) break
                 delay(2400L)
                 for (id in activeIds) {
-                    runCatching {
+                    try {
                         val fresh = container.onlineImagesApi.get(id)
                         _ui.update { cur ->
                             cur.copy(
@@ -924,6 +1000,9 @@ class ImageViewModel(private val container: AppContainer) : ViewModel() {
                         if (id == pendingPortraitGenId && !OnlineImageStudioUtils.isActiveJobStatus(fresh.status)) {
                             deliverPendingPortraitIfSucceeded(fresh)
                         }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Throwable) {
                     }
                 }
             }

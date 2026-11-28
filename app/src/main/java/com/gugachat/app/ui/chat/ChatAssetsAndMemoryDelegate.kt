@@ -2,6 +2,7 @@ package com.gugachat.app.ui.chat
 
 import android.content.ContentResolver
 import android.net.Uri
+import androidx.room.withTransaction
 import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.i18n.fmt
 import com.gugachat.app.core.storage.LocalMediaPathResolver
@@ -260,22 +261,27 @@ internal class ChatAssetsAndMemoryDelegate(private val host: ChatViewModelHost) 
                 if (out == null) {
                     host.container.toastController.show(s.compactNotEnough)
                 } else {
-                    chatDao.upsertConversation(
-                        conv.copy(
-                            archivedSummary = out.archivedSummary,
-                            summarizedUntilSeq = out.summarizedUntilSeq,
-                            updatedAt = System.currentTimeMillis(),
-                        ).toEntity(),
-                    )
-                    if (out.newEpisodes.isNotEmpty()) {
-                        chatDao.upsertMemoryEpisodes(out.newEpisodes.map { it.toEntity() })
-                    } else {
-                        out.newEpisode?.let { chatDao.upsertMemoryEpisode(it.toEntity()) }
+                    host.container.database.withTransaction {
+                        val fresh = chatDao.getConversationById(conv.id)?.toDomain() ?: conv
+                        chatDao.upsertConversation(
+                            fresh.copy(
+                                archivedSummary = out.archivedSummary,
+                                summarizedUntilSeq = out.summarizedUntilSeq,
+                                updatedAt = System.currentTimeMillis(),
+                            ).toEntity(),
+                        )
+                        if (out.newEpisodes.isNotEmpty()) {
+                            chatDao.upsertMemoryEpisodes(out.newEpisodes.map { it.toEntity() })
+                        } else {
+                            out.newEpisode?.let { chatDao.upsertMemoryEpisode(it.toEntity()) }
+                        }
                     }
                     host.scheduleIndexing(conv.id)
                     host.scheduleWaterline(debounceMs = 0L)
                     host.container.toastController.show(s.compactSuccess)
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 val reason = e.message?.takeIf { it.isNotBlank() } ?: host.strings().common.unknownError
                 host.container.toastController.show(s.compactFailedFallback.fmt("reason" to reason), isError = true)
@@ -359,6 +365,8 @@ internal class ChatAssetsAndMemoryDelegate(private val host: ChatViewModelHost) 
 
                     else -> error(if (isZh) "未识别到可导入的角色卡" else "Unrecognized character card")
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 host.container.toastController.show(
                     host.strings().rp.importFailed.fmt("reason" to (e.message ?: "Unknown")),
@@ -385,14 +393,9 @@ internal class ChatAssetsAndMemoryDelegate(private val host: ChatViewModelHost) 
                     }
 
                     is AssetImportResult.PromptPresetImported -> {
-                        val addedRegex = mergeRegexIntoConvRp(conv, imported.regexScripts)
-                        val fresh = chatDao.getConversationById(conv.id)?.toDomain() ?: conv
-                        chatDao.upsertConversation(
-                            fresh.copy(
-                                presetId = imported.preset.id,
-                                updatedAt = System.currentTimeMillis(),
-                            ).toEntity(),
-                        )
+                        val addedRegex = mergeRegexIntoConvRp(conv, imported.regexScripts) { current ->
+                            current.copy(presetId = imported.preset.id)
+                        }
                         val baseMsg = host.strings().rp.importPresetSuccess.fmt("name" to imported.preset.name)
                         val extras = if (addedRegex > 0) {
                             if (isZh) "+$addedRegex 条正则" else "+$addedRegex regex"
@@ -434,10 +437,12 @@ internal class ChatAssetsAndMemoryDelegate(private val host: ChatViewModelHost) 
                     }
 
                     is AssetImportResult.SettingsImported -> {
-                        val addedRegex = mergeRegexIntoConvRp(conv, imported.regexScripts)
-                        if (conv.rp != null && imported.authorNote.isNotBlank()) {
-                            host.updateRpConfig { cfg ->
-                                cfg.copy(authorNote = mergeTextSection(cfg.authorNote, imported.authorNote))
+                        val addedRegex = mergeRegexIntoConvRp(conv, imported.regexScripts) { current ->
+                            val rp = current.rp
+                            if (rp != null && imported.authorNote.isNotBlank()) {
+                                current.copy(rp = rp.copy(authorNote = mergeTextSection(rp.authorNote, imported.authorNote)))
+                            } else {
+                                current
                             }
                         }
                         host.container.toastController.show(
@@ -465,6 +470,8 @@ internal class ChatAssetsAndMemoryDelegate(private val host: ChatViewModelHost) 
                         else "Unrecognized lorebook, Tavern preset, or regex JSON",
                     )
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 host.container.toastController.show(
                     host.strings().rp.importFailed.fmt("reason" to (e.message ?: "Unknown")),
@@ -498,6 +505,8 @@ internal class ChatAssetsAndMemoryDelegate(private val host: ChatViewModelHost) 
                         if (isZh) "正则脚本均已存在（未重复添加）" else "All regex scripts already exist"
                     },
                 )
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 host.container.toastController.show(
                     host.strings().rp.importFailed.fmt("reason" to (e.message ?: "Unknown")),
@@ -547,6 +556,8 @@ internal class ChatAssetsAndMemoryDelegate(private val host: ChatViewModelHost) 
                         ?: error("Failed to open output stream")
                 }
                 host.container.toastController.show(host.strings().rp.exportDone)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 host.container.toastController.show(e.message ?: "Export failed", isError = true)
             }
@@ -569,6 +580,8 @@ internal class ChatAssetsAndMemoryDelegate(private val host: ChatViewModelHost) 
                     contentResolver = contentResolver,
                 )
                 host.container.toastController.show(host.strings().rp.exportDone)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 host.container.toastController.show(e.message ?: "Export failed", isError = true)
             }
@@ -741,66 +754,77 @@ internal class ChatAssetsAndMemoryDelegate(private val host: ChatViewModelHost) 
             val primaryKeys = keywordsRaw.split(',', '，', '、').map { it.trim() }.filter { it.isNotEmpty() }
                 .ifEmpty { if (alwaysActive) emptyList() else listOf(title.trim()) }
             val secondaryKeys = secondaryKeysRaw.split(',', '，', '、').map { it.trim() }.filter { it.isNotEmpty() }
-            val entryId = existingLegacyId?.takeIf { it.isNotBlank() } ?: UUID.randomUUID().toString()
+            val legacyIdToDelete = existingLegacyId?.takeIf { it.isNotBlank() }
+            val entryId = legacyIdToDelete ?: UUID.randomUUID().toString()
 
-            val existingWb = assetDao.getWorldbookById(wbId)
-            val wb = existingWb ?: WorldbookEntity(
-                id = wbId,
-                name = "${conv.title.take(18)} · 高级词条",
-                description = "Session V2 worldbook triggers",
-                sourceFormat = "gugachat_v2",
-                globalEnabled = false,
-                createdAt = now,
-                updatedAt = now,
-            )
-            if (existingWb == null) {
-                assetDao.upsertWorldbook(wb)
-            }
-            val entry = WorldbookEntryEntity(
-                id = entryId,
-                worldbookId = wbId,
-                uid = entryId.hashCode(),
-                title = title.trim(),
-                content = content.trim(),
-                category = category,
-                keysJson = AppJson.encodeToString(ListSerializer(String.serializer()), primaryKeys),
-                secondaryKeysJson = AppJson.encodeToString(ListSerializer(String.serializer()), secondaryKeys),
-                selectiveLogic = selectiveLogic.coerceIn(0, 3),
-                constant = alwaysActive,
-                enabled = true,
-                position = if (useDepthInjection) WorldbookEngine.POSITION_AT_DEPTH else WorldbookEngine.POSITION_BEFORE_CHAR,
-                depth = depth.coerceIn(0, 16),
-                sticky = sticky.coerceAtLeast(0),
-                cooldown = cooldown.coerceAtLeast(0),
-                delay = delay.coerceAtLeast(0),
-                estimatedTokens = TokenEstimator.estimateItem(title.trim(), content.trim(), overhead = 8, minTokens = 8),
-                createdAt = now,
-                updatedAt = now,
-            )
-            assetDao.upsertWorldbookEntry(entry)
-            val wbEntries = assetDao.getWorldbookEntries(wbId)
-            assetDao.upsertWorldbook(
-                wb.copy(
-                    entryCount = wbEntries.size,
-                    totalEstimatedTokens = wbEntries.sumOf { it.estimatedTokens },
+            val wbEntries = host.container.database.withTransaction {
+                val existingWb = assetDao.getWorldbookById(wbId)
+                val wb = existingWb ?: WorldbookEntity(
+                    id = wbId,
+                    name = "${conv.title.take(18)} · 高级词条",
+                    description = "Session V2 worldbook triggers",
+                    sourceFormat = "gugachat_v2",
+                    globalEnabled = false,
+                    createdAt = now,
                     updatedAt = now,
-                ),
-            )
-            val refs = assetDao.getMountedWorldbookRefs(conv.id)
-            if (refs.none { it.worldbookId == wbId }) {
-                assetDao.replaceMountedWorldbooks(
-                    conv.id,
-                    refs + ConversationWorldbookCrossRef(
-                        conversationId = conv.id,
-                        worldbookId = wbId,
-                        sortOrder = (refs.maxOfOrNull { it.sortOrder } ?: -1) + 1,
-                        enabled = true,
+                )
+                if (existingWb == null) {
+                    assetDao.upsertWorldbook(wb)
+                }
+                val entry = WorldbookEntryEntity(
+                    id = entryId,
+                    worldbookId = wbId,
+                    uid = entryId.hashCode(),
+                    title = title.trim(),
+                    content = content.trim(),
+                    category = category,
+                    keysJson = AppJson.encodeToString(ListSerializer(String.serializer()), primaryKeys),
+                    secondaryKeysJson = AppJson.encodeToString(ListSerializer(String.serializer()), secondaryKeys),
+                    selectiveLogic = selectiveLogic.coerceIn(0, 3),
+                    constant = alwaysActive,
+                    enabled = true,
+                    position = if (useDepthInjection) WorldbookEngine.POSITION_AT_DEPTH else WorldbookEngine.POSITION_BEFORE_CHAR,
+                    depth = depth.coerceIn(0, 16),
+                    sticky = sticky.coerceAtLeast(0),
+                    cooldown = cooldown.coerceAtLeast(0),
+                    delay = delay.coerceAtLeast(0),
+                    estimatedTokens = TokenEstimator.estimateItem(title.trim(), content.trim(), overhead = 8, minTokens = 8),
+                    createdAt = now,
+                    updatedAt = now,
+                )
+                assetDao.upsertWorldbookEntry(entry)
+                val entries = assetDao.getWorldbookEntries(wbId)
+                assetDao.upsertWorldbook(
+                    wb.copy(
+                        entryCount = entries.size,
+                        totalEstimatedTokens = entries.sumOf { it.estimatedTokens },
                         updatedAt = now,
                     ),
                 )
+                val refs = assetDao.getMountedWorldbookRefs(conv.id)
+                if (refs.none { it.worldbookId == wbId }) {
+                    assetDao.replaceMountedWorldbooks(
+                        conv.id,
+                        refs + ConversationWorldbookCrossRef(
+                            conversationId = conv.id,
+                            worldbookId = wbId,
+                            sortOrder = (refs.maxOfOrNull { it.sortOrder } ?: -1) + 1,
+                            enabled = true,
+                            updatedAt = now,
+                        ),
+                    )
+                }
+                if (legacyIdToDelete != null) {
+                    chatDao.deleteNovelLore(legacyIdToDelete)
+                }
+                entries
             }
-            if (existingLegacyId != null) {
-                chatDao.deleteNovelLore(existingLegacyId)
+            if (legacyIdToDelete != null) {
+                host.container.retrievalCoordinator.deleteOwnerVector(
+                    ownerType = RetrievalCoordinator.OWNER_NOVEL_LORE,
+                    ownerId = legacyIdToDelete,
+                    conversationId = conv.id,
+                )
             }
             host.container.retrievalCoordinator.scheduleWorldbookIndexing(host.scope, wbId, wbEntries)
             host.scheduleWaterline()
@@ -950,6 +974,8 @@ internal class ChatAssetsAndMemoryDelegate(private val host: ChatViewModelHost) 
                         },
                     )
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 host.container.toastController.show(e.message ?: host.strings().chat.invalidImage, isError = true)
             }
@@ -986,6 +1012,8 @@ internal class ChatAssetsAndMemoryDelegate(private val host: ChatViewModelHost) 
                         },
                     )
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 host.container.toastController.show(e.message ?: host.strings().chat.invalidImage, isError = true)
             }
@@ -1018,6 +1046,8 @@ internal class ChatAssetsAndMemoryDelegate(private val host: ChatViewModelHost) 
                 host.updateRpConfig { cfg ->
                     cfg.copy(state = cfg.state.copy(sceneImagePath = savedPath, activeCgId = null))
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 host.container.toastController.show(e.message ?: host.strings().chat.invalidImage, isError = true)
             }
@@ -1051,6 +1081,8 @@ internal class ChatAssetsAndMemoryDelegate(private val host: ChatViewModelHost) 
                     )
                     cfg.copy(state = cfg.state.copy(unlockedCgs = cfg.state.unlockedCgs + record))
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 host.container.toastController.show(e.message ?: host.strings().chat.invalidImage, isError = true)
             }
@@ -1234,6 +1266,8 @@ internal class ChatAssetsAndMemoryDelegate(private val host: ChatViewModelHost) 
                 fresh.novel?.let { n ->
                     chatDao.upsertConversation(fresh.copy(novel = n.copy(coverImagePath = relPath), updatedAt = System.currentTimeMillis()).toEntity())
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 host.container.toastController.show(e.message ?: host.strings().chat.invalidImage, isError = true)
             }
@@ -1299,16 +1333,27 @@ internal class ChatAssetsAndMemoryDelegate(private val host: ChatViewModelHost) 
         host.activeConvIdFlow.value = convId
     }
 
-    private fun mergeRegexIntoConvRp(conv: ChatConversation, scripts: List<RpRegexScript>): Int {
-        if (scripts.isEmpty() || conv.rp == null) return 0
+    private suspend fun mergeRegexIntoConvRp(
+        conv: ChatConversation,
+        scripts: List<RpRegexScript>,
+        extraConvTransform: (ChatConversation) -> ChatConversation = { it },
+    ): Int = host.container.database.withTransaction {
+        val fresh = chatDao.getConversationById(conv.id)?.toDomain() ?: conv
         var added = 0
-        host.updateRpConfig { cfg ->
+        val withRegex = if (scripts.isNotEmpty() && fresh.rp != null) {
+            val cfg = fresh.rp
             val existingKeys = cfg.regexScripts.map { "${it.findRegex}|${it.replaceString}" }.toHashSet()
             val toAdd = scripts.filter { existingKeys.add("${it.findRegex}|${it.replaceString}") }
             added = toAdd.size
-            if (toAdd.isEmpty()) cfg else cfg.copy(regexScripts = cfg.regexScripts + toAdd)
+            if (toAdd.isEmpty()) fresh else fresh.copy(rp = cfg.copy(regexScripts = cfg.regexScripts + toAdd))
+        } else {
+            fresh
         }
-        return added
+        val transformed = extraConvTransform(withRegex)
+        if (transformed != fresh) {
+            chatDao.upsertConversation(transformed.copy(updatedAt = System.currentTimeMillis()).toEntity())
+        }
+        added
     }
 
     private fun mergeTextSection(existing: String, incoming: String): String {

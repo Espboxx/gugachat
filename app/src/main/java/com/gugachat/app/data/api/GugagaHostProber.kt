@@ -1,9 +1,12 @@
 package com.gugachat.app.data.api
 
 import com.gugachat.app.core.util.ServerUrlUtils
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
@@ -76,25 +79,30 @@ class GugagaHostProber(baseClient: OkHttpClient) {
 
         val startNs = System.nanoTime()
         return try {
-            probeClient.awaitCall(req).use { resp ->
-                val raw = resp.body?.string().orEmpty()
-                val elapsedMs = ((System.nanoTime() - startNs) / 1_000_000L).coerceAtLeast(1L)
-                if (!resp.isSuccessful) {
-                    return@use HostLatencyResult(
+            val resp = probeClient.awaitCall(req)
+            withContext(Dispatchers.IO) {
+                resp.use { r ->
+                    val raw = r.body?.string().orEmpty()
+                    val elapsedMs = ((System.nanoTime() - startNs) / 1_000_000L).coerceAtLeast(1L)
+                    if (!r.isSuccessful) {
+                        return@use HostLatencyResult(
+                            host = host,
+                            status = HostProbeStatus.FAILED,
+                            latencyMs = elapsedMs,
+                            error = "HTTP ${r.code}",
+                        )
+                    }
+                    val settings = decodePublicSettingsSafe(raw)
+                    HostLatencyResult(
                         host = host,
-                        status = HostProbeStatus.FAILED,
+                        status = HostProbeStatus.REACHABLE,
                         latencyMs = elapsedMs,
-                        error = "HTTP ${resp.code}",
+                        publicSettings = settings,
                     )
                 }
-                val settings = decodePublicSettingsSafe(raw)
-                HostLatencyResult(
-                    host = host,
-                    status = HostProbeStatus.REACHABLE,
-                    latencyMs = elapsedMs,
-                    publicSettings = settings,
-                )
             }
+        } catch (ce: CancellationException) {
+            throw ce
         } catch (e: Exception) {
             HostLatencyResult(
                 host = host,

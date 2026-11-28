@@ -70,10 +70,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.ViewModel
-import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
 import com.gugachat.app.AppContainer
 import com.gugachat.app.AuthSessionState
 import com.gugachat.app.R
@@ -87,7 +87,6 @@ import com.gugachat.app.core.theme.GuGuChatTheme
 import com.gugachat.app.core.theme.GuToastHost
 import com.gugachat.app.core.theme.LocalAppShellController
 import com.gugachat.app.core.theme.LocalAppTheme
-import com.gugachat.app.domain.chat.ConversationMode
 import com.gugachat.app.ui.auth.AuthViewModel
 import com.gugachat.app.ui.auth.LoginScreen
 import com.gugachat.app.ui.chat.ChatViewModel
@@ -103,6 +102,7 @@ import com.gugachat.app.ui.images.ImagePresetSheet
 import com.gugachat.app.ui.images.ImageViewModel
 import com.gugachat.app.ui.profile.ProfileScreen
 import com.gugachat.app.ui.profile.ProfileViewModel
+import com.gugachat.app.ui.studio.AssetHubViewModel
 import com.gugachat.app.ui.update.AppUpdateDialog
 
 private enum class MainTab {
@@ -150,7 +150,12 @@ fun GuGuChatRoot(container: AppContainer) {
                 when (session) {
                     is AuthSessionState.Checking -> SplashGate()
                     is AuthSessionState.LoggedOut -> {
-                        val authVm = remember(container) { AuthViewModel(container) }
+                        val authFactory = remember(container) {
+                            viewModelFactory {
+                                initializer { AuthViewModel(container) }
+                            }
+                        }
+                        val authVm: AuthViewModel = viewModel(key = "auth", factory = authFactory)
                         LoginScreen(viewModel = authVm)
                     }
                     is AuthSessionState.LoggedIn -> {
@@ -234,27 +239,22 @@ private fun AuthenticatedShell(
     val c = theme.colors
 
     val vmFactory = remember(container, sessionIdentityKey) {
-        object : ViewModelProvider.Factory {
-            @Suppress("UNCHECKED_CAST")
-            override fun <T : ViewModel> create(modelClass: Class<T>): T = when {
-                modelClass.isAssignableFrom(ChatViewModel::class.java) -> ChatViewModel(container) as T
-                modelClass.isAssignableFrom(ImageViewModel::class.java) -> ImageViewModel(container) as T
-                modelClass.isAssignableFrom(ProfileViewModel::class.java) -> ProfileViewModel(container) as T
-                modelClass.isAssignableFrom(com.gugachat.app.ui.studio.AssetHubViewModel::class.java) ->
-                    com.gugachat.app.ui.studio.AssetHubViewModel(container) as T
-                else -> error("Unknown ViewModel class: ${modelClass.name}")
-            }
+        viewModelFactory {
+            initializer { ChatViewModel(container) }
+            initializer { ImageViewModel(container) }
+            initializer { ProfileViewModel(container) }
+            initializer { AssetHubViewModel(container) }
         }
     }
     val chatVm: ChatViewModel = viewModel(key = "$sessionIdentityKey:chat", factory = vmFactory)
     val imageVm: ImageViewModel = viewModel(key = "$sessionIdentityKey:image", factory = vmFactory)
     val profileVm: ProfileViewModel = viewModel(key = "$sessionIdentityKey:profile", factory = vmFactory)
-    val assetHubVm: com.gugachat.app.ui.studio.AssetHubViewModel = viewModel(
+    val assetHubVm: AssetHubViewModel = viewModel(
         key = "$sessionIdentityKey:asset_hub",
         factory = vmFactory,
     )
 
-    val chatState by chatVm.ui.collectAsStateWithLifecycle()
+    val shellChrome by chatVm.shellChromeState.collectAsStateWithLifecycle()
     val imageState by imageVm.ui.collectAsStateWithLifecycle()
     val activeImageTasks = remember(imageState.generations) {
         imageState.generations.count {
@@ -273,15 +273,14 @@ private fun AuthenticatedShell(
     var isChatDrawerOpen by remember { mutableStateOf(false) }
     var isScrollHidingBottomBar by remember { mutableStateOf(false) }
 
-    val activeConv = chatState.activeConversation
     LaunchedEffect(activeTab) {
         if (activeTab != MainTab.CHAT) {
             isChatDrawerOpen = false
             isScrollHidingBottomBar = false
         }
     }
-    LaunchedEffect(activeConv?.id, chatState.messages.isEmpty()) {
-        if (chatState.messages.isEmpty()) {
+    LaunchedEffect(shellChrome.activeConvId, shellChrome.hasMessages) {
+        if (!shellChrome.hasMessages) {
             isScrollHidingBottomBar = false
         }
     }
@@ -298,23 +297,19 @@ private fun AuthenticatedShell(
 
     val density = LocalDensity.current
     val isImeVisible = WindowInsets.ime.getBottom(density) > 0
-    val isNovelWorkspace = activeTab == MainTab.CHAT &&
-        activeConv?.mode == ConversationMode.novel &&
-        activeConv.novel != null
-    val isRpWorkspace = activeTab == MainTab.CHAT &&
-        activeConv?.mode == ConversationMode.rp &&
-        activeConv.rp != null
-    val isTheaterImmersive = isRpWorkspace && activeConv?.rp?.theaterMode == true
+    val isNovelWorkspace = activeTab == MainTab.CHAT && shellChrome.isNovelWorkspace
+    val isRpWorkspace = activeTab == MainTab.CHAT && shellChrome.isRpWorkspace
+    val isTheaterImmersive = isRpWorkspace && shellChrome.isTheaterImmersive
     val isRpStreamBar = isRpWorkspace && !isTheaterImmersive
-    val isPureReading = activeTab == MainTab.CHAT && chatState.pureReadingMode
+    val isPureReading = activeTab == MainTab.CHAT && shellChrome.pureReadingMode
     val showBottomBar = !isImeVisible &&
         !isTheaterImmersive &&
         !isPureReading &&
         !isChatDrawerOpen &&
         !isScrollHidingBottomBar
 
-    val novelPaper = remember(chatState.readerPaper, theme.isDark) {
-        resolveNovelPaperTheme(chatState.readerPaper, theme.isDark)
+    val novelPaper = remember(shellChrome.readerPaper, theme.isDark) {
+        resolveNovelPaperTheme(shellChrome.readerPaper, theme.isDark)
     }
     val scaffoldContainerColor = when {
         isNovelWorkspace -> novelPaper.bg
@@ -325,7 +320,7 @@ private fun AuthenticatedShell(
         isNovelWorkspace,
         isRpStreamBar,
         novelPaper,
-        activeConv?.rp?.visualTheme?.accentHex,
+        shellChrome.rpStageAccentHex,
         c,
     ) {
         when {
@@ -340,7 +335,7 @@ private fun AuthenticatedShell(
                 )
             }
             isRpStreamBar -> {
-                val stageAccent = resolveRpStageAccent(activeConv?.rp?.visualTheme?.accentHex)
+                val stageAccent = resolveRpStageAccent(shellChrome.rpStageAccentHex)
                 BottomBarPalette(
                     container = Color(0xEB0B0F1A),
                     divider = stageAccent.copy(alpha = 0.28f),

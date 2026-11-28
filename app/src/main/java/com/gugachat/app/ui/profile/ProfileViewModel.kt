@@ -19,7 +19,6 @@ import com.gugachat.app.core.theme.ColorMode
 import com.gugachat.app.core.theme.ThemeStyle
 import com.gugachat.app.core.theme.UiScalePreset
 import com.gugachat.app.data.api.ApiException
-import com.gugachat.app.data.api.DirectProtocolCodec
 import com.gugachat.app.data.api.DiscoveredRetrievalModel
 import com.gugachat.app.data.api.UpdateChannel
 import com.gugachat.app.data.api.UserDto
@@ -42,6 +41,10 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -83,6 +86,19 @@ data class ProfileUiState(
     val lastWebDavSyncSummary: String? = null,
 )
 
+private data class ProfileSettingsSlice(
+    val serverUrl: String,
+    val themeStyle: ThemeStyle,
+    val colorMode: ColorMode,
+    val uiScale: UiScalePreset,
+    val language: AppLanguage,
+    val memoryBudget: String,
+    val sseAutoRetryCount: Int,
+    val updateChannel: UpdateChannel,
+    val retrievalSettings: RetrievalSettings,
+    val webDavConfig: WebDavSyncConfig,
+)
+
 class ProfileViewModel(private val container: AppContainer) : ViewModel() {
     private val _ui = MutableStateFlow(
         ProfileUiState(
@@ -91,31 +107,24 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
             settings = container.settingsState.value,
             worksCount = container.imageWorksTotal.value,
             providers = container.apiProviderStore.currentProviders(),
-            retrievalSettings = container.settingsState.value.retrievalSettings,
+            retrievalSettings = hydrateRetrievalSettings(container.settingsState.value.retrievalSettings),
             localModelSpecs = container.localEmbeddingModelManager.catalog(),
             localModelStates = container.localEmbeddingModelManager.states.value,
             vectorIndexProgress = container.retrievalCoordinator.indexProgress.value,
             isLocalEmbedLoaded = container.retrievalCoordinator.isLocalSessionLoaded(),
             webDavConfig = container.settingsState.value.webDavConfig,
+            webDavPassword = container.secretVaultStore.getWebDavPassword(),
+            webDavPassphrase = container.secretVaultStore.getWebDavSyncPassphrase(),
         ),
     )
     val ui: StateFlow<ProfileUiState> = _ui.asStateFlow()
 
+    private var imageGroupsJob: Job? = null
+    private var vectorStatsJob: Job? = null
+
     init {
         viewModelScope.launch {
-            withContext(Dispatchers.IO) {
-                container.settingsStore.migratePlaintextRetrievalKeysIfNeeded(container.secretVaultStore)
-            }
-            _ui.update { cur ->
-                cur.copy(
-                    retrievalSettings = hydrateRetrievalSettings(cur.settings.retrievalSettings),
-                    webDavPassword = container.secretVaultStore.getWebDavPassword(),
-                    webDavPassphrase = container.secretVaultStore.getWebDavSyncPassphrase(),
-                )
-            }
-        }
-        viewModelScope.launch {
-            container.secretVaultStore.secretsFlow.collect {
+            container.secretVaultStore.secretsFlow.drop(1).collect {
                 _ui.update { cur ->
                     cur.copy(
                         retrievalSettings = hydrateRetrievalSettings(cur.settings.retrievalSettings),
@@ -134,21 +143,52 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
                         isDirectApiOnly = logged?.isDirectApiOnly == true,
                     )
                 }
-                refreshImageGroupsCount()
             }
         }
         viewModelScope.launch {
-            container.settingsState.collect { st ->
-                _ui.update {
-                    it.copy(
-                        settings = st,
-                        retrievalSettings = hydrateRetrievalSettings(st.retrievalSettings),
+            var prevRetrieval: RetrievalSettings? = null
+            container.settingsState
+                .map { st ->
+                    ProfileSettingsSlice(
+                        serverUrl = st.serverUrl,
+                        themeStyle = st.themeStyle,
+                        colorMode = st.colorMode,
+                        uiScale = st.uiScale,
+                        language = st.language,
+                        memoryBudget = st.memoryBudget,
+                        sseAutoRetryCount = st.sseAutoRetryCount,
+                        updateChannel = st.updateChannel,
+                        retrievalSettings = st.retrievalSettings,
                         webDavConfig = st.webDavConfig,
-                        isLocalEmbedLoaded = container.retrievalCoordinator.isLocalSessionLoaded(),
                     )
                 }
-                refreshVectorStats()
-            }
+                .distinctUntilChanged()
+                .collect { slice ->
+                    val retrievalChanged = prevRetrieval != null && prevRetrieval != slice.retrievalSettings
+                    prevRetrieval = slice.retrievalSettings
+                    _ui.update { cur ->
+                        cur.copy(
+                            settings = cur.settings.copy(
+                                serverUrl = slice.serverUrl,
+                                themeStyle = slice.themeStyle,
+                                colorMode = slice.colorMode,
+                                uiScale = slice.uiScale,
+                                language = slice.language,
+                                memoryBudget = slice.memoryBudget,
+                                sseAutoRetryCount = slice.sseAutoRetryCount,
+                                updateChannel = slice.updateChannel,
+                                retrievalSettings = slice.retrievalSettings,
+                                webDavConfig = slice.webDavConfig,
+                            ),
+                            retrievalSettings = hydrateRetrievalSettings(slice.retrievalSettings),
+                            webDavConfig = slice.webDavConfig,
+                            isLocalEmbedLoaded = container.retrievalCoordinator.isLocalSessionLoaded(),
+                        )
+                    }
+                    if (retrievalChanged) {
+                        refreshVectorStats()
+                    }
+                }
         }
         viewModelScope.launch {
             container.imageWorksTotal.collect { count ->
@@ -158,8 +198,22 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             container.apiProviderStore.providers.collect { list ->
                 _ui.update { it.copy(providers = list) }
-                refreshImageGroupsCount()
             }
+        }
+        viewModelScope.launch {
+            combine(
+                container.authSession.map { session ->
+                    val logged = session as? AuthSessionState.LoggedIn
+                    (logged?.isDirectApiOnly == true) to logged?.user?.id
+                }.distinctUntilChanged(),
+                container.apiProviderStore.providers,
+            ) { sessionKey, providers ->
+                sessionKey to providers
+            }
+                .distinctUntilChanged()
+                .collect {
+                    refreshImageGroupsCount()
+                }
         }
         viewModelScope.launch {
             container.localEmbeddingModelManager.states.collect { states ->
@@ -172,6 +226,7 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
             }
         }
         viewModelScope.launch {
+            var wasRunning = false
             container.retrievalCoordinator.indexProgress.collect { progress ->
                 _ui.update {
                     it.copy(
@@ -179,9 +234,10 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
                         isLocalEmbedLoaded = container.retrievalCoordinator.isLocalSessionLoaded(),
                     )
                 }
-                if (!progress.running) {
+                if (wasRunning && !progress.running) {
                     refreshVectorStats()
                 }
+                wasRunning = progress.running
             }
         }
         refreshVectorStats()
@@ -193,7 +249,8 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
     private fun strings() = if (container.settingsState.value.language == AppLanguage.EN) EnStrings else ZhStrings
 
     private fun refreshImageGroupsCount() {
-        viewModelScope.launch {
+        imageGroupsJob?.cancel()
+        imageGroupsJob = viewModelScope.launch {
             val count = container.imageChannelResolver.countAvailableImageChannels()
             if (count != null) {
                 _ui.update { it.copy(imageGroupsCount = count) }
@@ -212,6 +269,8 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
             try {
                 val models = container.directApiClient.testAndFetchModels(draft.toConfig())
                 _ui.update { it.copy(providerTesting = false, providerTestCount = models.size) }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 _ui.update {
                     it.copy(
@@ -258,11 +317,18 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             _ui.update { it.copy(isRefreshing = true) }
             try {
-                val user = runCatching { container.authApi.getUserProfile() }
-                    .getOrElse { container.authApi.getCurrentUser() }
+                val user = try {
+                    container.authApi.getUserProfile()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Throwable) {
+                    container.authApi.getCurrentUser()
+                }
                 container.setLoggedIn(user)
                 refreshImageGroupsCount()
                 container.toastController.show(if (isZh) "已同步最新账户与能力数据" else "Account & capabilities refreshed")
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 container.toastController.show(e.message ?: "Refresh failed", isError = true)
             } finally {
@@ -471,7 +537,8 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun refreshVectorStats() {
-        viewModelScope.launch {
+        vectorStatsJob?.cancel()
+        vectorStatsJob = viewModelScope.launch {
             val count = container.retrievalCoordinator.countIndexedVectors()
             _ui.update {
                 it.copy(
@@ -528,6 +595,8 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
                     "$successMessage$vaultTag"
                 }
                 container.toastController.show(doneMsg)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 container.toastController.show(e.message ?: "Export failed", isError = true)
             } finally {
@@ -618,6 +687,8 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
                 } else {
                     container.toastController.show(msg.ifBlank { failedMessage }, isError = true)
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 val errMsg = if (e is IllegalArgumentException && !e.message.isNullOrBlank()) {
                     e.message!!
@@ -700,6 +771,8 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
                         webDavRemoteUpdatedAt = res.remoteUpdatedAt,
                     )
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 val err = (e as? WebDavException)?.message ?: e.message ?: if (isZh) "WebDAV 连接失败" else "Connection failed"
                 _ui.update {

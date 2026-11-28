@@ -52,7 +52,7 @@ object ChatBackupCodec {
         if (!hasKnownSection) {
             throw IllegalArgumentException("该文件不是 GuGuChat 本地备份（外部软件导出请使用「导入外部对话 / 剧本」）")
         }
-        return AppJson.decodeFromString(GuGuChatBackupPayload.serializer(), cleaned)
+        return AppJson.decodeFromJsonElement(GuGuChatBackupPayload.serializer(), rootObj)
     }
 
     internal suspend fun restorePayloadInTransaction(
@@ -60,6 +60,8 @@ object ChatBackupCodec {
         memDao: UserMemoryDao,
         payload: GuGuChatBackupPayload,
         replaceExisting: Boolean,
+        assetDao: AssetDao? = null,
+        memoryEmbeddingDao: MemoryEmbeddingDao? = null,
     ) {
         if (replaceExisting) {
             chatDao.clearAllRpSaveSlots()
@@ -68,8 +70,10 @@ object ChatBackupCodec {
             chatDao.clearAllNovelLore()
             chatDao.clearAllNovelChapters()
             chatDao.clearAllMessages()
+            assetDao?.clearAllConversationWorldbooks()
             chatDao.clearAllConversations()
             memDao.clearAll()
+            memoryEmbeddingDao?.deleteAll()
         }
         if (payload.conversations.isNotEmpty()) {
             chatDao.upsertConversations(payload.conversations.map { it.toEntity() })
@@ -105,9 +109,18 @@ object ChatBackupCodec {
         val payload = decodePayload(rawJson)
         val chatDao = db.chatDao()
         val memDao = db.userMemoryDao()
+        val assetDao = db.assetDao()
+        val memoryEmbeddingDao = db.memoryEmbeddingDao()
 
         db.withTransaction {
-            restorePayloadInTransaction(chatDao, memDao, payload, replaceExisting)
+            restorePayloadInTransaction(
+                chatDao = chatDao,
+                memDao = memDao,
+                payload = payload,
+                replaceExisting = replaceExisting,
+                assetDao = assetDao,
+                memoryEmbeddingDao = memoryEmbeddingDao,
+            )
         }
 
         return BackupImportResult(

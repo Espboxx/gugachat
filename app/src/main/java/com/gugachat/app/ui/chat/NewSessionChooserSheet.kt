@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -26,7 +25,6 @@ import androidx.compose.material.icons.filled.Casino
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -148,10 +146,7 @@ fun NewSessionChooserSheet(
                                     )
                                 }
                                 Surface(
-                                    onClick = {
-                                        onSelectCard(card.id)
-                                        onDismiss()
-                                    },
+                                    onClick = { onSelectCard(card.id) },
                                     shape = RoundedCornerShape(999.dp),
                                     color = c.surface,
                                     shadowElevation = 0.8.dp,

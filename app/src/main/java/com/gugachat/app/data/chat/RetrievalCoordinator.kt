@@ -27,6 +27,7 @@ import com.gugachat.app.domain.chat.VectorIndexProgress
 import com.gugachat.app.domain.chat.VectorIndexTarget
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -349,7 +350,7 @@ class RetrievalCoordinator internal constructor(
         pruneStale: Boolean,
     ): Job {
         lateinit var launched: Job
-        launched = scope.launch(Dispatchers.Default) {
+        launched = scope.launch(Dispatchers.Default, start = CoroutineStart.LAZY) {
             try {
                 vectorMemoryIndex.ensureIndexed(
                     targets = targets,
@@ -373,6 +374,10 @@ class RetrievalCoordinator internal constructor(
         if (prev != null && prev !== launched) {
             prev.cancel()
         }
+        launched.invokeOnCompletion {
+            activeIndexJobs.remove(scopeKey, launched)
+        }
+        launched.start()
         return launched
     }
 
@@ -438,7 +443,13 @@ class RetrievalCoordinator internal constructor(
                 RetrievalMode.LEXICAL_ONLY -> null
             }
         if (profileKey == null) return 0
-        return runCatching { vectorMemoryIndex.countByProfile(profileKey) }.getOrDefault(0)
+        return try {
+            vectorMemoryIndex.countByProfile(profileKey)
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (_: Throwable) {
+            0
+        }
     }
 
     suspend fun clearAllVectors() {
@@ -455,8 +466,11 @@ class RetrievalCoordinator internal constructor(
         ownerId: String,
         conversationId: String? = null,
     ) {
-        runCatching {
+        try {
             vectorMemoryIndex.deleteOwner(ownerType, ownerId, conversationId)
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (_: Throwable) {
         }
     }
 

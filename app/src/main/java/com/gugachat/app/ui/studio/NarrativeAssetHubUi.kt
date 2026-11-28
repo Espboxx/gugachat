@@ -1,12 +1,9 @@
 package com.gugachat.app.ui.studio
 
-import android.content.Intent
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,7 +16,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -28,7 +25,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridItemSpan
@@ -39,46 +35,26 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.AutoStories
 import androidx.compose.material.icons.filled.Book
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.ExpandMore
-import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.FolderZip
 import androidx.compose.material.icons.filled.Image
-import androidx.compose.material.icons.filled.Landscape
-import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Public
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
-import androidx.compose.material.icons.filled.TheaterComedy
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -93,14 +69,11 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -116,39 +89,28 @@ import com.gugachat.app.core.theme.GuButton
 import com.gugachat.app.core.theme.GuButtonVariant
 import com.gugachat.app.core.theme.GuCard
 import com.gugachat.app.core.theme.GuCollapsibleSearchBar
-import com.gugachat.app.core.theme.GuCompactSearchBar
 import com.gugachat.app.core.theme.GuConfirmDialog
 import com.gugachat.app.core.theme.GuEmptyState
 import com.gugachat.app.core.theme.GuGroupedCard
-import com.gugachat.app.core.theme.GuHairlineDivider
 import com.gugachat.app.core.theme.GuIconTile
-import com.gugachat.app.core.theme.GuInlineStepper
 import com.gugachat.app.core.theme.GuModalBottomSheet
 import com.gugachat.app.core.theme.GuPill
-import com.gugachat.app.core.theme.GuPushPopContainer
 import com.gugachat.app.core.theme.GuSettingsRow
 import com.gugachat.app.core.theme.GuSheetHeader
-import com.gugachat.app.core.theme.GuSwitchRow
 import com.gugachat.app.core.theme.GuTextField
 import com.gugachat.app.core.theme.LocalAppTheme
-import com.gugachat.app.data.api.AppJson
 import com.gugachat.app.data.local.CharacterCardEntity
 import com.gugachat.app.data.local.PersonaEntity
 import com.gugachat.app.data.local.PromptPresetEntity
 import com.gugachat.app.data.local.WorldbookEntity
-import com.gugachat.app.data.local.WorldbookEntryEntity
 import com.gugachat.app.domain.chat.PromptPresetBlock
 import com.gugachat.app.domain.chat.RpCharacter
 import com.gugachat.app.domain.chat.RpConfig
 import com.gugachat.app.domain.chat.RpEngine
-import com.gugachat.app.domain.chat.RpPlayStyle
 import com.gugachat.app.domain.chat.RpPresetTemplate
 import com.gugachat.app.domain.chat.RpPresets
-import com.gugachat.app.domain.chat.RpRegexScript
-import com.gugachat.app.domain.chat.WorldbookEngine
 import com.gugachat.app.ui.images.ImageViewModel
 import kotlinx.coroutines.launch
-import java.io.File
 
 /**
  * Character & scenario showcase tab inside [CreativeStudioScreen].
@@ -858,10 +820,14 @@ internal fun CharacterCardLaunchSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
     ) {
+        BackHandler(enabled = subpage != LaunchSheetSubpage.MAIN) {
+            subpage = LaunchSheetSubpage.MAIN
+        }
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .fillMaxHeight(0.90f)
+                .imePadding()
                 .navigationBarsPadding(),
         ) {
             when (subpage) {
@@ -1034,7 +1000,7 @@ internal fun CharacterCardLaunchSheet(
 
                                 if (greetings.size > 1) {
                                     LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                        items(greetings.size) { idx ->
+                                        items(greetings.size, key = { it }) { idx ->
                                             GuPill(
                                                 label = if (isZh) "开场 ${idx + 1}" else "Greeting ${idx + 1}",
                                                 selected = selectedGreetingIdx == idx,
@@ -1370,6 +1336,9 @@ internal fun CharacterCardLaunchSheet(
                         onBack = { subpage = LaunchSheetSubpage.MAIN },
                         onClose = onDismiss,
                     )
+                    val nonRegexPresets = remember(presets) {
+                        presets.filter { it.sourceFormat != "sillytavern_regex" }
+                    }
                     LazyColumn(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1405,7 +1374,7 @@ internal fun CharacterCardLaunchSheet(
                                 }
                             }
                         }
-                        items(presets.filter { it.sourceFormat != "sillytavern_regex" }, key = { it.id }) { preset ->
+                        items(nonRegexPresets, key = { it.id }) { preset ->
                             val blocks = remember(preset.blocksJson) {
                                 decodeJsonList<PromptPresetBlock>(preset.blocksJson)
                             }

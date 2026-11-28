@@ -368,6 +368,7 @@ class CharacterCardCodecV04Test {
         override suspend fun getAllConversations(): List<ConversationEntity> = convs.values.toList()
         override suspend fun getConversationsPaged(limit: Int, offset: Int): List<ConversationEntity> = convs.values.drop(offset).take(limit)
         override suspend fun getConversationById(id: String): ConversationEntity? = convs[id]
+        override suspend fun getConversationsByIds(ids: List<String>): List<ConversationEntity> = ids.distinct().mapNotNull { convs[it] }
         override suspend fun upsertConversation(entity: ConversationEntity) {
             upsertCallsAfterInitial++
             convs[entity.id] = entity
@@ -384,6 +385,7 @@ class CharacterCardCodecV04Test {
         override suspend fun upsertMessages(entities: List<MessageEntity>) = Unit
         override suspend fun abortOrphanStreamingMessages() = Unit
         override suspend fun deleteMessagesForConversation(convId: String) = Unit
+        override suspend fun deleteMessagesForConversations(convIds: List<String>) = Unit
         override fun observeNovelChapters(convId: String): Flow<List<NovelChapterEntity>> = flowOf(emptyList())
         override suspend fun getNovelChaptersForConversation(convId: String): List<NovelChapterEntity> = emptyList()
         override suspend fun getAllNovelChapters(): List<NovelChapterEntity> = emptyList()
@@ -392,6 +394,7 @@ class CharacterCardCodecV04Test {
         override suspend fun upsertNovelChapters(entities: List<NovelChapterEntity>) = Unit
         override suspend fun deleteNovelChapter(id: String) = Unit
         override suspend fun deleteNovelChaptersForConversation(convId: String) = Unit
+        override suspend fun deleteNovelChaptersForConversations(convIds: List<String>) = Unit
         override fun observeNovelLore(convId: String): Flow<List<NovelLoreEntity>> = flowOf(emptyList())
         override suspend fun getNovelLoreForConversation(convId: String): List<NovelLoreEntity> = emptyList()
         override suspend fun getAllNovelLore(): List<NovelLoreEntity> = emptyList()
@@ -400,6 +403,7 @@ class CharacterCardCodecV04Test {
         override suspend fun upsertNovelLoreList(entities: List<NovelLoreEntity>) = Unit
         override suspend fun deleteNovelLore(id: String) = Unit
         override suspend fun deleteNovelLoreForConversation(convId: String) = Unit
+        override suspend fun deleteNovelLoreForConversations(convIds: List<String>) = Unit
         override fun observeMemoryLedger(convId: String): Flow<List<MemoryLedgerEntity>> = flowOf(emptyList())
         override suspend fun getMemoryLedgerForConversation(convId: String): List<MemoryLedgerEntity> = emptyList()
         override suspend fun getAllMemoryLedger(): List<MemoryLedgerEntity> = emptyList()
@@ -408,6 +412,7 @@ class CharacterCardCodecV04Test {
         override suspend fun upsertMemoryLedgerList(entities: List<MemoryLedgerEntity>) = Unit
         override suspend fun deleteMemoryLedger(id: String) = Unit
         override suspend fun deleteMemoryLedgerForConversation(convId: String) = Unit
+        override suspend fun deleteMemoryLedgerForConversations(convIds: List<String>) = Unit
         override fun observeMemoryEpisodes(convId: String): Flow<List<MemoryEpisodeEntity>> = flowOf(emptyList())
         override suspend fun getMemoryEpisodesForConversation(convId: String): List<MemoryEpisodeEntity> = emptyList()
         override suspend fun getAllMemoryEpisodes(): List<MemoryEpisodeEntity> = emptyList()
@@ -416,6 +421,7 @@ class CharacterCardCodecV04Test {
         override suspend fun upsertMemoryEpisodes(entities: List<MemoryEpisodeEntity>) = Unit
         override suspend fun deleteMemoryEpisode(id: String) = Unit
         override suspend fun deleteMemoryEpisodesForConversation(convId: String) = Unit
+        override suspend fun deleteMemoryEpisodesForConversations(convIds: List<String>) = Unit
         override fun observeRpSaveSlots(convId: String): Flow<List<RpSaveSlotEntity>> = flowOf(emptyList())
         override suspend fun getRpSaveSlotsForConversation(convId: String): List<RpSaveSlotEntity> = emptyList()
         override suspend fun getAllRpSaveSlots(): List<RpSaveSlotEntity> = emptyList()
@@ -424,8 +430,10 @@ class CharacterCardCodecV04Test {
         override suspend fun upsertRpSaveSlots(entities: List<RpSaveSlotEntity>) = Unit
         override suspend fun deleteRpSaveSlot(id: String) = Unit
         override suspend fun deleteRpSaveSlotsForConversation(convId: String) = Unit
+        override suspend fun deleteRpSaveSlotsForConversations(convIds: List<String>) = Unit
         override suspend fun deleteConversationWorldbooksForConversation(convId: String) = Unit
         override suspend fun deleteMemoryEmbeddingsForConversation(convId: String) = Unit
+        override suspend fun deleteMemoryEmbeddingsForConversations(convIds: List<String>) = Unit
         override suspend fun clearAllConversations() { convs.clear() }
         override suspend fun clearAllMessages() = Unit
         override suspend fun clearAllNovelChapters() = Unit
@@ -447,6 +455,7 @@ class CharacterCardCodecV04Test {
         override suspend fun getAllCharacterCards(): List<CharacterCardEntity> = cards.values.toList()
         override suspend fun getCharacterCardsPaged(limit: Int, offset: Int): List<CharacterCardEntity> = cards.values.drop(offset).take(limit)
         override suspend fun getCharacterCardById(id: String): CharacterCardEntity? = cards[id]
+        override suspend fun getCharacterCardsByIds(ids: List<String>): List<CharacterCardEntity> = ids.distinct().mapNotNull { cards[it] }
         override suspend fun getCardByFingerprint(fingerprint: String): CharacterCardEntity? =
             cards.values.firstOrNull { it.contentFingerprint == fingerprint }
         override suspend fun upsertCharacterCard(entity: CharacterCardEntity) { cards[entity.id] = entity }
@@ -460,6 +469,7 @@ class CharacterCardCodecV04Test {
         override suspend fun getGlobalEnabledWorldbooks(): List<WorldbookEntity> = worldbooks.values.filter { it.globalEnabled }
         override suspend fun getWorldbooksPaged(limit: Int, offset: Int): List<WorldbookEntity> = worldbooks.values.drop(offset).take(limit)
         override suspend fun getWorldbookById(id: String): WorldbookEntity? = worldbooks[id]
+        override suspend fun getWorldbooksByIds(ids: List<String>): List<WorldbookEntity> = ids.distinct().mapNotNull { worldbooks[it] }
         override suspend fun getWorldbookByFingerprint(fingerprint: String): WorldbookEntity? =
             worldbooks.values.firstOrNull { it.contentFingerprint == fingerprint }
         override suspend fun upsertWorldbook(entity: WorldbookEntity) { worldbooks[entity.id] = entity }
@@ -473,16 +483,22 @@ class CharacterCardCodecV04Test {
             wbEntries.values.filter { it.worldbookId in worldbookIds && it.enabled }
         override suspend fun getWorldbookEntriesPaged(limit: Int, offset: Int): List<WorldbookEntryEntity> = wbEntries.values.drop(offset).take(limit)
         override suspend fun getWorldbookEntryById(id: String): WorldbookEntryEntity? = wbEntries[id]
+        override suspend fun getWorldbookEntriesByIds(ids: List<String>): List<WorldbookEntryEntity> = ids.distinct().mapNotNull { wbEntries[it] }
         override suspend fun upsertWorldbookEntry(entity: WorldbookEntryEntity) { wbEntries[entity.id] = entity }
         override suspend fun upsertWorldbookEntries(entities: List<WorldbookEntryEntity>) { entities.forEach { wbEntries[it.id] = it } }
         override suspend fun deleteWorldbookEntry(id: String) { wbEntries.remove(id) }
         override suspend fun deleteEntriesForWorldbook(worldbookId: String) { wbEntries.entries.removeAll { it.value.worldbookId == worldbookId } }
+        override suspend fun deleteEntriesForWorldbooks(worldbookIds: List<String>) {
+            val set = worldbookIds.toHashSet()
+            wbEntries.entries.removeAll { it.value.worldbookId in set }
+        }
         override suspend fun clearAllWorldbookEntries() { wbEntries.clear() }
 
         override fun observePersonas(): Flow<List<PersonaEntity>> = flowOf(personas.values.toList())
         override suspend fun getAllPersonas(): List<PersonaEntity> = personas.values.toList()
         override suspend fun getPersonasPaged(limit: Int, offset: Int): List<PersonaEntity> = personas.values.drop(offset).take(limit)
         override suspend fun getPersonaById(id: String): PersonaEntity? = personas[id]
+        override suspend fun getPersonasByIds(ids: List<String>): List<PersonaEntity> = ids.distinct().mapNotNull { personas[it] }
         override suspend fun getDefaultPersona(): PersonaEntity? = personas.values.firstOrNull { it.isDefault }
         override suspend fun upsertPersona(entity: PersonaEntity) { personas[entity.id] = entity }
         override suspend fun upsertPersonas(entities: List<PersonaEntity>) { entities.forEach { personas[it.id] = it } }
@@ -494,6 +510,7 @@ class CharacterCardCodecV04Test {
         override suspend fun getAllPromptPresets(): List<PromptPresetEntity> = presets.values.toList()
         override suspend fun getPromptPresetsPaged(limit: Int, offset: Int): List<PromptPresetEntity> = presets.values.drop(offset).take(limit)
         override suspend fun getPromptPresetById(id: String): PromptPresetEntity? = presets[id]
+        override suspend fun getPromptPresetsByIds(ids: List<String>): List<PromptPresetEntity> = ids.distinct().mapNotNull { presets[it] }
         override suspend fun getDefaultRpPromptPreset(): PromptPresetEntity? = presets.values.firstOrNull { it.isDefaultRp }
         override suspend fun upsertPromptPreset(entity: PromptPresetEntity) { presets[entity.id] = entity }
         override suspend fun upsertPromptPresets(entities: List<PromptPresetEntity>) { entities.forEach { presets[it.id] = it } }
@@ -507,6 +524,10 @@ class CharacterCardCodecV04Test {
         override suspend fun getConversationWorldbooksPaged(limit: Int, offset: Int): List<ConversationWorldbookCrossRef> = refs.drop(offset).take(limit)
         override suspend fun upsertConversationWorldbooks(refs: List<ConversationWorldbookCrossRef>) { this.refs.addAll(refs) }
         override suspend fun deleteConversationWorldbooks(convId: String) { refs.removeAll { it.conversationId == convId } }
+        override suspend fun deleteConversationWorldbooksForConversations(convIds: List<String>) {
+            val set = convIds.toHashSet()
+            refs.removeAll { it.conversationId in set }
+        }
         override suspend fun deleteWorldbookRefsByWorldbookId(worldbookId: String) { refs.removeAll { it.worldbookId == worldbookId } }
         override suspend fun clearAllConversationWorldbooks() { refs.clear() }
     }

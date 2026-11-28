@@ -1,5 +1,7 @@
 package com.gugachat.app.data.sync
 
+import com.gugachat.app.core.util.StreamZipUtils
+import com.gugachat.app.data.api.ApiException
 import com.gugachat.app.data.api.awaitCall
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -101,7 +103,7 @@ class WebDavClient(
             if (rawXml.isBlank()) {
                 emptyList()
             } else {
-                parseMultiStatusXml(rawXml, targetUrl)
+                parseMultiStatusXml(rawXml)
             }
         }
     }
@@ -279,12 +281,7 @@ class WebDavClient(
                     }
                 }
             }
-            if (destFile.exists() && !destFile.delete()) {
-                throw IOException("Cannot overwrite destination file: ${destFile.path}")
-            }
-            if (!tmp.renameTo(destFile)) {
-                tmp.copyTo(destFile, overwrite = true)
-            }
+            StreamZipUtils.atomicReplace(tmp, destFile)
             succeeded = true
         } finally {
             if (!succeeded || tmp.exists()) {
@@ -315,7 +312,18 @@ class WebDavClient(
                 if (len > maxBytes) {
                     throw WebDavException(413, "WebDAV response exceeds max bytes ($len > $maxBytes)")
                 }
-                body.bytes()
+                try {
+                    body.byteStream().use { ins ->
+                        StreamZipUtils.run {
+                            ins.readBoundedBytesOrThrow(
+                                maxBytes = maxBytes,
+                                errorMessage = "WebDAV response exceeds max bytes (> $maxBytes)",
+                            )
+                        }
+                    }
+                } catch (e: IllegalArgumentException) {
+                    throw WebDavException(413, e.message ?: "WebDAV response exceeds max bytes", e)
+                }
             }
         }
     }
@@ -350,6 +358,13 @@ class WebDavClient(
                 }
             } catch (e: IOException) {
                 if (attempt < maxRetries) {
+                    attempt += 1
+                    delay(computeBackoffDelayMs(attempt, retryAfterHeader = null))
+                    continue
+                }
+                throw e
+            } catch (e: ApiException) {
+                if ((e.status == 0 || e.code == "ERR_NETWORK") && attempt < maxRetries) {
                     attempt += 1
                     delay(computeBackoffDelayMs(attempt, retryAfterHeader = null))
                     continue
@@ -461,7 +476,6 @@ class WebDavClient(
 
         internal fun parseMultiStatusXml(
             xml: String,
-            @Suppress("UNUSED_PARAMETER") requestUrl: String = "",
         ): List<WebDavResource> {
             val trimmed = xml.removePrefix("\uFEFF").trim()
             if (trimmed.isEmpty()) return emptyList()

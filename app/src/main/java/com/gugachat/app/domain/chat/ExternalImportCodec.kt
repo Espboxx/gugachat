@@ -107,6 +107,7 @@ data class ExternalImportBundle(
 
 object ExternalImportCodec {
     private const val MAX_ENTRY_BYTES = 64 * 1024 * 1024
+    private const val MAX_TOTAL_ZIP_EXTRACTED_BYTES = 96L * 1024L * 1024L
 
     private val CHAPTER_HEADING_RE = Regex(
         """^(?:#{1,3}\s+)?(第[零一二三四五六七八九十百千0-9]+[章回节幕卷].*|Chapter\s+\d+.*)$""",
@@ -115,6 +116,10 @@ object ExternalImportCodec {
     private val SPEAKER_BRACKET_RE = Regex("""^【([^】]{1,18})】\s*[:：]?\s*(.+)$""")
     private val SPEAKER_COLON_RE = Regex("""^([\u4e00-\u9fa5A-Za-z0-9_·]{1,14})[：:]\s*(.+)$""")
     private val CHOICE_LINE_RE = Regex("""^(?:[-*•]\s*)?(?:选项|分支|选择)?\s*(?:[A-Da-d]|[1-6])[.、)）:：]\s*(.+)$""")
+    private val CG_CHOICE_HEADER_RE = Regex("""^(?:【)?(?:选项|分支|分支选择|抉择|选择)(?:】)?\s*[:：]?$""")
+    private val CG_NUMBERED_OR_BULLET_CHOICE_RE = Regex("""^(?:[-*•]\s*|(?:[A-Da-d]|[1-6])[.、)）:：]\s*)(.+)$""")
+    private val CG_LETTER_CHOICE_RE = Regex("""^[A-Da-d][.、)）:：].*""")
+    private val MD_THINK_BLOCK_RE = Regex("<think>([\\s\\S]*?)</think>", RegexOption.IGNORE_CASE)
     private val MD_USER_HEADING_RE = Regex("""^(?:#{1,4}\s*)?(?:\*\*)?(?:User|Human|You|用户|我|提问)(?:\*\*)?\s*[:：]?\s*(.*)$""", RegexOption.IGNORE_CASE)
     private val MD_ASSISTANT_HEADING_RE = Regex("""^(?:#{1,4}\s*)?(?:\*\*)?(?:Assistant|AI|DeepSeek|ChatGPT|Claude|Bot|助手|模型|回复)(?:\*\*)?\s*[:：]?\s*(.*)$""", RegexOption.IGNORE_CASE)
 
@@ -279,20 +284,28 @@ object ExternalImportCodec {
 
         val textEntries = LinkedHashMap<String, String>()
         val pngEntries = LinkedHashMap<String, ByteArray>()
+        var totalExtractedBytes = 0L
 
         StreamZipUtils.forEachZipEntry(zipBytes) { norm, zis ->
             val lower = norm.lowercase()
             when {
                 lower.contains("_files/") -> Unit
                 lower.endsWith(".json") || lower.endsWith(".jsonl") || lower.endsWith(".txt") || lower.endsWith(".md") || lower.endsWith(".csv") -> {
-                    val content = zis.readBoundedBytesOrThrow(MAX_ENTRY_BYTES.toLong(), "压缩包内单文件体积超过限制")
+                    val remaining = (MAX_TOTAL_ZIP_EXTRACTED_BYTES - totalExtractedBytes).coerceAtLeast(0L)
+                    val cap = minOf(MAX_ENTRY_BYTES.toLong(), remaining)
+                    val entryBytes = zis.readBoundedBytesOrThrow(cap, "压缩包解压总体积超过限制（96MB）")
+                    totalExtractedBytes += entryBytes.size
+                    val content = entryBytes
                         .toString(Charsets.UTF_8)
                         .removePrefix("\uFEFF")
                         .trim()
                     if (content.isNotEmpty()) textEntries[norm] = content
                 }
                 lower.endsWith(".png") -> {
-                    val b = zis.readBoundedBytesOrThrow(16L * 1024 * 1024, "压缩包内单文件体积超过限制")
+                    val remaining = (MAX_TOTAL_ZIP_EXTRACTED_BYTES - totalExtractedBytes).coerceAtLeast(0L)
+                    val cap = minOf(16L * 1024L * 1024L, remaining)
+                    val b = zis.readBoundedBytesOrThrow(cap, "压缩包解压总体积超过限制（96MB）")
+                    totalExtractedBytes += b.size
                     if (RpCardCodec.isPngBytes(b)) pngEntries[norm] = b
                 }
             }
@@ -2209,8 +2222,6 @@ object ExternalImportCodec {
         var currentChapterTitle = "第一章 开篇"
         var currentBuf = StringBuilder()
         var inChoiceBlock = false
-        val choiceHeaderRe = Regex("""^(?:【)?(?:选项|分支|分支选择|抉择|选择)(?:】)?\s*[:：]?$""")
-        val numberedOrBulletChoiceRe = Regex("""^(?:[-*•]\s*|(?:[A-Da-d]|[1-6])[.、)）:：]\s*)(.+)$""")
 
         fun flushChapter() {
             val body = currentBuf.toString().trim()
@@ -2237,7 +2248,7 @@ object ExternalImportCodec {
                 currentChapterTitle = chMatch.groupValues[1].trim()
                 return@forEach
             }
-            if (choiceHeaderRe.matches(trimmed)) {
+            if (CG_CHOICE_HEADER_RE.matches(trimmed)) {
                 inChoiceBlock = true
                 return@forEach
             }
@@ -2247,7 +2258,7 @@ object ExternalImportCodec {
                     trimmed.startsWith("分支") ||
                     trimmed.startsWith("- 选项") ||
                     trimmed.startsWith("- 分支") ||
-                    trimmed.matches(Regex("""^[A-Da-d][.、)）:：].*"""))
+                    CG_LETTER_CHOICE_RE.matches(trimmed)
                 )
             if (isExplicitChoice) {
                 val label = choiceMatch!!.groupValues[1].trim()
@@ -2257,7 +2268,7 @@ object ExternalImportCodec {
                 return@forEach
             }
             if (inChoiceBlock) {
-                val numMatch = numberedOrBulletChoiceRe.matchEntire(trimmed)
+                val numMatch = CG_NUMBERED_OR_BULLET_CHOICE_RE.matchEntire(trimmed)
                 if (numMatch != null) {
                     val label = numMatch.groupValues[1].trim()
                     if (label.isNotEmpty()) {
@@ -2397,7 +2408,7 @@ object ExternalImportCodec {
             if (raw.isEmpty()) return
             var reasoning = ""
             var body = raw
-            val thinkMatch = Regex("<think>([\\s\\S]*?)</think>", RegexOption.IGNORE_CASE).find(body)
+            val thinkMatch = MD_THINK_BLOCK_RE.find(body)
             if (thinkMatch != null) {
                 reasoning = thinkMatch.groupValues[1].trim()
                 body = body.removeRange(thinkMatch.range).trim()

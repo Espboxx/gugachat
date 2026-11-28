@@ -2,12 +2,21 @@ package com.gugachat.app.core.util
 
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.io.InputStream
 import java.util.zip.ZipInputStream
 import kotlin.math.min
 
 object StreamZipUtils {
     private const val DEFAULT_BUFFER_SIZE = 8192
+
+    fun atomicReplace(tmp: File, dest: File) {
+        dest.parentFile?.mkdirs()
+        if (!tmp.renameTo(dest)) {
+            tmp.copyTo(dest, overwrite = true)
+            tmp.delete()
+        }
+    }
 
     fun isZipBytes(bytes: ByteArray): Boolean =
         bytes.size >= 4 &&

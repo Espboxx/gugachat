@@ -179,4 +179,108 @@ class DirectProtocolCodecTest {
         assertNotNull(gemImages[0].bytes)
         assertArrayEquals(rawImg, gemImages[0].bytes)
     }
+
+    @Test
+    fun jsonNullFields_doNotThrowOrEvaluateAsLiteralNull() {
+        val respDoneNullUsage = DirectProtocolCodec.parseOpenAIResponsesSse(
+            "response.completed",
+            """{"type":"response.completed","response":{"usage":null}}""",
+        )
+        assertTrue(respDoneNullUsage?.done == true)
+        assertNull(respDoneNullUsage?.usage)
+
+        val respNullDelta = DirectProtocolCodec.parseOpenAIResponsesSse(
+            "response.output_text.delta",
+            """{"type":"response.output_text.delta","delta":null}""",
+        )
+        assertEquals("", respNullDelta?.deltaText)
+
+        val respSingle = DirectProtocolCodec.parseOpenAIResponsesSingleJson(
+            """{"output_text":null,"output":[{"type":"message","content":[{"type":"output_text","text":"Hi"}]}],"usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15,"input_tokens_details":null}}""",
+            200,
+        )
+        assertEquals("Hi", respSingle.content)
+        assertEquals(15, respSingle.usage?.total_tokens)
+        assertNull(respSingle.usage?.cache_read_input_tokens)
+
+        val gemNullFinish = DirectProtocolCodec.parseGeminiSseData(
+            """{"candidates":[{"content":{"parts":[{"text":null},{"text":"ok"}]},"finishReason":null}]}""",
+        )
+        assertEquals("ok", gemNullFinish?.deltaText)
+        assertNull(gemNullFinish?.finishReason)
+
+        val errEx = try {
+            DirectProtocolCodec.parseOpenAIResponsesSse(
+                "response.failed",
+                """{"type":"response.failed","response":{"error":{"code":null,"message":"Upstream failure"}}}""",
+            )
+            null
+        } catch (e: ApiException) {
+            e
+        }
+        assertNotNull(errEx)
+        assertEquals("RESPONSES_ERROR", errEx?.code)
+        assertEquals("Upstream failure", errEx?.message)
+
+        val nullMsgErr = try {
+            DirectProtocolCodec.parseAnthropicSingleJson(
+                """{"error":{"code":null,"message":null}}""",
+                500,
+            )
+            null
+        } catch (e: ApiException) {
+            e
+        }
+        assertNotNull(nullMsgErr)
+        assertNull(nullMsgErr?.code)
+        assertEquals("API error", nullMsgErr?.message)
+
+        val nullCodeFallbackErr = try {
+            DirectProtocolCodec.parseOpenAIResponsesSingleJson(
+                """{"error":{"code":null,"type":"rate_limit_error","message":"Too many requests"}}""",
+                429,
+            )
+            null
+        } catch (e: ApiException) {
+            e
+        }
+        assertNotNull(nullCodeFallbackErr)
+        assertEquals("rate_limit_error", nullCodeFallbackErr?.code)
+        assertEquals("Too many requests", nullCodeFallbackErr?.message)
+    }
+
+    @Test
+    fun buildGeminiRequestJson_mergesAssistantPrefillIntoTrailingModelTurn() {
+        val mergedReq = OnlineChatCompletionRequestDto(
+            group_id = -1_000_000_001L,
+            model = "gemini-2.5-flash",
+            messages = listOf(
+                WireChatMessageDto.text("user", "Start a story"),
+                WireChatMessageDto.text("assistant", "Chapter 1: "),
+            ),
+            assistantPrefill = "Once upon a time",
+        )
+        val mergedObj = AppJson.parseToJsonElement(DirectProtocolCodec.buildGeminiRequestJson(mergedReq)).jsonObject
+        val mergedContents = mergedObj["contents"]!!.jsonArray
+        assertEquals(2, mergedContents.size)
+        assertEquals("user", mergedContents[0].jsonObject["role"]?.jsonPrimitive?.content)
+        assertEquals("model", mergedContents[1].jsonObject["role"]?.jsonPrimitive?.content)
+        val modelParts = mergedContents[1].jsonObject["parts"]!!.jsonArray
+        assertEquals(2, modelParts.size)
+        assertEquals("Chapter 1: ", modelParts[0].jsonObject["text"]?.jsonPrimitive?.content)
+        assertEquals("Once upon a time", modelParts[1].jsonObject["text"]?.jsonPrimitive?.content)
+
+        val appendedReq = OnlineChatCompletionRequestDto(
+            group_id = -1_000_000_001L,
+            model = "gemini-2.5-flash",
+            messages = listOf(WireChatMessageDto.text("user", "Hello")),
+            assistantPrefill = "Sure,",
+        )
+        val appendedObj = AppJson.parseToJsonElement(DirectProtocolCodec.buildGeminiRequestJson(appendedReq)).jsonObject
+        val appendedContents = appendedObj["contents"]!!.jsonArray
+        assertEquals(2, appendedContents.size)
+        assertEquals("user", appendedContents[0].jsonObject["role"]?.jsonPrimitive?.content)
+        assertEquals("model", appendedContents[1].jsonObject["role"]?.jsonPrimitive?.content)
+        assertEquals("Sure,", appendedContents[1].jsonObject["parts"]!!.jsonArray[0].jsonObject["text"]?.jsonPrimitive?.content)
+    }
 }

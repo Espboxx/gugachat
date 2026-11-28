@@ -5,6 +5,11 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
+internal data class MemoizedMessageCost(
+    val cleanedText: String,
+    val baseTextTokens: Int,
+)
+
 internal data class ComputedPipeline(
     val active: List<ChatMessage>,
     val allActiveMessages: List<ChatMessage>,
@@ -27,9 +32,45 @@ internal data class ComputedPipeline(
     val tailBundle: TailRecallBundle,
     val dynamicOverhead: Int,
     val waterline: ContextWaterlineSummary,
+    val messageCacheById: Map<String, MemoizedMessageCost> = emptyMap(),
 )
 
 internal object ContextRecallAssembler {
+    fun memoizedMessageCost(
+        msg: ChatMessage,
+        conversation: ChatConversation,
+        modelId: String?,
+        cache: MutableMap<String, MemoizedMessageCost>,
+    ): MemoizedMessageCost = cache.getOrPut(msg.id) {
+        val cleaned = ContextBudgetPolicy.cleanAssistantHistoryText(msg, conversation)
+        val baseTextTokens = ContextBudgetPolicy.estimateTextTokens(cleaned, modelId)
+        MemoizedMessageCost(cleanedText = cleaned, baseTextTokens = baseTextTokens)
+    }
+
+    fun resolveMemoizedMsgTokenCost(
+        msg: ChatMessage,
+        imageDecayed: Boolean,
+        fileDecayed: Boolean,
+        attachmentsById: Map<String, ChatAttachmentMeta>,
+        perTurnFileBudget: Int,
+        modelId: String?,
+        conversation: ChatConversation,
+        cache: Map<String, MemoizedMessageCost>,
+    ): Int {
+        val baseTextTokens = cache[msg.id]?.baseTextTokens ?: run {
+            val cleaned = ContextBudgetPolicy.cleanAssistantHistoryText(msg, conversation)
+            ContextBudgetPolicy.estimateTextTokens(cleaned, modelId)
+        }
+        val imageIds = if (msg.role == "user") {
+            msg.attachmentIds.filter { id -> attachmentsById[id]?.isFile != true }
+        } else {
+            emptyList()
+        }
+        val imgCount = if (!imageDecayed) imageIds.size else 0
+        val fileTok = ContextBudgetPolicy.resolveMsgFileTokens(msg, fileDecayed, attachmentsById, perTurnFileBudget)
+        val base = baseTextTokens + max(0, imgCount) * 765 + 8 + fileTok
+        return if (imageDecayed && imageIds.isNotEmpty()) base + 12 else base
+    }
     private fun emptyScoreResult(): ScoreMemoryResult = ScoreMemoryResult(emptyList(), emptyList(), 0)
 
     private fun toInspectItem(
@@ -618,8 +659,13 @@ internal object ContextRecallAssembler {
             reservedFixedTokens = prefix.systemTokens + dynamicOverhead,
         )
 
+        val messageCacheById = HashMap<String, MemoizedMessageCost>(slice.allActiveMessages.size * 2)
+        for (msg in slice.allActiveMessages) {
+            memoizedMessageCost(msg, conv, effectiveModelId, messageCacheById)
+        }
+
         val msgCosts = slice.active.map { msg ->
-            ContextBudgetPolicy.resolveMsgTokenCost(
+            resolveMemoizedMsgTokenCost(
                 msg = msg,
                 imageDecayed = msg.id in slice.decayedImageMessageIds,
                 fileDecayed = msg.id in slice.decayedFileMessageIds,
@@ -627,6 +673,7 @@ internal object ContextRecallAssembler {
                 perTurnFileBudget = fileTurnBudget,
                 modelId = effectiveModelId,
                 conversation = conv,
+                cache = messageCacheById,
             )
         }
         val msgFileCosts = slice.active.map { msg ->
@@ -677,7 +724,7 @@ internal object ContextRecallAssembler {
         val sentPct = min(100, ((sentTokens.toDouble() / max(1, effectiveLimitTokens)) * 100.0).roundToInt())
 
         val allArchiveHistoryRaw = slice.allActiveMessages.sumOf { msg ->
-            ContextBudgetPolicy.resolveMsgTokenCost(
+            resolveMemoizedMsgTokenCost(
                 msg = msg,
                 imageDecayed = msg.id in slice.decayedImageMessageIds,
                 fileDecayed = msg.id in slice.decayedFileMessageIds,
@@ -685,6 +732,7 @@ internal object ContextRecallAssembler {
                 perTurnFileBudget = fileTurnBudget,
                 modelId = effectiveModelId,
                 conversation = conv,
+                cache = messageCacheById,
             )
         }
         val archiveTotalTokens = ((prefix.systemTokens + draftTokens + dynamicOverhead + allArchiveHistoryRaw) * calibration).roundToInt()
@@ -802,6 +850,7 @@ internal object ContextRecallAssembler {
             tailBundle = tailBundle,
             dynamicOverhead = dynamicOverhead,
             waterline = waterline,
+            messageCacheById = messageCacheById,
         )
     }
 }

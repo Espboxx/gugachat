@@ -11,6 +11,7 @@ import com.gugachat.app.domain.chat.ExternalImportBundle
 import com.gugachat.app.domain.chat.ExternalImportCodec
 import com.gugachat.app.domain.chat.ExternalImportSource
 import com.gugachat.app.domain.chat.ExternalImportedItem
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -197,7 +198,7 @@ object ExternalImportService {
                 val downloaded = HashMap<String, String>()
                 pending.forEach { npc ->
                     val url = npc.avatar ?: return@forEach
-                    runCatching {
+                    try {
                         val req = Request.Builder()
                             .url(url)
                             .get()
@@ -221,6 +222,9 @@ object ExternalImportService {
                                 file.absolutePath,
                             ) ?: "rp_media/${file.name}"
                         }
+                    } catch (ce: CancellationException) {
+                        throw ce
+                    } catch (_: Throwable) {
                     }
                 }
 

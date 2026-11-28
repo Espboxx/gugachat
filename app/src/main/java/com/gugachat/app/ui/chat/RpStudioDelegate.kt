@@ -1,5 +1,6 @@
 package com.gugachat.app.ui.chat
 
+import androidx.room.withTransaction
 import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.i18n.fmt
 import com.gugachat.app.data.local.toDomain
@@ -209,29 +210,31 @@ internal class RpStudioDelegate(private val host: ChatViewModelHost) {
                 host.container.toastController.show(host.strings().common.unknownError, isError = true)
                 return@launchWithGroupModelAndFlag
             }
-            val msgs = chatDao.getMessagesForConversation(conv.id).map { it.toDomain() }
-            val lastAssistant = TimelineReconciler.activeMessages(msgs).lastOrNull { it.role == "assistant" }
-            if (lastAssistant != null) {
-                val updatedVariants = if (lastAssistant.variants.isNotEmpty()) {
-                    val activeIdx = lastAssistant.activeVariantIndex.coerceIn(0, lastAssistant.variants.lastIndex)
-                    lastAssistant.variants.mapIndexed { idx, v ->
-                        if (idx == activeIdx) v.copy(rpChoices = newChoices) else v
+            host.container.database.withTransaction {
+                val msgs = chatDao.getMessagesForConversation(conv.id).map { it.toDomain() }
+                val lastAssistant = TimelineReconciler.activeMessages(msgs).lastOrNull { it.role == "assistant" }
+                if (lastAssistant != null) {
+                    val updatedVariants = if (lastAssistant.variants.isNotEmpty()) {
+                        val activeIdx = lastAssistant.activeVariantIndex.coerceIn(0, lastAssistant.variants.lastIndex)
+                        lastAssistant.variants.mapIndexed { idx, v ->
+                            if (idx == activeIdx) v.copy(rpChoices = newChoices) else v
+                        }
+                    } else {
+                        lastAssistant.variants
                     }
-                } else {
-                    lastAssistant.variants
+                    chatDao.upsertMessage(
+                        lastAssistant.copy(rpChoices = newChoices, variants = updatedVariants).toEntity(),
+                    )
                 }
-                chatDao.upsertMessage(
-                    lastAssistant.copy(rpChoices = newChoices, variants = updatedVariants).toEntity(),
+                val freshConv = chatDao.getConversationById(conv.id)?.toDomain() ?: conv
+                val freshRp = freshConv.rp ?: rp
+                chatDao.upsertConversation(
+                    freshConv.copy(
+                        rp = freshRp.copy(pendingChoices = newChoices),
+                        updatedAt = System.currentTimeMillis(),
+                    ).toEntity(),
                 )
             }
-            val freshConv = chatDao.getConversationById(conv.id)?.toDomain() ?: conv
-            val freshRp = freshConv.rp ?: rp
-            chatDao.upsertConversation(
-                freshConv.copy(
-                    rp = freshRp.copy(pendingChoices = newChoices),
-                    updatedAt = System.currentTimeMillis(),
-                ).toEntity(),
-            )
         }
     }
 
@@ -294,7 +297,7 @@ internal class RpStudioDelegate(private val host: ChatViewModelHost) {
                         activeConversation = updatedConv,
                         draftRpKind = choice.inputKind,
                         draftDiceRoll = roll,
-                    )
+                    ).withDerivedBindings()
                 }
                 host.sendMessage(overrideText = choice.actionText)
             }
@@ -531,17 +534,22 @@ internal class RpStudioDelegate(private val host: ChatViewModelHost) {
     fun loadRpSaveSlotRewind(slot: RpSaveSlot) {
         val conv = host.uiFlow.value.activeConversation ?: return
         host.scope.launch {
-            chatDao.deleteMessagesForConversation(conv.id)
-            chatDao.deleteMemoryLedgerForConversation(conv.id)
-            chatDao.deleteMemoryEpisodesForConversation(conv.id)
-            chatDao.upsertMessages(slot.activeMessagesSnapshot.map { it.copy(conversationId = conv.id).toEntity() })
-            if (slot.ledgerItems.isNotEmpty()) {
-                chatDao.upsertMemoryLedgerList(slot.ledgerItems.map { it.copy(conversationId = conv.id).toEntity() })
+            host.container.database.withTransaction {
+                val fresh = chatDao.getConversationById(conv.id)?.toDomain() ?: conv
+                chatDao.deleteMessagesForConversation(conv.id)
+                chatDao.deleteMemoryLedgerForConversation(conv.id)
+                chatDao.deleteMemoryEpisodesForConversation(conv.id)
+                chatDao.deleteMemoryEmbeddingsForConversation(conv.id)
+                chatDao.upsertMessages(slot.activeMessagesSnapshot.map { it.copy(conversationId = conv.id).toEntity() })
+                if (slot.ledgerItems.isNotEmpty()) {
+                    chatDao.upsertMemoryLedgerList(slot.ledgerItems.map { it.copy(conversationId = conv.id).toEntity() })
+                }
+                if (slot.episodes.isNotEmpty()) {
+                    chatDao.upsertMemoryEpisodes(slot.episodes.map { it.copy(conversationId = conv.id).toEntity() })
+                }
+                chatDao.upsertConversation(fresh.copy(rp = slot.rpConfig, updatedAt = System.currentTimeMillis()).toEntity())
             }
-            if (slot.episodes.isNotEmpty()) {
-                chatDao.upsertMemoryEpisodes(slot.episodes.map { it.copy(conversationId = conv.id).toEntity() })
-            }
-            chatDao.upsertConversation(conv.copy(rp = slot.rpConfig, updatedAt = System.currentTimeMillis()).toEntity())
+            host.scheduleIndexing(conv.id)
             host.container.toastController.show(host.strings().rp.loadedRewindToast.fmt("name" to slot.name))
         }
     }

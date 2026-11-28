@@ -35,15 +35,45 @@ internal object StreamingTagStripper {
 
     fun isStreamingPartialMeta(
         raw: String,
+        completeTagRe: Regex,
         unclosedTagRe: Regex,
         knownTagTokens: List<String>,
         maxTailLength: Int = 16,
+    ): Boolean = isStreamingPartialMetaInternal(
+        raw = raw,
+        completeTagRe = completeTagRe,
+        unclosedTagRe = unclosedTagRe,
+        knownTagTokens = knownTagTokens,
+        maxTailLength = maxTailLength,
+    )
+
+    fun isStreamingPartialMeta(
+        raw: String,
+        unclosedTagRe: Regex,
+        knownTagTokens: List<String>,
+        maxTailLength: Int = 16,
+    ): Boolean = isStreamingPartialMetaInternal(
+        raw = raw,
+        completeTagRe = null,
+        unclosedTagRe = unclosedTagRe,
+        knownTagTokens = knownTagTokens,
+        maxTailLength = maxTailLength,
+    )
+
+    private fun isStreamingPartialMetaInternal(
+        raw: String,
+        completeTagRe: Regex?,
+        unclosedTagRe: Regex,
+        knownTagTokens: List<String>,
+        maxTailLength: Int,
     ): Boolean {
         if (raw.isEmpty()) return false
-        if (unclosedTagRe.containsMatchIn(raw)) return true
-        val lastLt = raw.lastIndexOf('<')
+        val stripped = if (completeTagRe != null) completeTagRe.replace(raw, "") else raw
+        if (stripped.isEmpty()) return false
+        if (unclosedTagRe.containsMatchIn(stripped)) return true
+        val lastLt = stripped.lastIndexOf('<')
         if (lastLt >= 0) {
-            val tail = raw.substring(lastLt).lowercase()
+            val tail = stripped.substring(lastLt).lowercase()
             if (tail.length in 2..maxTailLength && knownTagTokens.any { it.startsWith(tail) }) {
                 return true
             }

@@ -18,9 +18,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -64,19 +62,15 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
-import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -136,7 +130,6 @@ fun RpWorkspaceScreen(
     onOpenMoreMenu: () -> Unit,
     moreMenuContent: @Composable () -> Unit,
     onToggleTheaterMode: () -> Unit,
-    onSetTheaterMode: (Boolean) -> Unit,
     activeGreetingVariants: List<String> = emptyList(),
     greetingActions: RpGreetingActions? = null,
     onOpenStudio: (Int) -> Unit,
@@ -386,12 +379,10 @@ fun RpWorkspaceScreen(
                                 onFrontendAdjustAffinity = onFrontendAdjustAffinity,
                                 onToast = onToast,
                                 externalHideUi = hideUi,
-                                onExternalHideUiChange = { hideUi = it },
                                 externalShowHistory = showHistory,
                                 onExternalShowHistoryChange = { showHistory = it },
                                 isComposerExpanded = showTheaterComposer,
                                 onToggleComposer = { showTheaterComposer = !showTheaterComposer },
-                                onOpenQuickControl = { showQuickPopover = true },
                                 activeGreetingVariants = activeGreetingVariants,
                                 greetingActions = greetingActions,
                                 modifier = Modifier.fillMaxSize(),
@@ -1009,7 +1000,7 @@ private fun RpQuickControlOverlayPopover(
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
                     Text(
-                        text = formatRpActHeader(rp.state.actNumber, rp.state.chapterTitle, isZh),
+                        text = formatRpActChapter(rp.state.actNumber, rp.state.chapterTitle, isZh),
                         color = Color(0xFFFFF4DC),
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Bold,

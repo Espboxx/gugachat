@@ -1,16 +1,20 @@
 package com.gugachat.app.data.api
 
 import com.gugachat.app.core.util.HashUtils
+import com.gugachat.app.core.util.StreamZipUtils
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.job
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.security.MessageDigest
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
@@ -101,7 +105,7 @@ internal object ResumableFileDownloader {
                     0L
                 }
                 if (options.resumable) {
-                    onProgress(existingBytes, existingBytes)
+                    onProgress(existingBytes, maxOf(existingBytes, options.expectedSizeBytes))
                 }
 
                 val reqBuilder = Request.Builder()
@@ -115,103 +119,174 @@ internal object ResumableFileDownloader {
 
                 val response = dlClient.awaitCall(reqBuilder.build())
                 var resumedThisAttempt = false
+                var inlineShaHex: String? = null
                 val needsFreshRestart = withContext(Dispatchers.IO) {
                     response.use { resp ->
-                        if (options.resumable && resp.code == 416) {
-                            val rangeTotal = parseTotalFromContentRange(resp.header("Content-Range"))
-                            if (rangeTotal != null && rangeTotal == existingBytes && existingBytes > 0L) {
-                                resumedThisAttempt = true
-                                return@withContext false
-                            }
-                            partFile.delete()
-                            return@withContext true
+                        val cancelHandle = currentCoroutineContext().job.invokeOnCompletion {
+                            if (it != null) runCatching { resp.close() }
                         }
-
-                        val validStatus = if (options.resumable) {
-                            resp.code == 200 || resp.code == 206
-                        } else {
-                            resp.isSuccessful
-                        }
-                        if (!validStatus) {
-                            throw IllegalStateException("HTTP ${resp.code}")
-                        }
-
-                        val contentType = resp.header("Content-Type").orEmpty().lowercase(Locale.ROOT)
-                        if (contentType.contains("text/html")) {
-                            if (options.resumable) partFile.delete()
-                            throw IllegalStateException("Unexpected HTML response")
-                        }
-
-                        val isPartial = options.resumable && resp.code == 206
-                        val appendMode: Boolean
-                        val startOffset: Long
-                        val totalBytes: Long
-
-                        if (isPartial) {
-                            val parsedRange = parseContentRange(resp.header("Content-Range"))
-                            if (parsedRange != null && parsedRange.start != existingBytes) {
+                        try {
+                            if (options.resumable && resp.code == 416) {
+                                val rangeTotal = parseTotalFromContentRange(resp.header("Content-Range"))
+                                if (rangeTotal != null && rangeTotal == existingBytes && existingBytes > 0L) {
+                                    resumedThisAttempt = true
+                                    return@use false
+                                }
                                 partFile.delete()
-                                return@withContext true
+                                return@use true
                             }
-                            appendMode = existingBytes > 0L
-                            resumedThisAttempt = appendMode
-                            startOffset = existingBytes
-                            val bodyLen = resp.body?.contentLength()?.takeIf { it > 0L } ?: -1L
-                            totalBytes = parsedRange?.total
-                                ?: if (bodyLen > 0L) existingBytes + bodyLen else options.expectedSizeBytes
-                        } else {
-                            appendMode = false
-                            startOffset = 0L
-                            totalBytes = resp.body?.contentLength()?.takeIf { it > 0L } ?: options.expectedSizeBytes
-                        }
 
-                        val body = resp.body ?: throw IllegalStateException("Empty download body")
-                        val buf = ByteArray(options.bufferSizeBytes)
-                        var downloaded = startOffset
-                        var lastEmitMs = 0L
-                        var checkedPrefix = startOffset > 0L
+                            val validStatus = if (options.resumable) {
+                                resp.code == 200 || resp.code == 206
+                            } else {
+                                resp.isSuccessful
+                            }
+                            if (!validStatus) {
+                                throw IllegalStateException("HTTP ${resp.code}")
+                            }
 
-                        body.byteStream().use { input ->
-                            FileOutputStream(partFile, appendMode).use { output ->
-                                while (true) {
-                                    currentCoroutineContext().ensureActive()
-                                    val n = input.read(buf)
-                                    if (n <= 0) break
-                                    if (!checkedPrefix) {
-                                        checkedPrefix = true
-                                        options.verifyFirstChunk?.let { validator ->
+                            val contentType = resp.header("Content-Type").orEmpty().lowercase(Locale.ROOT)
+                            if (contentType.contains("text/html")) {
+                                if (options.resumable) partFile.delete()
+                                throw IllegalStateException("Unexpected HTML response")
+                            }
+
+                            val isPartial = options.resumable && resp.code == 206
+                            val rawBodyLen = resp.body?.contentLength()?.takeIf { it > 0L } ?: -1L
+                            val appendMode: Boolean
+                            val startOffset: Long
+                            val totalBytes: Long
+                            val serverTotal: Long
+
+                            if (isPartial) {
+                                val parsedRange = parseContentRange(resp.header("Content-Range"))
+                                if (parsedRange == null || parsedRange.start != existingBytes) {
+                                    partFile.delete()
+                                    return@use true
+                                }
+                                appendMode = existingBytes > 0L
+                                resumedThisAttempt = appendMode
+                                startOffset = existingBytes
+                                totalBytes = parsedRange.total
+                                    ?: if (rawBodyLen > 0L) existingBytes + rawBodyLen else options.expectedSizeBytes
+                                serverTotal = if (rawBodyLen > 0L) existingBytes + rawBodyLen else -1L
+                            } else {
+                                appendMode = false
+                                startOffset = 0L
+                                totalBytes = if (rawBodyLen > 0L) rawBodyLen else options.expectedSizeBytes
+                                serverTotal = rawBodyLen
+                            }
+
+                            val body = resp.body ?: throw IllegalStateException("Empty download body")
+                            val buf = ByteArray(options.bufferSizeBytes)
+                            var downloaded = startOffset
+                            var lastEmitMs = 0L
+                            val verifier = if (startOffset == 0L) options.verifyFirstChunk else null
+                            val pendingPrefix = if (verifier != null) ByteArrayOutputStream(64) else null
+                            var checkedPrefix = verifier == null
+                            val shaDigest = if (startOffset == 0L && normalizedExpectedSha != null) {
+                                MessageDigest.getInstance("SHA-256")
+                            } else {
+                                null
+                            }
+
+                            body.byteStream().use { input ->
+                                FileOutputStream(partFile, appendMode).use { output ->
+                                    fun flushPendingPrefixOrThrow() {
+                                        val acc = pendingPrefix ?: return
+                                        val bytes = acc.toByteArray()
+                                        if (bytes.isNotEmpty()) {
                                             try {
-                                                validator(buf, n)
+                                                verifier!!(bytes, bytes.size)
                                             } catch (t: Throwable) {
                                                 output.close()
                                                 partFile.delete()
                                                 throw t
                                             }
+                                            downloaded += bytes.size
+                                            if (downloaded > options.maxBytes) {
+                                                output.close()
+                                                partFile.delete()
+                                                throw IllegalStateException(options.sizeLimitErrorMessage)
+                                            }
+                                            shaDigest?.update(bytes, 0, bytes.size)
+                                            output.write(bytes, 0, bytes.size)
+                                        }
+                                        checkedPrefix = true
+                                    }
+
+                                    while (true) {
+                                        currentCoroutineContext().ensureActive()
+                                        val n = input.read(buf)
+                                        if (n <= 0) {
+                                            if (!checkedPrefix && pendingPrefix != null && pendingPrefix.size() > 0) {
+                                                flushPendingPrefixOrThrow()
+                                            }
+                                            break
+                                        }
+                                        if (!checkedPrefix && pendingPrefix != null) {
+                                            if (pendingPrefix.size() == 0 && n >= 4) {
+                                                checkedPrefix = true
+                                                try {
+                                                    verifier!!(buf, n)
+                                                } catch (t: Throwable) {
+                                                    output.close()
+                                                    partFile.delete()
+                                                    throw t
+                                                }
+                                            } else {
+                                                if (pendingPrefix.size().toLong() + n > options.maxBytes) {
+                                                    output.close()
+                                                    partFile.delete()
+                                                    throw IllegalStateException(options.sizeLimitErrorMessage)
+                                                }
+                                                pendingPrefix.write(buf, 0, n)
+                                                if (pendingPrefix.size() >= 4) {
+                                                    flushPendingPrefixOrThrow()
+                                                    val now = System.currentTimeMillis()
+                                                    if (now - lastEmitMs >= options.progressIntervalMs || (totalBytes > 0L && downloaded >= totalBytes)) {
+                                                        lastEmitMs = now
+                                                        onProgress(downloaded, if (totalBytes > 0L) totalBytes else downloaded)
+                                                    }
+                                                }
+                                                continue
+                                            }
+                                        }
+                                        downloaded += n
+                                        if (downloaded > options.maxBytes) {
+                                            output.close()
+                                            partFile.delete()
+                                            throw IllegalStateException(options.sizeLimitErrorMessage)
+                                        }
+                                        shaDigest?.update(buf, 0, n)
+                                        output.write(buf, 0, n)
+
+                                        val now = System.currentTimeMillis()
+                                        if (now - lastEmitMs >= options.progressIntervalMs || (totalBytes > 0L && downloaded >= totalBytes)) {
+                                            lastEmitMs = now
+                                            onProgress(downloaded, if (totalBytes > 0L) totalBytes else downloaded)
                                         }
                                     }
-                                    downloaded += n
-                                    if (downloaded > options.maxBytes) {
-                                        output.close()
-                                        partFile.delete()
-                                        throw IllegalStateException(options.sizeLimitErrorMessage)
-                                    }
-                                    output.write(buf, 0, n)
-
-                                    val now = System.currentTimeMillis()
-                                    if (now - lastEmitMs >= options.progressIntervalMs || (totalBytes > 0L && downloaded >= totalBytes)) {
-                                        lastEmitMs = now
-                                        onProgress(downloaded, if (totalBytes > 0L) totalBytes else downloaded)
-                                    }
+                                    output.flush()
                                 }
-                                output.flush()
                             }
-                        }
 
-                        if (options.resumable && totalBytes > 0L && downloaded < totalBytes) {
-                            throw IllegalStateException("Truncated stream ($downloaded/$totalBytes bytes)")
+                            val expectedTotal = when {
+                                serverTotal > 0L -> serverTotal
+                                options.resumable && totalBytes > 0L -> totalBytes
+                                else -> -1L
+                            }
+                            if (expectedTotal > 0L && downloaded < expectedTotal) {
+                                throw IllegalStateException("Truncated stream ($downloaded/$expectedTotal bytes)")
+                            }
+                            if (shaDigest != null) {
+                                inlineShaHex = HashUtils.toHex(shaDigest.digest())
+                            }
+                            onProgress(downloaded, if (totalBytes > 0L) totalBytes else downloaded)
+                            false
+                        } finally {
+                            cancelHandle.dispose()
                         }
-                        onProgress(downloaded, if (totalBytes > 0L) totalBytes else downloaded)
-                        false
                     }
                 }
 
@@ -233,20 +308,14 @@ internal object ResumableFileDownloader {
                         throw IllegalStateException(options.htmlFileErrorMessage)
                     }
                     if (normalizedExpectedSha != null) {
-                        val actualSha = HashUtils.sha256HexOrNull(partFile)
+                        val actualSha = inlineShaHex ?: HashUtils.sha256HexOrNull(partFile)
                         if (actualSha == null || !actualSha.equals(normalizedExpectedSha, ignoreCase = true)) {
                             partFile.delete()
                             if (resumedThisAttempt && attempt < maxAttempts) return@withContext true
                             throw IllegalStateException(options.shaMismatchErrorMessage)
                         }
                     }
-                    if (destFile.exists()) {
-                        destFile.delete()
-                    }
-                    if (!partFile.renameTo(destFile)) {
-                        partFile.copyTo(destFile, overwrite = true)
-                        partFile.delete()
-                    }
+                    StreamZipUtils.atomicReplace(partFile, destFile)
                     false
                 }
                 if (!retryFromZero) {

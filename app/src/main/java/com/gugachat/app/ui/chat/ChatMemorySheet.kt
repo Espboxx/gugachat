@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -18,37 +17,25 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.automirrored.filled.VolumeOff
-import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.AutoStories
-import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Bookmarks
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.PushPin
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -63,15 +50,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.gugachat.app.core.i18n.AppLanguage
-import com.gugachat.app.core.i18n.AppStrings
 import com.gugachat.app.core.i18n.LocalAppStrings
 import com.gugachat.app.core.i18n.fmt
 import com.gugachat.app.core.theme.GuBadge
@@ -80,7 +63,6 @@ import com.gugachat.app.core.theme.GuButton
 import com.gugachat.app.core.theme.GuCard
 import com.gugachat.app.core.theme.GuCompactSearchBar
 import com.gugachat.app.core.theme.GuEmptyState
-import com.gugachat.app.core.theme.GuLinearProgressBar
 import com.gugachat.app.core.theme.GuMetaText
 import com.gugachat.app.core.theme.GuModalBottomSheet
 import com.gugachat.app.core.theme.GuPill
@@ -92,14 +74,12 @@ import com.gugachat.app.core.theme.GuTextField
 import com.gugachat.app.core.theme.LocalAppTheme
 import com.gugachat.app.core.util.FuzzyMatcher
 import com.gugachat.app.domain.chat.ContextWaterlineSummary
-import com.gugachat.app.domain.chat.FileContextBudgeter
 import com.gugachat.app.domain.chat.MemoryCategory
 import com.gugachat.app.domain.chat.MemoryEpisode
 import com.gugachat.app.domain.chat.MemoryLedgerItem
 import com.gugachat.app.domain.chat.RetrievalMode
 import com.gugachat.app.domain.chat.UserMemory
 import com.gugachat.app.domain.chat.VectorIndexProgress
-import java.util.Locale
 
 internal val MEMORY_CATEGORIES = listOf(
     MemoryCategory.preference,

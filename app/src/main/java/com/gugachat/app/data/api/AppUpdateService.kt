@@ -29,7 +29,6 @@ import kotlinx.serialization.json.longOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
-import java.io.FileInputStream
 import java.net.URI
 import java.util.Locale
 import java.util.concurrent.TimeUnit
@@ -288,7 +287,7 @@ object AppUpdateService {
             cnDirects.forEach { url ->
                 addCandidate(label = "国内直链 · ${hostLabelOf(url)}", rawUrl = url, isCn = true)
             }
-            if (canProxyDirectApk && directApk != null) {
+            if (canProxyDirectApk) {
                 proxyPrefixes.forEach { prefix ->
                     val proxied = "$prefix$directApk"
                     addCandidate(label = "国内加速 · ${hostLabelOf(prefix)}", rawUrl = proxied, isCn = true)

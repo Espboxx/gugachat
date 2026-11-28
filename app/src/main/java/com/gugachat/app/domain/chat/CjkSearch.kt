@@ -108,6 +108,9 @@ object CjkSearch {
     )
     private val DEMONSTRATIVE_RE = Regex("([这那])(个|把|件|封|名|位|座|条|只|张|段|本|块)?([\\u4e00-\\u9fff]{1,5})")
     private val HEAD_NOUN_TAIL_STOP_RE = Regex("[的了了吗呢吧啊呀在是有和与及或也都就才却这那].*$")
+    private val NON_PERSON_OTHER_PRONOUN_RE = Regex("其他|他人|他乡|其它")
+    private val MALE_EN_PRONOUN_RE = Regex("\\b(he|him|his)\\b")
+    private val FEMALE_EN_PRONOUN_RE = Regex("\\b(she|her|hers)\\b")
     private val NON_COMPOUND_TAIL_CHARS = setOf(
         '上', '下', '里', '外', '旁', '中', '前', '后', '拔', '断', '掉', '落',
         '飞', '开', '关', '说', '看', '想', '去', '来', '拿', '放', '递', '给',
@@ -141,12 +144,12 @@ object CjkSearch {
     }
 
     private fun detectPronounGenders(text: String): List<String> {
-        val norm = normalizeForSearch(text).replace(Regex("其他|他人|他乡|其它"), " ")
+        val norm = normalizeForSearch(text).replace(NON_PERSON_OTHER_PRONOUN_RE, " ")
         val out = LinkedHashSet<String>()
-        if (norm.contains("他") || Regex("\\b(he|him|his)\\b").containsMatchIn(norm)) {
+        if (norm.contains("他") || MALE_EN_PRONOUN_RE.containsMatchIn(norm)) {
             out.add("male")
         }
-        if (norm.contains("她") || Regex("\\b(she|her|hers)\\b").containsMatchIn(norm)) {
+        if (norm.contains("她") || FEMALE_EN_PRONOUN_RE.containsMatchIn(norm)) {
             out.add("female")
         }
         return out.toList()

@@ -37,7 +37,6 @@ import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.BrightnessAuto
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.DarkMode
-import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Key
@@ -50,8 +49,6 @@ import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Speed
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -75,8 +72,6 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -121,7 +116,6 @@ fun LoginScreen(
     val isZh = strings.language == AppLanguage.ZH
     val focusManager = LocalFocusManager.current
 
-    var passwordVisible by remember { mutableStateOf(false) }
     var showProviderImportSheet by remember { mutableStateOf(false) }
 
     val initialCustomExpanded = state.serverUrlInput.isNotBlank() && !GugagaHosts.isPresetUrl(state.serverUrlInput)

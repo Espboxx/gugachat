@@ -36,7 +36,7 @@ object NovelExport {
         StreamingTagStripper.strip(prose, COMPLETE_TAG_RE, UNCLOSED_TAG_RE, KNOWN_NOVEL_TAG_TOKENS)
 
     fun isStreamingInternalMeta(raw: String): Boolean =
-        StreamingTagStripper.isStreamingPartialMeta(raw, UNCLOSED_TAG_RE, KNOWN_NOVEL_TAG_TOKENS)
+        StreamingTagStripper.isStreamingPartialMeta(raw, COMPLETE_TAG_RE, UNCLOSED_TAG_RE, KNOWN_NOVEL_TAG_TOKENS)
 
     fun countProseWords(prose: String): Int {
         val clean = stripInternalTags(prose)

@@ -46,6 +46,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -292,7 +293,6 @@ class ChatStreamManager internal constructor(
             scope = scope,
             database = database,
             onlineChatApi = onlineChatApi,
-            settingsState = settingsState,
             retrievalCoordinator = retrievalCoordinator,
         )::scheduleIfEnabled,
         scheduleVectorIndexing = { convId ->
@@ -344,8 +344,8 @@ class ChatStreamManager internal constructor(
     private val _turnCommittedEvents = MutableSharedFlow<String>(extraBufferCapacity = 16)
     val turnCommittedEvents: SharedFlow<String> = _turnCommittedEvents.asSharedFlow()
 
-    private val _lastWaterlineContext = MutableStateFlow<com.gugachat.app.domain.chat.BuiltChatContext?>(null)
-    val lastWaterlineContext: StateFlow<com.gugachat.app.domain.chat.BuiltChatContext?> = _lastWaterlineContext.asStateFlow()
+    private val _lastWaterlineByConv = MutableStateFlow<Map<String, com.gugachat.app.domain.chat.BuiltChatContext>>(emptyMap())
+    val lastWaterlineByConv: StateFlow<Map<String, com.gugachat.app.domain.chat.BuiltChatContext>> = _lastWaterlineByConv.asStateFlow()
 
     fun isStreaming(conversationId: String): Boolean =
         _activeSessions.value[conversationId]?.isStreaming == true
@@ -370,7 +370,12 @@ class ChatStreamManager internal constructor(
         val job = synchronized(jobsLock) { activeJobs[conversationId] }
         if (job != null) {
             job.cancel()
-            runCatching { job.join() }
+            try {
+                job.join()
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (_: Throwable) {
+            }
         }
     }
 
@@ -451,7 +456,10 @@ class ChatStreamManager internal constructor(
         var lastKeepAlivePushMs = 0L
         var lastKeepAliveChars = 0
         var uiDirty = false
+        var finalized = false
         var activeResolvedPrefill: String? = null
+
+        fun isFinalized(): Boolean = synchronized(streamLock) { finalized }
 
         fun mergeWithPrefill(raw: String): String {
             val pre = activeResolvedPrefill
@@ -523,12 +531,20 @@ class ChatStreamManager internal constructor(
         }
 
         fun maybeUpdateKeepAliveProgress(charCount: Int) {
-            val now = System.currentTimeMillis()
-            if (now - lastKeepAlivePushMs >= KEEP_ALIVE_THROTTLE_MS ||
-                charCount - lastKeepAliveChars >= KEEP_ALIVE_CHAR_STEP
-            ) {
-                lastKeepAlivePushMs = now
-                lastKeepAliveChars = charCount
+            val shouldPush = synchronized(streamLock) {
+                if (finalized) return@synchronized false
+                val now = System.currentTimeMillis()
+                if (now - lastKeepAlivePushMs >= KEEP_ALIVE_THROTTLE_MS ||
+                    charCount - lastKeepAliveChars >= KEEP_ALIVE_CHAR_STEP
+                ) {
+                    lastKeepAlivePushMs = now
+                    lastKeepAliveChars = charCount
+                    true
+                } else {
+                    false
+                }
+            }
+            if (shouldPush) {
                 keepAlive.updateProgress(taskId, keepAliveLabel, charCount)
             }
         }
@@ -589,10 +605,10 @@ class ChatStreamManager internal constructor(
         persistenceGateway.upsertMessageSnapshot(assistantStart)
 
         val flushTickerJob = scope.launch {
-            while (isActive) {
+            while (isActive && !isFinalized()) {
                 delay(UI_EMIT_INTERVAL_MS)
                 val pendingSnap: ChatMessage? = synchronized(streamLock) {
-                    if (!uiDirty) {
+                    if (finalized || !uiDirty) {
                         null
                     } else {
                         lastUiEmitMs = System.currentTimeMillis()
@@ -600,17 +616,26 @@ class ChatStreamManager internal constructor(
                         buildSnapshotLocked()
                     }
                 }
-                if (pendingSnap != null) {
+                if (pendingSnap != null && !isFinalized()) {
                     publishSessionSnapshot(pendingSnap)
                     maybeUpdateKeepAliveProgress(pendingSnap.content.length + pendingSnap.reasoning.length)
                 }
-                val now = System.currentTimeMillis()
-                if (now - lastDbFlushMs >= DB_SNAPSHOT_INTERVAL_MS) {
-                    lastDbFlushMs = now
-                    val checkpoint = buildSnapshot()
-                    if (checkpoint.content.isNotEmpty() || checkpoint.reasoning.isNotEmpty()) {
-                        persistenceGateway.upsertMessageSnapshot(checkpoint)
+                val checkpoint: ChatMessage? = synchronized(streamLock) {
+                    if (finalized) {
+                        null
+                    } else {
+                        val now = System.currentTimeMillis()
+                        if (now - lastDbFlushMs >= DB_SNAPSHOT_INTERVAL_MS) {
+                            lastDbFlushMs = now
+                            val snap = buildSnapshotLocked()
+                            if (snap.content.isNotEmpty() || snap.reasoning.isNotEmpty()) snap else null
+                        } else {
+                            null
+                        }
                     }
+                }
+                if (checkpoint != null && !isFinalized()) {
+                    persistenceGateway.upsertMessageSnapshot(checkpoint)
                 }
             }
         }
@@ -652,7 +677,7 @@ class ChatStreamManager internal constructor(
                 )
                 assembledPayload = prepared
                 activeResolvedPrefill = prepared.resolvedAssistantPrefill
-                _lastWaterlineContext.value = prepared.builtContext
+                _lastWaterlineByConv.update { it + (convId to prepared.builtContext) }
                 prepared.request
             }
 
@@ -696,7 +721,7 @@ class ChatStreamManager internal constructor(
                     )
                     assembledPayload = retryPrepared
                     activeResolvedPrefill = retryPrepared.resolvedAssistantPrefill
-                    _lastWaterlineContext.value = retryPrepared.builtContext
+                    _lastWaterlineByConv.update { it + (convId to retryPrepared.builtContext) }
                     wireRequest = retryPrepared.request
                     completionGateway.streamOnce(
                         request = wireRequest,
@@ -711,7 +736,10 @@ class ChatStreamManager internal constructor(
                 }
             }
 
-            flushTickerJob.cancel()
+            synchronized(streamLock) { finalized = true }
+            withContext(NonCancellable) {
+                flushTickerJob.cancelAndJoin()
+            }
             val (finalRawContent, finalReasoning, finalUsage) = synchronized(streamLock) {
                 if (reasoningStartMs != null && reasoningDurationMs == null) {
                     reasoningDurationMs = (System.currentTimeMillis() - reasoningStartMs!!).coerceAtLeast(1000L)
@@ -755,17 +783,24 @@ class ChatStreamManager internal constructor(
                 completionNotifier(convId, committedConv, committedMsg)
             }
         } catch (_: CancellationException) {
-            flushTickerJob.cancel()
+            synchronized(streamLock) { finalized = true }
             withContext(NonCancellable) {
+                flushTickerJob.cancelAndJoin()
                 persistInterruptedMessage(status = "aborted")
             }
         } catch (e: Throwable) {
-            flushTickerJob.cancel()
+            synchronized(streamLock) { finalized = true }
+            withContext(NonCancellable) {
+                flushTickerJob.cancelAndJoin()
+            }
             val errMsg = e.message ?: "Generation failed"
             persistInterruptedMessage(status = "error", error = errMsg)
             toastShower(errMsg, true)
         } finally {
-            flushTickerJob.cancel()
+            synchronized(streamLock) { finalized = true }
+            withContext(NonCancellable) {
+                flushTickerJob.cancelAndJoin()
+            }
         }
     }
 
@@ -1045,7 +1080,6 @@ private class BackgroundTurnMaintenance(
     private val scope: CoroutineScope,
     private val database: AppDatabase,
     private val onlineChatApi: OnlineChatApi,
-    private val settingsState: StateFlow<AppSettings>,
     private val retrievalCoordinator: RetrievalCoordinator,
 ) {
     private val chatDao = database.chatDao()
@@ -1060,7 +1094,7 @@ private class BackgroundTurnMaintenance(
         val model = conv.model?.takeIf { it.isNotBlank() } ?: return
         if (conv.mode == ConversationMode.chat && conv.params.enableAutoMemory) {
             scope.launch(Dispatchers.IO) {
-                runCatching {
+                try {
                     val msgs = TimelineReconciler.activeMessages(chatDao.getMessagesForConversation(convId).map { it.toDomain() })
                     if (msgs.size < 4 || msgs.size % 4 != 0) return@launch
                     val existing = userMemoryDao.getAll().map { it.toDomain() }
@@ -1070,19 +1104,30 @@ private class BackgroundTurnMaintenance(
                     )
                     val extracted = MemoryExtractor.parseExtractedMemories(res.content)
                     if (extracted.isNotEmpty()) {
-                        val (merged, added) = MemoryExtractor.mergeExtractedMemories(existing, extracted)
-                        if (added > 0) {
-                            userMemoryDao.upsertAll(merged.map { it.toEntity() })
+                        val anyAdded = database.withTransaction {
+                            val freshExisting = userMemoryDao.getAll().map { it.toDomain() }
+                            val (merged, added) = MemoryExtractor.mergeExtractedMemories(freshExisting, extracted)
+                            if (added > 0) {
+                                userMemoryDao.upsertAll(merged.map { it.toEntity() })
+                                true
+                            } else {
+                                false
+                            }
+                        }
+                        if (anyAdded) {
                             scheduleVectorIndexing(convId)
                         }
                     }
+                } catch (ce: CancellationException) {
+                    throw ce
+                } catch (_: Throwable) {
                 }
             }
         }
         if (conv.params.enableAutoConsolidate && activeConsolidations.add(convId)) {
             scope.launch(Dispatchers.IO) {
                 try {
-                    runCatching {
+                    try {
                         val msgs = TimelineReconciler.activeMessages(chatDao.getMessagesForConversation(convId).map { it.toDomain() })
                         val eps = chatDao.getMemoryEpisodesForConversation(convId).map { it.toDomain() }
                         val batch = EpisodeConsolidator.findNextMessagesBatch(msgs, eps)
@@ -1126,6 +1171,9 @@ private class BackgroundTurnMaintenance(
                         if (changed) {
                             scheduleVectorIndexing(convId)
                         }
+                    } catch (ce: CancellationException) {
+                        throw ce
+                    } catch (_: Throwable) {
                     }
                 } finally {
                     activeConsolidations.remove(convId)

@@ -5,8 +5,10 @@ import com.gugachat.app.BuildConfig
 import com.gugachat.app.data.api.ResumableFileDownloader
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -125,7 +127,8 @@ class LocalEmbeddingModelManager internal constructor(
         for (spec in catalogSpecs) {
             val prev = current[spec.id]
             next[spec.id] = when {
-                prev is LocalModelDownloadState.Downloading && activeJobs[spec.id]?.isActive == true -> prev
+                prev is LocalModelDownloadState.Downloading &&
+                    activeJobs[spec.id]?.let { !it.isCompleted && !it.isCancelled } == true -> prev
                 isModelInstalled(spec.id) -> LocalModelDownloadState.Ready(getInstalledSizeBytes(spec.id))
                 else -> LocalModelDownloadState.NotDownloaded
             }
@@ -137,11 +140,23 @@ class LocalEmbeddingModelManager internal constructor(
      * Launches a download in [scope] (reusing any already-active download job for [modelId]).
      */
     fun startDownload(modelId: String, scope: CoroutineScope): Job {
-        val existing = activeJobs[modelId]
-        if (existing != null && existing.isActive) return existing
-        return scope.launch(Dispatchers.IO) {
-            downloadModel(modelId)
+        var createdJob: Job? = null
+        val winner = activeJobs.compute(modelId) { _, existing ->
+            if (existing != null && !existing.isCompleted && !existing.isCancelled) {
+                existing
+            } else {
+                scope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
+                    downloadModel(modelId)
+                }.also { createdJob = it }
+            }
+        }!!
+        if (createdJob === winner) {
+            winner.invokeOnCompletion {
+                activeJobs.remove(modelId, winner)
+            }
+            winner.start()
         }
+        return winner
     }
 
     /**
@@ -260,13 +275,21 @@ class LocalEmbeddingModelManager internal constructor(
      * Cancels any active download for [modelId], removes installed weights/vocab/part files,
      * and resets the state to [LocalModelDownloadState.NotDownloaded].
      */
-    fun deleteModel(modelId: String): Boolean {
-        activeJobs.remove(modelId)?.cancel()
-        val dir = getModelDir(modelId)
-        val existed = dir.exists()
-        val deleted = if (existed) dir.deleteRecursively() else true
-        setModelState(modelId, LocalModelDownloadState.NotDownloaded)
-        return deleted
+    suspend fun deleteModel(modelId: String): Boolean {
+        val activeJob = activeJobs.remove(modelId)
+        if (activeJob != null) {
+            activeJob.cancelAndJoin()
+        }
+        val mutex = modelMutexes.computeIfAbsent(modelId) { Mutex() }
+        return mutex.withLock {
+            withContext(Dispatchers.IO) {
+                val dir = getModelDir(modelId)
+                val existed = dir.exists()
+                val deleted = if (existed) dir.deleteRecursively() else true
+                setModelState(modelId, LocalModelDownloadState.NotDownloaded)
+                deleted
+            }
+        }
     }
 
     private suspend fun downloadWithMirrorFailover(

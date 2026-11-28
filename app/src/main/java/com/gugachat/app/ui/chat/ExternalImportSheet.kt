@@ -21,7 +21,6 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -47,7 +46,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -77,7 +75,6 @@ import com.gugachat.app.core.theme.GuButton
 import com.gugachat.app.core.theme.GuButtonVariant
 import com.gugachat.app.core.theme.GuCompactSearchBar
 import com.gugachat.app.core.theme.GuGroupedCard
-import com.gugachat.app.core.theme.GuHairlineDivider
 import com.gugachat.app.core.theme.GuIconTile
 import com.gugachat.app.core.theme.GuModalBottomSheet
 import com.gugachat.app.core.theme.GuSectionHeader
@@ -86,6 +83,7 @@ import com.gugachat.app.core.theme.GuSheetHeader
 import com.gugachat.app.core.theme.GuTextField
 import com.gugachat.app.core.theme.LocalAppTheme
 import com.gugachat.app.core.util.FuzzyMatcher
+import com.gugachat.app.data.api.AppJson
 import com.gugachat.app.data.api.DeepSeekLinkAuthRequiredException
 import com.gugachat.app.data.chat.AssetImportResult
 import com.gugachat.app.data.api.ExternalImportService
@@ -95,9 +93,14 @@ import com.gugachat.app.domain.chat.ExternalImportCodec
 import com.gugachat.app.domain.chat.ExternalImportSource
 import com.gugachat.app.domain.chat.RpCardCodec
 import com.gugachat.app.domain.chat.TavernAssetCodec
+import com.gugachat.app.domain.chat.UuSaveCodec
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -180,17 +183,22 @@ fun ExternalImportSheet(
                         ?: error("Cannot read selected file")
                     data to queryDisplayName(ctx, uri)
                 }
-                val isBinaryTavernCard = RpCardCodec.isPngBytes(bytes) || RpCardCodec.extractCardFromZipBytes(bytes) != null
-                val rawText = if (!isBinaryTavernCard) {
-                    bytes.toString(Charsets.UTF_8).removePrefix("\uFEFF").trim()
-                } else {
-                    ""
+                val (isBinaryTavernCard, isStandaloneTavernAsset) = withContext(Dispatchers.Default) {
+                    val isBin = RpCardCodec.isPngBytes(bytes) || RpCardCodec.extractCardFromZipBytes(bytes) != null
+                    if (isBin) {
+                        true to false
+                    } else {
+                        val rawText = bytes.toString(Charsets.UTF_8).removePrefix("\uFEFF").trim()
+                        val isTavernTab = activeTab == ImportPlatformTab.TAVERN || activeTab == ImportPlatformTab.OTHER
+                        val isAsset = isTavernTab && (
+                            TavernAssetCodec.parseJsonText(rawText, conversationId = "preview", fileName = displayName) != null ||
+                                looksLikeCharacterCardJson(rawText)
+                            )
+                        false to isAsset
+                    }
                 }
-                val isStandaloneWorldbookOrPreset = !isBinaryTavernCard &&
-                    (activeTab == ImportPlatformTab.TAVERN || activeTab == ImportPlatformTab.OTHER) &&
-                    TavernAssetCodec.parseJsonText(rawText, conversationId = "preview", fileName = displayName) != null
 
-                if (isBinaryTavernCard || isStandaloneWorldbookOrPreset) {
+                if (isBinaryTavernCard || isStandaloneTavernAsset) {
                     if (onImportTavernAssetBytes != null) {
                         if (onImportTavernAssetBytes(bytes, displayName)) {
                             onDismiss()
@@ -205,7 +213,10 @@ fun ExternalImportSheet(
                             )
                         ) {
                             is AssetImportResult.CharacterCardImported -> {
-                                container.toastController.show(strings.rp.importSuccess.fmt("name" to imported.card.name))
+                                container.toastController.show(
+                                    if (isZh) "已导入角色卡「${imported.card.name}」到「创作 → 角色」"
+                                    else "Imported character card \"${imported.card.name}\" to Creative Studio",
+                                )
                                 true
                             }
                             is AssetImportResult.WorldbookImported -> {
@@ -238,6 +249,8 @@ fun ExternalImportSheet(
                 importSyncedProviders = bundle.importedProviders.isNotEmpty()
                 searchQuery = ""
                 targetModeOverride = null
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 errorMsg = e.message?.takeIf { it.isNotBlank() && it != "HTML_RESPONSE" } ?: strings.chat.importFailed
             } finally {
@@ -485,6 +498,8 @@ fun ExternalImportSheet(
                                                             } else {
                                                                 e.message ?: strings.chat.importFailed
                                                             }
+                                                        } catch (e: CancellationException) {
+                                                            throw e
                                                         } catch (e: Throwable) {
                                                             errorMsg = e.message ?: strings.chat.importFailed
                                                         } finally {
@@ -591,6 +606,8 @@ fun ExternalImportSheet(
                                                             importSyncedProviders = parsed.importedProviders.isNotEmpty()
                                                             searchQuery = ""
                                                             targetModeOverride = null
+                                                        } catch (e: CancellationException) {
+                                                            throw e
                                                         } catch (e: Throwable) {
                                                             errorMsg = e.message ?: strings.chat.importFailed
                                                         } finally {
@@ -1070,6 +1087,8 @@ fun ExternalImportSheet(
                                         onImported(null)
                                     }
                                     onDismiss()
+                                } catch (e: CancellationException) {
+                                    throw e
                                 } catch (e: Throwable) {
                                     container.toastController.show(e.message ?: strings.chat.importFailed, isError = true)
                                 } finally {
@@ -1113,3 +1132,31 @@ private fun readClipboardText(ctx: Context): String =
 
 private fun queryDisplayName(ctx: Context, uri: Uri): String? =
     com.gugachat.app.core.util.UriUtils.resolveDisplayName(ctx.contentResolver, uri) ?: uri.lastPathSegment
+
+private fun looksLikeCharacterCardJson(rawText: String): Boolean {
+    if (!rawText.startsWith("{")) return false
+    val root = runCatching { AppJson.parseToJsonElement(rawText) as? JsonObject }.getOrNull() ?: return false
+    if (UuSaveCodec.isUuGameSave(root)) return false
+    val spec = (root["spec"] as? JsonPrimitive)?.contentOrNull.orEmpty()
+    if (spec.equals("chara_card_v2", ignoreCase = true) ||
+        spec.equals("chara_card_v3", ignoreCase = true) ||
+        spec.equals("chara_card_v1", ignoreCase = true) ||
+        spec.equals("chara_card", ignoreCase = true)
+    ) {
+        return true
+    }
+    val data = root["data"] as? JsonObject
+    if (data != null && (
+            data.containsKey("first_mes") ||
+                data.containsKey("mes_example") ||
+                data.containsKey("character_book") ||
+                (!(data["name"] as? JsonPrimitive)?.contentOrNull.isNullOrBlank() &&
+                    (data.containsKey("description") || data.containsKey("personality") || data.containsKey("scenario")))
+            )
+    ) {
+        return true
+    }
+    return root.containsKey("first_mes") ||
+        root.containsKey("char_greeting") ||
+        (root.containsKey("char_name") && root.containsKey("char_persona"))
+}

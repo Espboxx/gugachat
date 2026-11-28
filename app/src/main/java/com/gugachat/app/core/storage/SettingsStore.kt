@@ -20,6 +20,7 @@ import com.gugachat.app.data.api.SseRetryPolicy
 import com.gugachat.app.data.api.UpdateChannel
 import com.gugachat.app.domain.chat.RetrievalSettings
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.Serializable
@@ -133,7 +134,7 @@ class SettingsStore(private val context: Context) {
             lastStudioSubtab = prefs[Keys.LAST_STUDIO_SUBTAB]?.takeIf { it >= 0 },
             webDavConfig = decodeWebDavConfig(prefs[Keys.WEBDAV_CONFIG_JSON]),
         )
-    }
+    }.distinctUntilChanged()
 
     suspend fun currentSettings(): AppSettings = settingsFlow.first()
 

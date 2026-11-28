@@ -25,6 +25,7 @@ import com.gugachat.app.data.api.UserDto
 import com.gugachat.app.data.api.resolveActiveCaptcha
 import com.gugachat.app.ui.providers.ApiProviderDraft
 import com.gugachat.app.ui.providers.ApiProviderQuickPreset
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -298,6 +299,8 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
                 val cfg = draft.toConfig()
                 val models = container.directApiClient.testAndFetchModels(cfg)
                 _ui.update { it.copy(directTesting = false, directTestCount = models.size) }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 _ui.update {
                     it.copy(
@@ -555,6 +558,8 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
                         captchaResetNonce = if (captchaChanged && nextCaptcha !is ActiveCaptchaConfig.None) cur.captchaResetNonce + 1 else cur.captchaResetNonce,
                     )
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 _ui.update {
                     it.copy(
@@ -589,6 +594,8 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
                 container.toastController.show(res.message.ifBlank { "Code sent" })
                 _ui.update { it.copy(isSubmitting = false) }
                 if (cur.requiresInAppCaptcha) clearCaptchaAndReload()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 _ui.update { it.copy(isSubmitting = false, errorMsg = e.message ?: "Failed to send code") }
                 if (cur.requiresInAppCaptcha) clearCaptchaAndReload()
@@ -630,6 +637,8 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
                 val user = resp.user ?: container.authApi.getCurrentUser()
                 container.setLoggedIn(user)
                 _ui.update { it.copy(isSubmitting = false) }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 _ui.update {
                     it.copy(
@@ -652,6 +661,8 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
                 val user = resp.user ?: container.authApi.getCurrentUser()
                 container.setLoggedIn(user)
                 _ui.update { it.copy(isSubmitting = false, requires2fa = false, tempToken = "") }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 _ui.update { it.copy(isSubmitting = false, errorMsg = e.message ?: "2FA verification failed") }
             }
@@ -684,6 +695,8 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
                 val user = resp.user ?: container.authApi.getCurrentUser()
                 container.setLoggedIn(user)
                 _ui.update { it.copy(isSubmitting = false) }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 _ui.update { it.copy(isSubmitting = false, errorMsg = e.message ?: "Registration failed") }
                 if (needsCaptcha) clearCaptchaAndReload()
@@ -703,11 +716,17 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
                 val parsed = userJson?.let { raw ->
                     runCatching { AppJson.decodeFromString(UserDto.serializer(), raw) }.getOrNull()
                 }
-                val user = runCatching { container.authApi.getCurrentUser() }.getOrElse { err ->
+                val user = try {
+                    container.authApi.getCurrentUser()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (err: Throwable) {
                     parsed ?: throw err
                 }
                 container.setLoggedIn(user)
                 _ui.update { it.copy(isSubmitting = false) }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 container.tokenStore.clear()
                 _ui.update { it.copy(isSubmitting = false, errorMsg = e.message ?: "Web login failed") }

@@ -53,6 +53,7 @@ import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -62,10 +63,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
@@ -115,16 +118,7 @@ fun ChatSessionsDrawerContent(
     val c = theme.colors
     val isZh = strings.language == AppLanguage.ZH
     val activeStreamingIds = streamingConversationIds
-    val streamPulseTransition = rememberInfiniteTransition(label = "drawer_stream_pulse")
-    val streamPulseAlpha by streamPulseTransition.animateFloat(
-        initialValue = 0.35f,
-        targetValue = 1.0f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 850),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "drawer_stream_pulse_alpha",
-    )
+    val streamPulseAlpha = if (activeStreamingIds.isNotEmpty()) rememberDrawerStreamPulseAlphaState() else null
 
     var search by remember { mutableStateOf("") }
     var filterIndex by remember { mutableIntStateOf(0) }
@@ -454,21 +448,10 @@ fun ChatSessionsDrawerContent(
                                         modifier = Modifier.weight(1f),
                                     )
                                     if (conv.id in activeStreamingIds) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(14.dp)
-                                                .clip(CircleShape)
-                                                .background(c.primary.copy(alpha = 0.18f * streamPulseAlpha)),
-                                            contentAlignment = Alignment.Center,
-                                        ) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .size(7.dp)
-                                                    .alpha(streamPulseAlpha)
-                                                    .clip(CircleShape)
-                                                    .background(c.primary),
-                                            )
-                                        }
+                                        StreamingPulseDot(
+                                            color = c.primary,
+                                            alphaState = streamPulseAlpha,
+                                        )
                                     }
                                     if (conv.pinned) {
                                         Icon(
@@ -693,6 +676,44 @@ private fun DrawerQuickTabAnchor(
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun rememberDrawerStreamPulseAlphaState(): State<Float> {
+    val transition = rememberInfiniteTransition(label = "drawer_stream_pulse")
+    return transition.animateFloat(
+        initialValue = 0.35f,
+        targetValue = 1.0f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 850),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "drawer_stream_pulse_alpha",
+    )
+}
+
+@Composable
+private fun StreamingPulseDot(
+    color: Color,
+    alphaState: State<Float>?,
+) {
+    Box(
+        modifier = Modifier
+            .size(14.dp)
+            .clip(CircleShape)
+            .drawBehind {
+                drawCircle(color.copy(alpha = 0.18f * (alphaState?.value ?: 1f)))
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(7.dp)
+                .graphicsLayer { alpha = alphaState?.value ?: 1f }
+                .clip(CircleShape)
+                .background(color),
         )
     }
 }

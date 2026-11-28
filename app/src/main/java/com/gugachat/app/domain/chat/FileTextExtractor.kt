@@ -7,7 +7,6 @@ import java.nio.ByteBuffer
 import java.nio.charset.Charset
 import java.nio.charset.CodingErrorAction
 import java.util.Locale
-import java.util.zip.ZipInputStream
 import javax.xml.parsers.DocumentBuilderFactory
 import kotlin.math.min
 
@@ -40,6 +39,8 @@ object FileTextExtractor {
     private val MULTI_BLANK_LINES_RE = Regex("\\n{3,}")
     private val NUMERIC_ENTITY_RE = Regex("&#(\\d+);")
     private val HEX_ENTITY_RE = Regex("&#[xX]([0-9a-fA-F]+);")
+    private val WHITESPACE_COLLAPSE_RE = Regex("\\s+")
+    private val TRAILING_XML_NUMBER_RE = Regex("(\\d+)\\.xml$", RegexOption.IGNORE_CASE)
 
     private val KNOWN_TEXT_EXTENSIONS = setOf(
         "txt", "md", "markdown", "json", "jsonl", "ndjson", "yaml", "yml", "xml", "csv", "tsv",
@@ -361,7 +362,7 @@ object FileTextExtractor {
         }
         val tokens = ContextBuilder.estimateTextTokens(capped)
         val preview = capped
-            .replace(Regex("\\s+"), " ")
+            .replace(WHITESPACE_COLLAPSE_RE, " ")
             .trim()
             .take(180)
         val finalNote = buildString {
@@ -516,7 +517,7 @@ object FileTextExtractor {
     }
 
     private fun extractTrailingNumber(path: String): Int =
-        Regex("(\\d+)\\.xml$", RegexOption.IGNORE_CASE).find(path)?.groupValues?.get(1)?.toIntOrNull() ?: Int.MAX_VALUE
+        TRAILING_XML_NUMBER_RE.find(path)?.groupValues?.get(1)?.toIntOrNull() ?: Int.MAX_VALUE
 
     private fun decodeHtmlEntities(input: String): String {
         var s = input

@@ -9,12 +9,10 @@ import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.floatOrNull
 import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
@@ -361,7 +359,7 @@ object DirectProtocolCodec {
             }
             if (cacheTurnIdx >= 0) {
                 val blocks = rawTurns[cacheTurnIdx].second
-                val textBlockIdx = blocks.indexOfLast { it["type"]?.jsonPrimitive?.content == "text" }
+                val textBlockIdx = blocks.indexOfLast { it["type"].asStrOrNull() == "text" }
                 if (textBlockIdx >= 0) {
                     val orig = blocks[textBlockIdx]
                     blocks[textBlockIdx] = buildJsonObject {
@@ -476,29 +474,24 @@ object DirectProtocolCodec {
             }
         }
 
-        val contents = rawTurns.mapTo(mutableListOf()) { (role, parts) ->
-            buildJsonObject {
-                put("role", role)
-                put("parts", JsonArray(parts))
-            }
-        }
-
-        if (contents.isEmpty()) {
-            contents += buildJsonObject {
-                put("role", "user")
-                putJsonArray("parts") {
-                    addJsonObject { put("text", "Hello") }
-                }
-            }
+        if (rawTurns.isEmpty()) {
+            rawTurns += "user" to mutableListOf(buildJsonObject { put("text", "Hello") })
         }
 
         val prefill = request.assistantPrefill?.takeIf { it.isNotBlank() }
         if (prefill != null) {
-            contents += buildJsonObject {
-                put("role", "model")
-                putJsonArray("parts") {
-                    addJsonObject { put("text", prefill) }
-                }
+            val prefillPart = buildJsonObject { put("text", prefill) }
+            if (rawTurns.isNotEmpty() && rawTurns.last().first == "model") {
+                rawTurns.last().second.add(prefillPart)
+            } else {
+                rawTurns += "model" to mutableListOf(prefillPart)
+            }
+        }
+
+        val contents = rawTurns.map { (role, parts) ->
+            buildJsonObject {
+                put("role", role)
+                put("parts", JsonArray(parts))
             }
         }
 
@@ -540,27 +533,27 @@ object DirectProtocolCodec {
         if (trimmed.isEmpty()) return null
         if (trimmed == "[DONE]") return SseLineOutcome(done = true)
 
-        val obj = runCatching { AppJson.parseToJsonElement(trimmed).jsonObject }.getOrNull() ?: return null
-        val type = obj["type"]?.jsonPrimitive?.content ?: eventType.orEmpty()
+        val obj = runCatching { AppJson.parseToJsonElement(trimmed).asObjOrNull() }.getOrNull() ?: return null
+        val type = obj["type"].asStrOrNull() ?: eventType.orEmpty()
 
         checkEmbeddedError(obj, 502)
 
         return when (type) {
             "response.output_text.delta" -> SseLineOutcome(
-                deltaText = obj["delta"]?.jsonPrimitive?.content.orEmpty(),
+                deltaText = obj["delta"].asStrOrNull().orEmpty(),
             )
             "response.reasoning_summary_text.delta",
             "response.reasoning_text.delta" -> SseLineOutcome(
-                deltaReasoning = obj["delta"]?.jsonPrimitive?.content.orEmpty(),
+                deltaReasoning = obj["delta"].asStrOrNull().orEmpty(),
             )
             "response.completed", "response.done" -> {
-                val usage = obj["response"]?.jsonObject?.get("usage")?.let { parseResponsesUsage(it.jsonObject) }
+                val usage = obj["response"].asObjOrNull()?.get("usage").asObjOrNull()?.let(::parseResponsesUsage)
                 SseLineOutcome(done = true, usage = usage)
             }
             "response.failed", "error" -> {
-                val msg = obj["response"]?.jsonObject?.get("error")?.jsonObject?.get("message")?.jsonPrimitive?.content
-                    ?: obj["error"]?.jsonObject?.get("message")?.jsonPrimitive?.content
-                    ?: obj["message"]?.jsonPrimitive?.content
+                val msg = obj["response"].asObjOrNull()?.get("error").asObjOrNull()?.get("message").asStrOrNull()
+                    ?: obj["error"].asObjOrNull()?.get("message").asStrOrNull()
+                    ?: obj["message"].asStrOrNull()
                     ?: "OpenAI Responses stream error"
                 throw ApiException(502, "RESPONSES_ERROR", msg)
             }
@@ -569,30 +562,30 @@ object DirectProtocolCodec {
     }
 
     fun parseOpenAIResponsesSingleJson(rawBody: String, statusCode: Int): CompletionResult {
-        val obj = runCatching { AppJson.parseToJsonElement(rawBody).jsonObject }.getOrNull()
+        val obj = runCatching { AppJson.parseToJsonElement(rawBody).asObjOrNull() }.getOrNull()
             ?: throw ApiException(statusCode, "INVALID_JSON", "Invalid OpenAI Responses JSON")
         checkEmbeddedError(obj, statusCode)
 
         val textBuf = StringBuilder()
         val reasonBuf = StringBuilder()
-        obj["output_text"]?.jsonPrimitive?.content?.let { textBuf.append(it) }
+        obj["output_text"].asStrOrNull()?.let { textBuf.append(it) }
 
         val outputArr = obj["output"] as? JsonArray
         if (outputArr != null && textBuf.isEmpty()) {
             for (itemEl in outputArr) {
                 val item = itemEl as? JsonObject ?: continue
-                val itemType = item["type"]?.jsonPrimitive?.content.orEmpty()
+                val itemType = item["type"].asStrOrNull().orEmpty()
                 if (itemType == "reasoning") {
                     val summaryArr = item["summary"] as? JsonArray
                     summaryArr?.forEach { s ->
-                        (s as? JsonObject)?.get("text")?.jsonPrimitive?.content?.let { reasonBuf.append(it) }
+                        (s as? JsonObject)?.get("text").asStrOrNull()?.let { reasonBuf.append(it) }
                     }
                 } else {
                     val contentArr = item["content"] as? JsonArray ?: continue
                     for (cEl in contentArr) {
                         val cObj = cEl as? JsonObject ?: continue
-                        val cType = cObj["type"]?.jsonPrimitive?.content.orEmpty()
-                        val txt = cObj["text"]?.jsonPrimitive?.content.orEmpty()
+                        val cType = cObj["type"].asStrOrNull().orEmpty()
+                        val txt = cObj["text"].asStrOrNull().orEmpty()
                         if (cType == "reasoning" || cType == "thinking") {
                             reasonBuf.append(txt)
                         } else if (txt.isNotEmpty()) {
@@ -602,7 +595,7 @@ object DirectProtocolCodec {
                 }
             }
         }
-        val usage = (obj["usage"] as? JsonObject)?.let(::parseResponsesUsage)
+        val usage = obj["usage"].asObjOrNull()?.let(::parseResponsesUsage)
         return CompletionResult(textBuf.toString(), reasonBuf.toString(), usage)
     }
 
@@ -611,27 +604,27 @@ object DirectProtocolCodec {
         if (trimmed.isEmpty()) return null
         if (trimmed == "[DONE]") return SseLineOutcome(done = true)
 
-        val obj = runCatching { AppJson.parseToJsonElement(trimmed).jsonObject }.getOrNull() ?: return null
-        val type = obj["type"]?.jsonPrimitive?.content ?: eventType.orEmpty()
+        val obj = runCatching { AppJson.parseToJsonElement(trimmed).asObjOrNull() }.getOrNull() ?: return null
+        val type = obj["type"].asStrOrNull() ?: eventType.orEmpty()
         checkEmbeddedError(obj, 502)
 
         return when (type) {
             "message_start" -> {
-                val usageObj = obj["message"]?.jsonObject?.get("usage") as? JsonObject
+                val usageObj = obj["message"].asObjOrNull()?.get("usage").asObjOrNull()
                 val usage = usageObj?.let(::parseAnthropicUsage)
                 SseLineOutcome(usage = usage)
             }
             "content_block_delta" -> {
-                val delta = obj["delta"] as? JsonObject ?: return null
-                val dType = delta["type"]?.jsonPrimitive?.content.orEmpty()
+                val delta = obj["delta"].asObjOrNull() ?: return null
+                val dType = delta["type"].asStrOrNull().orEmpty()
                 when (dType) {
-                    "text_delta" -> SseLineOutcome(deltaText = delta["text"]?.jsonPrimitive?.content.orEmpty())
-                    "thinking_delta" -> SseLineOutcome(deltaReasoning = delta["thinking"]?.jsonPrimitive?.content.orEmpty())
+                    "text_delta" -> SseLineOutcome(deltaText = delta["text"].asStrOrNull().orEmpty())
+                    "thinking_delta" -> SseLineOutcome(deltaReasoning = delta["thinking"].asStrOrNull().orEmpty())
                     else -> null
                 }
             }
             "message_delta" -> {
-                val usageObj = obj["usage"] as? JsonObject
+                val usageObj = obj["usage"].asObjOrNull()
                 SseLineOutcome(usage = usageObj?.let(::parseAnthropicUsage))
             }
             "message_stop" -> SseLineOutcome(done = true)
@@ -640,7 +633,7 @@ object DirectProtocolCodec {
     }
 
     fun parseAnthropicSingleJson(rawBody: String, statusCode: Int): CompletionResult {
-        val obj = runCatching { AppJson.parseToJsonElement(rawBody).jsonObject }.getOrNull()
+        val obj = runCatching { AppJson.parseToJsonElement(rawBody).asObjOrNull() }.getOrNull()
             ?: throw ApiException(statusCode, "INVALID_JSON", "Invalid Anthropic JSON")
         checkEmbeddedError(obj, statusCode)
 
@@ -649,12 +642,12 @@ object DirectProtocolCodec {
         val blocks = obj["content"] as? JsonArray
         blocks?.forEach { blockEl ->
             val block = blockEl as? JsonObject ?: return@forEach
-            when (block["type"]?.jsonPrimitive?.content) {
-                "thinking" -> reasonBuf.append(block["thinking"]?.jsonPrimitive?.content.orEmpty())
-                "text" -> textBuf.append(block["text"]?.jsonPrimitive?.content.orEmpty())
+            when (block["type"].asStrOrNull()) {
+                "thinking" -> reasonBuf.append(block["thinking"].asStrOrNull().orEmpty())
+                "text" -> textBuf.append(block["text"].asStrOrNull().orEmpty())
             }
         }
-        val usage = (obj["usage"] as? JsonObject)?.let(::parseAnthropicUsage)
+        val usage = obj["usage"].asObjOrNull()?.let(::parseAnthropicUsage)
         return CompletionResult(textBuf.toString(), reasonBuf.toString(), usage)
     }
 
@@ -663,15 +656,15 @@ object DirectProtocolCodec {
         if (trimmed.isEmpty()) return null
         if (trimmed == "[DONE]") return SseLineOutcome(done = true)
 
-        val obj = runCatching { AppJson.parseToJsonElement(trimmed).jsonObject }.getOrNull() ?: return null
+        val obj = runCatching { AppJson.parseToJsonElement(trimmed).asObjOrNull() }.getOrNull() ?: return null
         checkEmbeddedError(obj, 502)
 
         val textBuf = StringBuilder()
         val reasonBuf = StringBuilder()
         extractGeminiPartsText(obj, textBuf, reasonBuf)
-        val usage = (obj["usageMetadata"] as? JsonObject)?.let(::parseGeminiUsage)
+        val usage = obj["usageMetadata"].asObjOrNull()?.let(::parseGeminiUsage)
         val finishReason = ((obj["candidates"] as? JsonArray)?.firstOrNull() as? JsonObject)
-            ?.get("finishReason")?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+            ?.get("finishReason").asStrOrNull()?.takeIf { it.isNotBlank() }
 
         if (textBuf.isEmpty() && reasonBuf.isEmpty() && usage == null && finishReason == null) return null
         return SseLineOutcome(
@@ -684,38 +677,38 @@ object DirectProtocolCodec {
     }
 
     fun parseGeminiSingleJson(rawBody: String, statusCode: Int): CompletionResult {
-        val obj = runCatching { AppJson.parseToJsonElement(rawBody).jsonObject }.getOrNull()
+        val obj = runCatching { AppJson.parseToJsonElement(rawBody).asObjOrNull() }.getOrNull()
             ?: throw ApiException(statusCode, "INVALID_JSON", "Invalid Gemini JSON")
         checkEmbeddedError(obj, statusCode)
 
         val textBuf = StringBuilder()
         val reasonBuf = StringBuilder()
         extractGeminiPartsText(obj, textBuf, reasonBuf)
-        val usage = (obj["usageMetadata"] as? JsonObject)?.let(::parseGeminiUsage)
+        val usage = obj["usageMetadata"].asObjOrNull()?.let(::parseGeminiUsage)
         return CompletionResult(textBuf.toString(), reasonBuf.toString(), usage)
     }
 
     // ==================== Model List & Capability Inference ====================
 
     fun parseModelsJson(protocol: ApiProtocol, rawBody: String): List<OnlineChatModelDto> {
-        val obj = runCatching { AppJson.parseToJsonElement(rawBody).jsonObject }.getOrNull() ?: return emptyList()
+        val obj = runCatching { AppJson.parseToJsonElement(rawBody).asObjOrNull() }.getOrNull() ?: return emptyList()
         return when (protocol) {
             ApiProtocol.GEMINI -> {
                 val arr = obj["models"] as? JsonArray ?: return emptyList()
                 arr.mapNotNull { el ->
                     val m = el as? JsonObject ?: return@mapNotNull null
-                    val rawName = m["name"]?.jsonPrimitive?.content ?: return@mapNotNull null
+                    val rawName = m["name"].asStrOrNull() ?: return@mapNotNull null
                     val id = rawName.removePrefix("models/").trim()
                     if (id.isEmpty()) return@mapNotNull null
                     val methods = (m["supportedGenerationMethods"] as? JsonArray)
-                        ?.mapNotNull { it.jsonPrimitive.content }
+                        ?.mapNotNull { it.asStrOrNull() }
                         .orEmpty()
                     if (methods.isNotEmpty() &&
                         methods.none { it.equals("generateContent", true) || it.equals("predict", true) }
                     ) {
                         return@mapNotNull null
                     }
-                    val limit = m["inputTokenLimit"]?.jsonPrimitive?.intOrNull ?: inferContextWindow(id)
+                    val limit = m["inputTokenLimit"].asIntOrNull() ?: inferContextWindow(id)
                     inferChatModelMeta(id, overrideContext = limit)
                 }.distinctBy { it.id }
             }
@@ -725,7 +718,7 @@ object DirectProtocolCodec {
                 val arr = obj["data"] as? JsonArray ?: return emptyList()
                 arr.mapNotNull { el ->
                     val m = el as? JsonObject ?: return@mapNotNull null
-                    val id = m["id"]?.jsonPrimitive?.content?.trim().orEmpty()
+                    val id = m["id"].asStrOrNull()?.trim().orEmpty()
                     if (id.isEmpty()) return@mapNotNull null
                     val lower = id.lowercase()
                     if (lower.startsWith("text-embedding") ||
@@ -927,14 +920,14 @@ object DirectProtocolCodec {
     }.toString()
 
     fun parseOpenAIImagesJson(rawBody: String, statusCode: Int): List<DecodedDirectImage> {
-        val obj = runCatching { AppJson.parseToJsonElement(rawBody).jsonObject }.getOrNull()
+        val obj = runCatching { AppJson.parseToJsonElement(rawBody).asObjOrNull() }.getOrNull()
             ?: throw ApiException(statusCode, "INVALID_JSON", "Invalid image response JSON")
         checkEmbeddedError(obj, statusCode)
         val data = obj["data"] as? JsonArray ?: emptyList()
         return data.mapNotNull { el ->
             val item = el as? JsonObject ?: return@mapNotNull null
-            val b64 = item["b64_json"]?.jsonPrimitive?.content
-            val url = item["url"]?.jsonPrimitive?.content
+            val b64 = item["b64_json"].asStrOrNull()
+            val url = item["url"].asStrOrNull()
             when {
                 !b64.isNullOrBlank() -> DecodedDirectImage(bytes = Base64.getDecoder().decode(b64), mimeType = "image/png")
                 !url.isNullOrBlank() -> DecodedDirectImage(url = url, mimeType = "image/png")
@@ -944,7 +937,7 @@ object DirectProtocolCodec {
     }
 
     fun parseGeminiImagesJson(rawBody: String, statusCode: Int): List<DecodedDirectImage> {
-        val obj = runCatching { AppJson.parseToJsonElement(rawBody).jsonObject }.getOrNull()
+        val obj = runCatching { AppJson.parseToJsonElement(rawBody).asObjOrNull() }.getOrNull()
             ?: throw ApiException(statusCode, "INVALID_JSON", "Invalid Gemini image response JSON")
         checkEmbeddedError(obj, statusCode)
 
@@ -952,21 +945,21 @@ object DirectProtocolCodec {
         val candidates = obj["candidates"] as? JsonArray
         candidates?.forEach { candEl ->
             val parts = (candEl as? JsonObject)
-                ?.get("content")?.jsonObject
+                ?.get("content").asObjOrNull()
                 ?.get("parts") as? JsonArray ?: return@forEach
             for (pEl in parts) {
                 val pObj = pEl as? JsonObject ?: continue
-                val inline = (pObj["inlineData"] ?: pObj["inline_data"]) as? JsonObject ?: continue
-                val data = inline["data"]?.jsonPrimitive?.content ?: continue
-                val mime = (inline["mimeType"] ?: inline["mime_type"])?.jsonPrimitive?.content ?: "image/png"
+                val inline = (pObj["inlineData"] ?: pObj["inline_data"]).asObjOrNull() ?: continue
+                val data = inline["data"].asStrOrNull() ?: continue
+                val mime = (inline["mimeType"] ?: inline["mime_type"]).asStrOrNull() ?: "image/png"
                 out += DecodedDirectImage(bytes = Base64.getDecoder().decode(data), mimeType = mime)
             }
         }
         val predictions = obj["predictions"] as? JsonArray
         predictions?.forEach { predEl ->
             val pObj = predEl as? JsonObject ?: return@forEach
-            val b64 = pObj["bytesBase64Encoded"]?.jsonPrimitive?.content ?: return@forEach
-            val mime = pObj["mimeType"]?.jsonPrimitive?.content ?: "image/png"
+            val b64 = pObj["bytesBase64Encoded"].asStrOrNull() ?: return@forEach
+            val mime = pObj["mimeType"].asStrOrNull() ?: "image/png"
             out += DecodedDirectImage(bytes = Base64.getDecoder().decode(b64), mimeType = mime)
         }
         return out
@@ -989,7 +982,7 @@ object DirectProtocolCodec {
     }.toString()
 
     fun parseOpenAIEmbeddingsJson(rawBody: String, statusCode: Int): List<FloatArray> {
-        val obj = runCatching { AppJson.parseToJsonElement(rawBody).jsonObject }.getOrNull()
+        val obj = runCatching { AppJson.parseToJsonElement(rawBody).asObjOrNull() }.getOrNull()
             ?: throw ApiException(statusCode, "INVALID_JSON", "Invalid embeddings response JSON")
         checkEmbeddedError(obj, statusCode)
 
@@ -997,7 +990,7 @@ object DirectProtocolCodec {
         if (dataArr != null) {
             val indexed = dataArr.mapIndexedNotNull { fallbackIdx, el ->
                 val item = el as? JsonObject ?: return@mapIndexedNotNull null
-                val idx = item["index"]?.jsonPrimitive?.intOrNull ?: fallbackIdx
+                val idx = item["index"].asIntOrNull() ?: fallbackIdx
                 val embArr = item["embedding"] as? JsonArray ?: return@mapIndexedNotNull null
                 val vec = parseFloatVector(embArr)
                 if (vec.isEmpty()) return@mapIndexedNotNull null
@@ -1073,7 +1066,7 @@ object DirectProtocolCodec {
     }
 
     fun parseGeminiEmbeddingsJson(rawBody: String, statusCode: Int): List<FloatArray> {
-        val obj = runCatching { AppJson.parseToJsonElement(rawBody).jsonObject }.getOrNull()
+        val obj = runCatching { AppJson.parseToJsonElement(rawBody).asObjOrNull() }.getOrNull()
             ?: throw ApiException(statusCode, "INVALID_JSON", "Invalid Gemini embeddings JSON")
         checkEmbeddedError(obj, statusCode)
 
@@ -1139,8 +1132,8 @@ object DirectProtocolCodec {
                 val nested = (root["output"] as? JsonObject)?.get("results") as? JsonArray
                 val found = direct ?: nested
                 if (found == null) {
-                    val detail = root["detail"]?.jsonPrimitive?.content
-                        ?: root["message"]?.jsonPrimitive?.content
+                    val detail = root["detail"].asStrOrNull()
+                        ?: root["message"].asStrOrNull()
                     if (!detail.isNullOrBlank()) {
                         throw ApiException(statusCode, "RERANK_ERROR", detail)
                     }
@@ -1154,10 +1147,10 @@ object DirectProtocolCodec {
         val scores = LinkedHashMap<Int, Double>(resultsArr.size)
         for (el in resultsArr) {
             val item = el as? JsonObject ?: continue
-            val idx = item["index"]?.jsonPrimitive?.intOrNull ?: continue
+            val idx = item["index"].asIntOrNull() ?: continue
             if (idx < 0) continue
-            val score = item["relevance_score"]?.jsonPrimitive?.doubleOrNull
-                ?: item["score"]?.jsonPrimitive?.doubleOrNull
+            val score = item["relevance_score"].asDoubleOrNull()
+                ?: item["score"].asDoubleOrNull()
                 ?: continue
             if (score.isFinite()) {
                 scores[idx] = score.coerceIn(0.0, 1.0)
@@ -1170,18 +1163,18 @@ object DirectProtocolCodec {
         protocol: ApiProtocol,
         rawBody: String,
     ): List<DiscoveredRetrievalModel> {
-        val obj = runCatching { AppJson.parseToJsonElement(rawBody).jsonObject }.getOrNull()
+        val obj = runCatching { AppJson.parseToJsonElement(rawBody).asObjOrNull() }.getOrNull()
             ?: return emptyList()
         return when (protocol) {
             ApiProtocol.GEMINI -> {
                 val arr = obj["models"] as? JsonArray ?: return emptyList()
                 arr.mapNotNull { el ->
                     val m = el as? JsonObject ?: return@mapNotNull null
-                    val rawName = m["name"]?.jsonPrimitive?.content ?: return@mapNotNull null
+                    val rawName = m["name"].asStrOrNull() ?: return@mapNotNull null
                     val id = rawName.removePrefix("models/").trim()
                     if (id.isEmpty()) return@mapNotNull null
                     val methods = (m["supportedGenerationMethods"] as? JsonArray)
-                        ?.mapNotNull { it.jsonPrimitive.content }
+                        ?.mapNotNull { it.asStrOrNull() }
                         .orEmpty()
                     val supportsEmbed = methods.any {
                         it.equals("embedContent", ignoreCase = true) ||
@@ -1202,7 +1195,7 @@ object DirectProtocolCodec {
                 val arr = (obj["data"] as? JsonArray) ?: (obj["models"] as? JsonArray) ?: return emptyList()
                 arr.mapNotNull { el ->
                     val m = el as? JsonObject ?: return@mapNotNull null
-                    val id = (m["id"] ?: m["name"])?.jsonPrimitive?.content?.trim().orEmpty()
+                    val id = (m["id"] ?: m["name"]).asStrOrNull()?.trim().orEmpty()
                     if (id.isEmpty()) return@mapNotNull null
                     classifyRetrievalModelId(id)
                 }.distinctBy { it.id }
@@ -1268,19 +1261,29 @@ object DirectProtocolCodec {
 
     private data class WirePart(val text: String? = null, val imageUrl: String? = null)
 
+    private fun JsonElement?.asObjOrNull(): JsonObject? = this as? JsonObject
+
+    private fun JsonElement?.asStrOrNull(): String? = (this as? JsonPrimitive)?.contentOrNull
+
+    private fun JsonElement?.asIntOrNull(): Int? = (this as? JsonPrimitive)?.intOrNull
+
+    private fun JsonElement?.asBoolOrNull(): Boolean? = (this as? JsonPrimitive)?.booleanOrNull
+
+    private fun JsonElement?.asDoubleOrNull(): Double? = (this as? JsonPrimitive)?.doubleOrNull
+
     private fun extractPlainText(elem: JsonElement): String =
         extractParts(elem).mapNotNull { it.text }.joinToString("\n").trim()
 
     private fun extractParts(elem: JsonElement): List<WirePart> = when (elem) {
-        is JsonPrimitive -> listOf(WirePart(text = elem.content))
+        is JsonPrimitive -> elem.contentOrNull?.let { listOf(WirePart(text = it)) } ?: emptyList()
         is JsonArray -> elem.mapNotNull { item ->
             val obj = item as? JsonObject ?: return@mapNotNull null
-            when (obj["type"]?.jsonPrimitive?.content) {
-                "text", "input_text" -> obj["text"]?.jsonPrimitive?.content?.let { WirePart(text = it) }
-                "image_url" -> obj["image_url"]?.jsonObject?.get("url")?.jsonPrimitive?.content?.let {
+            when (obj["type"].asStrOrNull()) {
+                "text", "input_text" -> obj["text"].asStrOrNull()?.let { WirePart(text = it) }
+                "image_url" -> obj["image_url"].asObjOrNull()?.get("url").asStrOrNull()?.let {
                     WirePart(imageUrl = it)
                 }
-                else -> obj["text"]?.jsonPrimitive?.content?.let { WirePart(text = it) }
+                else -> obj["text"].asStrOrNull()?.let { WirePart(text = it) }
             }
         }
         else -> emptyList()
@@ -1300,25 +1303,25 @@ object DirectProtocolCodec {
         val parts = content["parts"] as? JsonArray ?: return
         for (partEl in parts) {
             val part = partEl as? JsonObject ?: continue
-            val txt = part["text"]?.jsonPrimitive?.content.orEmpty()
+            val txt = part["text"].asStrOrNull().orEmpty()
             if (txt.isEmpty()) continue
-            val isThought = part["thought"]?.jsonPrimitive?.booleanOrNull == true
+            val isThought = part["thought"].asBoolOrNull() == true
             if (isThought) reasonBuf.append(txt) else textBuf.append(txt)
         }
     }
 
     private fun parseResponsesUsage(u: JsonObject): ChatTokenUsageDto = ChatTokenUsageDto(
-        prompt_tokens = u["input_tokens"]?.jsonPrimitive?.intOrNull,
-        completion_tokens = u["output_tokens"]?.jsonPrimitive?.intOrNull,
-        total_tokens = u["total_tokens"]?.jsonPrimitive?.intOrNull,
-        cache_read_input_tokens = u["input_tokens_details"]?.jsonObject?.get("cached_tokens")?.jsonPrimitive?.intOrNull,
+        prompt_tokens = u["input_tokens"].asIntOrNull(),
+        completion_tokens = u["output_tokens"].asIntOrNull(),
+        total_tokens = u["total_tokens"].asIntOrNull(),
+        cache_read_input_tokens = u["input_tokens_details"].asObjOrNull()?.get("cached_tokens").asIntOrNull(),
     )
 
     private fun parseAnthropicUsage(u: JsonObject): ChatTokenUsageDto {
-        val input = u["input_tokens"]?.jsonPrimitive?.intOrNull
-        val output = u["output_tokens"]?.jsonPrimitive?.intOrNull
-        val cacheRead = u["cache_read_input_tokens"]?.jsonPrimitive?.intOrNull
-        val cacheCreation = u["cache_creation_input_tokens"]?.jsonPrimitive?.intOrNull
+        val input = u["input_tokens"].asIntOrNull()
+        val output = u["output_tokens"].asIntOrNull()
+        val cacheRead = u["cache_read_input_tokens"].asIntOrNull()
+        val cacheCreation = u["cache_creation_input_tokens"].asIntOrNull()
         val effectivePrompt = if (input != null || cacheCreation != null) {
             (input ?: 0) + (cacheCreation ?: 0)
         } else {
@@ -1339,17 +1342,17 @@ object DirectProtocolCodec {
     }
 
     private fun parseGeminiUsage(u: JsonObject): ChatTokenUsageDto = ChatTokenUsageDto(
-        prompt_tokens = u["promptTokenCount"]?.jsonPrimitive?.intOrNull,
-        completion_tokens = u["candidatesTokenCount"]?.jsonPrimitive?.intOrNull,
-        total_tokens = u["totalTokenCount"]?.jsonPrimitive?.intOrNull,
-        cache_read_input_tokens = u["cachedContentTokenCount"]?.jsonPrimitive?.intOrNull,
+        prompt_tokens = u["promptTokenCount"].asIntOrNull(),
+        completion_tokens = u["candidatesTokenCount"].asIntOrNull(),
+        total_tokens = u["totalTokenCount"].asIntOrNull(),
+        cache_read_input_tokens = u["cachedContentTokenCount"].asIntOrNull(),
     )
 
     private fun checkEmbeddedError(obj: JsonObject, statusCode: Int) {
         val errEl = obj["error"] ?: return
         if (errEl is JsonObject) {
-            val code = errEl["code"]?.jsonPrimitive?.content ?: errEl["type"]?.jsonPrimitive?.content
-            val msg = errEl["message"]?.jsonPrimitive?.content ?: "API error"
+            val code = errEl["code"].asStrOrNull() ?: errEl["type"].asStrOrNull()
+            val msg = errEl["message"].asStrOrNull() ?: "API error"
             throw ApiException(statusCode, code, msg)
         } else if (errEl is JsonPrimitive && errEl.isString) {
             throw ApiException(statusCode, statusCode.toString(), errEl.content)

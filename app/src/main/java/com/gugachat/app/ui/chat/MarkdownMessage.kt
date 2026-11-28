@@ -1,6 +1,5 @@
 package com.gugachat.app.ui.chat
 
-import android.content.Context
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
@@ -445,17 +444,19 @@ fun MarkdownMessageText(
                         }
                     }
                     is MdBlock.Paragraph -> {
-                        val paragraphText = if (indentFirstLine) {
-                            block.text.lines().joinToString("\n") { line ->
-                                val trimmedLine = line.trimStart()
-                                if (trimmedLine.isEmpty() || line.startsWith("　　") || line.startsWith("  ")) {
-                                    line
-                                } else {
-                                    "　　$trimmedLine"
+                        val paragraphText = remember(block.text, indentFirstLine) {
+                            if (indentFirstLine) {
+                                block.text.lines().joinToString("\n") { line ->
+                                    val trimmedLine = line.trimStart()
+                                    if (trimmedLine.isEmpty() || line.startsWith("　　") || line.startsWith("  ")) {
+                                        line
+                                    } else {
+                                        "　　$trimmedLine"
+                                    }
                                 }
+                            } else {
+                                block.text
                             }
-                        } else {
-                            block.text
                         }
                         InlineRichText(
                             raw = paragraphText,
@@ -517,7 +518,9 @@ private fun CodeFenceBlock(
     val strings = LocalAppStrings.current
     val isZh = strings.language == AppLanguage.ZH
     val isPlainText = remember(lang, code) { isPlainTextCodeFence(lang, code) }
-    var wrapLines by remember(lang, code) { mutableStateOf(shouldDefaultWrapCodeFence(lang, code)) }
+    val defaultWrap = remember(lang, code) { shouldDefaultWrapCodeFence(lang, code) }
+    var userWrapOverride by remember(lang) { mutableStateOf<Boolean?>(null) }
+    val wrapLines = userWrapOverride ?: defaultWrap
     var justCopied by remember(code) { mutableStateOf(false) }
     LaunchedEffect(justCopied) {
         if (justCopied) {
@@ -559,7 +562,7 @@ private fun CodeFenceBlock(
                         .background(
                             if (wrapLines) palette.accent.copy(alpha = 0.14f) else palette.codeBg.copy(alpha = 0.72f),
                         )
-                        .clickable { wrapLines = !wrapLines }
+                        .clickable { userWrapOverride = !wrapLines }
                         .padding(horizontal = 8.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -662,6 +665,10 @@ private fun InlineRichText(
     )
 }
 
+private val MD_HEADING_RE = Regex("^(#{1,4})\\s+(.+)$")
+private val MD_BULLET_RE = Regex("^([-*•]|\\d+\\.)\\s+(.+)$")
+private val MD_TABLE_SEP_RE = Regex("^\\|?\\s*[-:]+\\s*(\\|\\s*[-:]+\\s*)+\\|?$")
+
 internal fun parseMarkdownBlocks(raw: String): List<MdBlock> {
     if (raw.isEmpty()) return emptyList()
     val lines = raw.replace("\r\n", "\n").split('\n')
@@ -755,7 +762,7 @@ internal fun parseMarkdownBlocks(raw: String): List<MdBlock> {
             continue
         }
 
-        val headingMatch = Regex("^(#{1,4})\\s+(.+)$").matchEntire(trimmed)
+        val headingMatch = MD_HEADING_RE.matchEntire(trimmed)
         if (headingMatch != null) {
             flushPara()
             out.add(MdBlock.Heading(headingMatch.groupValues[1].length, headingMatch.groupValues[2]))
@@ -774,7 +781,7 @@ internal fun parseMarkdownBlocks(raw: String): List<MdBlock> {
             continue
         }
 
-        val bulletMatch = Regex("^([-*•]|\\d+\\.)\\s+(.+)$").matchEntire(trimmed)
+        val bulletMatch = MD_BULLET_RE.matchEntire(trimmed)
         if (bulletMatch != null) {
             flushPara()
             val sym = if (bulletMatch.groupValues[1] in listOf("-", "*", "•")) "•" else bulletMatch.groupValues[1]
@@ -783,7 +790,7 @@ internal fun parseMarkdownBlocks(raw: String): List<MdBlock> {
             continue
         }
 
-        if (trimmed.contains("|") && i + 1 < lines.size && lines[i + 1].trim().matches(Regex("^\\|?\\s*[-:]+\\s*(\\|\\s*[-:]+\\s*)+\\|?$"))) {
+        if (trimmed.contains("|") && i + 1 < lines.size && MD_TABLE_SEP_RE.matches(lines[i + 1].trim())) {
             flushPara()
             val headers = splitTableRow(trimmed)
             i += 2
