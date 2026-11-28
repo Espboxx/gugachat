@@ -1,26 +1,26 @@
 {
-  "tag_name": "v0.4.2",
-  "version_name": "0.4.2",
-  "name": "GuGuChat v0.4.2",
-  "published_at": "2026-11-28T10:28:33Z",
-  "html_url": "https://github.com/Espboxx/gugachat/releases/tag/v0.4.2",
+  "tag_name": "v0.4.3",
+  "version_name": "0.4.3",
+  "name": "GuGuChat v0.4.3",
+  "published_at": "2026-11-28T13:58:30Z",
+  "html_url": "https://github.com/Espboxx/gugachat/releases/tag/v0.4.3",
   "cn_download_page": "",
-  "apk_name": "GuGuChat-v0.4.2-arm64-v8a.apk",
-  "apk_size": 26464000,
-  "apk_sha256": "f459c82b482d88149d7db9238d3404398aadbaacd4aa834ed151ee9dcadd5a3a",
-  "apk_url": "https://github.com/Espboxx/gugachat/releases/download/v0.4.2/GuGuChat-v0.4.2-arm64-v8a.apk",
+  "apk_name": "GuGuChat-v0.4.3-arm64-v8a.apk",
+  "apk_size": 26529536,
+  "apk_sha256": "1e3d1118cae124e960d6c6a10bd7ad5b983f5dbcf79aeca83c6ee02bc43d5c39",
+  "apk_url": "https://github.com/Espboxx/gugachat/releases/download/v0.4.3/GuGuChat-v0.4.3-arm64-v8a.apk",
   "abi_apks": {
     "arm64-v8a": {
-      "apk_name": "GuGuChat-v0.4.2-arm64-v8a.apk",
-      "apk_size": 26464000,
-      "apk_sha256": "f459c82b482d88149d7db9238d3404398aadbaacd4aa834ed151ee9dcadd5a3a",
-      "apk_url": "https://github.com/Espboxx/gugachat/releases/download/v0.4.2/GuGuChat-v0.4.2-arm64-v8a.apk"
+      "apk_name": "GuGuChat-v0.4.3-arm64-v8a.apk",
+      "apk_size": 26529536,
+      "apk_sha256": "1e3d1118cae124e960d6c6a10bd7ad5b983f5dbcf79aeca83c6ee02bc43d5c39",
+      "apk_url": "https://github.com/Espboxx/gugachat/releases/download/v0.4.3/GuGuChat-v0.4.3-arm64-v8a.apk"
     },
     "x86_64": {
-      "apk_name": "GuGuChat-v0.4.2-x86_64.apk",
-      "apk_size": 29161124,
-      "apk_sha256": "da9a9a63ab1014e84ccf55180389c290625af54f41ceb22927b1e94c2b0887b2",
-      "apk_url": "https://github.com/Espboxx/gugachat/releases/download/v0.4.2/GuGuChat-v0.4.2-x86_64.apk"
+      "apk_name": "GuGuChat-v0.4.3-x86_64.apk",
+      "apk_size": 29226660,
+      "apk_sha256": "7c4bb0aff964871216ae3d00a54ad3c0e595b8562b9d46e15fb4ca87849675d1",
+      "apk_url": "https://github.com/Espboxx/gugachat/releases/download/v0.4.3/GuGuChat-v0.4.3-x86_64.apk"
     }
   },
   "cn_apk_urls": [],
@@ -31,5 +31,5 @@
     "https://gh-proxy.org/",
     "https://ghfast.top/"
   ],
-  "body": "## GuGuChat v0.4.2\n\n### 下载包选择说明\n- **`GuGuChat-v0.4.2-arm64-v8a.apk`（26,464,000 字节 / 约 25.2 MB，手机/平板真机推荐）**：适用于绝大多数安卓真机，内置自动更新按设备 ABI 自动匹配。\n- **`GuGuChat-v0.4.2-x86_64.apk`（29,161,124 字节 / 约 27.8 MB，电脑模拟器推荐）**：适用于 MuMu / 雷电 / AVD x86_64 等电脑安卓模拟器及 x86 平板。\n\n### 本次更新内容\n\n#### 1. 独立全屏模型切换页面（彻底告别误触下滑关闭）\n- 将聊天 / 角色扮演（RP）/ 长篇小说三模式共用的模型与分组选择器由底部弹窗重构为**独立全屏页面**，进入时自动隐藏底部导航栏并适配主题背景，滑动分组栏或下拉列表均不会再误关闭页面。\n- **更高效的分组与模型浏览**：顶部单行横向分组条支持自动定位当前选中分组与右侧渐变滚动提示；分组较多时点击右侧「全部 ⌄」即可一键展开多行网格视图直达目标分组，点选后自动收起；新增切换分组加载进度条与当前模型自动滚动定位。\n\n#### 2. 兼容 UU 世界书导出格式（`worldInfoEntries`）\n- 全面支持导入 UU 独立导出的世界书 JSON（`worldInfoEntries` / `world_info_entries`），完整解析 `title`、`keys`、`constant` 常驻标记、`disabled` 状态及同名分段词条。\n- 在「创作 → 设定」导入后自动入库并触发向量索引建库，同时打通外部导入归类识别。\n\n#### 3. 架构精简、稳定性修复与流式热路径优化\n- **协议与缓存修复**：修复跨协议 `@D` 深度注入标记透传（恢复 Anthropic 断点 2 / Responses / Gemini 提示词缓存命中），补全 Gemini `assistantPrefill` 合并与安全 JSON 解析；消除图片加载与 401 单飞刷新共享调度器死锁，强化 WebDAV 断网重试与断点续传分片校验。\n- **流式与渲染加速**：优化 `ChatStreamManager` 结束锁与多会话水位线隔离；为上下文召回、正则引擎与世界书扫描引入缓存，消除重复清洗与正则编译开销；统一底部弹窗与子页返回键处理、加固数据库事务原子性与流式备份批量查询。"
+  "body": "## GuGuChat v0.4.3\n\n### 下载包选择说明\n- **`GuGuChat-v0.4.3-arm64-v8a.apk`（26,529,536 字节 / 约 25.3 MB，手机/平板真机推荐）**：适用于绝大多数安卓真机，内置自动更新按设备 ABI 自动匹配。\n- **`GuGuChat-v0.4.3-x86_64.apk`（29,226,660 字节 / 约 27.9 MB，电脑模拟器推荐）**：适用于 MuMu / 雷电 / AVD x86_64 等电脑安卓模拟器及 x86 平板。\n\n### 本次更新内容\n\n#### 1. 全模式自定义最低输出字数（普通对话 / RP / 小说）\n- 支持在**普通对话、角色扮演（RP）、长篇小说**三大模式中自由设置最低输出字数（`50 ~ 20,000` 字，含 `不限 / ≥300 / ≥800 / ≥1500 / ≥3000 / 自定义` 快捷档位），按模式独立记忆默认偏好并同步至 `.gugubackup` 本地备份与 WebDAV。\n- **不伤 Prompt Cache + 自动抬高上限**：在 Zone 3 尾部注入最低字数约束，保持前文缓存前缀不变；并根据模型字数与思考预算自动抬升 `max_tokens` 下限，避免被旧上限截断。\n- **防短回复双兜底**：回复低于目标字数 85% 时，底部展示轻量一键「续写」胶囊（普通对话亦支持手动续写）；也支持按需开启「字数不足时自动续写」（最多静默补写 2 轮）。\n\n#### 2. 对话参数、预设开关与世界书全面升级为独立全屏页\n- 将**对话参数页**、**提示词预设/正则开关页**及**世界书词条管理页**重构为独立全屏页面，彻底解决预设或词条过多时上下滑动误触关闭底部弹窗的问题。\n- 预设与世界书全屏页统一支持**关键词搜索、状态/常驻筛选、保留 Marker 的批量启停、`↑/↓` 调序**以及全屏词条编辑（返回保持滚动位置），同步修复重复预设 `identifier` 导致的列表崩溃。\n\n#### 3. 大文件三级自适应留存与混合分块动态召回\n- **告别 2 轮后强制折叠丢失**：移除原先硬编码的 2 轮历史文件折叠，窗口充裕时自动保持大文件全文生效（Prompt Cache 持续命中），避免 AI 丢失后半文档或自行脑补剧情。\n- **动态混合分块召回**：超大文档或上下文受压时，在原消息位保留不可变的文档目录锚点，每轮自动通过 **CJK BM25F 词法 + ONNX/云端向量 + 可选 Rerank + 邻接段扩展** 精准召回相关章节片段（无需手动提及文件名），并支持 DOCX/EPUB 标题结构解析。\n- **已发送文件策略可随时切换**：点击历史消息中的文件胶囊即可自由切换「固定全文 / 动态召回 / 智能管理 / 头尾概览」，并在「召回详情」中直观查看与静音命中的文档片段。"
 }
