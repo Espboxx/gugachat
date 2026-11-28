@@ -1,22 +1,23 @@
 package com.gugachat.app.ui.chat
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -25,36 +26,45 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.outlined.Visibility
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -70,13 +80,13 @@ import com.gugachat.app.core.theme.GuBadge
 import com.gugachat.app.core.theme.GuBadgeVariant
 import com.gugachat.app.core.theme.GuCompactSearchBar
 import com.gugachat.app.core.theme.GuEmptyState
+import com.gugachat.app.core.theme.GuHairlineDivider
 import com.gugachat.app.core.theme.GuIconTile
+import com.gugachat.app.core.theme.GuLinearProgressBar
 import com.gugachat.app.core.theme.GuMetaText
-import com.gugachat.app.core.theme.GuModalBottomSheet
 import com.gugachat.app.core.theme.GuModelAvatar
 import com.gugachat.app.core.theme.GuPill
 import com.gugachat.app.core.theme.GuSegmentedControl
-import com.gugachat.app.core.theme.GuSheetHeader
 import com.gugachat.app.core.theme.GuTextField
 import com.gugachat.app.core.theme.LocalAppTheme
 import com.gugachat.app.core.util.FuzzyMatcher
@@ -115,21 +125,24 @@ internal fun formatContextTokenBadge(tokens: Int): String = when {
     else -> "${tokens}t"
 }
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun ModelGroupSheet(
+fun ModelPickerScreen(
     groups: List<OnlineChatGroupDto>,
     models: List<OnlineChatModelDto>,
     selectedGroupId: Long?,
     selectedModelId: String?,
     params: ChatParams = ChatParams(),
     waterline: ContextWaterlineSummary = ContextWaterlineSummary(),
+    isLoadingModels: Boolean = false,
     onSelectGroup: (Long) -> Unit,
     onSelectModel: (String) -> Unit,
     onSelectCustomModel: (String) -> Unit = onSelectModel,
     onUpdateContextSettings: ((contextWindowOverride: Int?, maxHistoryMessages: Int?, maxTokens: Int?) -> Unit)? = null,
-    onDismiss: () -> Unit,
+    onBack: () -> Unit,
 ) {
+    BackHandler(onBack = onBack)
+
     val strings = LocalAppStrings.current
     val theme = LocalAppTheme.current
     val c = theme.colors
@@ -138,6 +151,12 @@ fun ModelGroupSheet(
     var searchQuery by remember { mutableStateOf("") }
     var capFilterIndex by remember { mutableIntStateOf(0) } // 0=All, 1=Free, 2=Vision, 3=Reasoning
     var showContextSettings by remember { mutableStateOf(false) }
+    var groupsExpanded by remember { mutableStateOf(false) }
+    var hasInitialGroupAligned by remember { mutableStateOf(false) }
+
+    val groupListState = rememberLazyListState()
+    val modelListState = rememberLazyListState()
+    var lastScrolledContextKey by remember { mutableStateOf<Pair<Long?, String?>?>(null) }
 
     val capFilterLabels = remember(isZh, strings) {
         listOf(
@@ -201,72 +220,153 @@ fun ModelGroupSheet(
         params.maxHistoryMessages != null ||
         params.maxTokens != null
 
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    GuModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
+    val canScrollGroupsForward by remember {
+        derivedStateOf { groupListState.canScrollForward }
+    }
+    val canScrollGroupsBackward by remember {
+        derivedStateOf { groupListState.canScrollBackward }
+    }
+    val showExpandGroupsButton = displayedGroups.size > 3 || canScrollGroupsForward || canScrollGroupsBackward
+
+    LaunchedEffect(selectedGroupId, displayedGroups, groupsExpanded) {
+        if (groupsExpanded || selectedGroupId == null) return@LaunchedEffect
+        val idx = displayedGroups.indexOfFirst { it.id == selectedGroupId }
+        if (idx < 0) {
+            hasInitialGroupAligned = true
+            return@LaunchedEffect
+        }
+        val layoutInfo = groupListState.layoutInfo
+        if (!hasInitialGroupAligned || layoutInfo.visibleItemsInfo.isEmpty()) {
+            groupListState.scrollToItem((idx - 1).coerceAtLeast(0))
+        } else {
+            val visibleItem = layoutInfo.visibleItemsInfo.firstOrNull { it.index == idx }
+            val isFullyVisible = visibleItem != null &&
+                visibleItem.offset >= layoutInfo.viewportStartOffset &&
+                visibleItem.offset + visibleItem.size <= layoutInfo.viewportEndOffset
+            if (!isFullyVisible) {
+                groupListState.animateScrollToItem((idx - 1).coerceAtLeast(0))
+            }
+        }
+        hasInitialGroupAligned = true
+    }
+
+    LaunchedEffect(selectedGroupId, capFilterIndex, trimmedSearch) {
+        if (lastScrolledContextKey != null) {
+            modelListState.scrollToItem(0)
+        }
+    }
+
+    LaunchedEffect(selectedGroupId, selectedModelId, filteredModels, capFilterIndex, trimmedSearch, isLoadingModels) {
+        if (isLoadingModels || trimmedSearch.isNotEmpty() || capFilterIndex != 0) return@LaunchedEffect
+        val currentKey = selectedGroupId to selectedModelId
+        if (lastScrolledContextKey == currentKey) return@LaunchedEffect
+        val idx = selectedModelId?.let { targetId ->
+            filteredModels.indexOfFirst { it.id == targetId }
+        } ?: -1
+        lastScrolledContextKey = currentKey
+        if (idx > 2) {
+            modelListState.scrollToItem((idx - 1).coerceAtLeast(0))
+        }
+    }
+
+    val subtitleText = remember(activeGroup?.name, models.size, filteredModels.size, trimmedSearch, capFilterIndex) {
+        val countPart = if (trimmedSearch.isNotEmpty() || capFilterIndex != 0) {
+            "${filteredModels.size}/${models.size}"
+        } else {
+            "${models.size}"
+        }
+        val base = activeGroup?.name?.takeIf { it.isNotBlank() }
+        if (base != null) "$base · $countPart" else countPart
+    }
+
+    Surface(
+        color = c.page,
+        modifier = Modifier
+            .fillMaxSize()
+            .clickable(
+                indication = null,
+                interactionSource = remember { MutableInteractionSource() },
+                onClick = {},
+            ),
     ) {
         Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .fillMaxHeight(0.86f)
-                .imePadding()
-                .navigationBarsPadding(),
+                .fillMaxSize()
+                .statusBarsPadding()
+                .imePadding(),
         ) {
-            val subtitleText = remember(activeGroup?.name, models.size, filteredModels.size, trimmedSearch, capFilterIndex) {
-                val countPart = if (trimmedSearch.isNotEmpty() || capFilterIndex != 0) {
-                    "${filteredModels.size}/${models.size}"
-                } else {
-                    "${models.size}"
+            // Dedicated full-screen top bar
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 52.dp)
+                    .padding(start = 4.dp, end = 12.dp, top = 4.dp, bottom = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                IconButton(onClick = onBack) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = strings.common.back,
+                        tint = c.ink,
+                    )
                 }
-                val base = activeGroup?.name?.takeIf { it.isNotBlank() }
-                if (base != null) "$base · $countPart" else countPart
-            }
-
-            GuSheetHeader(
-                title = strings.chat.selectModel,
-                subtitle = subtitleText,
-                onClose = onDismiss,
-                closeContentDescription = strings.common.close,
-                trailing = if (onUpdateContextSettings != null) {
-                    {
-                        val triggerShape = RoundedCornerShape(999.dp)
-                        val activeTrigger = showContextSettings || hasCustomContext
-                        Row(
-                            modifier = Modifier
-                                .clip(triggerShape)
-                                .background(if (activeTrigger) c.primarySoft else c.surfaceSoft)
-                                .clickable { showContextSettings = !showContextSettings }
-                                .padding(horizontal = 10.dp, vertical = 5.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        ) {
-                            if (hasCustomContext) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(6.dp)
-                                        .clip(CircleShape)
-                                        .background(c.primary),
-                                )
-                            }
-                            Text(
-                                text = if (isZh) {
-                                    "上下文设置 ${if (showContextSettings) "▾" else "▸"}"
-                                } else {
-                                    "Context ${if (showContextSettings) "▾" else "▸"}"
-                                },
-                                color = if (activeTrigger) c.primarySoftInk else c.muted,
-                                fontSize = 11.5.sp,
-                                fontWeight = FontWeight.SemiBold,
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(1.dp),
+                ) {
+                    Text(
+                        text = strings.chat.selectModel,
+                        color = c.ink,
+                        fontSize = 16.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = subtitleText,
+                        color = c.muted,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                if (onUpdateContextSettings != null) {
+                    val triggerShape = RoundedCornerShape(999.dp)
+                    val activeTrigger = showContextSettings || hasCustomContext
+                    Row(
+                        modifier = Modifier
+                            .clip(triggerShape)
+                            .background(if (activeTrigger) c.primarySoft else c.surfaceSoft)
+                            .clickable { showContextSettings = !showContextSettings }
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        if (hasCustomContext) {
+                            Box(
+                                modifier = Modifier
+                                    .size(6.dp)
+                                    .clip(CircleShape)
+                                    .background(c.primary),
                             )
                         }
+                        Text(
+                            text = if (isZh) {
+                                "上下文设置 ${if (showContextSettings) "▾" else "▸"}"
+                            } else {
+                                "Context ${if (showContextSettings) "▾" else "▸"}"
+                            },
+                            color = if (activeTrigger) c.primarySoftInk else c.muted,
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
                     }
-                } else {
-                    null
-                },
-            )
+                }
+            }
+            GuHairlineDivider(alpha = 0.55f)
 
-            // Collapsible context settings (default collapsed to avoid competing with model list)
+            // Collapsible context settings drawer
             if (onUpdateContextSettings != null) {
                 val activeModelWindow = remember(models, selectedModelId) {
                     models.firstOrNull { it.id == selectedModelId }?.context_window ?: 128_000
@@ -281,10 +381,7 @@ fun ModelGroupSheet(
                             isZh = isZh,
                             onUpdate = onUpdateContextSettings,
                         )
-                        HorizontalDivider(
-                            thickness = 0.5.dp,
-                            color = c.border.copy(alpha = 0.45f),
-                        )
+                        GuHairlineDivider(alpha = 0.45f)
                     }
                 }
             }
@@ -294,18 +391,18 @@ fun ModelGroupSheet(
                     .fillMaxWidth()
                     .weight(1f)
                     .padding(horizontal = 16.dp, vertical = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                // 1. Unified 38dp search bar (fuzzy matches both channel names and model IDs)
+                // 1. Unified 40dp search bar (fuzzy matches both channel names and model IDs)
                 GuCompactSearchBar(
                     value = searchQuery,
                     onValueChange = { searchQuery = it },
                     placeholder = if (isZh) "搜索渠道或模型…" else "Search channels or models…",
                     clearContentDescription = strings.common.clear,
-                    modifier = Modifier.height(38.dp),
+                    modifier = Modifier.height(40.dp),
                 )
 
-                // 2. Single-line horizontal channel capsule strip
+                // 2. Option A: Horizontal channel capsule strip + one-tap "全部 ⌄" multi-row expansion
                 if (displayedGroups.isEmpty()) {
                     Text(
                         text = strings.chat.noGroups,
@@ -314,67 +411,167 @@ fun ModelGroupSheet(
                         modifier = Modifier.padding(horizontal = 2.dp, vertical = 2.dp),
                     )
                 } else {
-                    LazyRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        items(displayedGroups, key = { it.id }) { g ->
-                            val selected = g.id == selectedGroupId
-                            val protoTag = if (ApiProviderConfig.isCustomProviderId(g.id)) {
-                                strings.providers.protocolShortNames[g.platform]
-                            } else {
-                                null
-                            }
-                            Surface(
-                                onClick = {
-                                    onSelectGroup(g.id)
-                                    capFilterIndex = 0
-                                    if (trimmedSearch.isNotEmpty() &&
-                                        FuzzyMatcher.scoreItem(trimmedSearch, groupFieldsProvider(g)) != null
-                                    ) {
-                                        searchQuery = ""
-                                    }
-                                },
-                                shape = RoundedCornerShape(999.dp),
-                                color = if (selected) c.primary else c.surfaceSoft,
-                                border = null,
-                                modifier = Modifier.height(32.dp),
+                    val onPickGroup: (OnlineChatGroupDto) -> Unit = { g ->
+                        onSelectGroup(g.id)
+                        capFilterIndex = 0
+                        if (trimmedSearch.isNotEmpty() &&
+                            FuzzyMatcher.scoreItem(trimmedSearch, groupFieldsProvider(g)) != null
+                        ) {
+                            searchQuery = ""
+                        }
+                        groupsExpanded = false
+                    }
+
+                    if (!groupsExpanded) {
+                        val fadeColorState = rememberUpdatedState(c.page)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .drawWithCache {
+                                        val w = 22.dp.toPx()
+                                        val startX = (size.width - w).coerceAtLeast(0f)
+                                        val brush = Brush.horizontalGradient(
+                                            colors = listOf(Color.Transparent, fadeColorState.value),
+                                            startX = startX,
+                                            endX = size.width,
+                                        )
+                                        onDrawWithContent {
+                                            drawContent()
+                                            if (canScrollGroupsForward) {
+                                                drawRect(
+                                                    brush = brush,
+                                                    topLeft = Offset(startX, 0f),
+                                                    size = Size(w.coerceAtMost(size.width), size.height),
+                                                )
+                                            }
+                                        }
+                                    },
                             ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 11.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                                LazyRow(
+                                    state = groupListState,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    contentPadding = PaddingValues(
+                                        top = 2.dp,
+                                        bottom = 2.dp,
+                                        end = if (canScrollGroupsForward) 18.dp else 0.dp,
+                                    ),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                                 ) {
-                                    if (g.has_free_quotas) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(6.dp)
-                                                .clip(CircleShape)
-                                                .background(if (selected) Color.White else c.success),
+                                    items(displayedGroups, key = { it.id }) { g ->
+                                        val protoTag = if (ApiProviderConfig.isCustomProviderId(g.id)) {
+                                            strings.providers.protocolShortNames[g.platform]
+                                        } else {
+                                            null
+                                        }
+                                        GroupChipPill(
+                                            group = g,
+                                            selected = g.id == selectedGroupId,
+                                            protoTag = protoTag,
+                                            onClick = { onPickGroup(g) },
                                         )
                                     }
-                                    Text(
-                                        text = g.name,
-                                        color = if (selected) Color.White else c.ink,
-                                        fontSize = 12.sp,
-                                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-                                        maxLines = 1,
+                                }
+                            }
+
+                            if (showExpandGroupsButton) {
+                                Surface(
+                                    onClick = { groupsExpanded = true },
+                                    shape = RoundedCornerShape(999.dp),
+                                    color = c.surfaceSoft,
+                                    border = null,
+                                    modifier = Modifier.height(36.dp),
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(2.dp),
+                                    ) {
+                                        Text(
+                                            text = if (isZh) "全部" else "All",
+                                            color = c.muted,
+                                            fontSize = 11.5.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                        )
+                                        Icon(
+                                            imageVector = Icons.Default.ExpandMore,
+                                            contentDescription = if (isZh) "展开全部分组" else "Expand all groups",
+                                            tint = c.muted,
+                                            modifier = Modifier.size(15.dp),
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                GuMetaText(
+                                    text = if (isZh) {
+                                        "全部分组 (${displayedGroups.size})"
+                                    } else {
+                                        "All groups (${displayedGroups.size})"
+                                    },
+                                    color = c.muted,
+                                )
+                                Surface(
+                                    onClick = { groupsExpanded = false },
+                                    shape = RoundedCornerShape(999.dp),
+                                    color = c.surfaceSoft,
+                                    border = null,
+                                    modifier = Modifier.height(30.dp),
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(2.dp),
+                                    ) {
+                                        Text(
+                                            text = if (isZh) "收起" else "Collapse",
+                                            color = c.muted,
+                                            fontSize = 11.5.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                        )
+                                        Icon(
+                                            imageVector = Icons.Default.ExpandLess,
+                                            contentDescription = if (isZh) "收起分组" else "Collapse groups",
+                                            tint = c.muted,
+                                            modifier = Modifier.size(15.dp),
+                                        )
+                                    }
+                                }
+                            }
+                            FlowRow(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(max = 200.dp)
+                                    .verticalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                displayedGroups.forEach { g ->
+                                    val protoTag = if (ApiProviderConfig.isCustomProviderId(g.id)) {
+                                        strings.providers.protocolShortNames[g.platform]
+                                    } else {
+                                        null
+                                    }
+                                    GroupChipPill(
+                                        group = g,
+                                        selected = g.id == selectedGroupId,
+                                        protoTag = protoTag,
+                                        onClick = { onPickGroup(g) },
                                     )
-                                    if (protoTag != null) {
-                                        Text(
-                                            text = protoTag,
-                                            color = if (selected) Color.White.copy(alpha = 0.85f) else c.primarySoftInk,
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.SemiBold,
-                                        )
-                                    } else if (g.rate_multiplier != 1.0) {
-                                        Text(
-                                            text = "${g.rate_multiplier}x",
-                                            color = if (selected) Color.White.copy(alpha = 0.85f) else c.accent,
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.SemiBold,
-                                        )
-                                    }
                                 }
                             }
                         }
@@ -392,11 +589,44 @@ fun ModelGroupSheet(
                     )
                 }
 
-                // 4. Clean flat / borderless grouped model rows (7~8+ visible above fold)
-                if (filteredModels.isEmpty() && !showCustomAction) {
+                // Subtle loading bar while switching groups
+                if (isLoadingModels) {
+                    GuLinearProgressBar(
+                        modifier = Modifier.fillMaxWidth(),
+                        height = 2.dp,
+                    )
+                }
+
+                // 4. Full-width clean grouped model list
+                if (isLoadingModels && filteredModels.isEmpty() && !showCustomAction) {
                     Box(
                         modifier = Modifier
-                            .fillMaxSize()
+                            .fillMaxWidth()
+                            .weight(1f)
+                            .padding(vertical = 16.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(24.dp),
+                                strokeWidth = 2.4.dp,
+                                color = c.primary,
+                            )
+                            Text(
+                                text = if (isZh) "正在加载模型…" else "Loading models…",
+                                color = c.muted,
+                                fontSize = 12.5.sp,
+                            )
+                        }
+                    }
+                } else if (filteredModels.isEmpty() && !showCustomAction) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
                             .padding(vertical = 16.dp),
                         contentAlignment = Alignment.Center,
                     ) {
@@ -407,9 +637,11 @@ fun ModelGroupSheet(
                     }
                 } else {
                     LazyColumn(
+                        state = modelListState,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .weight(1f),
+                            .weight(1f)
+                            .graphicsLayer { alpha = if (isLoadingModels) 0.55f else 1f },
                         contentPadding = PaddingValues(top = 2.dp, bottom = 14.dp),
                     ) {
                         if (showCustomAction) {
@@ -422,7 +654,7 @@ fun ModelGroupSheet(
                                         .background(c.primarySoft)
                                         .clickable {
                                             onSelectCustomModel(trimmedSearch)
-                                            onDismiss()
+                                            onBack()
                                         }
                                         .padding(horizontal = 12.dp, vertical = 9.dp),
                                     verticalAlignment = Alignment.CenterVertically,
@@ -472,7 +704,7 @@ fun ModelGroupSheet(
                                         .fillMaxWidth()
                                         .clickable {
                                             onSelectModel(model.id)
-                                            onDismiss()
+                                            onBack()
                                         }
                                         .padding(horizontal = 12.dp, vertical = 10.dp),
                                     verticalAlignment = Alignment.CenterVertically,
@@ -528,16 +760,69 @@ fun ModelGroupSheet(
                                     }
                                 }
                                 if (!isLast) {
-                                    HorizontalDivider(
+                                    GuHairlineDivider(
                                         modifier = Modifier.padding(start = 43.dp, end = 12.dp),
-                                        thickness = 0.5.dp,
-                                        color = c.border.copy(alpha = 0.45f),
+                                        alpha = 0.45f,
                                     )
                                 }
                             }
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun GroupChipPill(
+    group: OnlineChatGroupDto,
+    selected: Boolean,
+    protoTag: String?,
+    onClick: () -> Unit,
+) {
+    val c = LocalAppTheme.current.colors
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(999.dp),
+        color = if (selected) c.primary else c.surfaceSoft,
+        border = null,
+        modifier = Modifier.height(36.dp),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
+        ) {
+            if (group.has_free_quotas) {
+                Box(
+                    modifier = Modifier
+                        .size(6.dp)
+                        .clip(CircleShape)
+                        .background(if (selected) Color.White else c.success),
+                )
+            }
+            Text(
+                text = group.name,
+                color = if (selected) Color.White else c.ink,
+                fontSize = 12.5.sp,
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                maxLines = 1,
+            )
+            if (protoTag != null) {
+                Text(
+                    text = protoTag,
+                    color = if (selected) Color.White.copy(alpha = 0.85f) else c.primarySoftInk,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            } else if (group.rate_multiplier != 1.0) {
+                Text(
+                    text = "${group.rate_multiplier}x",
+                    color = if (selected) Color.White.copy(alpha = 0.85f) else c.accent,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
             }
         }
     }

@@ -231,6 +231,7 @@ val LocalAppTheme = staticCompositionLocalOf { resolveAppTheme(ThemeStyle.GUGUGA
 data class AppShellController(
     val setChatDrawerOpen: (Boolean) -> Unit = {},
     val setScrollHideBottomBar: (Boolean) -> Unit = {},
+    val setFullscreenSubpageOpen: (Boolean) -> Unit = {},
     val selectMainTab: (Int) -> Unit = {},
 )
 

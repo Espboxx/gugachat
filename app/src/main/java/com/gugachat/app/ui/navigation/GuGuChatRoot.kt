@@ -272,11 +272,13 @@ private fun AuthenticatedShell(
     val saveableStateHolder = rememberSaveableStateHolder()
     var isChatDrawerOpen by remember { mutableStateOf(false) }
     var isScrollHidingBottomBar by remember { mutableStateOf(false) }
+    var isFullscreenSubpageOpen by remember { mutableStateOf(false) }
 
     LaunchedEffect(activeTab) {
         if (activeTab != MainTab.CHAT) {
             isChatDrawerOpen = false
             isScrollHidingBottomBar = false
+            isFullscreenSubpageOpen = false
         }
     }
     LaunchedEffect(shellChrome.activeConvId, shellChrome.hasMessages) {
@@ -289,6 +291,7 @@ private fun AuthenticatedShell(
         AppShellController(
             setChatDrawerOpen = { open -> isChatDrawerOpen = open },
             setScrollHideBottomBar = { hide -> isScrollHidingBottomBar = hide },
+            setFullscreenSubpageOpen = { open -> isFullscreenSubpageOpen = open },
             selectMainTab = { idx ->
                 activeTabOrdinal = idx.coerceIn(0, MainTab.entries.lastIndex)
             },
@@ -303,6 +306,7 @@ private fun AuthenticatedShell(
     val isRpStreamBar = isRpWorkspace && !isTheaterImmersive
     val isPureReading = activeTab == MainTab.CHAT && shellChrome.pureReadingMode
     val showBottomBar = !isImeVisible &&
+        !isFullscreenSubpageOpen &&
         !isTheaterImmersive &&
         !isPureReading &&
         !isChatDrawerOpen &&
@@ -312,6 +316,7 @@ private fun AuthenticatedShell(
         resolveNovelPaperTheme(shellChrome.readerPaper, theme.isDark)
     }
     val scaffoldContainerColor = when {
+        isFullscreenSubpageOpen -> c.page
         isNovelWorkspace -> novelPaper.bg
         isRpWorkspace -> Color(0xFF090D16)
         else -> c.page

@@ -110,6 +110,7 @@ data class ChatUiState(
     val models: List<OnlineChatModelDto> = emptyList(),
     val selectedGroupId: Long? = null,
     val selectedModelId: String? = null,
+    val isLoadingModels: Boolean = false,
     val conversations: List<ChatConversation> = emptyList(),
     val activeConversation: ChatConversation? = null,
     val messages: List<ChatMessage> = emptyList(),
@@ -660,6 +661,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         preferredModelId: String? = null,
         persistConv: Boolean = true,
     ) {
+        _ui.update { it.copy(isLoadingModels = true) }
         try {
             if (persistConv) {
                 _ui.value.activeConversation?.let { conv ->
@@ -688,6 +690,10 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             throw e
         } catch (e: Throwable) {
             container.toastController.show(e.message ?: "Failed to load models", isError = true)
+        } finally {
+            if (_ui.value.selectedGroupId == groupId) {
+                _ui.update { it.copy(isLoadingModels = false) }
+            }
         }
     }
 

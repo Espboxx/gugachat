@@ -8,8 +8,16 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.MenuBook
@@ -77,17 +85,21 @@ fun ChatWorkspaceScreen(
     val scope = rememberCoroutineScope()
     val shell = LocalAppShellController.current
 
+    var showModelPicker by remember { mutableStateOf(false) }
+
     LaunchedEffect(drawerState.isOpen) {
         shell.setChatDrawerOpen(drawerState.isOpen)
+    }
+    LaunchedEffect(showModelPicker) {
+        shell.setFullscreenSubpageOpen(showModelPicker)
     }
     DisposableEffect(Unit) {
         onDispose {
             shell.setChatDrawerOpen(false)
             shell.setScrollHideBottomBar(false)
+            shell.setFullscreenSubpageOpen(false)
         }
     }
-
-    var showModelSheet by remember { mutableStateOf(false) }
     var showNewSessionSheet by remember { mutableStateOf(false) }
     var showParamsSheet by remember { mutableStateOf(false) }
     var showMemorySheet by remember { mutableStateOf(false) }
@@ -192,22 +204,6 @@ fun ChatWorkspaceScreen(
             onIndentToggle = { viewModel.updateReaderPrefs(indent = it) },
             onContinueWriting = { viewModel.continueLastAssistantMessage() },
             onExit = { viewModel.setPureReadingMode(false) },
-        )
-    }
-
-    if (showModelSheet) {
-        ModelGroupSheet(
-            groups = state.groups,
-            models = state.models,
-            selectedGroupId = state.selectedGroupId,
-            selectedModelId = state.selectedModelId,
-            params = state.effectiveChatParams,
-            waterline = state.waterline,
-            onSelectGroup = viewModel::selectGroup,
-            onSelectModel = viewModel::selectModel,
-            onSelectCustomModel = viewModel::selectCustomModel,
-            onUpdateContextSettings = viewModel::updateContextSettings,
-            onDismiss = { showModelSheet = false },
         )
     }
 
@@ -783,218 +779,242 @@ fun ChatWorkspaceScreen(
         filePicker.launch(arrayOf("*/*"))
     }
 
-    ModalNavigationDrawer(
-        drawerState = drawerState,
-        drawerContent = {
-            ChatSessionsDrawerContent(
-                conversations = state.conversations,
-                activeConversationId = activeConv?.id,
-                streamingConversationIds = state.streamingConversationIds,
-                onSelectConversation = viewModel::selectConversation,
-                onNewSession = { showNewSessionSheet = true },
-                onImportDeepSeek = { showDeepSeekImport = true },
-                onTogglePin = viewModel::togglePinConversation,
-                onRenameConversation = viewModel::renameConversation,
-                onDeleteConversation = viewModel::deleteConversation,
-                onCloseDrawer = { scope.launch { drawerState.close() } },
-                onSwitchMainTab = shell.selectMainTab,
+    Box(modifier = Modifier.fillMaxSize()) {
+        ModalNavigationDrawer(
+            drawerState = drawerState,
+            gesturesEnabled = !showModelPicker,
+            drawerContent = {
+                ChatSessionsDrawerContent(
+                    conversations = state.conversations,
+                    activeConversationId = activeConv?.id,
+                    streamingConversationIds = state.streamingConversationIds,
+                    onSelectConversation = viewModel::selectConversation,
+                    onNewSession = { showNewSessionSheet = true },
+                    onImportDeepSeek = { showDeepSeekImport = true },
+                    onTogglePin = viewModel::togglePinConversation,
+                    onRenameConversation = viewModel::renameConversation,
+                    onDeleteConversation = viewModel::deleteConversation,
+                    onCloseDrawer = { scope.launch { drawerState.close() } },
+                    onSwitchMainTab = shell.selectMainTab,
+                )
+            },
+        ) {
+            when {
+                mode == ConversationMode.novel && novelConfig != null -> {
+                    NovelWorkspaceScreen(
+                        novel = novelConfig,
+                        chapters = state.novelChapters,
+                        messages = state.messages,
+                        waterline = state.waterline,
+                        readerPaper = state.readerPaper,
+                        selectedModelId = state.selectedModelId,
+                        activeModelFreeQuota = isFreeQuota,
+                        selectedGroupLabel = activeGroupName,
+                        memoryEnabled = enableAutoMemory,
+                        enableReasoning = enableReasoning,
+                        supportsVision = supportsVision,
+                        draftText = state.draftText,
+                        draftAttachments = state.draftAttachments,
+                        attachmentsById = state.attachmentsById,
+                        isImportingAttachment = state.isImportingAttachment,
+                        draftNovelKind = state.draftNovelKind,
+                        isStreaming = state.isStreaming,
+                        streamingStatusHint = state.streamingStatusHint,
+                        isRefreshingChoices = state.isRefreshingChoices,
+                        attachmentPathResolver = attachmentPathResolver,
+                        onOpenDrawer = { scope.launch { drawerState.open() } },
+                        onOpenModelSheet = { showModelPicker = true },
+                        onNewSession = { showNewSessionSheet = true },
+                        onOpenMoreMenu = { showMoreMenu = true },
+                        moreMenuContent = moreMenu,
+                        onSelectPaper = { viewModel.updateReaderPrefs(paper = it) },
+                        onOpenNovelStudio = { tab ->
+                            novelStudioInitialTab = tab
+                            showNovelStudio = true
+                        },
+                        onEnterPureReading = { viewModel.setPureReadingMode(true) },
+                        onFinishChapterAndAdvance = viewModel::finishActiveChapterAndAdvance,
+                        onUpdateAuthorNote = { note -> viewModel.updateNovelConfig { it.copy(authorNote = note) } },
+                        onStarterPrompt = viewModel::applyStarterPrompt,
+                        onSelectNovelChoice = { viewModel.sendMessage(overrideText = it) },
+                        onRefreshNovelChoices = viewModel::refreshNovelChoices,
+                        onContinueNovel = { viewModel.continueLastAssistantMessage() },
+                        onRegenerate = viewModel::regenerateFromAssistant,
+                        onEditUserMessage = viewModel::editAndResendUserMessage,
+                        onEditAssistantMessage = viewModel::editAssistantMessage,
+                        onBranchFromMessage = viewModel::branchFromMessage,
+                        onDeleteMessage = viewModel::deleteMessage,
+                        onSwitchVariant = viewModel::switchMessageVariant,
+                        onDraftChange = viewModel::updateDraftText,
+                        onSelectNovelKind = viewModel::setDraftNovelKind,
+                        onToggleReasoning = viewModel::toggleActiveReasoning,
+                        onToggleMemory = viewModel::toggleActiveMemory,
+                        onPickImage = onPickImage,
+                        onTakePhoto = onTakePhoto,
+                        onPickFile = onPickFile,
+                        onRemoveAttachment = viewModel::removeDraftAttachment,
+                        onUpdateAttachmentInjectMode = viewModel::updateDraftAttachmentInjectMode,
+                        onReadAttachmentText = viewModel::readAttachmentText,
+                        onOpenRecallInspector = {
+                            memorySheetInitialTab = 3
+                            showMemorySheet = true
+                        },
+                        onOpenContextSettings = { showParamsSheet = true },
+                        onSend = { viewModel.sendMessage() },
+                        onStop = viewModel::stopStreaming,
+                        onToast = { container.toastController.show(it) },
+                    )
+                }
+
+                mode == ConversationMode.rp && rpConfig != null -> {
+                    RpWorkspaceScreen(
+                        rp = rpConfig,
+                        messages = state.messages,
+                        waterline = state.waterline,
+                        selectedModelId = state.selectedModelId,
+                        activeModelFreeQuota = isFreeQuota,
+                        selectedGroupLabel = activeGroupName,
+                        memoryEnabled = enableAutoMemory,
+                        enableReasoning = enableReasoning,
+                        supportsVision = supportsVision,
+                        draftText = state.draftText,
+                        draftAttachments = state.draftAttachments,
+                        attachmentsById = state.attachmentsById,
+                        isImportingAttachment = state.isImportingAttachment,
+                        draftRpKind = state.draftRpKind,
+                        draftDiceRoll = state.draftDiceRoll,
+                        isStreaming = state.isStreaming,
+                        streamingStatusHint = state.streamingStatusHint,
+                        isRefreshingChoices = state.isRefreshingChoices,
+                        isImpersonating = state.isImpersonating,
+                        isGeneratingArt = state.isGeneratingRpArt,
+                        artStatusLabel = state.rpArtStatusLabel,
+                        attachmentPathResolver = attachmentPathResolver,
+                        onOpenDrawer = { scope.launch { drawerState.open() } },
+                        onOpenModelSheet = { showModelPicker = true },
+                        onOpenMoreMenu = { showMoreMenu = true },
+                        moreMenuContent = moreMenu,
+                        onToggleTheaterMode = viewModel::toggleRpTheaterMode,
+                        activeGreetingVariants = state.activeGreetingVariants,
+                        greetingActions = actions.rpGreeting,
+                        onOpenStudio = { tabIdx ->
+                            rpStudioInitialTab = tabIdx
+                            showRpStudio = true
+                        },
+                        onQuickSave = { viewModel.createRpSaveSlot(strings.rp.quickSaveBtn) },
+                        onUpdateAuthorNote = { note -> viewModel.updateRpConfig { it.copy(authorNote = note) } },
+                        onStarterPrompt = viewModel::applyStarterPrompt,
+                        onSelectChoice = { choice, bypassLock -> viewModel.triggerRpChoice(choice, bypassLock) },
+                        onRefreshChoices = viewModel::refreshRpChoices,
+                        onContinue = { viewModel.continueLastAssistantMessage() },
+                        onRegenerate = viewModel::regenerateFromAssistant,
+                        onEditUserMessage = viewModel::editAndResendUserMessage,
+                        onEditAssistantMessage = viewModel::editAssistantMessage,
+                        onBranchFromMessage = viewModel::branchFromMessage,
+                        onDeleteMessage = viewModel::deleteMessage,
+                        onSwitchVariant = viewModel::switchMessageVariant,
+                        onFrontendAction = viewModel::handleRpFrontendAction,
+                        onFrontendFillInput = viewModel::handleRpFrontendFillInput,
+                        onFrontendSetFlag = viewModel::handleRpFrontendSetFlag,
+                        onFrontendAdjustAffinity = viewModel::handleRpFrontendAdjustAffinity,
+                        onDraftChange = viewModel::updateDraftText,
+                        onSelectRpKind = viewModel::setDraftRpKind,
+                        onToggleReasoning = viewModel::toggleActiveReasoning,
+                        onToggleMemory = viewModel::toggleActiveMemory,
+                        onPickImage = onPickImage,
+                        onTakePhoto = onTakePhoto,
+                        onPickFile = onPickFile,
+                        onRemoveAttachment = viewModel::removeDraftAttachment,
+                        onUpdateAttachmentInjectMode = viewModel::updateDraftAttachmentInjectMode,
+                        onReadAttachmentText = viewModel::readAttachmentText,
+                        onOpenDiceDialog = { showDiceDialog = true },
+                        onClearDiceRoll = viewModel::clearDraftDiceRoll,
+                        onOpenRecallInspector = {
+                            memorySheetInitialTab = 3
+                            showMemorySheet = true
+                        },
+                        onOpenContextSettings = { showParamsSheet = true },
+                        onImpersonate = viewModel::impersonatePlayerDraft,
+                        onSend = { viewModel.sendMessage() },
+                        onStop = viewModel::stopStreaming,
+                        onToast = { container.toastController.show(it) },
+                    )
+                }
+
+                else -> {
+                    StandardChatWorkspace(
+                        messages = state.messages,
+                        waterline = state.waterline,
+                        selectedModelId = state.selectedModelId,
+                        activeModelFreeQuota = isFreeQuota,
+                        selectedGroupLabel = activeGroupName,
+                        memoryEnabled = enableAutoMemory,
+                        enableReasoning = enableReasoning,
+                        supportsVision = supportsVision,
+                        draftText = state.draftText,
+                        draftAttachments = state.draftAttachments,
+                        attachmentsById = state.attachmentsById,
+                        isImportingAttachment = state.isImportingAttachment,
+                        isStreaming = state.isStreaming,
+                        streamingStatusHint = state.streamingStatusHint,
+                        attachmentPathResolver = attachmentPathResolver,
+                        onOpenDrawer = { scope.launch { drawerState.open() } },
+                        onOpenModelSheet = { showModelPicker = true },
+                        onNewSession = { showNewSessionSheet = true },
+                        onOpenMoreMenu = { showMoreMenu = true },
+                        moreMenuContent = moreMenu,
+                        onStarterPrompt = viewModel::applyStarterPrompt,
+                        onRegenerate = viewModel::regenerateFromAssistant,
+                        onEditUserMessage = viewModel::editAndResendUserMessage,
+                        onEditAssistantMessage = viewModel::editAssistantMessage,
+                        onBranchFromMessage = viewModel::branchFromMessage,
+                        onDeleteMessage = viewModel::deleteMessage,
+                        onSwitchVariant = viewModel::switchMessageVariant,
+                        onDraftChange = viewModel::updateDraftText,
+                        onToggleReasoning = viewModel::toggleActiveReasoning,
+                        onToggleMemory = viewModel::toggleActiveMemory,
+                        onPickImage = onPickImage,
+                        onTakePhoto = onTakePhoto,
+                        onPickFile = onPickFile,
+                        onRemoveAttachment = viewModel::removeDraftAttachment,
+                        onUpdateAttachmentInjectMode = viewModel::updateDraftAttachmentInjectMode,
+                        onReadAttachmentText = viewModel::readAttachmentText,
+                        onOpenRecallInspector = {
+                            memorySheetInitialTab = 3
+                            showMemorySheet = true
+                        },
+                        onOpenContextSettings = { showParamsSheet = true },
+                        onSend = { viewModel.sendMessage() },
+                        onStop = viewModel::stopStreaming,
+                        onToast = { container.toastController.show(it) },
+                        conversationTitle = activeConv?.title.orEmpty(),
+                        onScrollHideBottomBarChanged = shell.setScrollHideBottomBar,
+                        onOpenRpWizard = { showRpWizard = true },
+                        onOpenNovelWizard = { showNovelWizard = true },
+                    )
+                }
+            }
+        }
+
+        AnimatedVisibility(
+            visible = showModelPicker,
+            enter = slideInHorizontally(tween(220)) { it / 3 } + fadeIn(tween(180)),
+            exit = slideOutHorizontally(tween(200)) { it / 3 } + fadeOut(tween(150)),
+        ) {
+            ModelPickerScreen(
+                groups = state.groups,
+                models = state.models,
+                selectedGroupId = state.selectedGroupId,
+                selectedModelId = state.selectedModelId,
+                params = state.effectiveChatParams,
+                waterline = state.waterline,
+                isLoadingModels = state.isLoadingModels,
+                onSelectGroup = viewModel::selectGroup,
+                onSelectModel = viewModel::selectModel,
+                onSelectCustomModel = viewModel::selectCustomModel,
+                onUpdateContextSettings = viewModel::updateContextSettings,
+                onBack = { showModelPicker = false },
             )
-        },
-    ) {
-        when {
-            mode == ConversationMode.novel && novelConfig != null -> {
-                NovelWorkspaceScreen(
-                    novel = novelConfig,
-                    chapters = state.novelChapters,
-                    messages = state.messages,
-                    waterline = state.waterline,
-                    readerPaper = state.readerPaper,
-                    selectedModelId = state.selectedModelId,
-                    activeModelFreeQuota = isFreeQuota,
-                    selectedGroupLabel = activeGroupName,
-                    memoryEnabled = enableAutoMemory,
-                    enableReasoning = enableReasoning,
-                    supportsVision = supportsVision,
-                    draftText = state.draftText,
-                    draftAttachments = state.draftAttachments,
-                    attachmentsById = state.attachmentsById,
-                    isImportingAttachment = state.isImportingAttachment,
-                    draftNovelKind = state.draftNovelKind,
-                    isStreaming = state.isStreaming,
-                    streamingStatusHint = state.streamingStatusHint,
-                    isRefreshingChoices = state.isRefreshingChoices,
-                    attachmentPathResolver = attachmentPathResolver,
-                    onOpenDrawer = { scope.launch { drawerState.open() } },
-                    onOpenModelSheet = { showModelSheet = true },
-                    onNewSession = { showNewSessionSheet = true },
-                    onOpenMoreMenu = { showMoreMenu = true },
-                    moreMenuContent = moreMenu,
-                    onSelectPaper = { viewModel.updateReaderPrefs(paper = it) },
-                    onOpenNovelStudio = { tab ->
-                        novelStudioInitialTab = tab
-                        showNovelStudio = true
-                    },
-                    onEnterPureReading = { viewModel.setPureReadingMode(true) },
-                    onFinishChapterAndAdvance = viewModel::finishActiveChapterAndAdvance,
-                    onUpdateAuthorNote = { note -> viewModel.updateNovelConfig { it.copy(authorNote = note) } },
-                    onStarterPrompt = viewModel::applyStarterPrompt,
-                    onSelectNovelChoice = { viewModel.sendMessage(overrideText = it) },
-                    onRefreshNovelChoices = viewModel::refreshNovelChoices,
-                    onContinueNovel = { viewModel.continueLastAssistantMessage() },
-                    onRegenerate = viewModel::regenerateFromAssistant,
-                    onEditUserMessage = viewModel::editAndResendUserMessage,
-                    onEditAssistantMessage = viewModel::editAssistantMessage,
-                    onBranchFromMessage = viewModel::branchFromMessage,
-                    onDeleteMessage = viewModel::deleteMessage,
-                    onSwitchVariant = viewModel::switchMessageVariant,
-                    onDraftChange = viewModel::updateDraftText,
-                    onSelectNovelKind = viewModel::setDraftNovelKind,
-                    onToggleReasoning = viewModel::toggleActiveReasoning,
-                    onToggleMemory = viewModel::toggleActiveMemory,
-                    onPickImage = onPickImage,
-                    onTakePhoto = onTakePhoto,
-                    onPickFile = onPickFile,
-                    onRemoveAttachment = viewModel::removeDraftAttachment,
-                    onUpdateAttachmentInjectMode = viewModel::updateDraftAttachmentInjectMode,
-                    onReadAttachmentText = viewModel::readAttachmentText,
-                    onOpenRecallInspector = {
-                        memorySheetInitialTab = 3
-                        showMemorySheet = true
-                    },
-                    onOpenContextSettings = { showParamsSheet = true },
-                    onSend = { viewModel.sendMessage() },
-                    onStop = viewModel::stopStreaming,
-                    onToast = { container.toastController.show(it) },
-                )
-            }
-
-            mode == ConversationMode.rp && rpConfig != null -> {
-                RpWorkspaceScreen(
-                    rp = rpConfig,
-                    messages = state.messages,
-                    waterline = state.waterline,
-                    selectedModelId = state.selectedModelId,
-                    activeModelFreeQuota = isFreeQuota,
-                    selectedGroupLabel = activeGroupName,
-                    memoryEnabled = enableAutoMemory,
-                    enableReasoning = enableReasoning,
-                    supportsVision = supportsVision,
-                    draftText = state.draftText,
-                    draftAttachments = state.draftAttachments,
-                    attachmentsById = state.attachmentsById,
-                    isImportingAttachment = state.isImportingAttachment,
-                    draftRpKind = state.draftRpKind,
-                    draftDiceRoll = state.draftDiceRoll,
-                    isStreaming = state.isStreaming,
-                    streamingStatusHint = state.streamingStatusHint,
-                    isRefreshingChoices = state.isRefreshingChoices,
-                    isImpersonating = state.isImpersonating,
-                    isGeneratingArt = state.isGeneratingRpArt,
-                    artStatusLabel = state.rpArtStatusLabel,
-                    attachmentPathResolver = attachmentPathResolver,
-                    onOpenDrawer = { scope.launch { drawerState.open() } },
-                    onOpenModelSheet = { showModelSheet = true },
-                    onOpenMoreMenu = { showMoreMenu = true },
-                    moreMenuContent = moreMenu,
-                    onToggleTheaterMode = viewModel::toggleRpTheaterMode,
-                    activeGreetingVariants = state.activeGreetingVariants,
-                    greetingActions = actions.rpGreeting,
-                    onOpenStudio = { tabIdx ->
-                        rpStudioInitialTab = tabIdx
-                        showRpStudio = true
-                    },
-                    onQuickSave = { viewModel.createRpSaveSlot(strings.rp.quickSaveBtn) },
-                    onUpdateAuthorNote = { note -> viewModel.updateRpConfig { it.copy(authorNote = note) } },
-                    onStarterPrompt = viewModel::applyStarterPrompt,
-                    onSelectChoice = { choice, bypassLock -> viewModel.triggerRpChoice(choice, bypassLock) },
-                    onRefreshChoices = viewModel::refreshRpChoices,
-                    onContinue = { viewModel.continueLastAssistantMessage() },
-                    onRegenerate = viewModel::regenerateFromAssistant,
-                    onEditUserMessage = viewModel::editAndResendUserMessage,
-                    onEditAssistantMessage = viewModel::editAssistantMessage,
-                    onBranchFromMessage = viewModel::branchFromMessage,
-                    onDeleteMessage = viewModel::deleteMessage,
-                    onSwitchVariant = viewModel::switchMessageVariant,
-                    onFrontendAction = viewModel::handleRpFrontendAction,
-                    onFrontendFillInput = viewModel::handleRpFrontendFillInput,
-                    onFrontendSetFlag = viewModel::handleRpFrontendSetFlag,
-                    onFrontendAdjustAffinity = viewModel::handleRpFrontendAdjustAffinity,
-                    onDraftChange = viewModel::updateDraftText,
-                    onSelectRpKind = viewModel::setDraftRpKind,
-                    onToggleReasoning = viewModel::toggleActiveReasoning,
-                    onToggleMemory = viewModel::toggleActiveMemory,
-                    onPickImage = onPickImage,
-                    onTakePhoto = onTakePhoto,
-                    onPickFile = onPickFile,
-                    onRemoveAttachment = viewModel::removeDraftAttachment,
-                    onUpdateAttachmentInjectMode = viewModel::updateDraftAttachmentInjectMode,
-                    onReadAttachmentText = viewModel::readAttachmentText,
-                    onOpenDiceDialog = { showDiceDialog = true },
-                    onClearDiceRoll = viewModel::clearDraftDiceRoll,
-                    onOpenRecallInspector = {
-                        memorySheetInitialTab = 3
-                        showMemorySheet = true
-                    },
-                    onOpenContextSettings = { showParamsSheet = true },
-                    onImpersonate = viewModel::impersonatePlayerDraft,
-                    onSend = { viewModel.sendMessage() },
-                    onStop = viewModel::stopStreaming,
-                    onToast = { container.toastController.show(it) },
-                )
-            }
-
-            else -> {
-                StandardChatWorkspace(
-                    messages = state.messages,
-                    waterline = state.waterline,
-                    selectedModelId = state.selectedModelId,
-                    activeModelFreeQuota = isFreeQuota,
-                    selectedGroupLabel = activeGroupName,
-                    memoryEnabled = enableAutoMemory,
-                    enableReasoning = enableReasoning,
-                    supportsVision = supportsVision,
-                    draftText = state.draftText,
-                    draftAttachments = state.draftAttachments,
-                    attachmentsById = state.attachmentsById,
-                    isImportingAttachment = state.isImportingAttachment,
-                    isStreaming = state.isStreaming,
-                    streamingStatusHint = state.streamingStatusHint,
-                    attachmentPathResolver = attachmentPathResolver,
-                    onOpenDrawer = { scope.launch { drawerState.open() } },
-                    onOpenModelSheet = { showModelSheet = true },
-                    onNewSession = { showNewSessionSheet = true },
-                    onOpenMoreMenu = { showMoreMenu = true },
-                    moreMenuContent = moreMenu,
-                    onStarterPrompt = viewModel::applyStarterPrompt,
-                    onRegenerate = viewModel::regenerateFromAssistant,
-                    onEditUserMessage = viewModel::editAndResendUserMessage,
-                    onEditAssistantMessage = viewModel::editAssistantMessage,
-                    onBranchFromMessage = viewModel::branchFromMessage,
-                    onDeleteMessage = viewModel::deleteMessage,
-                    onSwitchVariant = viewModel::switchMessageVariant,
-                    onDraftChange = viewModel::updateDraftText,
-                    onToggleReasoning = viewModel::toggleActiveReasoning,
-                    onToggleMemory = viewModel::toggleActiveMemory,
-                    onPickImage = onPickImage,
-                    onTakePhoto = onTakePhoto,
-                    onPickFile = onPickFile,
-                    onRemoveAttachment = viewModel::removeDraftAttachment,
-                    onUpdateAttachmentInjectMode = viewModel::updateDraftAttachmentInjectMode,
-                    onReadAttachmentText = viewModel::readAttachmentText,
-                    onOpenRecallInspector = {
-                        memorySheetInitialTab = 3
-                        showMemorySheet = true
-                    },
-                    onOpenContextSettings = { showParamsSheet = true },
-                    onSend = { viewModel.sendMessage() },
-                    onStop = viewModel::stopStreaming,
-                    onToast = { container.toastController.show(it) },
-                    conversationTitle = activeConv?.title.orEmpty(),
-                    onScrollHideBottomBarChanged = shell.setScrollHideBottomBar,
-                    onOpenRpWizard = { showRpWizard = true },
-                    onOpenNovelWizard = { showNovelWizard = true },
-                )
-            }
         }
     }
 }
