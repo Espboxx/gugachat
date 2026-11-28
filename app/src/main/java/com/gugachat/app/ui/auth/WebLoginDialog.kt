@@ -1,8 +1,10 @@
 package com.gugachat.app.ui.auth
 
 import android.annotation.SuppressLint
+import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
+import android.webkit.WebStorage
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.background
@@ -58,6 +60,7 @@ private data class WebAuthSnapshot(
 @Composable
 fun WebLoginDialog(
     serverUrl: String,
+    clearExistingSession: Boolean = false,
     onDismiss: () -> Unit,
     onTokensCaptured: (accessToken: String, refreshToken: String?, userJson: String?) -> Unit,
 ) {
@@ -69,9 +72,10 @@ fun WebLoginDialog(
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
     var loadProgress by remember { mutableIntStateOf(0) }
     var capturedHandled by remember { mutableStateOf(false) }
+    var readyToPoll by remember(clearExistingSession) { mutableStateOf(!clearExistingSession) }
 
     fun evaluateLocalStorageToken(wv: WebView?) {
-        if (wv == null || capturedHandled) return
+        if (wv == null || capturedHandled || !readyToPoll) return
         val js = """
             (function() {
                 try {
@@ -199,7 +203,17 @@ fun WebLoginDialog(
                             request: WebResourceRequest?,
                         ): Boolean = false
                     }
-                    loadUrl(targetUrl)
+                    if (clearExistingSession) {
+                        WebStorage.getInstance().deleteAllData()
+                        val cm = CookieManager.getInstance()
+                        cm.removeAllCookies {
+                            cm.flush()
+                            readyToPoll = true
+                            loadUrl(targetUrl)
+                        }
+                    } else {
+                        loadUrl(targetUrl)
+                    }
                     webViewRef = this
                 }
             },

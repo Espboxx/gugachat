@@ -7,9 +7,12 @@ import com.gugachat.app.core.runtime.AppForegroundTracker
 import com.gugachat.app.core.runtime.RuntimeKeepAliveController
 import com.gugachat.app.core.storage.ApiProviderStore
 import com.gugachat.app.core.storage.AppSettings
+import com.gugachat.app.core.storage.SavedAccount
+import com.gugachat.app.core.storage.SavedAccountStore
 import com.gugachat.app.core.storage.SecretVaultStore
 import com.gugachat.app.core.storage.SecureTokenStore
 import com.gugachat.app.core.storage.SettingsStore
+import com.gugachat.app.core.util.ServerUrlUtils
 import com.gugachat.app.core.theme.ColorMode
 import com.gugachat.app.core.theme.ThemeStyle
 import com.gugachat.app.core.theme.ToastController
@@ -60,7 +63,15 @@ sealed interface AuthSessionState {
     data class LoggedIn(
         val user: UserDto,
         val isDirectApiOnly: Boolean = false,
+        val serverUrl: String = "",
+        val accountKey: String = "",
     ) : AuthSessionState
+}
+
+sealed interface SwitchAccountResult {
+    data class Switched(val account: SavedAccount) : SwitchAccountResult
+    data class Expired(val account: SavedAccount) : SwitchAccountResult
+    data object NotFound : SwitchAccountResult
 }
 
 class AppContainer(context: Context) {
@@ -73,6 +84,7 @@ class AppContainer(context: Context) {
 
     val settingsStore = SettingsStore(appContext)
     val tokenStore = SecureTokenStore(appContext)
+    val savedAccountStore = SavedAccountStore(appContext)
     val apiProviderStore = ApiProviderStore(appContext)
     val database: AppDatabase = AppDatabase.create(appContext)
     val attachmentStore = AttachmentFileStore(appContext, database.attachmentDao())
@@ -97,9 +109,17 @@ class AppContainer(context: Context) {
 
     val apiClient = ApiClient(
         tokenStore = tokenStore,
-        serverUrlProvider = { settingsState.value.serverUrl },
+        serverUrlProvider = {
+            val active = (_authSession.value as? AuthSessionState.LoggedIn)
+                ?.takeIf { !it.isDirectApiOnly && it.serverUrl.isNotBlank() }
+            active?.serverUrl ?: settingsState.value.serverUrl
+        },
         languageTagProvider = { settingsState.value.language.tag },
         onSessionExpired = {
+            val current = _authSession.value as? AuthSessionState.LoggedIn
+            if (current != null && !current.isDirectApiOnly && current.accountKey.isNotBlank()) {
+                savedAccountStore.markExpired(current.accountKey)
+            }
             _authSession.value = AuthSessionState.LoggedOut
         },
     )
@@ -215,6 +235,33 @@ class AppContainer(context: Context) {
 
     init {
         CjkSearch.segmenter = AndroidIcuCjkSegmenter()
+        tokenStore.onTokensSaved = { snap ->
+            val active = _authSession.value as? AuthSessionState.LoggedIn
+            if (active != null &&
+                !active.isDirectApiOnly &&
+                active.accountKey.isNotBlank() &&
+                !snap.accessToken.isNullOrBlank()
+            ) {
+                savedAccountStore.syncTokens(
+                    accountKey = active.accountKey,
+                    accessToken = snap.accessToken,
+                    refreshToken = snap.refreshToken,
+                    tokenExpiresAtMs = snap.tokenExpiresAtMs,
+                )
+            }
+        }
+        tokenStore.onUserJsonSaved = { userJson ->
+            val active = _authSession.value as? AuthSessionState.LoggedIn
+            if (active != null && !active.isDirectApiOnly && active.accountKey.isNotBlank()) {
+                runCatching { AppJson.decodeFromString(UserDto.serializer(), userJson) }
+                    .getOrNull()
+                    ?.let { user ->
+                        if (user.id == active.user.id) {
+                            savedAccountStore.syncUser(active.accountKey, user)
+                        }
+                    }
+            }
+        }
         scope.launch {
             settingsStore.migratePlaintextRetrievalKeysIfNeeded(secretVaultStore)
             chatStreamManager.recoverOrphanStreams()
@@ -228,24 +275,50 @@ class AppContainer(context: Context) {
     ): String = when (session) {
         is AuthSessionState.LoggedIn -> if (session.isDirectApiOnly) {
             "direct"
+        } else if (session.accountKey.isNotBlank()) {
+            session.accountKey
         } else {
-            "sub2api:${session.user.id}:${serverUrl.trim().trimEnd('/')}"
+            val resolvedUrl = session.serverUrl.ifBlank { serverUrl }
+            "sub2api:${session.user.id}:${resolvedUrl.trim().trimEnd('/')}"
         }
         AuthSessionState.Checking, AuthSessionState.LoggedOut -> "logged_out"
     }
 
+    private fun snapshotActiveAccountToVault() {
+        val current = _authSession.value as? AuthSessionState.LoggedIn ?: return
+        if (current.isDirectApiOnly || current.serverUrl.isBlank()) return
+        val snap = tokenStore.readSnapshot()
+        val access = snap.accessToken?.trim().orEmpty()
+        if (access.isEmpty()) return
+        val existingLastUsed = savedAccountStore.findByKey(current.accountKey)?.lastUsedAt
+            ?: System.currentTimeMillis()
+        savedAccountStore.upsert(
+            serverUrl = current.serverUrl,
+            user = current.user,
+            accessToken = access,
+            refreshToken = snap.refreshToken,
+            tokenExpiresAtMs = snap.tokenExpiresAtMs,
+            sessionExpired = false,
+            lastUsedAt = existingLastUsed,
+        )
+    }
+
     suspend fun restoreSession() {
         val current = settingsStore.currentSettings()
+        if (current.directModeActive) {
+            _authSession.value = AuthSessionState.LoggedIn(
+                user = directModeUser(),
+                isDirectApiOnly = true,
+                serverUrl = "",
+                accountKey = "direct",
+            )
+            return
+        }
+
+        val normalizedUrl = ServerUrlUtils.normalizeServerUrl(current.serverUrl)
         val snap = tokenStore.readSnapshot()
-        if (current.serverUrl.isBlank() || snap.accessToken.isNullOrBlank()) {
-            if (current.directModeActive) {
-                _authSession.value = AuthSessionState.LoggedIn(
-                    user = directModeUser(),
-                    isDirectApiOnly = true,
-                )
-            } else {
-                _authSession.value = AuthSessionState.LoggedOut
-            }
+        if (normalizedUrl.isBlank() || snap.accessToken.isNullOrBlank()) {
+            _authSession.value = AuthSessionState.LoggedOut
             return
         }
 
@@ -253,19 +326,54 @@ class AppContainer(context: Context) {
             runCatching { AppJson.decodeFromString(UserDto.serializer(), raw) }.getOrNull()
         }
         if (cachedUser != null) {
-            _authSession.value = AuthSessionState.LoggedIn(cachedUser, isDirectApiOnly = false)
+            val cachedKey = SavedAccount.buildAccountKey(normalizedUrl, cachedUser.id)
+            if (savedAccountStore.findByKey(cachedKey) == null) {
+                savedAccountStore.upsert(
+                    serverUrl = normalizedUrl,
+                    user = cachedUser,
+                    accessToken = snap.accessToken,
+                    refreshToken = snap.refreshToken,
+                    tokenExpiresAtMs = snap.tokenExpiresAtMs,
+                    sessionExpired = false,
+                )
+            }
+            _authSession.value = AuthSessionState.LoggedIn(
+                user = cachedUser,
+                isDirectApiOnly = false,
+                serverUrl = normalizedUrl,
+                accountKey = cachedKey,
+            )
         }
 
         runCatching {
-            val pub = authApi.getPublicSettings(current.serverUrl)
+            val pub = authApi.getPublicSettings(normalizedUrl)
             _publicSettings.value = pub
         }
 
         try {
             val freshUser = authApi.getCurrentUser()
-            _authSession.value = AuthSessionState.LoggedIn(freshUser, isDirectApiOnly = false)
+            val freshKey = SavedAccount.buildAccountKey(normalizedUrl, freshUser.id)
+            val latestSnap = tokenStore.readSnapshot()
+            savedAccountStore.upsert(
+                serverUrl = normalizedUrl,
+                user = freshUser,
+                accessToken = latestSnap.accessToken ?: snap.accessToken,
+                refreshToken = latestSnap.refreshToken ?: snap.refreshToken,
+                tokenExpiresAtMs = latestSnap.tokenExpiresAtMs,
+                sessionExpired = false,
+            )
+            _authSession.value = AuthSessionState.LoggedIn(
+                user = freshUser,
+                isDirectApiOnly = false,
+                serverUrl = normalizedUrl,
+                accountKey = freshKey,
+            )
         } catch (e: ApiException) {
             if (e.status == 401 || _authSession.value !is AuthSessionState.LoggedIn) {
+                val activeKey = (_authSession.value as? AuthSessionState.LoggedIn)?.accountKey.orEmpty()
+                if (activeKey.isNotBlank()) {
+                    savedAccountStore.markExpired(activeKey)
+                }
                 tokenStore.clear()
                 _authSession.value = AuthSessionState.LoggedOut
             }
@@ -276,14 +384,145 @@ class AppContainer(context: Context) {
         }
     }
 
-    fun setLoggedIn(user: UserDto) {
+    suspend fun activateLoggedInAccount(
+        serverUrl: String,
+        user: UserDto,
+        accessToken: String,
+        refreshToken: String? = null,
+        expiresInSec: Long? = null,
+        tokenExpiresAtMs: Long? = null,
+    ): SavedAccount {
+        snapshotActiveAccountToVault()
+        val normalizedUrl = ServerUrlUtils.normalizeServerUrl(serverUrl)
+        val resolvedExpiresAtMs = when {
+            tokenExpiresAtMs != null && tokenExpiresAtMs > 0L -> tokenExpiresAtMs
+            expiresInSec != null && expiresInSec > 0L -> System.currentTimeMillis() + expiresInSec * 1000L
+            else -> 0L
+        }
+        val saved = savedAccountStore.upsert(
+            serverUrl = normalizedUrl,
+            user = user,
+            accessToken = accessToken,
+            refreshToken = refreshToken,
+            tokenExpiresAtMs = resolvedExpiresAtMs,
+            sessionExpired = false,
+            lastUsedAt = System.currentTimeMillis(),
+        )
+        val userJson = AppJson.encodeToString(UserDto.serializer(), user)
+        settingsStore.setServerUrl(normalizedUrl)
+        settingsStore.setDirectModeActive(false)
+        settingsStore.setPreferredEntryMode("gugaga")
+        tokenStore.restoreSnapshot(
+            accessToken = saved.accessToken,
+            refreshToken = saved.refreshToken,
+            tokenExpiresAtMs = saved.tokenExpiresAtMs,
+            userJson = userJson,
+        )
+        _authSession.value = AuthSessionState.LoggedIn(
+            user = user,
+            isDirectApiOnly = false,
+            serverUrl = normalizedUrl,
+            accountKey = saved.accountKey,
+        )
+        scope.launch {
+            runCatching {
+                val pub = authApi.getPublicSettings(normalizedUrl)
+                val nowActive = _authSession.value as? AuthSessionState.LoggedIn
+                if (nowActive != null && !nowActive.isDirectApiOnly && nowActive.serverUrl == normalizedUrl) {
+                    _publicSettings.value = pub
+                }
+            }
+        }
+        return saved
+    }
+
+    suspend fun switchToSavedAccount(accountKey: String): SwitchAccountResult {
+        val target = savedAccountStore.findByKey(accountKey) ?: return SwitchAccountResult.NotFound
+        if (!target.hasValidTokens) {
+            return SwitchAccountResult.Expired(target)
+        }
+        val current = _authSession.value as? AuthSessionState.LoggedIn
+        if (current != null && !current.isDirectApiOnly && current.accountKey == target.accountKey) {
+            savedAccountStore.touchLastUsed(target.accountKey)
+            return SwitchAccountResult.Switched(target)
+        }
+        val activated = activateLoggedInAccount(
+            serverUrl = target.serverUrl,
+            user = target.user,
+            accessToken = target.accessToken,
+            refreshToken = target.refreshToken,
+            tokenExpiresAtMs = target.tokenExpiresAtMs,
+        )
+        val targetKey = activated.accountKey
+        scope.launch {
+            try {
+                val freshUser = authApi.getCurrentUser()
+                val nowActive = _authSession.value as? AuthSessionState.LoggedIn
+                if (nowActive != null && !nowActive.isDirectApiOnly && nowActive.accountKey == targetKey) {
+                    savedAccountStore.syncUser(targetKey, freshUser)
+                    _authSession.value = nowActive.copy(user = freshUser)
+                }
+            } catch (e: ApiException) {
+                val nowActive = _authSession.value as? AuthSessionState.LoggedIn
+                if (e.status == 401 && nowActive != null && !nowActive.isDirectApiOnly && nowActive.accountKey == targetKey) {
+                    savedAccountStore.markExpired(targetKey)
+                    tokenStore.clear()
+                    _authSession.value = AuthSessionState.LoggedOut
+                    val isZh = settingsState.value.language == AppLanguage.ZH
+                    toastController.show(
+                        if (isZh) "该账号登录已过期，请重新登录" else "Session expired, please sign in again",
+                        isError = true,
+                    )
+                }
+            } catch (_: Throwable) {
+                // Keep cached session active on transient network failure
+            }
+        }
+        return SwitchAccountResult.Switched(activated)
+    }
+
+    fun setLoggedIn(user: UserDto, serverUrlOverride: String? = null) {
+        val current = _authSession.value as? AuthSessionState.LoggedIn
+        val resolvedServerUrl = ServerUrlUtils.normalizeServerUrl(
+            serverUrlOverride?.takeIf { it.isNotBlank() }
+                ?: current?.takeIf { !it.isDirectApiOnly }?.serverUrl?.takeIf { it.isNotBlank() }
+                ?: settingsState.value.serverUrl,
+        )
+        val accountKey = if (resolvedServerUrl.isNotBlank()) {
+            SavedAccount.buildAccountKey(resolvedServerUrl, user.id)
+        } else {
+            ""
+        }
+        val snap = tokenStore.readSnapshot()
+        if (resolvedServerUrl.isNotBlank() && !snap.accessToken.isNullOrBlank()) {
+            savedAccountStore.upsert(
+                serverUrl = resolvedServerUrl,
+                user = user,
+                accessToken = snap.accessToken,
+                refreshToken = snap.refreshToken,
+                tokenExpiresAtMs = snap.tokenExpiresAtMs,
+                sessionExpired = false,
+            )
+        }
         scope.launch { settingsStore.setDirectModeActive(false) }
-        _authSession.value = AuthSessionState.LoggedIn(user, isDirectApiOnly = false)
+        _authSession.value = AuthSessionState.LoggedIn(
+            user = user,
+            isDirectApiOnly = false,
+            serverUrl = resolvedServerUrl,
+            accountKey = accountKey,
+        )
     }
 
     fun enterDirectApiMode() {
+        snapshotActiveAccountToVault()
+        tokenStore.clear()
         scope.launch { settingsStore.setDirectModeActive(true) }
-        _authSession.value = AuthSessionState.LoggedIn(user = directModeUser(), isDirectApiOnly = true)
+        _authSession.value = AuthSessionState.LoggedIn(
+            user = directModeUser(),
+            isDirectApiOnly = true,
+            serverUrl = "",
+            accountKey = "direct",
+        )
     }
 
     private fun directModeUser(): UserDto = UserDto(
@@ -302,10 +541,26 @@ class AppContainer(context: Context) {
         _imageWorksTotal.value = total.coerceAtLeast(0)
     }
 
+    suspend fun removeSavedAccount(accountKey: String) {
+        val target = savedAccountStore.findByKey(accountKey) ?: return
+        val current = _authSession.value as? AuthSessionState.LoggedIn
+        val isActiveTarget = current != null && !current.isDirectApiOnly && current.accountKey == target.accountKey
+        if (isActiveTarget) {
+            logout()
+            return
+        }
+        authApi.revokeRefreshToken(target.serverUrl, target.refreshToken)
+        savedAccountStore.remove(target.accountKey)
+    }
+
     suspend fun logout() {
-        val isDirect = (_authSession.value as? AuthSessionState.LoggedIn)?.isDirectApiOnly == true
+        val current = _authSession.value as? AuthSessionState.LoggedIn
+        val isDirect = current?.isDirectApiOnly == true
         settingsStore.setDirectModeActive(false)
         if (!isDirect) {
+            if (current != null && current.accountKey.isNotBlank()) {
+                savedAccountStore.remove(current.accountKey)
+            }
             authApi.logout()
         }
         _authSession.value = AuthSessionState.LoggedOut

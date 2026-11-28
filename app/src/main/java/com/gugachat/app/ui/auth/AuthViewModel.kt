@@ -3,10 +3,15 @@ package com.gugachat.app.ui.auth
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.gugachat.app.AppContainer
+import com.gugachat.app.SwitchAccountResult
 import com.gugachat.app.core.i18n.AppLanguage
+import com.gugachat.app.core.i18n.EnStrings
+import com.gugachat.app.core.i18n.ZhStrings
+import com.gugachat.app.core.i18n.fmt
 import com.gugachat.app.core.storage.ApiProtocol
 import com.gugachat.app.core.storage.ApiProviderConfig
 import com.gugachat.app.core.storage.ApiProviderImportCodec
+import com.gugachat.app.core.storage.SavedAccount
 import com.gugachat.app.core.theme.ColorMode
 import com.gugachat.app.core.theme.ThemeStyle
 import com.gugachat.app.core.util.ServerUrlUtils
@@ -87,6 +92,9 @@ data class AuthUiState(
     val hostProbes: List<HostLatencyResult> = GugagaHosts.PRESETS.map { HostLatencyResult(it) },
     val isProbingHosts: Boolean = false,
     val colorMode: ColorMode = ColorMode.SYSTEM,
+    val savedAccounts: List<SavedAccount> = emptyList(),
+    val isAddAccountMode: Boolean = false,
+    val switchingAccountKey: String? = null,
 ) {
     val activeCaptcha: ActiveCaptchaConfig
         get() = publicSettings?.resolveActiveCaptcha() ?: ActiveCaptchaConfig.None
@@ -95,16 +103,36 @@ data class AuthUiState(
         get() = activeCaptcha !is ActiveCaptchaConfig.None
 }
 
-class AuthViewModel(private val container: AppContainer) : ViewModel() {
+class AuthViewModel(
+    private val container: AppContainer,
+    private val addAccountMode: Boolean = false,
+    prefillServerUrl: String? = null,
+    prefillEmail: String? = null,
+    private val onAddAccountCompleted: () -> Unit = {},
+) : ViewModel() {
+    private val initialPrefillUrl = prefillServerUrl?.trim().orEmpty()
+    private val initialServerUrl = initialPrefillUrl.ifBlank { container.settingsState.value.serverUrl }
+    private val reuseContainerPublicSettings = !addAccountMode ||
+        initialPrefillUrl.isBlank() ||
+        ServerUrlUtils.normalizeServerUrl(initialPrefillUrl)
+            .equals(ServerUrlUtils.normalizeServerUrl(container.settingsState.value.serverUrl), ignoreCase = true)
+
     private val _ui = MutableStateFlow(
         AuthUiState(
-            entryMode = computeInitialEntryMode(
-                settings = container.settingsState.value,
-                hasSavedProviders = container.apiProviderStore.currentProviders().isNotEmpty(),
-            ),
-            serverUrlInput = container.settingsState.value.serverUrl,
-            publicSettings = container.publicSettings.value,
-            serverConnected = container.publicSettings.value != null,
+            entryMode = if (addAccountMode) {
+                LoginEntryMode.SUB2API
+            } else {
+                computeInitialEntryMode(
+                    settings = container.settingsState.value,
+                    hasSavedProviders = container.apiProviderStore.currentProviders().isNotEmpty(),
+                )
+            },
+            serverUrlInput = initialServerUrl,
+            email = prefillEmail?.trim().orEmpty(),
+            publicSettings = if (reuseContainerPublicSettings) container.publicSettings.value else null,
+            serverConnected = reuseContainerPublicSettings && container.publicSettings.value != null,
+            savedAccounts = container.savedAccountStore.currentAccounts(),
+            isAddAccountMode = addAccountMode,
         ),
     )
     val ui: StateFlow<AuthUiState> = _ui.asStateFlow()
@@ -112,6 +140,8 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
     private val hostProber = GugagaHostProber(container.apiClient.standardClient)
     private var countdownJob: Job? = null
     private var hostProbeJob: Job? = null
+
+    private fun strings() = if (container.settingsState.value.language == AppLanguage.EN) EnStrings else ZhStrings
 
     init {
         viewModelScope.launch {
@@ -125,23 +155,34 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
             }
         }
         viewModelScope.launch {
+            container.savedAccountStore.accounts.collect { list ->
+                _ui.update { it.copy(savedAccounts = list) }
+            }
+        }
+        viewModelScope.launch {
             val saved = container.settingsStore.currentSettings()
-            val resolvedMode = computeInitialEntryMode(
-                settings = saved,
-                hasSavedProviders = container.apiProviderStore.currentProviders().isNotEmpty(),
-            )
+            val resolvedMode = if (addAccountMode) {
+                LoginEntryMode.SUB2API
+            } else {
+                computeInitialEntryMode(
+                    settings = saved,
+                    hasSavedProviders = container.apiProviderStore.currentProviders().isNotEmpty(),
+                )
+            }
+            val targetUrl = _ui.value.serverUrlInput.ifBlank { saved.serverUrl }
             _ui.update { cur ->
                 cur.copy(
                     entryMode = resolvedMode,
-                    serverUrlInput = cur.serverUrlInput.ifBlank { saved.serverUrl },
+                    serverUrlInput = targetUrl,
                 )
             }
-            if (saved.serverUrl.isNotBlank()) {
-                probeServer(saved.serverUrl, silent = true)
+            if (targetUrl.isNotBlank()) {
+                probeServer(targetUrl, silent = true)
             }
             if (resolvedMode == LoginEntryMode.SUB2API) {
                 probePresetHosts(
-                    autoSelectFastest = saved.serverUrl.isBlank() || GugagaHosts.isPresetUrl(saved.serverUrl),
+                    autoSelectFastest = targetUrl.isBlank() ||
+                        (initialPrefillUrl.isBlank() && GugagaHosts.isPresetUrl(targetUrl)),
                 )
             }
         }
@@ -170,12 +211,49 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
     fun chooseEntryMode(mode: LoginEntryMode) {
         _ui.update { it.copy(entryMode = mode, errorMsg = null, directTestError = null) }
         if (mode != LoginEntryMode.CHOOSER) {
-            val wire = if (mode == LoginEntryMode.DIRECT_API) "direct" else "gugaga"
-            viewModelScope.launch { container.settingsStore.setPreferredEntryMode(wire) }
+            if (!addAccountMode) {
+                val wire = if (mode == LoginEntryMode.DIRECT_API) "direct" else "gugaga"
+                viewModelScope.launch { container.settingsStore.setPreferredEntryMode(wire) }
+            }
             if (mode == LoginEntryMode.SUB2API && _ui.value.hostProbes.all { it.status == HostProbeStatus.IDLE }) {
                 probePresetHosts(
                     autoSelectFastest = _ui.value.serverUrlInput.isBlank() || GugagaHosts.isPresetUrl(_ui.value.serverUrlInput),
                 )
+            }
+        }
+    }
+
+    fun quickSignInSavedAccount(accountKey: String) {
+        if (_ui.value.switchingAccountKey != null || _ui.value.isSubmitting) return
+        viewModelScope.launch {
+            _ui.update { it.copy(switchingAccountKey = accountKey, errorMsg = null) }
+            try {
+                when (val res = container.switchToSavedAccount(accountKey)) {
+                    is SwitchAccountResult.Switched -> {
+                        container.toastController.show(
+                            strings().profile.switchedToAccount.fmt("name" to res.account.displayName()),
+                        )
+                        if (addAccountMode) {
+                            onAddAccountCompleted()
+                        }
+                    }
+                    is SwitchAccountResult.Expired -> {
+                        _ui.update {
+                            it.copy(
+                                entryMode = LoginEntryMode.SUB2API,
+                                activeTab = AuthFormTab.LOGIN,
+                                serverUrlInput = res.account.serverUrl,
+                                email = res.account.user.email,
+                                password = "",
+                                errorMsg = strings().profile.accountExpiredTapHint,
+                            )
+                        }
+                        probeServer(res.account.serverUrl, silent = true)
+                    }
+                    SwitchAccountResult.NotFound -> Unit
+                }
+            } finally {
+                _ui.update { it.copy(switchingAccountKey = null) }
             }
         }
     }
@@ -234,8 +312,10 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
 
     private suspend fun applySelectedHostResult(result: HostLatencyResult) {
         val normalized = ServerUrlUtils.normalizeServerUrl(result.host.url)
-        container.settingsStore.setServerUrl(normalized)
-        result.publicSettings?.let { container.setPublicSettings(it) }
+        if (!addAccountMode) {
+            container.settingsStore.setServerUrl(normalized)
+            result.publicSettings?.let { container.setPublicSettings(it) }
+        }
         _ui.update { cur ->
             val prevUrl = ServerUrlUtils.normalizeServerUrl(cur.serverUrlInput)
             val nextSettings = result.publicSettings ?: cur.publicSettings
@@ -326,6 +406,9 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
                 container.settingsStore.setLastImageSelection(saved.syntheticGroupId, "")
             }
             container.enterDirectApiMode()
+            if (addAccountMode) {
+                onAddAccountCompleted()
+            }
         }
     }
 
@@ -333,12 +416,18 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
         val enabled = container.apiProviderStore.enabledProviders()
         if (enabled.isEmpty()) return
         container.enterDirectApiMode()
+        if (addAccountMode) {
+            onAddAccountCompleted()
+        }
     }
 
     fun enterGuestMode() {
         viewModelScope.launch {
             container.settingsStore.setPreferredEntryMode("direct")
             container.enterDirectApiMode()
+            if (addAccountMode) {
+                onAddAccountCompleted()
+            }
         }
     }
 
@@ -361,6 +450,9 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
                         firstSaved.customModels.firstOrNull().orEmpty(),
                     )
                     container.enterDirectApiMode()
+                    if (addAccountMode) {
+                        onAddAccountCompleted()
+                    }
                 }
             }
         } else {
@@ -505,8 +597,10 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
         if (show) {
             val resolved = resolveSelectedHostUrl()
             _ui.update { it.copy(serverUrlInput = resolved, serverError = null, errorMsg = null) }
-            viewModelScope.launch {
-                container.settingsStore.setServerUrl(resolved)
+            if (!addAccountMode) {
+                viewModelScope.launch {
+                    container.settingsStore.setServerUrl(resolved)
+                }
             }
         }
         _ui.update { it.copy(showWebLoginDialog = show) }
@@ -535,10 +629,14 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
                     captchaErrorMsg = if (urlChanged) null else cur.captchaErrorMsg,
                 )
             }
-            container.settingsStore.setServerUrl(normalized)
+            if (!addAccountMode) {
+                container.settingsStore.setServerUrl(normalized)
+            }
             try {
                 val settings = container.authApi.getPublicSettings(normalized)
-                container.setPublicSettings(settings)
+                if (!addAccountMode) {
+                    container.setPublicSettings(settings)
+                }
                 _ui.update { cur ->
                     val prevCaptcha = cur.activeCaptcha
                     val nextCaptcha = settings.resolveActiveCaptcha()
@@ -576,7 +674,7 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
         val state = _ui.value
         if (state.verifyCountdownSec > 0 || state.isSubmitting) return
         viewModelScope.launch {
-            if (!ensureServerConfigured()) return@launch
+            val targetUrl = ensureServerConfigured()
             val cur = _ui.value
             if (cur.email.isBlank()) {
                 _ui.update { it.copy(errorMsg = "Email required") }
@@ -589,7 +687,11 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
             _ui.update { it.copy(isSubmitting = true, errorMsg = null) }
             try {
                 val proof = cur.captchaProof.takeIf { cur.requiresInAppCaptcha }
-                val res = container.authApi.sendVerifyCode(cur.email, captchaProof = proof)
+                val res = container.authApi.sendVerifyCode(
+                    email = cur.email,
+                    captchaProof = proof,
+                    baseUrlOverride = targetUrl,
+                )
                 startCountdown(res.countdown.coerceIn(30, 120))
                 container.toastController.show(res.message.ifBlank { "Code sent" })
                 _ui.update { it.copy(isSubmitting = false) }
@@ -607,7 +709,7 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
         val state = _ui.value
         if (state.isSubmitting) return
         viewModelScope.launch {
-            if (!ensureServerConfigured()) return@launch
+            val targetUrl = ensureServerConfigured()
             val cur = _ui.value
             if (cur.email.isBlank() || cur.password.isBlank()) {
                 _ui.update { it.copy(errorMsg = "Please enter email and password") }
@@ -620,7 +722,13 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
             _ui.update { it.copy(isSubmitting = true, errorMsg = null) }
             try {
                 val proof = cur.captchaProof.takeIf { cur.requiresInAppCaptcha }
-                val resp = container.authApi.login(cur.email, cur.password, captchaProof = proof)
+                val resp = container.authApi.login(
+                    email = cur.email,
+                    password = cur.password,
+                    captchaProof = proof,
+                    baseUrlOverride = targetUrl,
+                    persistToTokenStore = false,
+                )
                 if (resp.requires_2fa) {
                     _ui.update {
                         it.copy(
@@ -634,9 +742,29 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
                     if (cur.requiresInAppCaptcha) clearCaptchaAndReload()
                     return@launch
                 }
-                val user = resp.user ?: container.authApi.getCurrentUser()
-                container.setLoggedIn(user)
+                val accessToken = resp.access_token?.trim().orEmpty()
+                if (accessToken.isEmpty()) {
+                    throw IllegalStateException("Missing access token in login response")
+                }
+                val user = resp.user ?: container.authApi.getCurrentUser(
+                    baseUrlOverride = targetUrl,
+                    accessTokenOverride = accessToken,
+                    persistToTokenStore = false,
+                )
+                val activated = container.activateLoggedInAccount(
+                    serverUrl = targetUrl,
+                    user = user,
+                    accessToken = accessToken,
+                    refreshToken = resp.refresh_token,
+                    expiresInSec = resp.expires_in,
+                )
                 _ui.update { it.copy(isSubmitting = false) }
+                if (addAccountMode) {
+                    container.toastController.show(
+                        strings().profile.switchedToAccount.fmt("name" to activated.displayName()),
+                    )
+                    onAddAccountCompleted()
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
@@ -655,12 +783,38 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
         val state = _ui.value
         if (state.isSubmitting || state.tempToken.isBlank()) return
         viewModelScope.launch {
+            val targetUrl = ensureServerConfigured()
             _ui.update { it.copy(isSubmitting = true, errorMsg = null) }
             try {
-                val resp = container.authApi.login2FA(state.tempToken, state.totpCode)
-                val user = resp.user ?: container.authApi.getCurrentUser()
-                container.setLoggedIn(user)
+                val resp = container.authApi.login2FA(
+                    tempToken = state.tempToken,
+                    totpCode = state.totpCode,
+                    baseUrlOverride = targetUrl,
+                    persistToTokenStore = false,
+                )
+                val accessToken = resp.access_token?.trim().orEmpty()
+                if (accessToken.isEmpty()) {
+                    throw IllegalStateException("Missing access token in 2FA response")
+                }
+                val user = resp.user ?: container.authApi.getCurrentUser(
+                    baseUrlOverride = targetUrl,
+                    accessTokenOverride = accessToken,
+                    persistToTokenStore = false,
+                )
+                val activated = container.activateLoggedInAccount(
+                    serverUrl = targetUrl,
+                    user = user,
+                    accessToken = accessToken,
+                    refreshToken = resp.refresh_token,
+                    expiresInSec = resp.expires_in,
+                )
                 _ui.update { it.copy(isSubmitting = false, requires2fa = false, tempToken = "") }
+                if (addAccountMode) {
+                    container.toastController.show(
+                        strings().profile.switchedToAccount.fmt("name" to activated.displayName()),
+                    )
+                    onAddAccountCompleted()
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
@@ -673,7 +827,7 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
         val state = _ui.value
         if (state.isSubmitting) return
         viewModelScope.launch {
-            if (!ensureServerConfigured()) return@launch
+            val targetUrl = ensureServerConfigured()
             val cur = _ui.value
             val needsCaptcha = cur.requiresInAppCaptcha &&
                 !(cur.publicSettings?.email_verify_enabled == true && cur.verifyCode.isNotBlank())
@@ -691,10 +845,32 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
                     promoCode = cur.promoCode,
                     invitationCode = cur.invitationCode,
                     captchaProof = proof,
+                    baseUrlOverride = targetUrl,
+                    persistToTokenStore = false,
                 )
-                val user = resp.user ?: container.authApi.getCurrentUser()
-                container.setLoggedIn(user)
+                val accessToken = resp.access_token?.trim().orEmpty()
+                if (accessToken.isEmpty()) {
+                    throw IllegalStateException("Missing access token in registration response")
+                }
+                val user = resp.user ?: container.authApi.getCurrentUser(
+                    baseUrlOverride = targetUrl,
+                    accessTokenOverride = accessToken,
+                    persistToTokenStore = false,
+                )
+                val activated = container.activateLoggedInAccount(
+                    serverUrl = targetUrl,
+                    user = user,
+                    accessToken = accessToken,
+                    refreshToken = resp.refresh_token,
+                    expiresInSec = resp.expires_in,
+                )
                 _ui.update { it.copy(isSubmitting = false) }
+                if (addAccountMode) {
+                    container.toastController.show(
+                        strings().profile.switchedToAccount.fmt("name" to activated.displayName()),
+                    )
+                    onAddAccountCompleted()
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
@@ -708,27 +884,38 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
         _ui.update { it.copy(showWebLoginDialog = false, isSubmitting = true, errorMsg = null) }
         viewModelScope.launch {
             try {
-                container.tokenStore.saveTokens(
-                    accessToken = accessToken,
-                    refreshToken = refreshToken,
-                    userJson = userJson,
-                )
+                val targetUrl = resolveSelectedHostUrl()
                 val parsed = userJson?.let { raw ->
                     runCatching { AppJson.decodeFromString(UserDto.serializer(), raw) }.getOrNull()
                 }
                 val user = try {
-                    container.authApi.getCurrentUser()
+                    container.authApi.getCurrentUser(
+                        baseUrlOverride = targetUrl,
+                        accessTokenOverride = accessToken,
+                        persistToTokenStore = false,
+                    )
                 } catch (e: CancellationException) {
                     throw e
                 } catch (err: Throwable) {
+                    if ((err as? ApiException)?.status == 401) throw err
                     parsed ?: throw err
                 }
-                container.setLoggedIn(user)
+                val activated = container.activateLoggedInAccount(
+                    serverUrl = targetUrl,
+                    user = user,
+                    accessToken = accessToken,
+                    refreshToken = refreshToken,
+                )
                 _ui.update { it.copy(isSubmitting = false) }
+                if (addAccountMode) {
+                    container.toastController.show(
+                        strings().profile.switchedToAccount.fmt("name" to activated.displayName()),
+                    )
+                    onAddAccountCompleted()
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
-                container.tokenStore.clear()
                 _ui.update { it.copy(isSubmitting = false, errorMsg = e.message ?: "Web login failed") }
             }
         }
@@ -760,18 +947,22 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
             ?: GugagaHosts.PRESETS.first().url
     }
 
-    private suspend fun ensureServerConfigured(): Boolean {
+    private suspend fun ensureServerConfigured(): String {
         val normalized = resolveSelectedHostUrl()
-        container.settingsStore.setServerUrl(normalized)
+        if (!addAccountMode) {
+            container.settingsStore.setServerUrl(normalized)
+        }
         _ui.update { it.copy(serverUrlInput = normalized) }
         if (_ui.value.publicSettings == null) {
             runCatching {
                 val settings = container.authApi.getPublicSettings(normalized)
-                container.setPublicSettings(settings)
+                if (!addAccountMode) {
+                    container.setPublicSettings(settings)
+                }
                 _ui.update { it.copy(publicSettings = settings, serverConnected = true, serverError = null) }
             }
         }
-        return true
+        return normalized
     }
 
     private fun startCountdown(seconds: Int) {

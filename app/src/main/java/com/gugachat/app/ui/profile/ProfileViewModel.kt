@@ -6,6 +6,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.gugachat.app.AppContainer
 import com.gugachat.app.AuthSessionState
+import com.gugachat.app.SwitchAccountResult
 import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.i18n.EnStrings
 import com.gugachat.app.core.i18n.ZhStrings
@@ -13,6 +14,7 @@ import com.gugachat.app.core.i18n.fmt
 import com.gugachat.app.core.storage.ApiProtocol
 import com.gugachat.app.core.storage.ApiProviderConfig
 import com.gugachat.app.core.storage.AppSettings
+import com.gugachat.app.core.storage.SavedAccount
 import com.gugachat.app.core.storage.SettingsStore
 import com.gugachat.app.core.storage.WebDavSyncConfig
 import com.gugachat.app.core.theme.ColorMode
@@ -54,6 +56,9 @@ import javax.crypto.AEADBadTagException
 data class ProfileUiState(
     val user: UserDto? = null,
     val isDirectApiOnly: Boolean = false,
+    val activeAccountKey: String = "",
+    val savedAccounts: List<SavedAccount> = emptyList(),
+    val switchingAccountKey: String? = null,
     val settings: AppSettings = AppSettings(),
     val worksCount: Int = 0,
     val imageGroupsCount: Int? = null,
@@ -104,6 +109,8 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
         ProfileUiState(
             user = (container.authSession.value as? AuthSessionState.LoggedIn)?.user,
             isDirectApiOnly = (container.authSession.value as? AuthSessionState.LoggedIn)?.isDirectApiOnly == true,
+            activeAccountKey = (container.authSession.value as? AuthSessionState.LoggedIn)?.accountKey.orEmpty(),
+            savedAccounts = container.savedAccountStore.currentAccounts(),
             settings = container.settingsState.value,
             worksCount = container.imageWorksTotal.value,
             providers = container.apiProviderStore.currentProviders(),
@@ -141,8 +148,14 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
                     it.copy(
                         user = logged?.user,
                         isDirectApiOnly = logged?.isDirectApiOnly == true,
+                        activeAccountKey = logged?.accountKey.orEmpty(),
                     )
                 }
+            }
+        }
+        viewModelScope.launch {
+            container.savedAccountStore.accounts.collect { accounts ->
+                _ui.update { it.copy(savedAccounts = accounts) }
             }
         }
         viewModelScope.launch {
@@ -951,6 +964,56 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
                     )
                 }
             }
+        }
+    }
+
+    fun onSessionActivated() {
+        refreshImageGroupsCount()
+    }
+
+    fun switchToSavedAccount(
+        accountKey: String,
+        onSwitched: () -> Unit = {},
+        onNeedRelogin: (SavedAccount) -> Unit = {},
+    ) {
+        if (_ui.value.switchingAccountKey != null) return
+        viewModelScope.launch {
+            _ui.update { it.copy(switchingAccountKey = accountKey) }
+            try {
+                when (val result = container.switchToSavedAccount(accountKey)) {
+                    is SwitchAccountResult.Switched -> {
+                        container.toastController.show(
+                            strings().profile.switchedToAccount.fmt("name" to result.account.displayName()),
+                        )
+                        onSwitched()
+                    }
+                    is SwitchAccountResult.Expired -> {
+                        container.toastController.show(
+                            strings().profile.accountExpiredTapHint,
+                            isError = true,
+                        )
+                        onNeedRelogin(result.account)
+                    }
+                    SwitchAccountResult.NotFound -> Unit
+                }
+            } finally {
+                _ui.update { it.copy(switchingAccountKey = null) }
+            }
+        }
+    }
+
+    fun switchToDirectMode(onSwitched: () -> Unit = {}) {
+        container.enterDirectApiMode()
+        container.toastController.show(strings().profile.switchedToDirectMode)
+        onSwitched()
+    }
+
+    fun removeSavedAccount(account: SavedAccount) {
+        viewModelScope.launch {
+            container.removeSavedAccount(account.accountKey)
+            container.toastController.show(
+                strings().profile.accountRemovedToast.fmt("name" to account.displayName()),
+            )
         }
     }
 

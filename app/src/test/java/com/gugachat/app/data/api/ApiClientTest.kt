@@ -402,4 +402,70 @@ class ApiClientTest {
         assertTrue("Expected SSE streaming off caller thread ($callerThread), got $deltaThreads", deltaThreads.all { it != callerThread })
         assertTrue("Expected incremental chunks before EOF, span was ${doneAt - firstDeltaAt.get()}ms", doneAt - firstDeltaAt.get() >= 100L)
     }
+
+    @Test
+    fun accessTokenOverride_andIsolatedAuth_doNotMutateOrExpireActiveSession() = runBlocking {
+        var expiredCalls = 0
+        val guardedClient = ApiClient(
+            tokenStore = tokenStore,
+            serverUrlProvider = { server.url("/").toString() },
+            languageTagProvider = { "zh-CN" },
+            onSessionExpired = { expiredCalls += 1 },
+        )
+        val authApi = AuthApi(guardedClient, tokenStore)
+
+        // 1. Isolated login with persistToTokenStore = false must leave active tokenStore untouched
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setBody("""{"code":0,"data":{"access_token":"second-access","refresh_token":"second-refresh","user":{"id":2,"email":"b@test.com","username":"bob"}}}"""),
+        )
+        val resp = authApi.login(
+            email = "b@test.com",
+            password = "pw",
+            baseUrlOverride = server.url("/").toString(),
+            persistToTokenStore = false,
+        )
+        assertEquals("second-access", resp.access_token)
+        assertEquals("initial-access", tokenStore.getAccessToken())
+        assertEquals("initial-refresh", tokenStore.getRefreshToken())
+        val loginReq = server.takeRequest()
+        assertEquals(null, loginReq.getHeader("Authorization"))
+
+        // 2. 401 on an isolated getCurrentUser(accessTokenOverride) must not clear active token or expire session
+        server.enqueue(MockResponse().setResponseCode(401).setBody("""{"code":401,"message":"bad token"}"""))
+        val ex = assertThrows(ApiException::class.java) {
+            runBlocking {
+                authApi.getCurrentUser(
+                    baseUrlOverride = server.url("/").toString(),
+                    accessTokenOverride = "probe-bad-token",
+                    persistToTokenStore = false,
+                )
+            }
+        }
+        assertEquals(401, ex.status)
+        assertEquals(0, expiredCalls)
+        assertEquals("initial-access", tokenStore.getAccessToken())
+        val meReq = server.takeRequest()
+        assertEquals("Bearer probe-bad-token", meReq.getHeader("Authorization"))
+
+        // 3. Stale 401 refresh attempt after switching to Direct API mode (cleared tokenStore) must not trigger onSessionExpired
+        tokenStore.clear()
+        val staleEx = assertThrows(ApiException::class.java) {
+            runBlocking {
+                guardedClient.refreshTokensSingleFlight(failedAccessToken = "initial-access")
+            }
+        }
+        assertEquals("AUTH_SESSION_CHANGED", staleEx.code)
+        assertEquals(0, expiredCalls)
+
+        // 4. revokeRefreshToken targets specified server without sending active Authorization header
+        tokenStore.saveTokens("active-access", "active-refresh", 3600L)
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"code":0,"data":{}}"""))
+        authApi.revokeRefreshToken(server.url("/").toString(), "other-account-refresh")
+        val logoutReq = server.takeRequest()
+        assertEquals(null, logoutReq.getHeader("Authorization"))
+        assertTrue(logoutReq.body.readUtf8().contains("other-account-refresh"))
+        assertEquals("active-access", tokenStore.getAccessToken())
+    }
 }

@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
@@ -89,6 +90,7 @@ fun ProfileScreen(
     container: AppContainer,
     viewModel: ProfileViewModel,
     imageGroupsCount: Int? = null,
+    onOpenAddAccount: (prefillServerUrl: String?, prefillEmail: String?) -> Unit = { _, _ -> },
 ) {
     val state by viewModel.ui.collectAsStateWithLifecycle()
     val updateUi by container.updateController.ui.collectAsStateWithLifecycle()
@@ -102,6 +104,7 @@ fun ProfileScreen(
     val isScrolled by remember { derivedStateOf { scrollState.value > 6 } }
 
     var showLogoutConfirm by remember { mutableStateOf(false) }
+    var showAccountSwitcher by remember { mutableStateOf(false) }
     var showDeepSeekImport by remember { mutableStateOf(false) }
     var showRetrievalSettings by remember { mutableStateOf(false) }
     var showProvidersSheet by remember { mutableStateOf(false) }
@@ -372,13 +375,51 @@ fun ProfileScreen(
         )
     }
 
+    if (showAccountSwitcher) {
+        val enabledProvidersCount = remember(state.providers) { state.providers.count { it.enabled } }
+        AccountSwitcherSheet(
+            accounts = state.savedAccounts,
+            activeAccountKey = state.activeAccountKey,
+            isDirectApiOnly = state.isDirectApiOnly,
+            enabledProvidersCount = enabledProvidersCount,
+            switchingAccountKey = state.switchingAccountKey,
+            onSelectAccount = { key ->
+                viewModel.switchToSavedAccount(
+                    accountKey = key,
+                    onSwitched = { showAccountSwitcher = false },
+                    onNeedRelogin = { expired ->
+                        showAccountSwitcher = false
+                        onOpenAddAccount(expired.serverUrl, expired.user.email)
+                    },
+                )
+            },
+            onSelectDirectMode = {
+                viewModel.switchToDirectMode(
+                    onSwitched = { showAccountSwitcher = false },
+                )
+            },
+            onAddAccount = {
+                showAccountSwitcher = false
+                onOpenAddAccount(null, null)
+            },
+            onRemoveAccount = { target ->
+                val removingActive = !state.isDirectApiOnly && target.accountKey == state.activeAccountKey
+                if (removingActive) {
+                    showAccountSwitcher = false
+                }
+                viewModel.removeSavedAccount(target)
+            },
+            onDismiss = { showAccountSwitcher = false },
+        )
+    }
+
     if (showLogoutConfirm) {
         GuConfirmDialog(
-            title = if (state.isDirectApiOnly) strings.providers.switchToSub2api else strings.profile.logoutConfirmTitle,
+            title = strings.profile.logoutConfirmTitle,
             message = strings.profile.logoutConfirmMsg,
-            confirmText = if (state.isDirectApiOnly) strings.common.confirm else strings.profile.logout,
+            confirmText = strings.profile.logout,
             cancelText = strings.common.cancel,
-            isDestructive = !state.isDirectApiOnly,
+            isDestructive = true,
             onConfirm = {
                 showLogoutConfirm = false
                 viewModel.logout(strings.profile.loggedOut)
@@ -550,6 +591,32 @@ fun ProfileScreen(
                                     modifier = Modifier.size(11.dp),
                                 )
                             }
+                        }
+                    }
+
+                    Surface(
+                        onClick = { showAccountSwitcher = true },
+                        shape = RoundedCornerShape(999.dp),
+                        color = c.primarySoft,
+                        border = null,
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.SwapHoriz,
+                                contentDescription = strings.profile.switchAccount,
+                                tint = c.primarySoftInk,
+                                modifier = Modifier.size(14.dp),
+                            )
+                            Text(
+                                text = strings.profile.switchAccountShort,
+                                color = c.primarySoftInk,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                            )
                         }
                     }
                 }
@@ -800,24 +867,49 @@ fun ProfileScreen(
                 }
             }
 
-            // 6. Restrained centered text sign-out / switch action
+            // 6. Restrained centered account switch / sign-out actions
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(top = 2.dp, bottom = 10.dp),
                 contentAlignment = Alignment.Center,
             ) {
-                TextButton(onClick = { showLogoutConfirm = true }) {
-                    Text(
-                        text = if (state.isDirectApiOnly) {
-                            strings.providers.switchToSub2api
-                        } else {
-                            strings.profile.logout
-                        },
-                        color = if (state.isDirectApiOnly) c.muted else c.danger,
-                        fontSize = 13.5.sp,
-                        fontWeight = FontWeight.Medium,
-                    )
+                if (state.isDirectApiOnly) {
+                    TextButton(onClick = { showAccountSwitcher = true }) {
+                        Text(
+                            text = strings.profile.switchOrSignIn,
+                            color = c.primary,
+                            fontSize = 13.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                } else {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    ) {
+                        TextButton(onClick = { showAccountSwitcher = true }) {
+                            Text(
+                                text = strings.profile.switchAccount,
+                                color = c.primary,
+                                fontSize = 13.5.sp,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                        VerticalDivider(
+                            modifier = Modifier.height(14.dp),
+                            thickness = 0.5.dp,
+                            color = c.border.copy(alpha = 0.65f),
+                        )
+                        TextButton(onClick = { showLogoutConfirm = true }) {
+                            Text(
+                                text = strings.profile.logout,
+                                color = c.danger,
+                                fontSize = 13.5.sp,
+                                fontWeight = FontWeight.Medium,
+                            )
+                        }
+                    }
                 }
             }
         }

@@ -44,6 +44,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -110,6 +111,12 @@ private enum class MainTab {
     STUDIO,
     MINE,
 }
+
+private data class AddAccountRequest(
+    val nonce: Int,
+    val prefillServerUrl: String? = null,
+    val prefillEmail: String? = null,
+)
 
 @Composable
 fun GuGuChatRoot(container: AppContainer) {
@@ -273,6 +280,13 @@ private fun AuthenticatedShell(
     var isChatDrawerOpen by remember { mutableStateOf(false) }
     var isScrollHidingBottomBar by remember { mutableStateOf(false) }
     var isFullscreenSubpageOpen by remember { mutableStateOf(false) }
+    var addAccountRequest by remember { mutableStateOf<AddAccountRequest?>(null) }
+    var addAccountNonce by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(sessionIdentityKey) {
+        container.updateImageWorksTotal(imageVm.ui.value.totalWorks)
+        profileVm.onSessionActivated()
+    }
 
     LaunchedEffect(activeTab) {
         isFullscreenSubpageOpen = false
@@ -464,6 +478,14 @@ private fun AuthenticatedShell(
                             container = container,
                             viewModel = profileVm,
                             imageGroupsCount = resolvedImageGroupsCount,
+                            onOpenAddAccount = { prefillUrl, prefillEmail ->
+                                addAccountNonce += 1
+                                addAccountRequest = AddAccountRequest(
+                                    nonce = addAccountNonce,
+                                    prefillServerUrl = prefillUrl,
+                                    prefillEmail = prefillEmail,
+                                )
+                            },
                         )
                     }
                 }
@@ -471,6 +493,35 @@ private fun AuthenticatedShell(
         }
 
         ImageStudioModals(container = container, imageVm = imageVm)
+
+        addAccountRequest?.let { req ->
+            val addAuthFactory = remember(container, req.nonce) {
+                viewModelFactory {
+                    initializer {
+                        AuthViewModel(
+                            container = container,
+                            addAccountMode = true,
+                            prefillServerUrl = req.prefillServerUrl,
+                            prefillEmail = req.prefillEmail,
+                            onAddAccountCompleted = { addAccountRequest = null },
+                        )
+                    }
+                }
+            }
+            val addAuthVm: AuthViewModel = viewModel(
+                key = "add_account_${req.nonce}",
+                factory = addAuthFactory,
+            )
+            Surface(
+                modifier = Modifier.fillMaxSize(),
+                color = c.page,
+            ) {
+                LoginScreen(
+                    viewModel = addAuthVm,
+                    onCloseAddAccount = { addAccountRequest = null },
+                )
+            }
+        }
     }
 }
 

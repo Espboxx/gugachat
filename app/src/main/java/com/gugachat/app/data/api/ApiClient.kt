@@ -100,12 +100,14 @@ class ApiClient(
         deserializer: KSerializer<T>,
         queryParams: Map<String, String> = emptyMap(),
         baseUrlOverride: String? = null,
+        accessTokenOverride: String? = null,
     ): T = requestJson(
         method = "GET",
         path = path,
         deserializer = deserializer,
         queryParams = queryParams,
         baseUrlOverride = baseUrlOverride,
+        accessTokenOverride = accessTokenOverride,
     )
 
     suspend fun <T> postJson(
@@ -114,6 +116,7 @@ class ApiClient(
         deserializer: KSerializer<T>,
         queryParams: Map<String, String> = emptyMap(),
         baseUrlOverride: String? = null,
+        accessTokenOverride: String? = null,
     ): T = requestJson(
         method = "POST",
         path = path,
@@ -121,6 +124,7 @@ class ApiClient(
         deserializer = deserializer,
         queryParams = queryParams,
         baseUrlOverride = baseUrlOverride,
+        accessTokenOverride = accessTokenOverride,
     )
 
     suspend fun <T> putJson(
@@ -176,6 +180,7 @@ class ApiClient(
         extraHeaders: Map<String, String> = emptyMap(),
         client: OkHttpClient = standardClient,
         baseUrlOverride: String? = null,
+        accessTokenOverride: String? = null,
     ): Response {
         val base = ServerUrlUtils.normalizeServerUrl(baseUrlOverride ?: serverUrlProvider())
         if (base.isEmpty()) {
@@ -184,11 +189,15 @@ class ApiClient(
         val requestUrl = buildUrlWithParams(base, path, method, queryParams)
         val isAuthEndpoint = isAuthEndpointPath(path)
 
-        val firstToken = tokenStore.getAccessToken()
+        val firstToken = accessTokenOverride ?: tokenStore.getAccessToken()
         val firstReq = buildRequest(method, requestUrl, body, extraHeaders, firstToken)
         val firstResp = client.awaitCall(firstReq)
 
-        if (firstResp.code == 401 && !isAuthEndpoint && !tokenStore.getRefreshToken().isNullOrBlank()) {
+        if (firstResp.code == 401 &&
+            !isAuthEndpoint &&
+            accessTokenOverride == null &&
+            !tokenStore.getRefreshToken().isNullOrBlank()
+        ) {
             withContext(Dispatchers.IO) { firstResp.close() }
             val refreshedToken = refreshTokensSingleFlight(firstToken)
             val retryReq = buildRequest(method, requestUrl, body, extraHeaders, refreshedToken)
@@ -235,6 +244,7 @@ class ApiClient(
         extraHeaders: Map<String, String> = emptyMap(),
         client: OkHttpClient = standardClient,
         baseUrlOverride: String? = null,
+        accessTokenOverride: String? = null,
     ): T {
         val resp = executeRaw(
             method = method,
@@ -244,6 +254,7 @@ class ApiClient(
             extraHeaders = extraHeaders,
             client = client,
             baseUrlOverride = baseUrlOverride,
+            accessTokenOverride = accessTokenOverride,
         )
         return withContext(Dispatchers.IO) {
             resp.use { response ->
@@ -268,9 +279,15 @@ class ApiClient(
 
         val refreshToken = snapshot.refreshToken
         if (refreshToken.isNullOrBlank()) {
-            tokenStore.clear()
-            onSessionExpired()
-            throw ApiException(401, "TOKEN_REFRESH_FAILED", "Session expired. Please sign in again.")
+            if (failedAccessToken.isNullOrBlank() || snapshot.accessToken == failedAccessToken) {
+                tokenStore.clear()
+                onSessionExpired()
+                throw ApiException(401, "TOKEN_REFRESH_FAILED", "Session expired. Please sign in again.")
+            }
+            if (!snapshot.accessToken.isNullOrBlank()) {
+                return@withLock snapshot.accessToken
+            }
+            throw ApiException(401, "AUTH_SESSION_CHANGED", "Authentication session changed while refreshing.")
         }
 
         val base = ServerUrlUtils.normalizeServerUrl(serverUrlProvider())

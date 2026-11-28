@@ -1,5 +1,6 @@
 package com.gugachat.app.ui.auth
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -49,6 +50,7 @@ import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -81,6 +83,7 @@ import com.gugachat.app.R
 import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.i18n.LocalAppStrings
 import com.gugachat.app.core.i18n.fmt
+import com.gugachat.app.core.storage.SavedAccount
 import com.gugachat.app.core.theme.ColorMode
 import com.gugachat.app.core.theme.GuBadge
 import com.gugachat.app.core.theme.GuBadgeVariant
@@ -108,6 +111,7 @@ import com.gugachat.app.ui.providers.canSubmitProviderDraft
 @Composable
 fun LoginScreen(
     viewModel: AuthViewModel,
+    onCloseAddAccount: (() -> Unit)? = null,
 ) {
     val state by viewModel.ui.collectAsStateWithLifecycle()
     val strings = LocalAppStrings.current
@@ -115,6 +119,12 @@ fun LoginScreen(
     val c = theme.colors
     val isZh = strings.language == AppLanguage.ZH
     val focusManager = LocalFocusManager.current
+
+    if (onCloseAddAccount != null) {
+        BackHandler(enabled = !state.showWebLoginDialog) {
+            onCloseAddAccount()
+        }
+    }
 
     var showProviderImportSheet by remember { mutableStateOf(false) }
 
@@ -135,6 +145,7 @@ fun LoginScreen(
     if (state.showWebLoginDialog) {
         WebLoginDialog(
             serverUrl = state.serverUrlInput,
+            clearExistingSession = state.isAddAccountMode || state.savedAccounts.isNotEmpty(),
             onDismiss = { viewModel.setShowWebLogin(false) },
             onTokensCaptured = viewModel::handleWebLoginCaptured,
         )
@@ -148,7 +159,7 @@ fun LoginScreen(
             .navigationBarsPadding()
             .imePadding(),
     ) {
-        if (state.entryMode == LoginEntryMode.CHOOSER) {
+        if (state.entryMode == LoginEntryMode.CHOOSER && !state.isAddAccountMode) {
             // Clean top-right quick icon controls under status bar
             ChooserTopActionRow(
                 colorMode = state.colorMode,
@@ -167,6 +178,13 @@ fun LoginScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
+                if (state.savedAccounts.isNotEmpty()) {
+                    SavedAccountsQuickLoginCard(
+                        accounts = state.savedAccounts,
+                        switchingAccountKey = state.switchingAccountKey,
+                        onSelectAccount = viewModel::quickSignInSavedAccount,
+                    )
+                }
                 FirstLaunchModeChooser(
                     isZh = isZh,
                     onChooseCustomApi = { viewModel.chooseEntryMode(LoginEntryMode.DIRECT_API) },
@@ -175,7 +193,7 @@ fun LoginScreen(
                 )
             }
         } else {
-            // Single-row 48.dp header: [<-] + centered GuSegmentedControl
+            // Single-row 48.dp header: [<-] + centered title or GuSegmentedControl
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -184,12 +202,22 @@ fun LoginScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 IconButton(
-                    onClick = { viewModel.chooseEntryMode(LoginEntryMode.CHOOSER) },
+                    onClick = {
+                        if (state.isAddAccountMode && onCloseAddAccount != null) {
+                            onCloseAddAccount()
+                        } else {
+                            viewModel.chooseEntryMode(LoginEntryMode.CHOOSER)
+                        }
+                    },
                     modifier = Modifier.size(44.dp),
                 ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = strings.providers.chooserBackBtn,
+                        contentDescription = if (state.isAddAccountMode) {
+                            strings.common.close
+                        } else {
+                            strings.providers.chooserBackBtn
+                        },
                         tint = c.ink,
                         modifier = Modifier.size(20.dp),
                     )
@@ -198,18 +226,29 @@ fun LoginScreen(
                     modifier = Modifier.weight(1f),
                     contentAlignment = Alignment.Center,
                 ) {
-                    GuSegmentedControl(
-                        items = listOf(strings.providers.entryDirectApi, strings.providers.entrySub2api),
-                        selectedIndex = if (state.entryMode == LoginEntryMode.DIRECT_API) 0 else 1,
-                        onSelect = { idx ->
-                            viewModel.chooseEntryMode(
-                                if (idx == 0) LoginEntryMode.DIRECT_API else LoginEntryMode.SUB2API,
-                            )
-                        },
-                        modifier = Modifier
-                            .widthIn(max = 264.dp)
-                            .fillMaxWidth(),
-                    )
+                    if (state.isAddAccountMode) {
+                        Text(
+                            text = strings.profile.addAccountTitle,
+                            color = c.ink,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    } else {
+                        GuSegmentedControl(
+                            items = listOf(strings.providers.entryDirectApi, strings.providers.entrySub2api),
+                            selectedIndex = if (state.entryMode == LoginEntryMode.DIRECT_API) 0 else 1,
+                            onSelect = { idx ->
+                                viewModel.chooseEntryMode(
+                                    if (idx == 0) LoginEntryMode.DIRECT_API else LoginEntryMode.SUB2API,
+                                )
+                            },
+                            modifier = Modifier
+                                .widthIn(max = 264.dp)
+                                .fillMaxWidth(),
+                        )
+                    }
                 }
                 Spacer(Modifier.width(44.dp))
             }
@@ -370,6 +409,13 @@ fun LoginScreen(
                         .padding(horizontal = 16.dp, vertical = 10.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
+                    if (!state.isAddAccountMode && state.savedAccounts.isNotEmpty()) {
+                        SavedAccountsQuickLoginCard(
+                            accounts = state.savedAccounts,
+                            switchingAccountKey = state.switchingAccountKey,
+                            onSelectAccount = viewModel::quickSignInSavedAccount,
+                        )
+                    }
                     val normalizedCurrentUrl = ServerUrlUtils.normalizeServerUrl(state.serverUrlInput)
                     val selectedProbe = remember(state.hostProbes, normalizedCurrentUrl) {
                         state.hostProbes.firstOrNull {
@@ -1237,6 +1283,115 @@ private fun PresetHostRow(
                 HostProbeStatus.FAILED -> {
                     GuBadge(strings.auth.hostUnreachable, variant = GuBadgeVariant.DANGER)
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SavedAccountsQuickLoginCard(
+    accounts: List<SavedAccount>,
+    switchingAccountKey: String?,
+    onSelectAccount: (String) -> Unit,
+) {
+    val strings = LocalAppStrings.current
+    val c = LocalAppTheme.current.colors
+    GuGroupedCard(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 13.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(
+                text = strings.profile.savedAccountsTitle,
+                color = c.muted,
+                fontSize = 11.5.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+            GuBadge(text = "${accounts.size}", variant = GuBadgeVariant.BLUE)
+        }
+        HorizontalDivider(thickness = 0.5.dp, color = c.border.copy(alpha = 0.65f))
+        accounts.forEachIndexed { index, account ->
+            val isSwitching = switchingAccountKey == account.accountKey
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(enabled = switchingAccountKey == null) {
+                        onSelectAccount(account.accountKey)
+                    }
+                    .padding(horizontal = 13.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(34.dp)
+                        .clip(CircleShape)
+                        .background(c.primarySoft),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = account.displayName().take(1).uppercase(),
+                        color = c.primarySoftInk,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text(
+                            text = account.displayName(),
+                            color = c.ink,
+                            fontSize = 13.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
+                        if (account.sessionExpired) {
+                            GuBadge(
+                                text = strings.profile.accountExpiredBadge,
+                                variant = GuBadgeVariant.AMBER,
+                            )
+                        }
+                    }
+                    Text(
+                        text = account.serverHostLabel().ifBlank { account.user.email },
+                        color = c.muted,
+                        fontSize = 11.5.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                if (isSwitching) {
+                    CircularProgressIndicator(
+                        color = c.primary,
+                        strokeWidth = 2.dp,
+                        modifier = Modifier.size(16.dp),
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                        contentDescription = null,
+                        tint = c.primary,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+            }
+            if (index < accounts.lastIndex) {
+                HorizontalDivider(
+                    modifier = Modifier.padding(start = 57.dp),
+                    thickness = 0.5.dp,
+                    color = c.border.copy(alpha = 0.65f),
+                )
             }
         }
     }

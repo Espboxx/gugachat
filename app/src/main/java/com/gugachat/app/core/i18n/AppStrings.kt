@@ -135,6 +135,23 @@ data class ProfileStrings(
     val logoutConfirmMsg: String,
     val loggedOut: String,
     val refreshed: String,
+    val switchAccount: String,
+    val switchAccountShort: String,
+    val switchAccountSubtitle: String,
+    val savedAccountsTitle: String,
+    val addAccountBtn: String,
+    val addAccountTitle: String,
+    val currentAccountBadge: String,
+    val accountExpiredBadge: String,
+    val accountExpiredTapHint: String,
+    val switchedToAccount: String,
+    val switchedToDirectMode: String,
+    val directModeRowTitle: String,
+    val directModeRowSubtitle: String,
+    val removeAccountConfirmTitle: String,
+    val removeAccountConfirmMsg: String,
+    val accountRemovedToast: String,
+    val switchOrSignIn: String,
 )
 
 @Immutable

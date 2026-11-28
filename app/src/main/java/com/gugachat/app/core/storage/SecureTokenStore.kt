@@ -26,12 +26,22 @@ interface TokenStore {
     fun clear()
 }
 
-class SecureTokenStore(context: Context) : TokenStore {
-    private val prefs: SharedPreferences = EncryptedPrefsFactory.create(
-        context = context.applicationContext,
-        encryptedName = "gugachat_secure_tokens",
-        fallbackName = "gugachat_tokens_fallback",
+class SecureTokenStore internal constructor(
+    private val prefs: SharedPreferences,
+) : TokenStore {
+    constructor(context: Context) : this(
+        EncryptedPrefsFactory.create(
+            context = context.applicationContext,
+            encryptedName = "gugachat_secure_tokens",
+            fallbackName = "gugachat_tokens_fallback",
+        ),
     )
+
+    @Volatile
+    var onTokensSaved: ((TokenSnapshot) -> Unit)? = null
+
+    @Volatile
+    var onUserJsonSaved: ((String) -> Unit)? = null
 
     private object Keys {
         const val ACCESS_TOKEN = "auth_token"
@@ -80,11 +90,44 @@ class SecureTokenStore(context: Context) : TokenStore {
             editor.putString(Keys.REFRESH_TOKEN, refreshToken)
         }
         editor.apply()
+        onTokensSaved?.invoke(readSnapshot())
+    }
+
+    /**
+     * Atomically replaces the active token snapshot when switching between saved accounts,
+     * preserving the exact expiry timestamp without triggering the active-account writeback hook.
+     */
+    @Synchronized
+    fun restoreSnapshot(
+        accessToken: String,
+        refreshToken: String?,
+        tokenExpiresAtMs: Long,
+        userJson: String?,
+    ) {
+        val editor = prefs.edit()
+        editor.putString(Keys.ACCESS_TOKEN, accessToken)
+        if (!refreshToken.isNullOrBlank()) {
+            editor.putString(Keys.REFRESH_TOKEN, refreshToken)
+        } else {
+            editor.remove(Keys.REFRESH_TOKEN)
+        }
+        if (tokenExpiresAtMs > 0L) {
+            editor.putLong(Keys.TOKEN_EXPIRES_AT, tokenExpiresAtMs)
+        } else {
+            editor.remove(Keys.TOKEN_EXPIRES_AT)
+        }
+        if (!userJson.isNullOrBlank()) {
+            editor.putString(Keys.AUTH_USER_JSON, userJson)
+        } else {
+            editor.remove(Keys.AUTH_USER_JSON)
+        }
+        editor.apply()
     }
 
     @Synchronized
     override fun saveUserJson(userJson: String) {
         prefs.edit().putString(Keys.AUTH_USER_JSON, userJson).apply()
+        onUserJsonSaved?.invoke(userJson)
     }
 
     @Synchronized
