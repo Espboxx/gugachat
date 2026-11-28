@@ -493,12 +493,21 @@ object ExternalImportCodec {
             return parseSillyTavernCardJson(rawJson, fileName)
         }
 
-        // 4. SillyTavern Standalone World Info / Lorebook / Tavern Helper WorldbookEntry JSON
+        // 4. SillyTavern Standalone World Info / Lorebook / Tavern Helper WorldbookEntry / UU Worldbook JSON
         if (TavernAssetCodec.isLorebookJson(root)) {
             val baseId = (fileName ?: rawJson.take(120)).hashCode().toUInt().toString(16)
-            val convId = "st_lore_$baseId"
-            val loreAsset = TavernAssetCodec.parseLorebookJson(root, conversationId = convId, fileName = fileName)
-            return buildLorebookBundle(loreAsset, convId, baseId, ExternalImportSource.SILLYTAVERN)
+            val preview = TavernAssetCodec.parseLorebookJson(root, conversationId = "preview", fileName = fileName)
+            val isUu = preview.sourceFormat == "uu_worldbook"
+            val convId = if (isUu) "uu_lore_$baseId" else "st_lore_$baseId"
+            val loreAsset = preview.copy(
+                entries = preview.entries.map { it.copy(conversationId = convId) },
+            )
+            return buildLorebookBundle(
+                loreAsset,
+                convId,
+                baseId,
+                if (isUu) ExternalImportSource.UU_GAME else ExternalImportSource.SILLYTAVERN,
+            )
         }
 
         // 5. SillyTavern Chat Completion Preset JSON (ordered `prompts` + `prompt_order` or flat `main_prompt`)

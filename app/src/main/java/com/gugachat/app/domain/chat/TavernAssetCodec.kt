@@ -251,6 +251,7 @@ object TavernAssetCodec {
         if (isRikkaExportEnvelope(obj) && obj.strOrNull("type").equals("lorebook", ignoreCase = true)) {
             return true
         }
+        if (isUuWorldbookObject(obj)) return true
         val entries = obj["entries"] ?: return false
         val firstEntry = when (entries) {
             is JsonObject -> entries.values.firstOrNull { it is JsonObject } as? JsonObject
@@ -270,6 +271,21 @@ object TavernAssetCodec {
         return first.containsKey("content") && first["strategy"] is JsonObject
     }
 
+    private fun extractUuWorldInfoEntries(obj: JsonObject): JsonArray? =
+        (obj["worldInfoEntries"] as? JsonArray)
+            ?: (obj["world_info_entries"] as? JsonArray)
+
+    private fun isUuWorldbookObject(obj: JsonObject): Boolean {
+        val arr = extractUuWorldInfoEntries(obj) ?: return false
+        val firstEntry = arr.firstOrNull { it is JsonObject && it.containsKey("content") } as? JsonObject
+            ?: return false
+        return firstEntry.containsKey("keys") ||
+            firstEntry.containsKey("key") ||
+            firstEntry.containsKey("keywords") ||
+            firstEntry.containsKey("title") ||
+            firstEntry.containsKey("constant")
+    }
+
     fun parseLorebookJson(
         root: JsonElement,
         conversationId: String,
@@ -282,8 +298,10 @@ object TavernAssetCodec {
 
         val now = System.currentTimeMillis()
         val obj = root as? JsonObject
+        val isUuWorldbook = obj != null && isUuWorldbookObject(obj)
         val title = obj?.strOrNull("name")?.trim()?.takeIf { it.isNotEmpty() }
-            ?: stripExtension(fileName).ifBlank { "酒馆世界书" }
+            ?: obj?.strOrNull("title")?.trim()?.takeIf { it.isNotEmpty() }
+            ?: stripExtension(fileName).ifBlank { if (isUuWorldbook) "UU 世界书" else "酒馆世界书" }
         val desc = obj?.strOrNull("description").orEmpty().trim()
 
         val rawEntries = extractRawWorldbookEntries(root)
@@ -313,11 +331,17 @@ object TavernAssetCodec {
             throw IllegalArgumentException("世界书中未解析到有效条目")
         }
 
+        val sourceFormat = when {
+            isUuWorldbook -> "uu_worldbook"
+            isTavernHelper -> "sillytavern_worldbook_v2"
+            else -> "sillytavern_lorebook"
+        }
+
         return ParsedLorebookAsset(
             name = title,
             description = desc,
             entries = loreEntries,
-            sourceFormat = if (isTavernHelper) "sillytavern_worldbook_v2" else "sillytavern_lorebook",
+            sourceFormat = sourceFormat,
         )
     }
 
@@ -624,16 +648,23 @@ object TavernAssetCodec {
         }
 
         val obj = root as? JsonObject
+        val isUuWorldbook = obj != null && isUuWorldbookObject(obj)
         val title = obj?.strOrNull("name")?.trim()?.takeIf { it.isNotEmpty() }
-            ?: stripExtension(fileName).ifBlank { "酒馆世界书" }
+            ?: obj?.strOrNull("title")?.trim()?.takeIf { it.isNotEmpty() }
+            ?: stripExtension(fileName).ifBlank { if (isUuWorldbook) "UU 世界书" else "酒馆世界书" }
         val desc = obj?.strOrNull("description").orEmpty().trim()
         val rawEntries = extractRawWorldbookEntries(root)
         val isTavernHelper = rawEntries.any { it["strategy"] is JsonObject }
+        val sourceFormat = when {
+            isUuWorldbook -> "uu_worldbook"
+            isTavernHelper -> "sillytavern_worldbook_v2"
+            else -> "sillytavern_lorebook"
+        }
         return buildWorldbookV4FromRawEntries(
             worldbookId = worldbookId,
             name = title,
             description = desc,
-            sourceFormat = if (isTavernHelper) "sillytavern_worldbook_v2" else "sillytavern_lorebook",
+            sourceFormat = sourceFormat,
             bookObj = obj,
             rawEntries = rawEntries,
             now = now,
@@ -960,7 +991,9 @@ object TavernAssetCodec {
 
     private fun extractRawWorldbookEntries(root: JsonElement): List<JsonObject> = when (root) {
         is JsonArray -> root.mapNotNull { it as? JsonObject }
-        is JsonObject -> when (val e = root["entries"]) {
+        is JsonObject -> when (
+            val e = root["entries"] ?: root["worldInfoEntries"] ?: root["world_info_entries"]
+        ) {
             is JsonObject -> e.values.mapNotNull { it as? JsonObject }
             is JsonArray -> e.mapNotNull { it as? JsonObject }
             else -> emptyList()
@@ -995,11 +1028,12 @@ object TavernAssetCodec {
             ).distinct()
         val title = (
             entry.strOrNull("comment")?.takeIf { it.isNotBlank() }
+                ?: entry.strOrNull("title")?.takeIf { it.isNotBlank() }
                 ?: entry.strOrNull("name")?.takeIf { it.isNotBlank() }
                 ?: keywords.firstOrNull()
                 ?: "条目 #${idx + 1}"
             ).trim()
-        val disabled = entry.boolOrNull("disable") == true
+        val disabled = entry.boolOrNull("disable") == true || entry.boolOrNull("disabled") == true
         val enabled = entry.boolOrNull("enabled") ?: !disabled
         val constant = entry.boolOrNull("constant")
             ?: entry.boolOrNull("constantActive")

@@ -125,6 +125,42 @@ class ExternalImportCodecTest {
     }
 
     @Test
+    fun parseBytes_uuWorldbookScriptJson_importsAsUuGameSource() {
+        val uuLoreJson = """
+            {
+              "worldInfoEntries": [
+                {
+                  "id": "wi-eea4e456-72ec",
+                  "content": "世界观设定一段。",
+                  "title": "攻性癖",
+                  "keys": ["攻性癖"],
+                  "constant": true
+                },
+                {
+                  "id": "wi-849f04b9-c829",
+                  "content": "世界观设定二段。",
+                  "title": "受性癖",
+                  "keys": ["受性癖"],
+                  "constant": true
+                }
+              ]
+            }
+        """.trimIndent()
+
+        val bundle = ExternalImportCodec.parseBytes(
+            uuLoreJson.toByteArray(Charsets.UTF_8),
+            fileName = "uu-worldbook-script (11).json",
+        )
+        assertEquals(ExternalImportSource.UU_GAME, bundle.source)
+        assertEquals("uu_worldbook", bundle.sourceFormat)
+        val item = bundle.items.single()
+        assertEquals("uu-worldbook-script (11)", item.conversation.title)
+        assertEquals(2, item.loreEntries.size)
+        assertEquals(listOf("攻性癖", "受性癖"), item.loreEntries.map { it.title })
+        assertTrue(item.loreEntries.all { it.alwaysActive })
+    }
+
+    @Test
     fun parseBytes_sillyTavernJsonl_preservesSwipesReasoningAndPlayerName() {
         val jsonl = listOf(
             """{"user_name":"阿远","character_name":"露西","create_date":"2026-03-01T20:00:00Z"}""",

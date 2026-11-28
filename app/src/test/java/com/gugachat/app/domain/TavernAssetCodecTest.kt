@@ -276,4 +276,73 @@ class TavernAssetCodecTest {
         assertEquals("战斗快捷指令", qr.name)
         assertEquals(listOf("环顾四周寻找掩体", "抽出长剑进入戒备姿态"), qr.actions)
     }
+
+    @Test
+    fun parseUuWorldbookScriptJson_extractsAllEntriesTitlesAndConstantFlags() {
+        val uuWorldbookJson = """
+            {
+              "worldInfoEntries": [
+                {
+                  "id": "wi-eea4e456-72ec",
+                  "content": "{\"_meta\":{\"generator\":\"测试\",\"count\":1}}",
+                  "title": "攻性癖",
+                  "keys": ["攻性癖"],
+                  "constant": true
+                },
+                {
+                  "id": "wi-7abd7106-d940",
+                  "content": "常驻条目但未填写触发词，需要保留独立标题。",
+                  "title": "独立标题A",
+                  "keys": [],
+                  "constant": true
+                },
+                {
+                  "id": "wi-849f04b9-c829",
+                  "content": "标题与触发关键词不一致的词条。",
+                  "title": "受性癖·分段2",
+                  "keys": ["受性癖"],
+                  "constant": false,
+                  "disabled": true
+                }
+              ]
+            }
+        """.trimIndent()
+
+        val root = AppJson.parseToJsonElement(uuWorldbookJson)
+        assertTrue(TavernAssetCodec.isLorebookJson(root))
+
+        val parsed = TavernAssetCodec.parseJsonText(
+            uuWorldbookJson,
+            conversationId = "c7",
+            fileName = "uu-worldbook-script (11).json",
+        )
+        assertTrue(parsed is ParsedTavernAsset.Lorebook)
+        val lore = (parsed as ParsedTavernAsset.Lorebook).asset
+        assertEquals("uu_worldbook", lore.sourceFormat)
+        assertEquals("uu-worldbook-script (11)", lore.name)
+        assertEquals(3, lore.entries.size)
+        assertEquals("攻性癖", lore.entries[0].title)
+        assertTrue(lore.entries[0].alwaysActive)
+        assertTrue(lore.entries[0].enabled)
+        assertEquals("独立标题A", lore.entries[1].title)
+        assertEquals(listOf("独立标题A"), lore.entries[1].keywords)
+        assertTrue(lore.entries[1].alwaysActive)
+        assertEquals("受性癖·分段2", lore.entries[2].title)
+        assertEquals(listOf("受性癖"), lore.entries[2].keywords)
+        assertFalse(lore.entries[2].alwaysActive)
+        assertFalse(lore.entries[2].enabled)
+
+        val v4 = TavernAssetCodec.parseWorldbookV4(
+            rawJson = uuWorldbookJson,
+            worldbookId = "wb-uu-1",
+            fileName = "uu-worldbook-script (11).json",
+        )
+        assertEquals("uu_worldbook", v4.worldbook.sourceFormat)
+        assertEquals("uu-worldbook-script (11)", v4.worldbook.name)
+        assertEquals(3, v4.entries.size)
+        assertEquals(listOf(0, 1, 2), v4.entries.map { it.uid })
+        assertTrue(v4.worldbook.contentFingerprint.isNotBlank())
+        assertTrue(v4.entries[0].constant)
+        assertFalse(v4.entries[2].enabled)
+    }
 }
