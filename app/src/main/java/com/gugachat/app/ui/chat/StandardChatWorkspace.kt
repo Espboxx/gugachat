@@ -97,6 +97,10 @@ fun StandardChatWorkspace(
     onScrollHideBottomBarChanged: (Boolean) -> Unit = {},
     onOpenRpWizard: () -> Unit = {},
     onOpenNovelWizard: () -> Unit = {},
+    onUpdateSentAttachmentInjectMode: ((String, FileInjectMode) -> Unit)? = null,
+    minOutputChars: Int? = null,
+    autoContinueShortReply: Boolean = false,
+    onContinueChat: () -> Unit = {},
 ) {
     val strings = LocalAppStrings.current
     val theme = LocalAppTheme.current
@@ -271,6 +275,10 @@ fun StandardChatWorkspace(
             onOpenRpWizard = onOpenRpWizard,
             onOpenNovelWizard = onOpenNovelWizard,
             onStartNormalChat = { runCatching { composerFocusRequester.requestFocus() } },
+            onUpdateSentAttachmentInjectMode = onUpdateSentAttachmentInjectMode,
+            minOutputChars = minOutputChars,
+            autoContinueShortReply = autoContinueShortReply,
+            onContinueChat = onContinueChat,
         )
 
         ChatComposerBar(

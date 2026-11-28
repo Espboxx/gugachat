@@ -92,6 +92,7 @@ import com.gugachat.app.data.local.CharacterCardEntity
 import com.gugachat.app.data.local.ConversationWorldbookCrossRef
 import com.gugachat.app.data.local.PersonaEntity
 import com.gugachat.app.data.local.WorldbookEntity
+import com.gugachat.app.domain.chat.ChatParams
 import com.gugachat.app.domain.chat.NovelLoreEntry
 import com.gugachat.app.domain.chat.RpCgRecord
 import com.gugachat.app.domain.chat.RpCharacter
@@ -412,6 +413,8 @@ fun RpStudioSheet(
     worldbooks: List<WorldbookEntity> = emptyList(),
     mountedWorldbookRefs: List<ConversationWorldbookCrossRef> = emptyList(),
     assetActions: RpStudioAssetActions? = null,
+    params: ChatParams = ChatParams(),
+    onUpdateMinOutput: ((minChars: Int?, autoContinue: Boolean) -> Unit)? = null,
 ) {
     val strings = LocalAppStrings.current
     val theme = LocalAppTheme.current
@@ -632,6 +635,8 @@ fun RpStudioSheet(
                                     onToggleLoreEnabled = onToggleLoreEnabled,
                                     onToggleLoreAlwaysActive = onToggleLoreAlwaysActive,
                                     onDeleteLore = onDeleteLore,
+                                    params = params,
+                                    onUpdateMinOutput = onUpdateMinOutput,
                                 )
 
                                 else -> RpStageDesignSection(

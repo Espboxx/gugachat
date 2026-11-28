@@ -716,6 +716,103 @@ class BackupAndWebDavSyncTest {
         }
     }
 
+    @Test
+    fun backupArchiveEngine_roundTripsMinOutputParamsAndPerModeDefaultsWithLegacyBackwardCompat() = runBlocking {
+        // 1. Backward compatibility: legacy JSON missing new minOutput fields deserializes cleanly to null/false
+        val legacyParamsJson = """{"temperature":0.8,"topP":0.95,"maxTokens":2048}"""
+        val decodedLegacyParams = AppJson.decodeFromString(
+            com.gugachat.app.domain.chat.ChatParams.serializer(),
+            legacyParamsJson,
+        )
+        assertEquals(null, decodedLegacyParams.minOutputChars)
+        assertFalse(decodedLegacyParams.autoContinueShortReply)
+
+        val legacyVaultJson = """{"serverUrl":"https://example.com","language":"zh"}"""
+        val decodedLegacySnap = AppJson.decodeFromString(
+            VaultSettingsSnapshot.serializer(),
+            legacyVaultJson,
+        )
+        assertEquals(null, decodedLegacySnap.defaultMinOutputChat)
+        assertEquals(null, decodedLegacySnap.defaultMinOutputRp)
+        assertEquals(null, decodedLegacySnap.defaultMinOutputNovel)
+        assertFalse(decodedLegacySnap.defaultAutoContinueShort)
+
+        // 2. Full v2 backup round-trip preserves ChatParams.minOutputChars/autoContinueShortReply + VaultSettingsSnapshot defaults
+        val srcDb = FakeBackupDbGateway()
+        val srcFiles = tempFolder.newFolder("min_out_src")
+        val customParams = com.gugachat.app.domain.chat.ChatParams(
+            maxTokens = 4096,
+            minOutputChars = 1500,
+            autoContinueShortReply = true,
+        )
+        srcDb.chatDao.upsertConversation(
+            ConversationEntity(
+                id = "conv-min-out",
+                title = "Long Novel",
+                mode = ConversationMode.novel.name,
+                groupId = 1L,
+                model = "claude-sonnet-4-20250514",
+                systemPrompt = "",
+                paramsJson = AppJson.encodeToString(com.gugachat.app.domain.chat.ChatParams.serializer(), customParams),
+                novelJson = null,
+                rpJson = null,
+                archivedSummary = "",
+                summarizedUntilSeq = 0,
+                tokenCalibration = 1.0,
+                createdAt = 100L,
+                updatedAt = 200L,
+                pinned = false,
+            ),
+        )
+        val srcSettings = com.gugachat.app.core.storage.AppSettings(
+            defaultMinOutputChat = 300,
+            defaultMinOutputRp = 800,
+            defaultMinOutputNovel = 1500,
+            defaultAutoContinueShort = true,
+        )
+        val srcVault = InMemoryVaultAdapter(
+            VaultPayloadV2(
+                settings = VaultSettingsSnapshot.fromAppSettings(srcSettings),
+            ),
+        )
+
+        val archiveFile = File(tempFolder.root, "min_output_roundtrip.gugubackup")
+        BackupArchiveEngine.exportBackupToFile(
+            gateway = srcDb,
+            filesDir = srcFiles,
+            outputFile = archiveFile,
+            vaultAdapter = srcVault,
+            options = BackupExportOptions(passphrase = null, includeVault = true),
+        )
+
+        val destDb = FakeBackupDbGateway()
+        val destFiles = tempFolder.newFolder("min_out_dest")
+        val destVault = InMemoryVaultAdapter()
+        val res = BackupArchiveEngine.restoreFromFile(
+            gateway = destDb,
+            filesDir = destFiles,
+            inputFile = archiveFile,
+            replaceExisting = true,
+            vaultAdapter = destVault,
+        )
+        assertTrue(res.vaultRestored)
+
+        val restoredConv = destDb.chatDao.getConversationById("conv-min-out")!!
+        val restoredParams = AppJson.decodeFromString(
+            com.gugachat.app.domain.chat.ChatParams.serializer(),
+            restoredConv.paramsJson,
+        )
+        assertEquals(1500, restoredParams.minOutputChars)
+        assertTrue(restoredParams.autoContinueShortReply)
+
+        val restoredSnap = destVault.appliedPayload?.settings
+        assertNotNull(restoredSnap)
+        assertEquals(300, restoredSnap?.defaultMinOutputChat)
+        assertEquals(800, restoredSnap?.defaultMinOutputRp)
+        assertEquals(1500, restoredSnap?.defaultMinOutputNovel)
+        assertTrue(restoredSnap?.defaultAutoContinueShort == true)
+    }
+
     // ==================== 3. WebDavClient & WebDavSyncManager Tests ====================
 
     @Test
@@ -1433,6 +1530,9 @@ class BackupAndWebDavSyncTest {
             }
             override suspend fun deleteByOwner(ownerType: String, ownerId: String) {
                 embeddings.entries.removeIf { it.key.first == ownerType && it.key.second == ownerId }
+            }
+            override suspend fun deleteByConversationId(conversationId: String) {
+                embeddings.entries.removeIf { it.value.conversationId == conversationId }
             }
             override suspend fun deleteStaleProfiles(activeProfileKey: String) {
                 embeddings.entries.removeIf { it.key.third != activeProfileKey }

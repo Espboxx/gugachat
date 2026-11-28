@@ -8,8 +8,10 @@ import com.gugachat.app.data.api.WireChatMessageDto
 import com.gugachat.app.domain.chat.BuiltChatContext
 import com.gugachat.app.domain.chat.ChatConversation
 import com.gugachat.app.domain.chat.ChatMessage
+import com.gugachat.app.domain.chat.ChatParams
 import com.gugachat.app.domain.chat.CompactionOutcome
 import com.gugachat.app.domain.chat.ContextWaterlineSummary
+import com.gugachat.app.domain.chat.ConversationMode
 import com.gugachat.app.domain.chat.LoreTimedEntryState
 import com.gugachat.app.domain.chat.MemoryEpisode
 import com.gugachat.app.domain.chat.MessageUsage
@@ -653,6 +655,167 @@ class ChatStreamManagerTest {
             assertEquals(1, persistence.compactionOutcomesSaved.size)
             assertEquals("recovered after compaction", manager.lastCommittedMessages.value["conv_compact"]?.content)
             assertEquals(listOf("conv_compact"), indexedConvs.toList())
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun autoContinue_triggersWhenShort_stripsPrematureRpTags_capsAtTwoPasses_andStopsOnLowDelta() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            // 1. Disabled by default: never fires when autoContinueShortReply = false
+            run {
+                val persistence = FakePersistenceGateway()
+                val calls = AtomicInteger(0)
+                val completion = object : StreamCompletionGateway {
+                    override suspend fun streamOnce(
+                        request: OnlineChatCompletionRequestDto,
+                        onTextDelta: (String) -> Unit,
+                        onReasoningDelta: (String) -> Unit,
+                        onUsageSet: (MessageUsage) -> Unit,
+                        onRetryAttempt: (Int, Int, Throwable) -> Unit,
+                        onResetForRetry: () -> Unit,
+                    ) {
+                        calls.incrementAndGet()
+                        onTextDelta("短回复。")
+                    }
+                }
+                val manager = ChatStreamManager(
+                    scope = scope,
+                    keepAlive = FakeKeepAliveGateway(),
+                    contextGateway = FakeContextGateway(),
+                    completionGateway = completion,
+                    persistenceGateway = persistence,
+                )
+                val conv = sampleConv("conv_off").copy(
+                    params = ChatParams(minOutputChars = 300, autoContinueShortReply = false),
+                )
+                assertTrue(manager.startStream(StreamLaunchRequest(conv, 1L, "m1")))
+                awaitUntil { manager.lastCommittedMessages.value.containsKey("conv_off") && manager.activeSessions.value.isEmpty() }
+                assertEquals(1, calls.get())
+            }
+
+            // 2. RP mode: pass 1 ends prematurely with <rp_state>, pass 2 strips premature tag and reaches >= 85%
+            run {
+                val persistence = FakePersistenceGateway()
+                val recordedRequests = CopyOnWriteArrayList<OnlineChatCompletionRequestDto>()
+                val observedHints = CopyOnWriteArrayList<String>()
+                val completion = object : StreamCompletionGateway {
+                    override suspend fun streamOnce(
+                        request: OnlineChatCompletionRequestDto,
+                        onTextDelta: (String) -> Unit,
+                        onReasoningDelta: (String) -> Unit,
+                        onUsageSet: (MessageUsage) -> Unit,
+                        onRetryAttempt: (Int, Int, Throwable) -> Unit,
+                        onResetForRetry: () -> Unit,
+                    ) {
+                        recordedRequests += request
+                        when (recordedRequests.size) {
+                            1 -> {
+                                onTextDelta("雨夜微冷，酒馆木门吱呀作响。<rp_state>{\"scene\":\"酒馆\"}</rp_state>")
+                                onUsageSet(MessageUsage(promptTokens = 100, completionTokens = 25, totalTokens = 125))
+                            }
+                            else -> {
+                                onTextDelta("桌上的烛火摇曳不定，映照着斑驳的墙壁与行人的剪影。".repeat(12) + "\n<rp_state>{\"scene\":\"酒馆内\"}</rp_state>")
+                                onUsageSet(MessageUsage(promptTokens = 140, completionTokens = 180, totalTokens = 320))
+                            }
+                        }
+                    }
+                }
+                val manager = ChatStreamManager(
+                    scope = scope,
+                    keepAlive = FakeKeepAliveGateway(),
+                    contextGateway = FakeContextGateway(),
+                    completionGateway = completion,
+                    persistenceGateway = persistence,
+                    autoContinueHintFormatter = { actual, target, pass, max ->
+                        val h = "auto:$actual/$target:$pass/$max"
+                        observedHints += h
+                        h
+                    },
+                )
+                val rpConv = sampleConv("conv_rp_ac").copy(
+                    mode = ConversationMode.rp,
+                    params = ChatParams(minOutputChars = 200, autoContinueShortReply = true),
+                )
+                assertTrue(manager.startStream(StreamLaunchRequest(rpConv, 1L, "m1")))
+                awaitUntil { manager.lastCommittedMessages.value.containsKey("conv_rp_ac") && manager.activeSessions.value.isEmpty() }
+
+                assertEquals(2, recordedRequests.size)
+                assertEquals(1, observedHints.size)
+                assertTrue(observedHints.first().contains(":1/2"))
+                val finalRaw = persistence.finalizedCalls.last().rawContent
+                assertFalse("Premature pass-1 <rp_state> must be stripped before pass 2", finalRaw.contains("\"scene\":\"酒馆\""))
+                assertTrue("Final pass-2 <rp_state> must remain intact", finalRaw.contains("\"scene\":\"酒馆内\""))
+                assertEquals(205, persistence.finalizedCalls.last().usage?.completionTokens)
+            }
+
+            // 3. Caps at 2 auto-continue passes (3 total calls) even when still below threshold
+            run {
+                val persistence = FakePersistenceGateway()
+                val calls = AtomicInteger(0)
+                val completion = object : StreamCompletionGateway {
+                    override suspend fun streamOnce(
+                        request: OnlineChatCompletionRequestDto,
+                        onTextDelta: (String) -> Unit,
+                        onReasoningDelta: (String) -> Unit,
+                        onUsageSet: (MessageUsage) -> Unit,
+                        onRetryAttempt: (Int, Int, Throwable) -> Unit,
+                        onResetForRetry: () -> Unit,
+                    ) {
+                        calls.incrementAndGet()
+                        onTextDelta("这是一段用于测试自动续写次数上限的五十个中文字符片段内容，确保每次增量超过四十字但总长度仍未达到八百字的目标下限。")
+                    }
+                }
+                val manager = ChatStreamManager(
+                    scope = scope,
+                    keepAlive = FakeKeepAliveGateway(),
+                    contextGateway = FakeContextGateway(),
+                    completionGateway = completion,
+                    persistenceGateway = persistence,
+                )
+                val conv = sampleConv("conv_cap2").copy(
+                    params = ChatParams(minOutputChars = 800, autoContinueShortReply = true),
+                )
+                assertTrue(manager.startStream(StreamLaunchRequest(conv, 1L, "m1")))
+                awaitUntil { manager.lastCommittedMessages.value.containsKey("conv_cap2") && manager.activeSessions.value.isEmpty() }
+                assertEquals(3, calls.get()) // 1 initial + 2 auto-continue passes max
+            }
+
+            // 4. Stops early after pass 2 when continuation delta < 40 effective units
+            run {
+                val persistence = FakePersistenceGateway()
+                val calls = AtomicInteger(0)
+                val completion = object : StreamCompletionGateway {
+                    override suspend fun streamOnce(
+                        request: OnlineChatCompletionRequestDto,
+                        onTextDelta: (String) -> Unit,
+                        onReasoningDelta: (String) -> Unit,
+                        onUsageSet: (MessageUsage) -> Unit,
+                        onRetryAttempt: (Int, Int, Throwable) -> Unit,
+                        onResetForRetry: () -> Unit,
+                    ) {
+                        when (calls.incrementAndGet()) {
+                            1 -> onTextDelta("第一段较短的内容。")
+                            else -> onTextDelta("补充十个字。") // < 40 effective units -> stop early
+                        }
+                    }
+                }
+                val manager = ChatStreamManager(
+                    scope = scope,
+                    keepAlive = FakeKeepAliveGateway(),
+                    contextGateway = FakeContextGateway(),
+                    completionGateway = completion,
+                    persistenceGateway = persistence,
+                )
+                val conv = sampleConv("conv_low_delta").copy(
+                    params = ChatParams(minOutputChars = 800, autoContinueShortReply = true),
+                )
+                assertTrue(manager.startStream(StreamLaunchRequest(conv, 1L, "m1")))
+                awaitUntil { manager.lastCommittedMessages.value.containsKey("conv_low_delta") && manager.activeSessions.value.isEmpty() }
+                assertEquals(2, calls.get()) // stopped after pass 1 of auto-continue
+            }
         } finally {
             scope.cancel()
         }

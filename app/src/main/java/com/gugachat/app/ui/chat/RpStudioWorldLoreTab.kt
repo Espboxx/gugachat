@@ -98,6 +98,8 @@ import com.gugachat.app.core.theme.GuTextField
 import com.gugachat.app.core.theme.LocalAppTheme
 import com.gugachat.app.data.local.ConversationWorldbookCrossRef
 import com.gugachat.app.data.local.WorldbookEntity
+import com.gugachat.app.domain.chat.ChatParams
+import com.gugachat.app.domain.chat.ConversationMode
 import com.gugachat.app.domain.chat.NovelLoreEntry
 import com.gugachat.app.domain.chat.RpConfig
 import com.gugachat.app.domain.chat.RpPlayStyle
@@ -128,6 +130,8 @@ internal fun RpWorldAndLoreSection(
     onToggleLoreEnabled: (String) -> Unit,
     onToggleLoreAlwaysActive: (String) -> Unit,
     onDeleteLore: (String) -> Unit,
+    params: ChatParams = ChatParams(),
+    onUpdateMinOutput: ((minChars: Int?, autoContinue: Boolean) -> Unit)? = null,
 ) {
     val strings = LocalAppStrings.current
     val theme = LocalAppTheme.current
@@ -559,6 +563,17 @@ internal fun RpWorldAndLoreSection(
                             label = strings.rp.autoSkillBonusToggle,
                             checked = rp.autoDiceSkillBonus,
                             onCheckedChange = { v -> onUpdateConfig { it.copy(autoDiceSkillBonus = v) } },
+                        )
+                    }
+                }
+
+                if (onUpdateMinOutput != null) {
+                    GuCard(modifier = Modifier.fillMaxWidth()) {
+                        CompactOutputLengthControl(
+                            params = params,
+                            mode = ConversationMode.rp,
+                            isZh = isZh,
+                            onUpdateMinOutput = onUpdateMinOutput,
                         )
                     }
                 }

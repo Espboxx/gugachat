@@ -381,6 +381,57 @@ class VectorQuantizerAndIndexTest {
         assertTrue(truncated.endsWith("结尾核心问题"))
     }
 
+    @Test
+    fun fileScopeIndexing_scoresViaExtraScopeIdsAndDeletesCleanly() = runBlocking {
+        val dao = FakeMemoryEmbeddingDao()
+        val index = VectorMemoryIndex(dao = dao)
+        val engine = object : EmbeddingEngine {
+            override val profileKey: String = "test:file-scope"
+            override val minCosineFloor: Double = 0.40
+            override suspend fun isAvailable(): Boolean = true
+            override suspend fun embed(texts: List<String>, isQuery: Boolean): List<FloatArray> =
+                texts.map { txt ->
+                    when {
+                        txt.contains("崔晨浩") -> floatArrayOf(1f, 0f, 0f, 0f)
+                        txt.contains("林知夏") -> floatArrayOf(0f, 1f, 0f, 0f)
+                        else -> floatArrayOf(0f, 0f, 1f, 0f)
+                    }
+                }
+        }
+
+        val scopeId = VectorMemoryIndex.fileScopeId("att-42")
+        assertEquals("file:att-42", scopeId)
+        val targets = listOf(
+            VectorIndexTarget("file_chunk", "fc:att-42:0", scopeId, "[doc.docx | 角色] 崔晨浩是建筑设计师"),
+            VectorIndexTarget("file_chunk", "fc:att-42:1", scopeId, "[doc.docx | 角色] 林知夏是独立策展人"),
+        )
+        val progress = index.ensureIndexed(targets, engine)
+        assertEquals(2, progress.indexed)
+        assertEquals(2, index.countByProfile(engine.profileKey))
+
+        val scores = index.scoreCandidates(
+            conversationId = "conv-any-branch",
+            queryText = "崔晨浩的职业是什么",
+            candidateIds = setOf("fc:att-42:0", "fc:att-42:1"),
+            engine = engine,
+            extraScopeIds = listOf(scopeId),
+        )
+        assertTrue("Expected fc:att-42:0 high cosine score, got $scores", (scores["fc:att-42:0"] ?: 0.0) > 0.90)
+        assertFalse("Unrelated chunk should be below cosine floor", scores.containsKey("fc:att-42:1"))
+
+        // Orphan cleanup deletes the entire file:$attId scope cleanly
+        index.deleteScope(scopeId)
+        assertEquals(0, index.countByProfile(engine.profileKey))
+        val afterDelete = index.scoreCandidates(
+            conversationId = "conv-any-branch",
+            queryText = "崔晨浩的职业是什么",
+            candidateIds = setOf("fc:att-42:0"),
+            engine = engine,
+            extraScopeIds = listOf(scopeId),
+        )
+        assertTrue(afterDelete.isEmpty())
+    }
+
     private fun deterministicVec4(text: String): FloatArray {
         val h = text.hashCode()
         return floatArrayOf(
@@ -424,6 +475,10 @@ class VectorQuantizerAndIndexTest {
 
         override suspend fun deleteByOwner(ownerType: String, ownerId: String) {
             rows.keys.removeIf { it.first == ownerType && it.second == ownerId }
+        }
+
+        override suspend fun deleteByConversationId(conversationId: String) {
+            rows.entries.removeIf { it.value.conversationId == conversationId }
         }
 
         override suspend fun deleteStaleProfiles(activeProfileKey: String) {

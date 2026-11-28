@@ -1,6 +1,5 @@
 package com.gugachat.app.ui.chat
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -15,8 +14,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyRow
@@ -30,18 +27,16 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CloseFullscreen
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.OpenInFull
-import androidx.compose.material.icons.filled.CloseFullscreen
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.WarningAmber
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -69,17 +64,15 @@ import com.gugachat.app.core.theme.GuBadge
 import com.gugachat.app.core.theme.GuBadgeVariant
 import com.gugachat.app.core.theme.GuCard
 import com.gugachat.app.core.theme.GuCompactActionPill
+import com.gugachat.app.core.theme.GuFullscreenPage
 import com.gugachat.app.core.theme.GuGroupedCard
 import com.gugachat.app.core.theme.GuHairlineDivider
 import com.gugachat.app.core.theme.GuInlineStepper
 import com.gugachat.app.core.theme.GuLabeledSliderRow
 import com.gugachat.app.core.theme.GuMetaText
-import com.gugachat.app.core.theme.GuModalBottomSheet
 import com.gugachat.app.core.theme.GuPill
-import com.gugachat.app.core.theme.GuPushPopContainer
 import com.gugachat.app.core.theme.GuSegmentedControl
 import com.gugachat.app.core.theme.GuSettingsRow
-import com.gugachat.app.core.theme.GuSheetHeader
 import com.gugachat.app.core.theme.GuSwitchRow
 import com.gugachat.app.core.theme.GuTextField
 import com.gugachat.app.core.theme.LocalAppTheme
@@ -115,30 +108,34 @@ internal val PARAMS_HISTORY_PRESETS: List<Int?> = listOf(null, 10, 20, 40)
 
 internal val PARAMS_TOP_K_PRESETS: List<Int?> = listOf(null, 20, 40, 64)
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun ChatParamsSheet(
+fun ChatParamsScreen(
     systemPrompt: String,
     params: ChatParams,
     waterline: ContextWaterlineSummary,
     isCompacting: Boolean,
     compactingProgressText: String? = null,
     nativeModelWindow: Int = waterline.modelContextWindow,
+    initialTab: Int = 0,
+    onActiveTabChange: ((Int) -> Unit)? = null,
     onSave: (String, ChatParams) -> Unit,
     onCompactNow: () -> Unit,
-    onDismiss: () -> Unit,
+    onBack: () -> Unit,
     promptPresets: List<PromptPresetEntity> = emptyList(),
     boundPromptPreset: PromptPresetEntity? = null,
-    boundPresetId: String? = null,
-    presetActions: ChatParamsActions? = null,
+    onOpenPresetBlocks: () -> Unit = {},
+    minOutputSlot: (@Composable () -> Unit)? = null,
 ) {
     val strings = LocalAppStrings.current
     val theme = LocalAppTheme.current
     val c = theme.colors
     val isZh = strings.language == AppLanguage.ZH
 
-    var activeTab by remember { mutableIntStateOf(0) } // 0=Persona&Sampling, 1=ContextBudget, 2=Advanced&Cache
-    var showingPresetSubpage by remember { mutableStateOf(false) }
+    var activeTab by remember { mutableIntStateOf(initialTab.coerceIn(0, 2)) } // 0=Persona&Sampling, 1=ContextBudget, 2=Advanced&Cache
+    LaunchedEffect(initialTab) {
+        activeTab = initialTab.coerceIn(0, 2)
+    }
 
     // Draft state initialized when sheet opens
     var promptDraft by remember { mutableStateOf(systemPrompt) }
@@ -195,6 +192,7 @@ fun ChatParamsSheet(
     var newStopDraft by remember { mutableStateOf("") }
 
     var prefillText by remember { mutableStateOf(params.assistantPrefill) }
+    val latestParams by rememberUpdatedState(params)
 
     fun buildCurrentParams(): ChatParams {
         val resolvedMaxTokens = if (showCustomMaxTokens) {
@@ -217,7 +215,7 @@ fun ChatParamsSheet(
         } else {
             selectedTopKPreset
         }
-        return params.copy(
+        return latestParams.copy(
             temperature = ((temp * 100).roundToInt() / 100.0).coerceIn(0.0, 2.0),
             topP = ((topP * 100).roundToInt() / 100.0).coerceIn(0.1, 1.0),
             maxTokens = resolvedMaxTokens,
@@ -242,8 +240,15 @@ fun ChatParamsSheet(
     var lastCommittedPrompt by remember { mutableStateOf(systemPrompt) }
     var lastCommittedParams by remember { mutableStateOf(buildCurrentParams()) }
     val latestOnSave by rememberUpdatedState(onSave)
-    val latestBuildParams by rememberUpdatedState(::buildCurrentParams)
+    val latestBuildParams by rememberUpdatedState<() -> ChatParams> { buildCurrentParams() }
     val latestPromptDraft by rememberUpdatedState(promptDraft)
+
+    LaunchedEffect(params.minOutputChars, params.autoContinueShortReply) {
+        lastCommittedParams = lastCommittedParams.copy(
+            minOutputChars = params.minOutputChars,
+            autoContinueShortReply = params.autoContinueShortReply,
+        )
+    }
 
     fun flushIfDirty() {
         val built = latestBuildParams()
@@ -287,8 +292,8 @@ fun ChatParamsSheet(
 
     fun resetParamsToDefault() {
         val defaults = ChatParams(
-            maxFileTurns = params.maxFileTurns,
-            activeWindowStartSeq = params.activeWindowStartSeq,
+            maxFileTurns = latestParams.maxFileTurns,
+            activeWindowStartSeq = latestParams.activeWindowStartSeq,
         )
         temp = defaults.temperature.toFloat()
         topP = defaults.topP.toFloat()
@@ -350,92 +355,62 @@ fun ChatParamsSheet(
         inactiveTickColor = c.border,
     )
 
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    GuModalBottomSheet(
-        onDismissRequest = {
+    GuFullscreenPage(
+        title = strings.chat.paramsTitle,
+        backContentDescription = strings.common.back,
+        onBack = {
             flushIfDirty()
-            onDismiss()
+            onBack()
         },
-        sheetState = sheetState,
+        trailing = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    text = if (hasPendingChanges) {
+                        if (isZh) "保存中…" else "Saving…"
+                    } else {
+                        if (isZh) "已自动保存" else "Auto-saved"
+                    },
+                    color = if (hasPendingChanges) c.primary else c.muted,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium,
+                )
+                Text(
+                    text = strings.common.reset,
+                    color = c.primary,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { resetParamsToDefault() }
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                )
+            }
+        },
     ) {
-        BackHandler(enabled = showingPresetSubpage) {
-            showingPresetSubpage = false
-        }
-        GuPushPopContainer(
-            showingSubpage = showingPresetSubpage,
-            label = "params_preset_subpage",
+        GuSegmentedControl(
+            items = tabLabels,
+            selectedIndex = activeTab,
+            onSelect = {
+                activeTab = it
+                onActiveTabChange?.invoke(it)
+            },
+            compact = true,
             modifier = Modifier
                 .fillMaxWidth()
-                .fillMaxHeight(0.88f)
-                .imePadding()
-                .navigationBarsPadding(),
-        ) { inPresetSubpage ->
-            if (inPresetSubpage) {
-                PresetBlocksSubpage(
-                    presets = promptPresets,
-                    boundPresetId = boundPresetId,
-                    onSelectPreset = { id -> presetActions?.onSelectPreset?.invoke(id) },
-                    onToggleBlock = { presetId, identifier, idx ->
-                        presetActions?.onTogglePresetBlock?.invoke(presetId, identifier, idx)
-                    },
-                    onBack = { showingPresetSubpage = false },
-                )
-            } else {
-                Column(modifier = Modifier.fillMaxWidth()) {
-            GuSheetHeader(
-                title = strings.chat.paramsTitle,
-                onClose = {
-                    flushIfDirty()
-                    onDismiss()
-                },
-                closeContentDescription = strings.common.close,
-                trailing = {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        Text(
-                            text = if (hasPendingChanges) {
-                                if (isZh) "保存中…" else "Saving…"
-                            } else {
-                                if (isZh) "已自动保存" else "Auto-saved"
-                            },
-                            color = if (hasPendingChanges) c.primary else c.muted,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Medium,
-                        )
-                        Text(
-                            text = strings.common.reset,
-                            color = c.primary,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable { resetParamsToDefault() }
-                                .padding(horizontal = 8.dp, vertical = 4.dp),
-                        )
-                    }
-                },
-            )
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+        )
 
-            GuSegmentedControl(
-                items = tabLabels,
-                selectedIndex = activeTab,
-                onSelect = { activeTab = it },
-                compact = true,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
-            )
-
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f)
-                    .verticalScroll(rememberScrollState())
-                    .padding(start = 16.dp, end = 16.dp, top = 2.dp, bottom = 18.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .verticalScroll(rememberScrollState())
+                .padding(start = 16.dp, end = 16.dp, top = 2.dp, bottom = 22.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
                 when (activeTab) {
                     // Tab 0: Persona & Sampling (fits comfortably in 1 screen)
                     0 -> {
@@ -521,7 +496,7 @@ fun ChatParamsSheet(
                                 iconTint = c.primarySoftInk,
                                 iconBg = c.primarySoft,
                                 showChevron = true,
-                                onClick = { showingPresetSubpage = true },
+                                onClick = onOpenPresetBlocks,
                             )
                         }
 
@@ -675,6 +650,11 @@ fun ChatParamsSheet(
                                         ),
                                     )
                                 }
+                            }
+
+                            if (minOutputSlot != null) {
+                                SheetHairlineDivider()
+                                minOutputSlot()
                             }
                         }
                     }
@@ -1353,9 +1333,6 @@ fun ChatParamsSheet(
                     }
                 }
             }
-                }
-            }
-        }
     }
 }
 

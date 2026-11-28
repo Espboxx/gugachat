@@ -275,10 +275,10 @@ private fun AuthenticatedShell(
     var isFullscreenSubpageOpen by remember { mutableStateOf(false) }
 
     LaunchedEffect(activeTab) {
+        isFullscreenSubpageOpen = false
         if (activeTab != MainTab.CHAT) {
             isChatDrawerOpen = false
             isScrollHidingBottomBar = false
-            isFullscreenSubpageOpen = false
         }
     }
     LaunchedEffect(shellChrome.activeConvId, shellChrome.hasMessages) {

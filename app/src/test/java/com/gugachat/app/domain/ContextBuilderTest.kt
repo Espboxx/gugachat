@@ -1,5 +1,6 @@
 package com.gugachat.app.domain.chat
 
+import com.gugachat.app.data.local.CharacterCardEntity
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -374,8 +375,8 @@ class ContextBuilderTest {
         val imgPart = userMsg.parts?.firstOrNull { it.type == "image_url" }?.imageUrl
 
         assertEquals("data:image/jpeg;base64,IMG", imgPart)
-        assertTrue(textPart.contains("<attached_file name=\"arch_manual.md\""))
-        assertTrue(textPart.contains("mode=\"smart_rag\""))
+        assertTrue(textPart.contains("<attached_file_index name=\"arch_manual.md\""))
+        assertTrue(textPart.contains("<recalled_file_context>"))
         assertTrue(textPart.contains("12800"))
         assertTrue(
             "Actual wire text tokens should never blow up the 16K window",
@@ -473,11 +474,12 @@ class ContextBuilderTest {
 
         assertTrue(built.summary.decayedFileMessageIds.contains("u1"))
         val firstUserWire = built.wireMessages.first { it.role == "user" }
-        assertTrue(firstUserWire.textContent!!.contains("历史文件已折叠"))
-        assertFalse(firstUserWire.textContent!!.contains("<attached_file"))
+        assertTrue(firstUserWire.textContent!!.contains("<attached_file_index name=\"Q3_Report.pdf\""))
+        assertFalse(firstUserWire.textContent!!.contains("<attached_file "))
 
         val latestUserWire = built.wireMessages.last { it.role == "user" }
-        assertTrue(latestUserWire.textContent!!.contains("<attached_file name=\"Q3_Report.pdf\""))
+        assertTrue(latestUserWire.textContent!!.contains("<recalled_file_context>"))
+        assertTrue(latestUserWire.textContent!!.contains("Q3_Report.pdf"))
         assertTrue(latestUserWire.textContent!!.contains("68.4%"))
     }
 
@@ -959,5 +961,474 @@ class ContextBuilderTest {
         )
         assertTrue(v4.built.summary.sentTokens <= v4.built.summary.effectiveLimitTokens)
         assertFalse(v4.built.summary.hardOverflow)
+    }
+
+    @Test
+    fun tier1AdaptiveRetention_keeps19kFileFullOn128kTurn3WithoutCacheBusting() = runBlocking {
+        val conv = ChatConversation(
+            id = "conv-tier1",
+            title = "恋综2.0",
+            mode = ConversationMode.chat,
+            params = ChatParams(maxTokens = 2048, maxFileTurns = 2),
+            createdAt = 1L,
+            updatedAt = 10L,
+        )
+        // ~19.8K tokens Chinese docx
+        val unit = "男嘉宾崔晨浩是建筑设计师，性格沉稳；女嘉宾林知夏是独立策展人，擅长油画修复。第一天傍晚在海岛玻璃花房集合。\n"
+        val docText = "# 恋综2.0后会有期\n## 角色名单\n" + unit.repeat(360)
+        val docTokens = ContextBuilder.estimateTextTokens(docText)
+        assertTrue("Expected ~15K-23K tokens doc, was $docTokens", docTokens in 12_000..23_500)
+
+        val meta = ChatAttachmentMeta(
+            id = "att-show",
+            mimeType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            sizeBytes = docText.length.toLong(),
+            localPath = "/tmp/att-show.txt",
+            kind = AttachmentKind.file,
+            fileName = "恋综2.0后会有期.docx",
+            textPath = "/tmp/att-show.txt",
+            charCount = docText.length,
+            estimatedTokens = docTokens,
+            previewSnippet = "恋综2.0后会有期角色设定",
+            injectMode = FileInjectMode.auto,
+        )
+        val turn1Messages = listOf(
+            ChatMessage(id = "u1", conversationId = conv.id, role = "user", content = "看下这个设定，准备开局", createdAt = 1L, seq = 1, attachmentIds = listOf("att-show")),
+        )
+        val turn3Messages = turn1Messages + listOf(
+            ChatMessage(id = "a1", conversationId = conv.id, role = "assistant", content = "好的，已完整阅读全部嘉宾与流程。", createdAt = 2L, seq = 2),
+            ChatMessage(id = "u2", conversationId = conv.id, role = "user", content = "介绍一下海岛别墅", createdAt = 3L, seq = 3),
+            ChatMessage(id = "a2", conversationId = conv.id, role = "assistant", content = "别墅临海而建，二楼带星空露台。", createdAt = 4L, seq = 4),
+            ChatMessage(id = "u3", conversationId = conv.id, role = "user", content = "第一天开局，崔晨浩出场了", createdAt = 5L, seq = 5),
+        )
+
+        val builtTurn1 = ContextBuilder.buildChatContext(
+            ContextBuildInput(
+                conversation = conv,
+                messages = turn1Messages,
+                modelContextWindow = 128_000,
+                attachmentsById = mapOf("att-show" to meta),
+                resolveAttachmentText = { docText },
+            ),
+        )
+        val builtTurn3 = ContextBuilder.buildChatContext(
+            ContextBuildInput(
+                conversation = conv,
+                messages = turn3Messages,
+                modelContextWindow = 128_000,
+                attachmentsById = mapOf("att-show" to meta),
+                resolveAttachmentText = { docText },
+            ),
+        )
+
+        assertFalse("19.8K file on 128K model must NOT decay on Turn 3", builtTurn3.summary.decayedFileMessageIds.contains("u1"))
+        val u1Turn1 = builtTurn1.wireMessages.first { it.role == "user" }.textContent!!
+        val u1Turn3 = builtTurn3.wireMessages.first { it.role == "user" }.textContent!!
+        assertTrue(u1Turn3.contains("<attached_file name=\"恋综2.0后会有期.docx\""))
+        assertTrue(u1Turn3.contains("mode=\"full\""))
+        assertFalse(u1Turn3.contains("历史文件已折叠"))
+        // Prompt cache safety: u1 wire text must remain byte-for-byte identical between Turn 1 and Turn 3
+        assertEquals(u1Turn1, u1Turn3)
+    }
+
+    @Test
+    fun tier2Recall_worksWithoutMentioningFilenameAndAfterCompactionAndRespectsSoftDeleteAndMute() = runBlocking {
+        val conv = ChatConversation(
+            id = "conv-tier2",
+            title = "超大文档动态召回",
+            mode = ConversationMode.chat,
+            params = ChatParams(maxTokens = 1024),
+            createdAt = 1L,
+            updatedAt = 20L,
+        )
+        val docText = buildString {
+            appendLine("# 恋综2.0后会有期")
+            for (i in 1..100) {
+                appendLine("## 第 $i 节 录制流程与嘉宾安排")
+                if (i == 62) {
+                    appendLine("【核心人物档案】林知夏是27岁的独立策展人，随身携带一把蓝柄折扇，最怕雷雨天。")
+                    appendLine("她在第二天秘密约会中抽中了灯塔手作陶艺任务。")
+                } else {
+                    appendLine("例行拍摄排期、海岛天气播报与节目组后勤统筹清单。".repeat(16))
+                }
+            }
+        }
+        val docTokens = ContextBuilder.estimateTextTokens(docText)
+        assertTrue("Expected >25K tokens doc, was $docTokens", docTokens > 25_000)
+
+        val meta = ChatAttachmentMeta(
+            id = "att-big",
+            mimeType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            sizeBytes = docText.length.toLong(),
+            localPath = "/tmp/att-big.txt",
+            kind = AttachmentKind.file,
+            fileName = "恋综2.0后会有期.docx",
+            textPath = "/tmp/att-big.txt",
+            charCount = docText.length,
+            estimatedTokens = docTokens,
+            previewSnippet = "恋综2.0后会有期完整设定",
+            injectMode = FileInjectMode.auto,
+        )
+        val indexedDoc = FileContextBudgeter.buildIndexedDocument("att-big", meta.fileName, docText)
+        val messages = listOf(
+            ChatMessage(id = "u1", conversationId = conv.id, role = "user", content = "看下这份设定文档", createdAt = 1L, seq = 1, attachmentIds = listOf("att-big")),
+            ChatMessage(id = "a1", conversationId = conv.id, role = "assistant", content = "已收到并建立索引。", createdAt = 2L, seq = 2),
+            ChatMessage(id = "u2", conversationId = conv.id, role = "user", content = "我们先聊聊海岛天气", createdAt = 3L, seq = 3),
+            ChatMessage(id = "a2", conversationId = conv.id, role = "assistant", content = "海风清凉，晚间有阵雨。", createdAt = 4L, seq = 4),
+            // Does NOT mention filename "恋综2.0后会有期" at all!
+            ChatMessage(id = "u3", conversationId = conv.id, role = "user", content = "林知夏随身带了什么，抽中了什么任务？", createdAt = 5L, seq = 5),
+        )
+
+        // 1) Normal Turn 3 without filename mention -> immutable TOC in u1 + Zone 3 recall in u3
+        val built = ContextBuilder.buildChatContext(
+            ContextBuildInput(
+                conversation = conv,
+                messages = messages,
+                modelContextWindow = 128_000,
+                attachmentsById = mapOf("att-big" to meta),
+                preloadedFileChunks = mapOf("att-big" to indexedDoc),
+                resolveAttachmentText = { docText },
+            ),
+        )
+        val u1Wire = built.wireMessages.first { it.role == "user" }.textContent!!
+        val u3Wire = built.wireMessages.last { it.role == "user" }.textContent!!
+        assertTrue(u1Wire.contains("<attached_file_index name=\"恋综2.0后会有期.docx\""))
+        assertTrue(u3Wire.contains("<recalled_file_context>"))
+        assertTrue(u3Wire.contains("蓝柄折扇"))
+        assertTrue(u3Wire.contains("灯塔手作陶艺"))
+
+        // Verify waterline & Recall Inspector parity ("file_chunk" source)
+        val fileChunkItems = built.summary.recalledItems.filter { it.source == FileContextBudgeter.FILE_CHUNK_SOURCE }
+        assertTrue("Expected recalled file_chunk inspect items", fileChunkItems.isNotEmpty())
+        val wl = ContextBuilder.computeContextWaterline(
+            ContextBuildInput(
+                conversation = conv,
+                messages = messages,
+                modelContextWindow = 128_000,
+                attachmentsById = mapOf("att-big" to meta),
+                preloadedFileChunks = mapOf("att-big" to indexedDoc),
+            ),
+        )
+        assertEquals(
+            fileChunkItems.map { it.id },
+            wl.recalledItems.filter { it.source == FileContextBudgeter.FILE_CHUNK_SOURCE }.map { it.id },
+        )
+
+        // 2) Muting the top recalled chunk excludes it from both recall items and prompt
+        val topKey = "${FileContextBudgeter.FILE_CHUNK_SOURCE}:${fileChunkItems.first().id}"
+        val builtMuted = ContextBuilder.buildChatContext(
+            ContextBuildInput(
+                conversation = conv,
+                messages = messages,
+                modelContextWindow = 128_000,
+                attachmentsById = mapOf("att-big" to meta),
+                preloadedFileChunks = mapOf("att-big" to indexedDoc),
+                mutedRecallKeys = setOf(topKey),
+            ),
+        )
+        assertFalse(builtMuted.summary.recalledItems.any { "${it.source}:${it.id}" == topKey })
+
+        // 3) Post-compaction recall: compacting past u1 (summarizedUntilSeq = 2) keeps file recallable!
+        val compactedConv = conv.copy(summarizedUntilSeq = 2, archivedSummary = "前两轮已归档。")
+        val builtCompacted = ContextBuilder.buildChatContext(
+            ContextBuildInput(
+                conversation = compactedConv,
+                messages = messages,
+                modelContextWindow = 128_000,
+                attachmentsById = mapOf("att-big" to meta),
+                preloadedFileChunks = mapOf("att-big" to indexedDoc),
+            ),
+        )
+        val u3Compacted = builtCompacted.wireMessages.last { it.role == "user" }.textContent!!
+        assertTrue("Compacted file must remain recallable in Zone 3", u3Compacted.contains("蓝柄折扇"))
+
+        // 4) Soft-deleted upload message must stop recalling immediately (zero ghost recall)
+        val softDeletedMsgs = messages.map { if (it.id == "u1") it.copy(deletedAt = 999L) else it }
+        val builtDeleted = ContextBuilder.buildChatContext(
+            ContextBuildInput(
+                conversation = conv,
+                messages = softDeletedMsgs,
+                modelContextWindow = 128_000,
+                attachmentsById = mapOf("att-big" to meta),
+                preloadedFileChunks = mapOf("att-big" to indexedDoc),
+            ),
+        )
+        assertFalse(builtDeleted.wireMessages.last { it.role == "user" }.textContent!!.contains("<recalled_file_context>"))
+        assertTrue(builtDeleted.summary.recalledItems.none { it.source == FileContextBudgeter.FILE_CHUNK_SOURCE })
+    }
+
+    @Test
+    fun fileInjectModeFull_pinsLarge28kFileFullOn128kModel() = runBlocking {
+        val conv = ChatConversation(
+            id = "conv-pin-full",
+            title = "固定全文",
+            mode = ConversationMode.chat,
+            params = ChatParams(maxTokens = 2048),
+            createdAt = 1L,
+            updatedAt = 5L,
+        )
+        val docText = "# 完整剧本设定\n" + "这是用于测试固定全文模式的剧本详细设定条目与世界观说明。\n".repeat(900)
+        val docTokens = ContextBuilder.estimateTextTokens(docText)
+        assertTrue("Expected 25K-40K tokens doc, was $docTokens", docTokens in 24_500..42_000)
+
+        val pinnedMeta = ChatAttachmentMeta(
+            id = "att-pin",
+            mimeType = "text/plain",
+            sizeBytes = docText.length.toLong(),
+            localPath = "/tmp/att-pin.txt",
+            kind = AttachmentKind.file,
+            fileName = "full_script.txt",
+            textPath = "/tmp/att-pin.txt",
+            charCount = docText.length,
+            estimatedTokens = docTokens,
+            injectMode = FileInjectMode.full,
+        )
+        val messages = listOf(
+            ChatMessage(id = "u1", conversationId = conv.id, role = "user", content = "固定全文记住", createdAt = 1L, seq = 1, attachmentIds = listOf("att-pin")),
+            ChatMessage(id = "a1", conversationId = conv.id, role = "assistant", content = "已记住。", createdAt = 2L, seq = 2),
+            ChatMessage(id = "u2", conversationId = conv.id, role = "user", content = "继续剧情", createdAt = 3L, seq = 3),
+            ChatMessage(id = "a2", conversationId = conv.id, role = "assistant", content = "继续中。", createdAt = 4L, seq = 4),
+            ChatMessage(id = "u3", conversationId = conv.id, role = "user", content = "第三轮对话", createdAt = 5L, seq = 5),
+        )
+        val built = ContextBuilder.buildChatContext(
+            ContextBuildInput(
+                conversation = conv,
+                messages = messages,
+                modelContextWindow = 128_000,
+                attachmentsById = mapOf("att-pin" to pinnedMeta),
+                resolveAttachmentText = { docText },
+            ),
+        )
+        assertFalse("FileInjectMode.full under hard cap must stay Tier-1 full", built.summary.decayedFileMessageIds.contains("u1"))
+        val u1Wire = built.wireMessages.first { it.role == "user" }.textContent!!
+        assertTrue(u1Wire.contains("<attached_file name=\"full_script.txt\""))
+        assertTrue(u1Wire.contains("mode=\"full\""))
+    }
+
+    @Test
+    fun zone3LengthDirective_injectedAcrossChatRpNovelLegacyAndV4WithoutMutatingCachePrefix() = runBlocking {
+        // 1) Standard Chat (Legacy) + cache prefix invariance
+        val chatMsgs = listOf(
+            ChatMessage(id = "u1", conversationId = "c-len-chat", role = "user", content = "第一轮问题", createdAt = 1L, seq = 1),
+            ChatMessage(id = "a1", conversationId = "c-len-chat", role = "assistant", content = "第一轮回答", createdAt = 2L, seq = 2),
+            ChatMessage(id = "u2", conversationId = "c-len-chat", role = "user", content = "请详细分析 Android 渲染管线", createdAt = 3L, seq = 3),
+        )
+        val chatNoMin = ChatConversation(
+            id = "c-len-chat",
+            title = "普通对话",
+            mode = ConversationMode.chat,
+            systemPrompt = "你是一个资深工程师。",
+            params = ChatParams(maxTokens = 2048, minOutputChars = null),
+            createdAt = 1L,
+            updatedAt = 3L,
+        )
+        val chatWithMin = chatNoMin.copy(params = chatNoMin.params.copy(minOutputChars = 1500))
+
+        val builtChatBase = ContextBuilder.buildChatContext(
+            ContextBuildInput(conversation = chatNoMin, messages = chatMsgs, modelContextWindow = 64_000, modelId = "claude-sonnet-4"),
+        )
+        val builtChatMin = ContextBuilder.buildChatContext(
+            ContextBuildInput(conversation = chatWithMin, messages = chatMsgs, modelContextWindow = 64_000, modelId = "claude-sonnet-4"),
+        )
+        // Zone 0 system prompt and Zone 1/2 prior turns must remain byte-identical (Prompt Cache safe)
+        assertEquals(builtChatBase.wireMessages[0].textContent, builtChatMin.wireMessages[0].textContent)
+        assertEquals(builtChatBase.wireMessages[1].textContent, builtChatMin.wireMessages[1].textContent)
+        assertEquals(builtChatBase.wireMessages[2].textContent, builtChatMin.wireMessages[2].textContent)
+        val chatZone3 = builtChatMin.wireMessages.last().textContent!!
+        assertTrue(chatZone3.contains("【输出长度要求】"))
+        assertTrue(chatZone3.contains("1500"))
+        // Output reserve should tighten effectiveLimitTokens when minOutputChars floor exceeds default maxTokens
+        assertTrue(builtChatMin.summary.effectiveLimitTokens < builtChatBase.summary.effectiveLimitTokens)
+
+        // 2) RP (V4 mode with CharacterCard post-history instructions) — length directive placed AFTER V4 post-history block
+        val rpCard = CharacterCardEntity(
+            id = "card-v4",
+            name = "林雾",
+            description = "雨夜侦探",
+            postHistoryInstructions = "保持第一人称冷硬派叙事风格。",
+        )
+        val rpConvBase = ChatConversation(
+            id = "c-len-rp",
+            title = "雨夜推理",
+            mode = ConversationMode.rp,
+            characterCardId = rpCard.id,
+            params = ChatParams(maxTokens = 2048, minOutputChars = null),
+            rp = RpConfig(title = "雨夜推理", worldview = "霓虹港城"),
+            createdAt = 1L,
+            updatedAt = 3L,
+        )
+        val rpConvMin = rpConvBase.copy(params = rpConvBase.params.copy(minOutputChars = 800))
+        val rpMsgs = listOf(
+            ChatMessage(id = "ru1", conversationId = rpConvBase.id, role = "user", content = "推开侦探社木门", createdAt = 1L, seq = 1),
+            ChatMessage(id = "ra1", conversationId = rpConvBase.id, role = "assistant", content = "铃铛轻响。", createdAt = 2L, seq = 2),
+            ChatMessage(id = "ru2", conversationId = rpConvBase.id, role = "user", content = "把信封放在桌上", createdAt = 3L, seq = 3),
+        )
+        val builtRpBase = ContextBuilder.buildChatContextV4(
+            ContextBuildInput(conversation = rpConvBase, messages = rpMsgs, characterCard = rpCard, modelContextWindow = 64_000),
+        ).built
+        val builtRpMin = ContextBuilder.buildChatContextV4(
+            ContextBuildInput(conversation = rpConvMin, messages = rpMsgs, characterCard = rpCard, modelContextWindow = 64_000),
+        ).built
+        assertEquals(builtRpBase.wireMessages[0].textContent, builtRpMin.wireMessages[0].textContent)
+        assertEquals(builtRpBase.wireMessages[1].textContent, builtRpMin.wireMessages[1].textContent)
+        val rpZone3 = builtRpMin.wireMessages.last().textContent!!
+        val postIdx = rpZone3.indexOf("【后置核心指令")
+        val lenIdx = rpZone3.indexOf("【输出长度要求】")
+        assertTrue("Expected V4 post-history instructions in Zone 3", postIdx >= 0)
+        assertTrue("Expected RP length directive after V4 post-history block", lenIdx > postIdx)
+        assertTrue(rpZone3.contains("<rp_state>"))
+
+        // 3) Novel (Legacy + active chapter + synthetic opening turn when no user messages exist yet)
+        val ch1 = NovelChapter(id = "ch1", conversationId = "c-len-novel", order = 1, title = "第一章 风起", outline = "少年踏出青石镇", wordCount = 400)
+        val novelConv = ChatConversation(
+            id = "c-len-novel",
+            title = "剑来风云",
+            mode = ConversationMode.novel,
+            params = ChatParams(maxTokens = 2048, minOutputChars = 1200),
+            novel = NovelConfig(title = "剑来风云", activeChapterId = ch1.id, targetWordsPerChapter = 3000),
+            createdAt = 1L,
+            updatedAt = 2L,
+        )
+        val builtNovelOpening = ContextBuilder.buildChatContext(
+            ContextBuildInput(
+                conversation = novelConv,
+                messages = emptyList(),
+                novelChapters = listOf(ch1),
+                modelContextWindow = 64_000,
+            ),
+        )
+        val novelSynthetic = builtNovelOpening.wireMessages.last { it.role == "user" }.textContent!!
+        assertTrue(novelSynthetic.contains("【输出长度要求】"))
+        assertTrue(novelSynthetic.contains("1200"))
+        assertTrue(novelSynthetic.contains("3000"))
+    }
+
+    @Test
+    fun zone3LengthDirective_coexistsCleanlyWithTier1AndTier2FileRecall() = runBlocking {
+        // Tier-1 full file + minOutputChars: Zone 0 & u1 stay byte-identical when minOutputChars toggles
+        val smallDoc = "# 人物小传\n" + "林知夏擅长古画修复，常驻海岛玻璃花房。".repeat(80)
+        val smallMeta = ChatAttachmentMeta(
+            id = "att-small",
+            mimeType = "text/plain",
+            sizeBytes = smallDoc.length.toLong(),
+            localPath = "/tmp/att-small.txt",
+            kind = AttachmentKind.file,
+            fileName = "小传.txt",
+            textPath = "/tmp/att-small.txt",
+            charCount = smallDoc.length,
+            estimatedTokens = ContextBuilder.estimateTextTokens(smallDoc),
+            injectMode = FileInjectMode.auto,
+        )
+        val t1Msgs = listOf(
+            ChatMessage(id = "u1", conversationId = "c-coex-t1", role = "user", content = "记住这份设定", createdAt = 1L, seq = 1, attachmentIds = listOf("att-small")),
+            ChatMessage(id = "a1", conversationId = "c-coex-t1", role = "assistant", content = "已记住。", createdAt = 2L, seq = 2),
+            ChatMessage(id = "u2", conversationId = "c-coex-t1", role = "user", content = "描写她在花房修复古画的桥段", createdAt = 3L, seq = 3),
+        )
+        val t1BaseConv = ChatConversation(
+            id = "c-coex-t1",
+            title = "Tier1协同",
+            mode = ConversationMode.chat,
+            systemPrompt = "你是一个细腻的创作者。",
+            params = ChatParams(maxTokens = 2048, minOutputChars = null),
+            createdAt = 1L,
+            updatedAt = 3L,
+        )
+        val t1MinConv = t1BaseConv.copy(params = t1BaseConv.params.copy(minOutputChars = 800))
+        val builtT1Base = ContextBuilder.buildChatContext(
+            ContextBuildInput(
+                conversation = t1BaseConv,
+                messages = t1Msgs,
+                modelContextWindow = 128_000,
+                attachmentsById = mapOf("att-small" to smallMeta),
+                resolveAttachmentText = { smallDoc },
+            ),
+        )
+        val builtT1Min = ContextBuilder.buildChatContext(
+            ContextBuildInput(
+                conversation = t1MinConv,
+                messages = t1Msgs,
+                modelContextWindow = 128_000,
+                attachmentsById = mapOf("att-small" to smallMeta),
+                resolveAttachmentText = { smallDoc },
+            ),
+        )
+        assertEquals(builtT1Base.wireMessages[0].textContent, builtT1Min.wireMessages[0].textContent)
+        assertEquals(builtT1Base.wireMessages[1].textContent, builtT1Min.wireMessages[1].textContent)
+        assertTrue(builtT1Min.wireMessages[1].textContent!!.contains("mode=\"full\""))
+        assertTrue(builtT1Min.wireMessages.last().textContent!!.contains("【输出长度要求】"))
+
+        // Tier-2 large file (>25K tok) + minOutputChars: immutable <attached_file_index> in u1,
+        // and <recalled_file_context> followed by Zone 3 length directive in final user turn
+        val largeDoc = buildString {
+            appendLine("# 星港编年史")
+            for (i in 1..100) {
+                appendLine("## 第 $i 节 港区档案")
+                if (i == 48) {
+                    appendLine("【密室线索】青铜怀表背面刻着“北纬31度，潮汐钟楼三层”。")
+                } else {
+                    appendLine("星港货轮调度表、常规气象简报与港区维护记录。".repeat(16))
+                }
+            }
+        }
+        val largeTokens = ContextBuilder.estimateTextTokens(largeDoc)
+        assertTrue("Expected >25K tokens doc, was $largeTokens", largeTokens > 25_000)
+        val largeMeta = ChatAttachmentMeta(
+            id = "att-large",
+            mimeType = "text/plain",
+            sizeBytes = largeDoc.length.toLong(),
+            localPath = "/tmp/att-large.txt",
+            kind = AttachmentKind.file,
+            fileName = "星港编年史.txt",
+            textPath = "/tmp/att-large.txt",
+            charCount = largeDoc.length,
+            estimatedTokens = largeTokens,
+            injectMode = FileInjectMode.auto,
+        )
+        val indexedLarge = FileContextBudgeter.buildIndexedDocument("att-large", largeMeta.fileName, largeDoc)
+        val t2Msgs = listOf(
+            ChatMessage(id = "u1", conversationId = "c-coex-t2", role = "user", content = "导入港区档案", createdAt = 1L, seq = 1, attachmentIds = listOf("att-large")),
+            ChatMessage(id = "a1", conversationId = "c-coex-t2", role = "assistant", content = "档案已索引。", createdAt = 2L, seq = 2),
+            ChatMessage(id = "u2", conversationId = "c-coex-t2", role = "user", content = "青铜怀表背面刻着什么？请详细推理它指向的地点。", createdAt = 3L, seq = 3),
+        )
+        val t2BaseConv = ChatConversation(
+            id = "c-coex-t2",
+            title = "Tier2协同",
+            mode = ConversationMode.chat,
+            systemPrompt = "你是一个推理助手。",
+            params = ChatParams(maxTokens = 2048, minOutputChars = null),
+            createdAt = 1L,
+            updatedAt = 3L,
+        )
+        val t2MinConv = t2BaseConv.copy(params = t2BaseConv.params.copy(minOutputChars = 1500))
+        val builtT2Base = ContextBuilder.buildChatContext(
+            ContextBuildInput(
+                conversation = t2BaseConv,
+                messages = t2Msgs,
+                modelContextWindow = 128_000,
+                attachmentsById = mapOf("att-large" to largeMeta),
+                preloadedFileChunks = mapOf("att-large" to indexedLarge),
+            ),
+        )
+        val builtT2Min = ContextBuilder.buildChatContext(
+            ContextBuildInput(
+                conversation = t2MinConv,
+                messages = t2Msgs,
+                modelContextWindow = 128_000,
+                attachmentsById = mapOf("att-large" to largeMeta),
+                preloadedFileChunks = mapOf("att-large" to indexedLarge),
+            ),
+        )
+        // Zone 0 & immutable u1 <attached_file_index> remain byte-identical
+        assertEquals(builtT2Base.wireMessages[0].textContent, builtT2Min.wireMessages[0].textContent)
+        assertEquals(builtT2Base.wireMessages[1].textContent, builtT2Min.wireMessages[1].textContent)
+        assertTrue(builtT2Min.wireMessages[1].textContent!!.contains("<attached_file_index name=\"星港编年史.txt\""))
+
+        val t2Zone3 = builtT2Min.wireMessages.last().textContent!!
+        val recallIdx = t2Zone3.indexOf("<recalled_file_context>")
+        val directiveIdx = t2Zone3.indexOf("【输出长度要求】")
+        assertTrue("Expected recalled file context in Zone 3", recallIdx >= 0)
+        assertTrue("Expected recalled clue text in Zone 3", t2Zone3.contains("潮汐钟楼三层"))
+        assertTrue("Expected length directive after recalled file context", directiveIdx > recallIdx)
+        assertTrue(builtT2Min.summary.recalledItems.any { it.source == FileContextBudgeter.FILE_CHUNK_SOURCE })
     }
 }

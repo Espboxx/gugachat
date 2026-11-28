@@ -179,4 +179,71 @@ class FileTextExtractorTest {
         val binary = byteArrayOf(0x00, 0x01, 0x02, 0x00, 0x7F, 0x45, 0x4C, 0x46)
         FileTextExtractor.extractFromBytes(binary, "app.bin", "application/octet-stream")
     }
+
+    @Test
+    fun extractDocx_convertsHeadingStylesAndOutlineLvlToMarkdownHeadings() {
+        val stylesXml = """
+            <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+            <w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+              <w:style w:type="paragraph" w:styleId="a3">
+                <w:name w:val="heading 2"/>
+              </w:style>
+            </w:styles>
+        """.trimIndent()
+        val docXml = """
+            <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+            <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+              <w:body>
+                <w:p>
+                  <w:pPr><w:pStyle w:val="Title"/></w:pPr>
+                  <w:r><w:t>恋综2.0后会有期</w:t></w:r>
+                </w:p>
+                <w:p>
+                  <w:pPr><w:pStyle w:val="Heading1"/></w:pPr>
+                  <w:r><w:t>角色名单</w:t></w:r>
+                </w:p>
+                <w:p>
+                  <w:pPr><w:pStyle w:val="a3"/></w:pPr>
+                  <w:r><w:t>男嘉宾档案</w:t></w:r>
+                </w:p>
+                <w:p>
+                  <w:pPr><w:pStyle w:val="标题 3"/></w:pPr>
+                  <w:r><w:t>崔晨浩</w:t></w:r>
+                </w:p>
+                <w:p>
+                  <w:pPr><w:outlineLvl w:val="2"/></w:pPr>
+                  <w:r><w:t>Day 1 破冰流程</w:t></w:r>
+                </w:p>
+                <w:p>
+                  <w:r><w:t>正文段落内容保持原样。</w:t></w:r>
+                </w:p>
+              </w:body>
+            </w:document>
+        """.trimIndent()
+        val bytes = buildZip(
+            mapOf(
+                "word/document.xml" to docXml,
+                "word/styles.xml" to stylesXml,
+            ),
+        )
+        val res = FileTextExtractor.extractFromBytes(bytes, "show.docx", "")
+        assertTrue(res.text.contains("# 恋综2.0后会有期"))
+        assertTrue(res.text.contains("# 角色名单"))
+        assertTrue(res.text.contains("## 男嘉宾档案"))
+        assertTrue(res.text.contains("### 崔晨浩"))
+        assertTrue(res.text.contains("### Day 1 破冰流程"))
+        assertTrue(res.text.contains("正文段落内容保持原样。"))
+        assertFalse(res.text.contains("# 正文段落内容保持原样。"))
+    }
+
+    @Test
+    fun extractEpub_preservesHtmlHeadingsAsMarkdown() {
+        val ch1 = "<html><body><h1>卷一 雾港</h1><h2>第一章 启程</h2><h3>甲板密谈</h3><p>晨雾笼罩着海港，蒸汽船发出低沉的鸣笛声。</p></body></html>"
+        val bytes = buildZip(mapOf("OEBPS/Text/ch01.xhtml" to ch1))
+        val res = FileTextExtractor.extractFromBytes(bytes, "novel.epub", "application/epub+zip")
+        assertTrue(res.text.contains("# 卷一 雾港"))
+        assertTrue(res.text.contains("## 第一章 启程"))
+        assertTrue(res.text.contains("### 甲板密谈"))
+        assertTrue(res.text.contains("蒸汽船发出低沉的鸣笛声"))
+    }
 }

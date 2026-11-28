@@ -78,6 +78,8 @@ data class ScoreMemoryOptions(
     val modelId: String? = null,
     val mutedIds: Set<String> = emptySet(),
     val allowPinnedBypass: Boolean = true,
+    val minCleanTermsOverride: Int? = null,
+    val minNormBm25Override: Double? = null,
 )
 
 data class ScoreMemoryResult(
@@ -612,8 +614,10 @@ object CjkSearch {
         val topCos = validSemValues.maxOrNull() ?: 0.0
         val effectiveSemanticFloor = max(options.minSemanticCosine, topCos - 0.12)
 
-        val minCleanTermsRequired = if (totalCleanQueryTerms <= 1) 1 else 2
-        val minNormBm25Required = if (totalCleanQueryTerms <= 1) 0.30 else MIN_BM25_NORM_FLOOR
+        val minCleanTermsRequired = options.minCleanTermsOverride?.coerceAtLeast(1)
+            ?: if (totalCleanQueryTerms <= 1) 1 else 2
+        val minNormBm25Required = options.minNormBm25Override?.coerceIn(0.01, 1.0)
+            ?: if (totalCleanQueryTerms <= 1) 0.30 else MIN_BM25_NORM_FLOOR
 
         data class InternalScoreMeta(
             val candidate: ScoredMemoryCandidate,

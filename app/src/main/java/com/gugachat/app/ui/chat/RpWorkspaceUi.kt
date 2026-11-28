@@ -167,6 +167,9 @@ fun RpWorkspaceScreen(
     onSend: () -> Unit,
     onStop: () -> Unit,
     onToast: (String) -> Unit,
+    onUpdateSentAttachmentInjectMode: ((String, FileInjectMode) -> Unit)? = null,
+    minOutputChars: Int? = null,
+    autoContinueShortReply: Boolean = false,
 ) {
     val strings = LocalAppStrings.current
     val outerTheme = LocalAppTheme.current
@@ -430,6 +433,9 @@ fun RpWorkspaceScreen(
                                     onFrontendFillInput = onFrontendFillInput,
                                     onFrontendSetFlag = onFrontendSetFlag,
                                     onFrontendAdjustAffinity = onFrontendAdjustAffinity,
+                                    onUpdateSentAttachmentInjectMode = onUpdateSentAttachmentInjectMode,
+                                    minOutputChars = minOutputChars,
+                                    autoContinueShortReply = autoContinueShortReply,
                                     modifier = Modifier.fillMaxSize(),
                                 )
                             }

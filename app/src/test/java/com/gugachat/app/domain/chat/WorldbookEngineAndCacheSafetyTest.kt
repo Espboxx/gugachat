@@ -980,6 +980,12 @@ class WorldbookEngineAndCacheSafetyTest {
             }
         }
 
+        override suspend fun deleteByConversationId(conversationId: String) {
+            synchronized(lock) {
+                rows.entries.removeAll { it.value.conversationId == conversationId }
+            }
+        }
+
         override suspend fun deleteStaleProfiles(activeProfileKey: String) {
             synchronized(lock) {
                 rows.entries.removeAll { it.key.third != activeProfileKey }

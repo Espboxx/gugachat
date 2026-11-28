@@ -569,6 +569,18 @@ class VectorMemoryIndex(
         invalidateCache(conversationId = conversationId, profileKey = null)
     }
 
+    suspend fun deleteScope(conversationId: String) {
+        val clean = conversationId.trim()
+        if (clean.isEmpty()) return
+        withContext(Dispatchers.IO) {
+            dao.deleteByConversationId(clean)
+        }
+        synchronized(cacheLock) {
+            verifiedEntryHashes.entries.removeAll { it.key.conversationId == clean }
+        }
+        invalidateCache(conversationId = clean, profileKey = null)
+    }
+
     suspend fun clearAll() {
         withContext(Dispatchers.IO) {
             dao.deleteAll()
@@ -737,11 +749,14 @@ class VectorMemoryIndex(
 
     companion object {
         const val WORLDBOOK_CONV_PREFIX = "wb:"
+        const val FILE_CONV_PREFIX = "file:"
         const val DEFAULT_MAX_QUERY_CHARS = 500
         const val DEFAULT_RERANK_QUERY_CHARS = 800
         const val DEFAULT_RERANK_MAX_CANDIDATES = 16
 
         fun worldbookScopeId(worldbookId: String): String = "$WORLDBOOK_CONV_PREFIX${worldbookId.trim()}"
+
+        fun fileScopeId(attachmentId: String): String = "$FILE_CONV_PREFIX${attachmentId.trim()}"
 
         private const val MAX_SLICE_CACHE_SIZE = 16
         private const val MAX_CONTENT_VECTOR_CACHE_SIZE = 1024

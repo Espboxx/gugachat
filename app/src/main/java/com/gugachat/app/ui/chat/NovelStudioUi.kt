@@ -115,6 +115,8 @@ import com.gugachat.app.core.theme.GuSwitchRow
 import com.gugachat.app.core.theme.GuTextField
 import com.gugachat.app.core.theme.LocalAppTheme
 import com.gugachat.app.domain.chat.ChatMessage
+import com.gugachat.app.domain.chat.ChatParams
+import com.gugachat.app.domain.chat.ConversationMode
 import com.gugachat.app.domain.chat.NovelChapter
 import com.gugachat.app.domain.chat.NovelConfig
 import com.gugachat.app.domain.chat.NovelDraftOption
@@ -578,6 +580,8 @@ fun NovelStudioSheet(
     onDismiss: () -> Unit,
     isGeneratingCover: Boolean = false,
     extraActions: NovelStudioExtraActions? = null,
+    params: ChatParams = ChatParams(),
+    onUpdateMinOutput: ((minChars: Int?, autoContinue: Boolean) -> Unit)? = null,
 ) {
     val strings = LocalAppStrings.current
     val theme = LocalAppTheme.current
@@ -1411,6 +1415,21 @@ fun NovelStudioSheet(
                                                             )
                                                         }
                                                     }
+                                                }
+
+                                                if (onUpdateMinOutput != null) {
+                                                    CompactOutputLengthControl(
+                                                        params = params,
+                                                        mode = ConversationMode.novel,
+                                                        isZh = isZh,
+                                                        title = if (isZh) "单次最低输出字数" else "Min Output per Turn",
+                                                        subtitle = if (isZh) {
+                                                            "单次生成下限（与上方整章累计目标独立）"
+                                                        } else {
+                                                            "Minimum per reply (separate from chapter total target)"
+                                                        },
+                                                        onUpdateMinOutput = onUpdateMinOutput,
+                                                    )
                                                 }
 
                                                 // Worldbook Budget Capsules

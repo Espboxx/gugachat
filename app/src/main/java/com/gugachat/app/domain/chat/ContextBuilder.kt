@@ -23,6 +23,7 @@ data class ContextBuildInput(
     val semanticScorer: SemanticScorer? = null,
     val resolveAttachmentDataUrl: (suspend (String) -> String?)? = null,
     val resolveAttachmentText: (suspend (String) -> String?)? = null,
+    val preloadedFileChunks: Map<String, IndexedDocument> = emptyMap(),
     val precomputedSemanticScores: Map<String, Double>? = null,
     val mutedRecallKeys: Set<String> = emptySet(),
     val modelId: String? = null,
@@ -83,6 +84,7 @@ data class ActiveWindowSlice(
     val activeChapter: NovelChapter?,
     val allActiveMessages: List<ChatMessage> = active,
     val uncompactedExcludedCount: Int = 0,
+    val fileRetentionByAttachmentId: Map<String, FileRetentionTier> = emptyMap(),
 )
 
 object ContextBuilder {
@@ -127,8 +129,15 @@ object ContextBuilder {
         messages: List<ChatMessage>,
         novelChapters: List<NovelChapter>,
         attachmentsById: Map<String, ChatAttachmentMeta> = emptyMap(),
+        effectiveLimitTokens: Int = 100_000,
     ): ActiveWindowSlice =
-        ContextBudgetPolicy.sliceActiveWindow(conversation, messages, novelChapters, attachmentsById)
+        ContextBudgetPolicy.sliceActiveWindow(
+            conversation = conversation,
+            messages = messages,
+            novelChapters = novelChapters,
+            attachmentsById = attachmentsById,
+            effectiveLimitTokens = effectiveLimitTokens,
+        )
 
     fun buildSystemPrefix(
         conversation: ChatConversation,

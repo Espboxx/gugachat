@@ -30,6 +30,7 @@ import com.gugachat.app.domain.chat.MemoryExtractor
 import com.gugachat.app.domain.chat.MemoryLedgerItem
 import com.gugachat.app.domain.chat.MessageVariant
 import com.gugachat.app.domain.chat.PromptPresetBlock
+import com.gugachat.app.domain.chat.PromptPresetBlockOps
 import com.gugachat.app.domain.chat.RetrievalMode
 import com.gugachat.app.domain.chat.RpCardCodec
 import com.gugachat.app.domain.chat.RpCgRecord
@@ -639,17 +640,65 @@ internal class ChatAssetsAndMemoryDelegate(private val host: ChatViewModelHost) 
             val blocks = runCatching {
                 AppJson.decodeFromString(ListSerializer(PromptPresetBlock.serializer()), preset.blocksJson)
             }.getOrDefault(emptyList())
-            if (blocks.isEmpty()) return@launch
-            val updated = blocks.mapIndexed { idx, block ->
-                if (idx == index && (identifier.isBlank() || block.identifier == identifier)) {
-                    block.copy(enabled = !block.enabled)
-                } else {
-                    block
-                }
-            }
+            if (index !in blocks.indices) return@launch
+            if (identifier.isNotBlank() && blocks[index].identifier != identifier) return@launch
+            val updated = PromptPresetBlockOps.toggleBlock(blocks, index)
+            if (updated == blocks) return@launch
             val encoded = AppJson.encodeToString(ListSerializer(PromptPresetBlock.serializer()), updated)
             assetDao.upsertPromptPreset(
                 preset.copy(blocksJson = encoded, updatedAt = System.currentTimeMillis()),
+            )
+            host.scheduleWaterline()
+        }
+    }
+
+    fun setPromptPresetBlocksEnabled(presetId: String, indices: List<Int>, enabled: Boolean) {
+        if (indices.isEmpty()) return
+        host.scope.launch {
+            val preset = assetDao.getPromptPresetById(presetId) ?: return@launch
+            val blocks = runCatching {
+                AppJson.decodeFromString(ListSerializer(PromptPresetBlock.serializer()), preset.blocksJson)
+            }.getOrDefault(emptyList())
+            val updated = PromptPresetBlockOps.batchSetEnabled(blocks, indices, enabled)
+            if (updated === blocks || updated == blocks) return@launch
+            val encoded = AppJson.encodeToString(ListSerializer(PromptPresetBlock.serializer()), updated)
+            assetDao.upsertPromptPreset(
+                preset.copy(blocksJson = encoded, updatedAt = System.currentTimeMillis()),
+            )
+            host.scheduleWaterline()
+        }
+    }
+
+    fun movePromptPresetBlock(presetId: String, index: Int, delta: Int) {
+        if (delta == 0) return
+        host.scope.launch {
+            val preset = assetDao.getPromptPresetById(presetId) ?: return@launch
+            val blocks = runCatching {
+                AppJson.decodeFromString(ListSerializer(PromptPresetBlock.serializer()), preset.blocksJson)
+            }.getOrDefault(emptyList())
+            val updated = PromptPresetBlockOps.moveBlock(blocks, index, delta)
+            if (updated === blocks || updated == blocks) return@launch
+            val encoded = AppJson.encodeToString(ListSerializer(PromptPresetBlock.serializer()), updated)
+            assetDao.upsertPromptPreset(
+                preset.copy(blocksJson = encoded, updatedAt = System.currentTimeMillis()),
+            )
+            host.scheduleWaterline()
+        }
+    }
+
+    fun togglePromptPresetRegexEnabled(presetId: String, scriptId: String, enabled: Boolean) {
+        host.scope.launch {
+            val preset = assetDao.getPromptPresetById(presetId) ?: return@launch
+            val scripts = runCatching {
+                AppJson.decodeFromString(ListSerializer(RpRegexScript.serializer()), preset.regexScriptsJson)
+            }.getOrDefault(emptyList())
+            val updated = scripts.map { s ->
+                if (s.id == scriptId) s.copy(enabled = enabled) else s
+            }
+            if (updated == scripts) return@launch
+            val encoded = AppJson.encodeToString(ListSerializer(RpRegexScript.serializer()), updated)
+            assetDao.upsertPromptPreset(
+                preset.copy(regexScriptsJson = encoded, updatedAt = System.currentTimeMillis()),
             )
             host.scheduleWaterline()
         }

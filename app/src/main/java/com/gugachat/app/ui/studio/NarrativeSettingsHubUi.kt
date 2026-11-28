@@ -8,35 +8,27 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.lazy.staggeredgrid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Book
 import androidx.compose.material.icons.filled.Code
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Layers
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -61,12 +53,8 @@ import com.gugachat.app.core.theme.GuButton
 import com.gugachat.app.core.theme.GuButtonVariant
 import com.gugachat.app.core.theme.GuCard
 import com.gugachat.app.core.theme.GuCollapsibleSearchBar
-import com.gugachat.app.core.theme.GuConfirmDialog
 import com.gugachat.app.core.theme.GuEmptyState
 import com.gugachat.app.core.theme.GuIconTile
-import com.gugachat.app.core.theme.GuModalBottomSheet
-import com.gugachat.app.core.theme.GuSheetHeader
-import com.gugachat.app.core.theme.GuSwitchRow
 import com.gugachat.app.core.theme.LocalAppTheme
 import com.gugachat.app.data.local.PromptPresetEntity
 import com.gugachat.app.data.local.WorldbookEntity
@@ -88,7 +76,6 @@ fun LoreSettingsHubTab(
 ) {
     val ui by assetHubViewModel.ui.collectAsStateWithLifecycle()
     val strings = LocalAppStrings.current
-    val c = LocalAppTheme.current.colors
     val isZh = strings.language == AppLanguage.ZH
 
     var activeFilter by rememberSaveable { mutableStateOf(SettingFilterKind.ALL) }
@@ -137,13 +124,6 @@ fun LoreSettingsHubTab(
                     (cleanSearch.isEmpty() || preset.name.lowercase().contains(cleanSearch))
             }
         }
-    }
-
-    val activeWorldbook = remember(ui.activeWorldbookId, ui.worldbooks) {
-        ui.activeWorldbookId?.let { id -> ui.worldbooks.firstOrNull { it.id == id } }
-    }
-    val activePreset = remember(ui.activePresetId, ui.promptPresets) {
-        ui.activePresetId?.let { id -> ui.promptPresets.firstOrNull { it.id == id } }
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -306,65 +286,6 @@ fun LoreSettingsHubTab(
                 showCreateWorldbookDialog = false
             },
             onDismiss = { showCreateWorldbookDialog = false },
-        )
-    }
-
-    if (activeWorldbook != null) {
-        WorldbookDetailSheet(
-            worldbook = activeWorldbook,
-            entries = ui.activeWorldbookEntries,
-            vectorReady = ui.worldbookVectorReady[activeWorldbook.id] == true,
-            isIndexing = ui.vectorIndexProgress.running,
-            onToggleGlobal = { assetHubViewModel.toggleWorldbookGlobalEnabled(activeWorldbook.id, it) },
-            onUpdateMeta = { name, desc, scanDepth, tokenBudget, recursive ->
-                assetHubViewModel.updateWorldbookMeta(
-                    activeWorldbook.id,
-                    name,
-                    desc,
-                    scanDepth,
-                    tokenBudget,
-                    recursive,
-                )
-            },
-            onReindex = { assetHubViewModel.reindexWorldbook(activeWorldbook.id) },
-            onDeleteBook = { assetHubViewModel.deleteWorldbook(activeWorldbook.id) },
-            onToggleEntryEnabled = { entry, enabled ->
-                assetHubViewModel.toggleWorldbookEntryEnabled(entry, enabled)
-            },
-            onSaveEntry = { entryId, title, content, keys, secKeys, logic, constant, enabled, pos, depth, sticky, cooldown ->
-                assetHubViewModel.saveWorldbookEntry(
-                    worldbookId = activeWorldbook.id,
-                    entryId = entryId,
-                    title = title,
-                    content = content,
-                    primaryKeys = keys,
-                    secondaryKeys = secKeys,
-                    selectiveLogic = logic,
-                    constant = constant,
-                    enabled = enabled,
-                    position = pos,
-                    depth = depth,
-                    sticky = sticky,
-                    cooldown = cooldown,
-                )
-            },
-            onDeleteEntry = { assetHubViewModel.deleteWorldbookEntry(it) },
-            onDismiss = { assetHubViewModel.openWorldbookDetail(null) },
-        )
-    }
-
-    if (activePreset != null) {
-        PromptPresetDetailSheet(
-            preset = activePreset,
-            onToggleDefault = { assetHubViewModel.setDefaultRpPreset(activePreset.id, it) },
-            onToggleBlock = { identifier, enabled ->
-                assetHubViewModel.togglePresetBlockEnabled(activePreset.id, identifier, enabled)
-            },
-            onToggleRegex = { scriptId, enabled ->
-                assetHubViewModel.togglePresetRegexEnabled(activePreset.id, scriptId, enabled)
-            },
-            onDeletePreset = { assetHubViewModel.deletePromptPreset(activePreset.id) },
-            onDismiss = { assetHubViewModel.openPresetDetail(null) },
         )
     }
 }
@@ -589,183 +510,6 @@ internal fun RegexPackSummaryCard(
                 color = c.muted,
                 fontSize = 12.sp,
             )
-        }
-    }
-}
-
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-internal fun PromptPresetDetailSheet(
-    preset: PromptPresetEntity,
-    onToggleDefault: (Boolean) -> Unit,
-    onToggleBlock: (identifier: String, enabled: Boolean) -> Unit,
-    onToggleRegex: (scriptId: String, enabled: Boolean) -> Unit,
-    onDeletePreset: () -> Unit,
-    onDismiss: () -> Unit,
-) {
-    val strings = LocalAppStrings.current
-    val c = LocalAppTheme.current.colors
-    val isZh = strings.language == AppLanguage.ZH
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-
-    val blocks = remember(preset.blocksJson) { decodeJsonList<PromptPresetBlock>(preset.blocksJson) }
-    val regexScripts = remember(preset.regexScriptsJson) { decodeJsonList<RpRegexScript>(preset.regexScriptsJson) }
-    var expandedBlockId by remember { mutableStateOf<String?>(null) }
-    var confirmDelete by remember { mutableStateOf(false) }
-
-    if (confirmDelete) {
-        GuConfirmDialog(
-            title = if (isZh) "删除设定预设" else "Delete Preset",
-            message = if (isZh) "确认删除「${preset.name}」？" else "Delete \"${preset.name}\"?",
-            confirmText = strings.common.delete,
-            cancelText = strings.common.cancel,
-            isDestructive = true,
-            onConfirm = {
-                confirmDelete = false
-                onDeletePreset()
-            },
-            onDismiss = { confirmDelete = false },
-        )
-    }
-
-    GuModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .fillMaxHeight(0.90f)
-                .navigationBarsPadding(),
-        ) {
-            GuSheetHeader(
-                title = preset.name,
-                subtitle = "${preset.sourceFormat} · ${blocks.size} blocks · ${regexScripts.size} regex",
-                closeContentDescription = strings.common.close,
-                onClose = onDismiss,
-                trailing = {
-                    IconButton(onClick = { confirmDelete = true }) {
-                        Icon(Icons.Default.Delete, contentDescription = strings.common.delete, tint = c.danger)
-                    }
-                },
-            )
-
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                if (preset.sourceFormat != "sillytavern_regex") {
-                    item(key = "preset_default_switch") {
-                        GuCard(backgroundColor = c.surfaceSoft) {
-                            GuSwitchRow(
-                                label = if (isZh) "设为新周目默认预设" else "Default for New RP Campaigns",
-                                checked = preset.isDefaultRp,
-                                onCheckedChange = onToggleDefault,
-                            )
-                        }
-                    }
-                }
-
-                if (blocks.isNotEmpty()) {
-                    item(key = "blocks_header") {
-                        Text(
-                            text = if (isZh) "提示词模块 (${blocks.count { it.enabled }}/${blocks.size})" else "Prompt Blocks",
-                            color = c.ink,
-                            fontSize = 13.5.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.padding(top = 4.dp),
-                        )
-                    }
-                    items(blocks, key = { "blk_${it.identifier}" }) { blk ->
-                        val isExpanded = expandedBlockId == blk.identifier
-                        GuCard(
-                            onClick = { expandedBlockId = if (isExpanded) null else blk.identifier },
-                            contentPadding = PaddingValues(12.dp),
-                        ) {
-                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = blk.name.ifBlank { blk.identifier },
-                                            color = c.ink,
-                                            fontSize = 13.5.sp,
-                                            fontWeight = FontWeight.SemiBold,
-                                        )
-                                        Text(
-                                            text = "${blk.role} · pos=${blk.injectionPosition} @D${blk.injectionDepth}",
-                                            color = c.muted,
-                                            fontSize = 11.5.sp,
-                                        )
-                                    }
-                                    Switch(
-                                        checked = blk.enabled,
-                                        onCheckedChange = { onToggleBlock(blk.identifier, it) },
-                                    )
-                                }
-                                if (isExpanded && blk.content.isNotBlank()) {
-                                    Text(
-                                        text = blk.content,
-                                        color = c.muted,
-                                        fontSize = 12.sp,
-                                        lineHeight = 17.sp,
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if (regexScripts.isNotEmpty()) {
-                    item(key = "regex_header") {
-                        Text(
-                            text = if (isZh) "正则脚本 (${regexScripts.count { it.enabled }}/${regexScripts.size})" else "Regex Scripts",
-                            color = c.ink,
-                            fontSize = 13.5.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.padding(top = 4.dp),
-                        )
-                    }
-                    items(regexScripts, key = { "rx_${it.id}" }) { rx ->
-                        GuCard(contentPadding = PaddingValues(12.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = rx.name.ifBlank { rx.findRegex.take(28) },
-                                        color = c.ink,
-                                        fontSize = 13.5.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                    Text(
-                                        text = "${rx.placement} · /${rx.findRegex.take(40)}/",
-                                        color = c.muted,
-                                        fontSize = 11.5.sp,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                }
-                                Switch(
-                                    checked = rx.enabled,
-                                    onCheckedChange = { onToggleRegex(rx.id, it) },
-                                )
-                            }
-                        }
-                    }
-                }
-            }
         }
     }
 }

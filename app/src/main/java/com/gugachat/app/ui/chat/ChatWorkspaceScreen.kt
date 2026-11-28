@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.MenuBook
@@ -56,10 +57,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.gugachat.app.AppContainer
+import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.i18n.LocalAppStrings
 import com.gugachat.app.core.i18n.fmt
 import com.gugachat.app.core.theme.GuConfirmDialog
 import com.gugachat.app.core.theme.GuPopupMenu
+import com.gugachat.app.core.theme.GuPushPopContainer
 import com.gugachat.app.core.theme.LocalAppShellController
 import com.gugachat.app.core.theme.LocalAppTheme
 import com.gugachat.app.data.api.DirectProtocolCodec
@@ -67,8 +70,16 @@ import com.gugachat.app.data.local.AttachmentFileStore
 import com.gugachat.app.domain.chat.ConversationMode
 import com.gugachat.app.domain.chat.FileContextBudgeter
 import com.gugachat.app.domain.chat.TimelineReconciler
+import com.gugachat.app.ui.studio.PromptPresetEditorMode
+import com.gugachat.app.ui.studio.PromptPresetEditorScreen
 import kotlinx.coroutines.launch
 import java.io.File
+
+private sealed interface ChatFullscreenRoute {
+    data object ModelPicker : ChatFullscreenRoute
+    data class Params(val initialTab: Int = 0) : ChatFullscreenRoute
+    data class PresetBlocks(val returnToParamsTab: Int? = 0) : ChatFullscreenRoute
+}
 
 @Composable
 fun ChatWorkspaceScreen(
@@ -85,13 +96,14 @@ fun ChatWorkspaceScreen(
     val scope = rememberCoroutineScope()
     val shell = LocalAppShellController.current
 
-    var showModelPicker by remember { mutableStateOf(false) }
+    var activeFullscreenRoute by remember { mutableStateOf<ChatFullscreenRoute?>(null) }
+    var lastParamsTab by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(drawerState.isOpen) {
         shell.setChatDrawerOpen(drawerState.isOpen)
     }
-    LaunchedEffect(showModelPicker) {
-        shell.setFullscreenSubpageOpen(showModelPicker)
+    LaunchedEffect(activeFullscreenRoute) {
+        shell.setFullscreenSubpageOpen(activeFullscreenRoute != null)
     }
     DisposableEffect(Unit) {
         onDispose {
@@ -101,7 +113,6 @@ fun ChatWorkspaceScreen(
         }
     }
     var showNewSessionSheet by remember { mutableStateOf(false) }
-    var showParamsSheet by remember { mutableStateOf(false) }
     var showMemorySheet by remember { mutableStateOf(false) }
     var memorySheetInitialTab by remember { mutableIntStateOf(0) }
     var showNovelWizard by remember { mutableStateOf(false) }
@@ -230,24 +241,6 @@ fun ChatWorkspaceScreen(
         )
     }
 
-    if (showParamsSheet) {
-        ChatParamsSheet(
-            systemPrompt = activeConv?.systemPrompt.orEmpty(),
-            params = state.effectiveChatParams,
-            waterline = state.waterline,
-            isCompacting = state.isCompacting,
-            compactingProgressText = state.compactingProgressText,
-            nativeModelWindow = nativeModelWindow,
-            onSave = viewModel::updateConversationParams,
-            onCompactNow = viewModel::triggerManualCompaction,
-            onDismiss = { showParamsSheet = false },
-            promptPresets = state.promptPresets,
-            boundPromptPreset = state.boundPromptPreset,
-            boundPresetId = activeConv?.presetId,
-            presetActions = actions.params,
-        )
-    }
-
     if (showMemorySheet) {
         ChatMemorySheet(
             userMemories = state.userMemories,
@@ -274,7 +267,8 @@ fun ChatWorkspaceScreen(
             onReindexVectors = viewModel::reindexActiveConversationVectors,
             onOpenContextSettings = {
                 showMemorySheet = false
-                showParamsSheet = true
+                lastParamsTab = 1
+                activeFullscreenRoute = ChatFullscreenRoute.Params(initialTab = 1)
             },
             onDismiss = { showMemorySheet = false },
         )
@@ -358,6 +352,8 @@ fun ChatWorkspaceScreen(
             onDismiss = { showNovelStudio = false },
             isGeneratingCover = state.isGeneratingRpArt,
             extraActions = actions.novelStudio,
+            params = state.effectiveChatParams,
+            onUpdateMinOutput = viewModel::updateMinOutputSettings,
         )
     }
 
@@ -450,6 +446,8 @@ fun ChatWorkspaceScreen(
             worldbooks = state.worldbooks,
             mountedWorldbookRefs = state.mountedWorldbookRefs,
             assetActions = actions.rpStudioAssets,
+            params = state.effectiveChatParams,
+            onUpdateMinOutput = viewModel::updateMinOutputSettings,
         )
     }
 
@@ -545,7 +543,7 @@ fun ChatWorkspaceScreen(
                     },
                     onClick = {
                         showMoreMenu = false
-                        showParamsSheet = true
+                        activeFullscreenRoute = ChatFullscreenRoute.Params(initialTab = lastParamsTab)
                     },
                 )
                 val overflowStatusColor = when {
@@ -782,7 +780,7 @@ fun ChatWorkspaceScreen(
     Box(modifier = Modifier.fillMaxSize()) {
         ModalNavigationDrawer(
             drawerState = drawerState,
-            gesturesEnabled = !showModelPicker,
+            gesturesEnabled = activeFullscreenRoute == null,
             drawerContent = {
                 ChatSessionsDrawerContent(
                     conversations = state.conversations,
@@ -823,7 +821,7 @@ fun ChatWorkspaceScreen(
                         isRefreshingChoices = state.isRefreshingChoices,
                         attachmentPathResolver = attachmentPathResolver,
                         onOpenDrawer = { scope.launch { drawerState.open() } },
-                        onOpenModelSheet = { showModelPicker = true },
+                        onOpenModelSheet = { activeFullscreenRoute = ChatFullscreenRoute.ModelPicker },
                         onNewSession = { showNewSessionSheet = true },
                         onOpenMoreMenu = { showMoreMenu = true },
                         moreMenuContent = moreMenu,
@@ -859,10 +857,16 @@ fun ChatWorkspaceScreen(
                             memorySheetInitialTab = 3
                             showMemorySheet = true
                         },
-                        onOpenContextSettings = { showParamsSheet = true },
+                        onOpenContextSettings = {
+                            lastParamsTab = 1
+                            activeFullscreenRoute = ChatFullscreenRoute.Params(initialTab = 1)
+                        },
                         onSend = { viewModel.sendMessage() },
                         onStop = viewModel::stopStreaming,
                         onToast = { container.toastController.show(it) },
+                        onUpdateSentAttachmentInjectMode = viewModel::updateAttachmentInjectMode,
+                        minOutputChars = state.effectiveChatParams.minOutputChars,
+                        autoContinueShortReply = state.effectiveChatParams.autoContinueShortReply,
                     )
                 }
 
@@ -891,7 +895,7 @@ fun ChatWorkspaceScreen(
                         artStatusLabel = state.rpArtStatusLabel,
                         attachmentPathResolver = attachmentPathResolver,
                         onOpenDrawer = { scope.launch { drawerState.open() } },
-                        onOpenModelSheet = { showModelPicker = true },
+                        onOpenModelSheet = { activeFullscreenRoute = ChatFullscreenRoute.ModelPicker },
                         onOpenMoreMenu = { showMoreMenu = true },
                         moreMenuContent = moreMenu,
                         onToggleTheaterMode = viewModel::toggleRpTheaterMode,
@@ -933,11 +937,17 @@ fun ChatWorkspaceScreen(
                             memorySheetInitialTab = 3
                             showMemorySheet = true
                         },
-                        onOpenContextSettings = { showParamsSheet = true },
+                        onOpenContextSettings = {
+                            lastParamsTab = 1
+                            activeFullscreenRoute = ChatFullscreenRoute.Params(initialTab = 1)
+                        },
                         onImpersonate = viewModel::impersonatePlayerDraft,
                         onSend = { viewModel.sendMessage() },
                         onStop = viewModel::stopStreaming,
                         onToast = { container.toastController.show(it) },
+                        onUpdateSentAttachmentInjectMode = viewModel::updateAttachmentInjectMode,
+                        minOutputChars = state.effectiveChatParams.minOutputChars,
+                        autoContinueShortReply = state.effectiveChatParams.autoContinueShortReply,
                     )
                 }
 
@@ -959,7 +969,7 @@ fun ChatWorkspaceScreen(
                         streamingStatusHint = state.streamingStatusHint,
                         attachmentPathResolver = attachmentPathResolver,
                         onOpenDrawer = { scope.launch { drawerState.open() } },
-                        onOpenModelSheet = { showModelPicker = true },
+                        onOpenModelSheet = { activeFullscreenRoute = ChatFullscreenRoute.ModelPicker },
                         onNewSession = { showNewSessionSheet = true },
                         onOpenMoreMenu = { showMoreMenu = true },
                         moreMenuContent = moreMenu,
@@ -983,7 +993,10 @@ fun ChatWorkspaceScreen(
                             memorySheetInitialTab = 3
                             showMemorySheet = true
                         },
-                        onOpenContextSettings = { showParamsSheet = true },
+                        onOpenContextSettings = {
+                            lastParamsTab = 1
+                            activeFullscreenRoute = ChatFullscreenRoute.Params(initialTab = 1)
+                        },
                         onSend = { viewModel.sendMessage() },
                         onStop = viewModel::stopStreaming,
                         onToast = { container.toastController.show(it) },
@@ -991,13 +1004,17 @@ fun ChatWorkspaceScreen(
                         onScrollHideBottomBarChanged = shell.setScrollHideBottomBar,
                         onOpenRpWizard = { showRpWizard = true },
                         onOpenNovelWizard = { showNovelWizard = true },
+                        onUpdateSentAttachmentInjectMode = viewModel::updateAttachmentInjectMode,
+                        minOutputChars = state.effectiveChatParams.minOutputChars,
+                        autoContinueShortReply = state.effectiveChatParams.autoContinueShortReply,
+                        onContinueChat = { viewModel.continueLastAssistantMessage() },
                     )
                 }
             }
         }
 
         AnimatedVisibility(
-            visible = showModelPicker,
+            visible = activeFullscreenRoute is ChatFullscreenRoute.ModelPicker,
             enter = slideInHorizontally(tween(220)) { it / 3 } + fadeIn(tween(180)),
             exit = slideOutHorizontally(tween(200)) { it / 3 } + fadeOut(tween(150)),
         ) {
@@ -1013,8 +1030,79 @@ fun ChatWorkspaceScreen(
                 onSelectModel = viewModel::selectModel,
                 onSelectCustomModel = viewModel::selectCustomModel,
                 onUpdateContextSettings = viewModel::updateContextSettings,
-                onBack = { showModelPicker = false },
+                mode = mode,
+                onUpdateMinOutput = viewModel::updateMinOutputSettings,
+                onBack = { activeFullscreenRoute = null },
             )
+        }
+
+        val showingParamsStack = activeFullscreenRoute is ChatFullscreenRoute.Params ||
+            activeFullscreenRoute is ChatFullscreenRoute.PresetBlocks
+        val showingPresetBlocks = activeFullscreenRoute is ChatFullscreenRoute.PresetBlocks
+        AnimatedVisibility(
+            visible = showingParamsStack,
+            enter = slideInHorizontally(tween(220)) { it / 3 } + fadeIn(tween(180)),
+            exit = slideOutHorizontally(tween(200)) { it / 3 } + fadeOut(tween(150)),
+        ) {
+            GuPushPopContainer(
+                showingSubpage = showingPresetBlocks,
+                label = "chat_params_preset_fullscreen_stack",
+            ) { inPresetBlocks ->
+                if (inPresetBlocks) {
+                    PromptPresetEditorScreen(
+                        mode = PromptPresetEditorMode.CHAT,
+                        activePreset = state.boundPromptPreset,
+                        allPresets = state.promptPresets,
+                        onSelectPreset = actions.params.onSelectPreset,
+                        onToggleBlock = { presetId, identifier, idx, _ ->
+                            actions.params.onTogglePresetBlock(presetId, identifier, idx)
+                        },
+                        onBatchSetBlocksEnabled = actions.params.onBatchSetPresetBlocksEnabled,
+                        onMoveBlock = actions.params.onMovePresetBlock,
+                        onToggleRegex = actions.params.onTogglePresetRegex,
+                        onBack = {
+                            val retTab = (activeFullscreenRoute as? ChatFullscreenRoute.PresetBlocks)?.returnToParamsTab
+                            activeFullscreenRoute = if (retTab != null) {
+                                ChatFullscreenRoute.Params(initialTab = retTab)
+                            } else {
+                                null
+                            }
+                        },
+                    )
+                } else {
+                    val requestedTab = (activeFullscreenRoute as? ChatFullscreenRoute.Params)?.initialTab ?: lastParamsTab
+                    ChatParamsScreen(
+                        systemPrompt = activeConv?.systemPrompt.orEmpty(),
+                        params = state.effectiveChatParams,
+                        waterline = state.waterline,
+                        isCompacting = state.isCompacting,
+                        compactingProgressText = state.compactingProgressText,
+                        nativeModelWindow = nativeModelWindow,
+                        initialTab = requestedTab,
+                        onActiveTabChange = { lastParamsTab = it },
+                        onSave = viewModel::updateConversationParams,
+                        onCompactNow = viewModel::triggerManualCompaction,
+                        onBack = { activeFullscreenRoute = null },
+                        promptPresets = state.promptPresets,
+                        boundPromptPreset = state.boundPromptPreset,
+                        onOpenPresetBlocks = {
+                            activeFullscreenRoute = ChatFullscreenRoute.PresetBlocks(returnToParamsTab = lastParamsTab)
+                        },
+                        minOutputSlot = {
+                            OutputLengthControlSection(
+                                params = state.effectiveChatParams,
+                                mode = mode,
+                                isZh = strings.language == AppLanguage.ZH,
+                                modelId = effectiveModelId,
+                                modelMeta = activeModel,
+                                windowLimit = state.effectiveChatParams.contextWindowOverride ?: nativeModelWindow,
+                                onUpdateMinOutput = viewModel::updateMinOutputSettings,
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                            )
+                        },
+                    )
+                }
+            }
         }
     }
 }

@@ -78,6 +78,8 @@ data class ChatParams(
     val minP: Double? = null,
     val stopSequences: List<String> = emptyList(),
     val assistantPrefill: String = "",
+    val minOutputChars: Int? = null,
+    val autoContinueShortReply: Boolean = false,
 )
 
 @Serializable

@@ -8,6 +8,7 @@ import com.gugachat.app.data.local.toEntity
 import com.gugachat.app.domain.chat.ConversationMode
 import com.gugachat.app.domain.chat.NovelEngine
 import com.gugachat.app.domain.chat.NovelExport
+import com.gugachat.app.domain.chat.OutputLengthPolicy
 import com.gugachat.app.domain.chat.RpCharacter
 import com.gugachat.app.domain.chat.RpChoice
 import com.gugachat.app.domain.chat.RpConfig
@@ -161,6 +162,30 @@ internal class RpStudioDelegate(private val host: ChatViewModelHost) {
                     conv = conv.copy(groupId = groupId, model = modelId),
                     existingMessageForVariant = lastAssistant,
                     continuePrefixText = lastAssistant?.content?.let { NovelExport.stripInternalTags(it) },
+                    overrideMessages = wireDtos,
+                )
+            }
+        } else if (conv.mode == ConversationMode.chat) {
+            host.scope.launch {
+                val allMsgs = chatDao.getMessagesForConversation(conv.id).map { it.toDomain() }
+                val activeMsgs = TimelineReconciler.activeMessages(allMsgs)
+                val lastAssistant = activeMsgs.lastOrNull { it.role == "assistant" && it.status != "error" }
+                    ?: return@launch
+                val lastUserText = activeMsgs.lastOrNull { it.role == "user" }?.content
+                val isEnglish = OutputLengthPolicy.isEnglishPreference(
+                    recentUserText = lastUserText,
+                    appLanguageIsEnglish = host.container.settingsState.value.language == AppLanguage.EN,
+                )
+                val wireDtos = OutputLengthPolicy.buildStandardChatContinueMessages(
+                    conv = conv,
+                    activeMessages = activeMsgs,
+                    instruction = instruction,
+                    isEnglish = isEnglish,
+                )
+                host.launchCompletionForConversation(
+                    conv = conv.copy(groupId = groupId, model = modelId),
+                    existingMessageForVariant = lastAssistant,
+                    continuePrefixText = lastAssistant.content,
                     overrideMessages = wireDtos,
                 )
             }

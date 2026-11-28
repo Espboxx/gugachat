@@ -14,10 +14,51 @@ internal object ContextDepthInjector {
     )
 
     suspend fun buildChatContextV4(input: ContextBuildInput): BuiltChatContextV4 {
-        val pipe = ContextRecallAssembler.runSharedPipeline(input, allowScorer = true)
-        val conv = input.conversation
+        // Auto-hydrate preloadedFileChunks for active files when caller supplies resolveAttachmentText
+        // without pre-populating AttachmentChunkCache (e.g. direct domain calls / JVM tests).
+        val resolvedTextsById = HashMap<String, String>()
+        val hydratedPreloaded = LinkedHashMap<String, IndexedDocument>(input.preloadedFileChunks)
+        if (input.resolveAttachmentText != null) {
+            val activeMsgs = TimelineReconciler.activeMessages(input.messages)
+            val neededFileIds = LinkedHashSet<String>()
+            for (msg in activeMsgs) {
+                if (msg.role != "user") continue
+                for (attId in msg.attachmentIds) {
+                    if (input.attachmentsById[attId]?.isFile == true) {
+                        neededFileIds.add(attId)
+                    }
+                }
+            }
+            for (df in input.draftAttachments) {
+                if (df.isFile) neededFileIds.add(df.id)
+            }
+            for (attId in neededFileIds) {
+                if (hydratedPreloaded.containsKey(attId)) continue
+                val meta = input.attachmentsById[attId]
+                    ?: input.draftAttachments.firstOrNull { it.id == attId }
+                    ?: continue
+                val rawText = input.resolveAttachmentText.invoke(attId)
+                if (!rawText.isNullOrBlank()) {
+                    resolvedTextsById[attId] = rawText
+                    hydratedPreloaded[attId] = FileContextBudgeter.buildIndexedDocument(
+                        attachmentId = attId,
+                        fileName = meta.fileName,
+                        text = rawText,
+                    )
+                }
+            }
+        }
+        val effectiveInput = if (hydratedPreloaded.size != input.preloadedFileChunks.size) {
+            input.copy(preloadedFileChunks = hydratedPreloaded)
+        } else {
+            input
+        }
+
+        val pipe = ContextRecallAssembler.runSharedPipeline(effectiveInput, allowScorer = true)
+        val conv = effectiveInput.conversation
         val active = pipe.active
         val decayedImages = pipe.waterline.decayedImageMessageIds.toMutableSet()
+        val retentionByAttId = pipe.fileRetentionByAttachmentId.toMutableMap()
         val decayedFiles = pipe.waterline.decayedFileMessageIds.toMutableSet()
         val fileTurnBudget = FileContextBudgeter.computeFileTurnBudget(
             effectiveLimitTokens = pipe.effectiveLimitTokens,
@@ -28,11 +69,12 @@ internal object ContextDepthInjector {
             msg = msg,
             imageDecayed = msg.id in decayedImages,
             fileDecayed = msg.id in decayedFiles,
-            attachmentsById = input.attachmentsById,
+            attachmentsById = effectiveInput.attachmentsById,
             perTurnFileBudget = fileTurnBudget,
             modelId = pipe.effectiveModelId,
             conversation = conv,
             cache = pipe.messageCacheById,
+            fileRetentionByAttachmentId = retentionByAttId,
         )
 
         val maxHistoryLimit = conv.params.maxHistoryMessages?.takeIf { it > 0 }
@@ -53,12 +95,21 @@ internal object ContextDepthInjector {
             msgCosts[idx] = newCost
         }
 
+        var newlyDemotedTier2 = false
         if (totalCalibratedTokens() > pipe.effectiveLimitTokens) {
             for (i in 0 until max(0, candidateWindow.size - 1)) {
                 val msg = candidateWindow[i]
-                val hasFiles = msg.attachmentIds.any { input.attachmentsById[it]?.isFile == true }
-                val hasImgs = msg.attachmentIds.any { input.attachmentsById[it]?.isFile != true }
-                if (hasFiles && msg.id !in decayedFiles) {
+                val hasImgs = msg.attachmentIds.any { effectiveInput.attachmentsById[it]?.isFile != true }
+                var demotedAutoFile = false
+                for (attId in msg.attachmentIds) {
+                    val meta = effectiveInput.attachmentsById[attId]?.takeIf { it.isFile } ?: continue
+                    if (meta.injectMode == FileInjectMode.auto && retentionByAttId[attId] == FileRetentionTier.FULL) {
+                        retentionByAttId[attId] = FileRetentionTier.INDEX_RECALL
+                        demotedAutoFile = true
+                        newlyDemotedTier2 = true
+                    }
+                }
+                if (demotedAutoFile) {
                     decayedFiles.add(msg.id)
                     refreshMsgCost(i)
                     if (totalCalibratedTokens() <= pipe.effectiveLimitTokens) break
@@ -89,6 +140,17 @@ internal object ContextDepthInjector {
             maxHistoryLimit = maxHistoryLimit,
         )
         val selected = if (selectedCount > 0) active.takeLast(selectedCount) else emptyList()
+        val selectedIds = selected.map { it.id }.toSet()
+        for (msg in active) {
+            if (msg.id in selectedIds || msg.role != "user") continue
+            for (attId in msg.attachmentIds) {
+                if (effectiveInput.attachmentsById[attId]?.isFile == true && retentionByAttId[attId] != FileRetentionTier.INDEX_RECALL) {
+                    retentionByAttId[attId] = FileRetentionTier.INDEX_RECALL
+                    newlyDemotedTier2 = true
+                }
+            }
+        }
+
         var selectedRawHistory = 0
         var selectedRawFiles = 0
         for (msg in selected) {
@@ -96,8 +158,9 @@ internal object ContextDepthInjector {
             selectedRawFiles += ContextBudgetPolicy.resolveMsgFileTokens(
                 msg = msg,
                 fileDecayed = msg.id in decayedFiles,
-                attachmentsById = input.attachmentsById,
+                attachmentsById = effectiveInput.attachmentsById,
                 perTurnFileBudget = fileTurnBudget,
+                fileRetentionByAttachmentId = retentionByAttId,
             )
         }
 
@@ -114,8 +177,8 @@ internal object ContextDepthInjector {
                     val expanded = ContextZonePrefixBuilder.expandDynamicV4Macros(
                         entry.content.trim(),
                         conv,
-                        input.characterCard,
-                        input.persona,
+                        effectiveInput.characterCard,
+                        effectiveInput.persona,
                     )
                     NovelLoreEntry(
                         id = entry.id,
@@ -133,7 +196,9 @@ internal object ContextDepthInjector {
             pipe.loreMatch.triggered
         }
 
-        val zone3TrailingSuffix = buildZone3TrailingSuffix(input, pipe, wbResult, conv)
+        val lastUserIdx = selected.indexOfLast { it.role == "user" }
+        val latestUserQuery = if (lastUserIdx >= 0) selected[lastUserIdx].content else effectiveInput.draftText
+        val zone3TrailingSuffix = buildZone3TrailingSuffix(effectiveInput, pipe, wbResult, conv, latestUserQuery)
 
         val chatWorldbookTriggeredBlock = if (pipe.isV4Mode && !pipe.isRp && !pipe.isNovel && zone3StandardLore.isNotEmpty()) {
             val lines = zone3StandardLore.joinToString("\n") { entry ->
@@ -144,25 +209,58 @@ internal object ContextDepthInjector {
             ""
         }
 
-        val lastUserIdx = selected.indexOfLast { it.role == "user" }
-        val latestUserQuery = if (lastUserIdx >= 0) selected[lastUserIdx].content else input.draftText
         val existingLoreTitles = if (pipe.isNovel) pipe.novelLore.map { it.title } else emptyList()
 
-        val reRecalledDecayedFiles = if (lastUserIdx >= 0 && latestUserQuery.isNotBlank()) {
-            val latestOwnIds = selected[lastUserIdx].attachmentIds.toSet()
-            pipe.allActiveMessages
-                .filter { it.role == "user" && it.id in decayedFiles }
-                .flatMap { it.attachmentIds }
-                .filter { it !in latestOwnIds }
-                .mapNotNull { input.attachmentsById[it]?.takeIf { m -> m.isFile } }
-                .filter { meta -> FileContextBudgeter.messageMentionsFile(latestUserQuery, meta) }
-                .distinctBy { it.id }
-                .take(2)
+        // If pressure/sliding demoted additional files to Tier 2, recompute file recall bundle
+        val effectiveFileRecallBundle = if (newlyDemotedTier2) {
+            val orderedTier2Ids = LinkedHashSet<String>()
+            for (msg in pipe.allActiveMessages) {
+                if (msg.role != "user") continue
+                for (attId in msg.attachmentIds) {
+                    if (effectiveInput.attachmentsById[attId]?.isFile == true &&
+                        retentionByAttId[attId] == FileRetentionTier.INDEX_RECALL
+                    ) {
+                        orderedTier2Ids.add(attId)
+                    }
+                }
+            }
+            val tier2Docs = orderedTier2Ids.mapNotNull { hydratedPreloaded[it] }
+            val uploadIds = if (lastUserIdx >= 0) {
+                selected[lastUserIdx].attachmentIds.filter { effectiveInput.attachmentsById[it]?.isFile == true }.toSet()
+            } else {
+                emptySet()
+            }
+            val baseDyn = pipe.dynamicOverhead - pipe.fileRecallBundle.recalledTokens
+            val remAfterSys = max(0, pipe.effectiveLimitTokens - pipe.prefix.systemTokens - baseDyn)
+            val recallBudget = FileContextBudgeter.computeFileRecallBudget(
+                remainingAfterSystem = remAfterSys,
+                memoryBudget = effectiveInput.memoryBudget,
+                isUploadTurn = uploadIds.any { it in orderedTier2Ids },
+            )
+            val recentForQuery = if (lastUserIdx >= 0) {
+                selected.filterIndexed { i, _ -> i != lastUserIdx }
+            } else {
+                selected
+            }
+            FileRecallEngine.recall(
+                tier2Docs = tier2Docs,
+                fileMetasById = effectiveInput.attachmentsById,
+                uploadTurnFileIds = uploadIds,
+                conversation = conv,
+                recentMessages = recentForQuery,
+                latestUserQuery = latestUserQuery,
+                activeChapter = pipe.activeChapter,
+                budgetTokens = recallBudget,
+                semanticScores = pipe.resolvedSemanticScores,
+                semanticScorer = null,
+                minSemanticCosine = effectiveInput.minSemanticCosine,
+                mutedRecallKeys = effectiveInput.mutedRecallKeys,
+                modelId = pipe.effectiveModelId,
+            )
         } else {
-            emptyList()
+            pipe.fileRecallBundle
         }
-
-        var reRecalledInjectedRawTokens = 0
+        val recalledFileContextBlock = effectiveFileRecallBundle.recalledBlock
 
         fun appendTrailingZone3(baseText: String): String = buildList {
             if (baseText.isNotBlank()) add(baseText.trim())
@@ -182,24 +280,24 @@ internal object ContextDepthInjector {
                 isFinalNovelUser -> {
                     val wrapped = NovelEngine.wrapNovelTurnUserMessage(
                         rawContent = rawContent,
-                        inputKind = msg.inputKind ?: input.draftInputKind ?: NovelInputKind.director,
+                        inputKind = msg.inputKind ?: effectiveInput.draftInputKind ?: NovelInputKind.director,
                         novel = conv.novel!!,
                         activeChapter = pipe.activeChapter,
                         triggeredLore = zone3StandardLore,
                         existingLoreTitles = existingLoreTitles,
                         archivedEpisodeLines = pipe.tailBundle.novelArchivedEpisodeLines,
                     )
-                    val withRecall = if (pipe.tailBundle.chatTailRecallBlock.isNotBlank()) {
-                        "${pipe.tailBundle.chatTailRecallBlock}\n\n$wrapped"
-                    } else {
-                        wrapped
-                    }
-                    appendTrailingZone3(withRecall)
+                    val combined = buildList {
+                        if (recalledFileContextBlock.isNotBlank()) add(recalledFileContextBlock)
+                        if (pipe.tailBundle.chatTailRecallBlock.isNotBlank()) add(pipe.tailBundle.chatTailRecallBlock)
+                        add(wrapped)
+                    }.joinToString("\n\n")
+                    appendTrailingZone3(combined)
                 }
                 isFinalRpUser -> {
                     val wrappedRp = RpEngine.wrapRpTurnUserMessage(
                         rawContent = rawContent,
-                        inputKind = msg.rpInputKind ?: input.draftRpInputKind ?: RpInputKind.action,
+                        inputKind = msg.rpInputKind ?: effectiveInput.draftRpInputKind ?: RpInputKind.action,
                         rp = conv.rp!!,
                         diceRoll = msg.rpDiceRoll,
                         activeLedgerLines = pipe.tailBundle.rpActiveLedgerLines,
@@ -208,11 +306,16 @@ internal object ContextDepthInjector {
                         triggeredLore = zone3StandardLore,
                         includeAuthorNote = conv.rp.authorNoteDepth <= 0,
                     )
-                    appendTrailingZone3(wrappedRp)
+                    val combined = buildList {
+                        if (recalledFileContextBlock.isNotBlank()) add(recalledFileContextBlock)
+                        add(wrappedRp)
+                    }.joinToString("\n\n")
+                    appendTrailingZone3(combined)
                 }
                 isFinalChatUser -> buildList {
                     if (chatWorldbookTriggeredBlock.isNotBlank()) add(chatWorldbookTriggeredBlock)
                     if (pipe.tailBundle.chatTailRecallBlock.isNotBlank()) add(pipe.tailBundle.chatTailRecallBlock)
+                    if (recalledFileContextBlock.isNotBlank()) add(recalledFileContextBlock)
                     if (rawContent.isNotBlank()) add(rawContent)
                     if (zone3TrailingSuffix.isNotBlank()) add(zone3TrailingSuffix)
                 }.joinToString("\n\n")
@@ -221,62 +324,62 @@ internal object ContextDepthInjector {
 
             val attIds = msg.attachmentIds
             val fileMetas = if (msg.role == "user") {
-                attIds.mapNotNull { input.attachmentsById[it]?.takeIf { a -> a.isFile } }
+                attIds.mapNotNull { effectiveInput.attachmentsById[it]?.takeIf { a -> a.isFile } }
             } else {
                 emptyList()
             }
             val imageIds = if (msg.role == "user") {
-                attIds.filter { id -> input.attachmentsById[id]?.isFile != true }
+                attIds.filter { id -> effectiveInput.attachmentsById[id]?.isFile != true }
             } else {
                 emptyList()
             }
 
-            val extraFilesForTurn = if (idx == lastUserIdx) reRecalledDecayedFiles else emptyList()
             val fileBlocksText = buildString {
                 if (fileMetas.isNotEmpty()) {
-                    if (msg.id in decayedFiles || input.resolveAttachmentText == null) {
-                        fileMetas.forEach { fm ->
-                            appendLine(FileContextBudgeter.buildDecayedFileStub(fm))
-                        }
+                    val tier1Metas = fileMetas.filter { fm ->
+                        (retentionByAttId[fm.id] ?: FileRetentionTier.FULL) == FileRetentionTier.FULL
+                    }
+                    val allocations = if (tier1Metas.isNotEmpty()) {
+                        FileContextBudgeter.allocateFileBudgets(tier1Metas, fileTurnBudget)
                     } else {
-                        val allTurnFiles = fileMetas + extraFilesForTurn
-                        val allocations = FileContextBudgeter.allocateFileBudgets(allTurnFiles, fileTurnBudget)
-                        val queryForTurn = if (idx == lastUserIdx) latestUserQuery else rawContent
-                        for (fm in fileMetas) {
-                            val rawFileText = input.resolveAttachmentText.invoke(fm.id)
+                        emptyMap()
+                    }
+                    for (fm in fileMetas) {
+                        val tier = retentionByAttId[fm.id] ?: FileRetentionTier.FULL
+                        if (tier == FileRetentionTier.INDEX_RECALL) {
+                            val indexed = hydratedPreloaded[fm.id]
+                            appendLine(
+                                FileContextBudgeter.buildDocumentIndexAnchor(
+                                    meta = fm,
+                                    outline = indexed?.outline.orEmpty(),
+                                    chunkCount = indexed?.chunks?.size ?: 0,
+                                ),
+                            )
+                            appendLine()
+                        } else {
+                            val rawFileText = resolvedTextsById[fm.id]
+                                ?: effectiveInput.resolveAttachmentText?.invoke(fm.id)
                             if (!rawFileText.isNullOrBlank()) {
                                 val fitted = FileContextBudgeter.fitFileToBudget(
                                     meta = fm,
                                     fullText = rawFileText,
-                                    queryText = queryForTurn,
+                                    queryText = "",
                                     budgetTokens = allocations[fm.id] ?: fileTurnBudget,
+                                    modeOverride = FileInjectMode.full,
                                 )
                                 appendLine(fitted.formattedBlock)
                                 appendLine()
                             } else {
-                                appendLine(FileContextBudgeter.buildDecayedFileStub(fm))
+                                val indexed = hydratedPreloaded[fm.id]
+                                appendLine(
+                                    FileContextBudgeter.buildDocumentIndexAnchor(
+                                        meta = fm,
+                                        outline = indexed?.outline.orEmpty(),
+                                        chunkCount = indexed?.chunks?.size ?: 0,
+                                    ),
+                                )
+                                appendLine()
                             }
-                        }
-                    }
-                }
-                if (extraFilesForTurn.isNotEmpty() && input.resolveAttachmentText != null) {
-                    val allocations = FileContextBudgeter.allocateFileBudgets(
-                        fileMetas + extraFilesForTurn,
-                        fileTurnBudget,
-                    )
-                    for (fm in extraFilesForTurn) {
-                        val rawFileText = input.resolveAttachmentText.invoke(fm.id)
-                        if (!rawFileText.isNullOrBlank()) {
-                            val fitted = FileContextBudgeter.fitFileToBudget(
-                                meta = fm,
-                                fullText = rawFileText,
-                                queryText = latestUserQuery,
-                                budgetTokens = allocations[fm.id] ?: (fileTurnBudget / 2),
-                                modeOverride = FileInjectMode.retrieve,
-                            )
-                            reRecalledInjectedRawTokens += fitted.injectedTokens
-                            appendLine(fitted.formattedBlock)
-                            appendLine()
                         }
                     }
                 }
@@ -291,7 +394,7 @@ internal object ContextDepthInjector {
             }.trim()
 
             if (imageIds.isNotEmpty() && msg.role == "user") {
-                if (msg.id in decayedImages || input.resolveAttachmentDataUrl == null) {
+                if (msg.id in decayedImages || effectiveInput.resolveAttachmentDataUrl == null) {
                     val notice = "[${imageIds.size} 张历史图片已省略]"
                     wireMessages.add(
                         WireChatMessage(
@@ -305,7 +408,7 @@ internal object ContextDepthInjector {
                         parts.add(WireChatContentPart(type = "text", text = mergedText))
                     }
                     for (id in imageIds) {
-                        val url = input.resolveAttachmentDataUrl.invoke(id)
+                        val url = effectiveInput.resolveAttachmentDataUrl.invoke(id)
                         if (!url.isNullOrBlank()) {
                             parts.add(WireChatContentPart(type = "image_url", imageUrl = url))
                         }
@@ -324,26 +427,35 @@ internal object ContextDepthInjector {
         if (lastUserIdx == -1) {
             appendSyntheticOpeningTurn(
                 wireMessages = wireMessages,
-                input = input,
+                input = effectiveInput,
                 pipe = pipe,
                 conv = conv,
                 zone3StandardLore = zone3StandardLore,
                 existingLoreTitles = existingLoreTitles,
                 chatWorldbookTriggeredBlock = chatWorldbookTriggeredBlock,
+                recalledFileContextBlock = recalledFileContextBlock,
                 zone3TrailingSuffix = zone3TrailingSuffix,
                 appendTrailingZone3 = ::appendTrailingZone3,
             )
         }
 
-        injectShallowDepthMessages(wireMessages, input, pipe, wbResult, conv)
+        injectShallowDepthMessages(wireMessages, effectiveInput, pipe, wbResult, conv)
 
-        val actualSentRaw = pipe.prefix.systemTokens + pipe.dynamicOverhead + selectedRawHistory + reRecalledInjectedRawTokens
+        val fileRecallDelta = effectiveFileRecallBundle.recalledTokens - pipe.fileRecallBundle.recalledTokens
+        val actualSentRaw = pipe.prefix.systemTokens + pipe.dynamicOverhead + fileRecallDelta + selectedRawHistory
         val actualSentTokens = (actualSentRaw * pipe.calibration).roundToInt()
         val actualSentPct = min(100, ((actualSentTokens.toDouble() / max(1, pipe.effectiveLimitTokens)) * 100.0).roundToInt())
-        val actualFileTokens = ((selectedRawFiles + reRecalledInjectedRawTokens) * pipe.calibration).roundToInt()
+        val actualFileTokens = ((selectedRawFiles + effectiveFileRecallBundle.recalledTokens) * pipe.calibration).roundToInt()
         val actualTrimmedCount = pipe.uncompactedExcludedCount + max(0, active.size - selected.size)
         val actualHardOverflow = actualSentTokens > pipe.windowLimit
         val actualIsSliding = actualTrimmedCount > 0
+
+        val updatedRecalledItems = if (newlyDemotedTier2) {
+            pipe.waterline.recalledItems.filterNot { it.source == FileContextBudgeter.FILE_CHUNK_SOURCE } +
+                effectiveFileRecallBundle.recalledItems
+        } else {
+            pipe.waterline.recalledItems
+        }
 
         val built = BuiltChatContext(
             wireMessages = wireMessages,
@@ -355,6 +467,9 @@ internal object ContextDepthInjector {
                 decayedFileMessageIds = decayedFiles,
                 trimmedMessageCount = actualTrimmedCount,
                 fileTokens = actualFileTokens,
+                retrievedMemoryCount = updatedRecalledItems.size,
+                recalledItems = updatedRecalledItems,
+                recalledTotalTokens = updatedRecalledItems.sumOf { it.estimatedTokens },
                 sentTokens = actualSentTokens,
                 sentPercentage = actualSentPct,
                 isSliding = actualIsSliding,
@@ -374,50 +489,62 @@ internal object ContextDepthInjector {
         pipe: ComputedPipeline,
         wbResult: WorldbookEvalResult?,
         conv: ChatConversation,
+        lastUserText: String,
     ): String {
-        if (!pipe.isV4Mode) return ""
         val parts = ArrayList<String>()
-        val depth0Lore = wbResult?.zone3TriggeredEntries.orEmpty()
-            .filter { it.position == WorldbookEngine.POSITION_AT_DEPTH && it.depth == 0 }
-        if (depth0Lore.isNotEmpty()) {
-            val body = depth0Lore.joinToString("\n") { e ->
-                val txt = ContextZonePrefixBuilder.expandDynamicV4Macros(e.content.trim(), conv, input.characterCard, input.persona)
-                "- [${e.category}] ${e.title}: $txt"
+        if (pipe.isV4Mode) {
+            val depth0Lore = wbResult?.zone3TriggeredEntries.orEmpty()
+                .filter { it.position == WorldbookEngine.POSITION_AT_DEPTH && it.depth == 0 }
+            if (depth0Lore.isNotEmpty()) {
+                val body = depth0Lore.joinToString("\n") { e ->
+                    val txt = ContextZonePrefixBuilder.expandDynamicV4Macros(e.content.trim(), conv, input.characterCard, input.persona)
+                    "- [${e.category}] ${e.title}: $txt"
+                }
+                parts.add("<depth_instructions>\n$body\n</depth_instructions>")
             }
-            parts.add("<depth_instructions>\n$body\n</depth_instructions>")
-        }
-        val depth0PresetBlocks = pipe.parsedPresetBlocks
-            .filter {
-                it.enabled && !it.marker &&
-                    ContextZonePrefixBuilder.isDepthInjectionPosition(it.injectionPosition) &&
-                    it.injectionDepth == 0 &&
-                    !it.role.equals("assistant", ignoreCase = true) &&
-                    it.content.isNotBlank()
+            val depth0PresetBlocks = pipe.parsedPresetBlocks
+                .filter {
+                    it.enabled && !it.marker &&
+                        ContextZonePrefixBuilder.isDepthInjectionPosition(it.injectionPosition) &&
+                        it.injectionDepth == 0 &&
+                        !it.role.equals("assistant", ignoreCase = true) &&
+                        it.content.isNotBlank()
+                }
+            for (b in depth0PresetBlocks) {
+                parts.add(ContextZonePrefixBuilder.expandDynamicV4Macros(b.content.trim(), conv, input.characterCard, input.persona))
             }
-        for (b in depth0PresetBlocks) {
-            parts.add(ContextZonePrefixBuilder.expandDynamicV4Macros(b.content.trim(), conv, input.characterCard, input.persona))
-        }
-        val personaDepth0 = input.persona
-            ?.takeIf {
-                it.description.isNotBlank() &&
-                    ContextZonePrefixBuilder.isDepthInjectionPosition(it.injectionPosition) &&
-                    it.injectionDepth == 0
+            val personaDepth0 = input.persona
+                ?.takeIf {
+                    it.description.isNotBlank() &&
+                        ContextZonePrefixBuilder.isDepthInjectionPosition(it.injectionPosition) &&
+                        it.injectionDepth == 0
+                }
+            if (personaDepth0 != null) {
+                val userName = ContextZonePrefixBuilder.resolveStaticUserName(conv, input.persona)
+                val body = ContextZonePrefixBuilder.expandDynamicV4Macros(personaDepth0.description.trim(), conv, input.characterCard, input.persona)
+                parts.add("【用户人设 ($userName)】\n$body")
             }
-        if (personaDepth0 != null) {
-            val userName = ContextZonePrefixBuilder.resolveStaticUserName(conv, input.persona)
-            val body = ContextZonePrefixBuilder.expandDynamicV4Macros(personaDepth0.description.trim(), conv, input.characterCard, input.persona)
-            parts.add("【用户人设 ($userName)】\n$body")
+            val cardDepth0 = input.characterCard
+                ?.takeIf { it.depthPromptText.isNotBlank() && it.depthPromptDepth == 0 }
+            if (cardDepth0 != null) {
+                parts.add(ContextZonePrefixBuilder.expandDynamicV4Macros(cardDepth0.depthPromptText.trim(), conv, input.characterCard, input.persona))
+            }
+            val cardPost = input.characterCard?.postHistoryInstructions?.trim().orEmpty()
+            val rpPost = conv.rp?.postHistoryInstructions?.trim().orEmpty()
+            if (cardPost.isNotEmpty() && (!pipe.isRp || rpPost != cardPost)) {
+                val expandedPost = ContextZonePrefixBuilder.expandDynamicV4Macros(cardPost, conv, input.characterCard, input.persona)
+                parts.add("【后置核心指令 (Post-History Instructions)】\n$expandedPost")
+            }
         }
-        val cardDepth0 = input.characterCard
-            ?.takeIf { it.depthPromptText.isNotBlank() && it.depthPromptDepth == 0 }
-        if (cardDepth0 != null) {
-            parts.add(ContextZonePrefixBuilder.expandDynamicV4Macros(cardDepth0.depthPromptText.trim(), conv, input.characterCard, input.persona))
-        }
-        val cardPost = input.characterCard?.postHistoryInstructions?.trim().orEmpty()
-        val rpPost = conv.rp?.postHistoryInstructions?.trim().orEmpty()
-        if (cardPost.isNotEmpty() && (!pipe.isRp || rpPost != cardPost)) {
-            val expandedPost = ContextZonePrefixBuilder.expandDynamicV4Macros(cardPost, conv, input.characterCard, input.persona)
-            parts.add("【后置核心指令 (Post-History Instructions)】\n$expandedPost")
+        val lengthDirective = OutputLengthPolicy.buildLengthDirective(
+            mode = conv.mode,
+            minOutputChars = conv.params.minOutputChars,
+            novelConfig = conv.novel,
+            activeChapter = pipe.activeChapter,
+            isEnglish = OutputLengthPolicy.isEnglishPreference(lastUserText),
+        )
+        if (lengthDirective.isNotBlank()) {
+            parts.add(lengthDirective)
         }
         return parts.joinToString("\n\n").trim()
     }
@@ -430,6 +557,7 @@ internal object ContextDepthInjector {
         zone3StandardLore: List<NovelLoreEntry>,
         existingLoreTitles: List<String>,
         chatWorldbookTriggeredBlock: String,
+        recalledFileContextBlock: String,
         zone3TrailingSuffix: String,
         appendTrailingZone3: (String) -> String,
     ) {
@@ -448,11 +576,11 @@ internal object ContextDepthInjector {
                     existingLoreTitles = existingLoreTitles,
                     archivedEpisodeLines = pipe.tailBundle.novelArchivedEpisodeLines,
                 )
-                val content = if (pipe.tailBundle.chatTailRecallBlock.isNotBlank()) {
-                    "${pipe.tailBundle.chatTailRecallBlock}\n\n$openingPrompt"
-                } else {
-                    openingPrompt
-                }
+                val content = buildList {
+                    if (recalledFileContextBlock.isNotBlank()) add(recalledFileContextBlock)
+                    if (pipe.tailBundle.chatTailRecallBlock.isNotBlank()) add(pipe.tailBundle.chatTailRecallBlock)
+                    add(openingPrompt)
+                }.joinToString("\n\n")
                 wireMessages.add(WireChatMessage(role = "user", textContent = appendTrailingZone3(content)))
             }
             pipe.isRp -> {
@@ -466,12 +594,17 @@ internal object ContextDepthInjector {
                     triggeredLore = zone3StandardLore,
                     includeAuthorNote = conv.rp.authorNoteDepth <= 0,
                 )
-                wireMessages.add(WireChatMessage(role = "user", textContent = appendTrailingZone3(openingRp)))
+                val content = buildList {
+                    if (recalledFileContextBlock.isNotBlank()) add(recalledFileContextBlock)
+                    add(openingRp)
+                }.joinToString("\n\n")
+                wireMessages.add(WireChatMessage(role = "user", textContent = appendTrailingZone3(content)))
             }
             else -> {
                 val syntheticChat = buildList {
                     if (chatWorldbookTriggeredBlock.isNotBlank()) add(chatWorldbookTriggeredBlock)
                     if (pipe.tailBundle.chatTailRecallBlock.isNotBlank()) add(pipe.tailBundle.chatTailRecallBlock)
+                    if (recalledFileContextBlock.isNotBlank()) add(recalledFileContextBlock)
                     if (zone3TrailingSuffix.isNotBlank()) add(zone3TrailingSuffix)
                 }.joinToString("\n\n")
                 if (syntheticChat.isNotBlank()) {

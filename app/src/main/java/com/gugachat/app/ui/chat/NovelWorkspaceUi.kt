@@ -148,6 +148,9 @@ fun NovelWorkspaceScreen(
     onSend: () -> Unit,
     onStop: () -> Unit,
     onToast: (String) -> Unit,
+    onUpdateSentAttachmentInjectMode: ((String, FileInjectMode) -> Unit)? = null,
+    minOutputChars: Int? = null,
+    autoContinueShortReply: Boolean = false,
 ) {
     val strings = LocalAppStrings.current
     val isZh = strings.language == AppLanguage.ZH
@@ -444,6 +447,9 @@ fun NovelWorkspaceScreen(
                         onDeleteMessage = onDeleteMessage,
                         onSwitchVariant = onSwitchVariant,
                         onToast = onToast,
+                        onUpdateSentAttachmentInjectMode = onUpdateSentAttachmentInjectMode,
+                        minOutputChars = minOutputChars,
+                        autoContinueShortReply = autoContinueShortReply,
                         modifier = Modifier.fillMaxSize(),
                     )
 

@@ -1,5 +1,6 @@
 package com.gugachat.app.data.chat
 
+import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.storage.ApiProtocol
 import com.gugachat.app.core.storage.ApiProviderConfig
 import com.gugachat.app.core.storage.ApiProviderStore
@@ -27,12 +28,15 @@ import com.gugachat.app.domain.chat.ChatMessage
 import com.gugachat.app.domain.chat.ContextBuildInput
 import com.gugachat.app.domain.chat.ContextBuilder
 import com.gugachat.app.domain.chat.ConversationMode
+import com.gugachat.app.domain.chat.FileContextBudgeter
+import com.gugachat.app.domain.chat.IndexedDocument
 import com.gugachat.app.domain.chat.LoreTimedEntryState
 import com.gugachat.app.domain.chat.MemoryBudget
 import com.gugachat.app.domain.chat.MemoryEpisode
 import com.gugachat.app.domain.chat.MemoryLedgerItem
 import com.gugachat.app.domain.chat.NovelChapter
 import com.gugachat.app.domain.chat.NovelLoreEntry
+import com.gugachat.app.domain.chat.OutputLengthPolicy
 import com.gugachat.app.domain.chat.TimelineReconciler
 import com.gugachat.app.domain.chat.TokenEstimator
 import com.gugachat.app.domain.chat.UserMemory
@@ -161,9 +165,16 @@ class ChatContextAssembler(
         val budget = parseMemoryBudget(settings.memoryBudget)
         val modelMeta = modelMetaOverride ?: DirectProtocolCodec.inferChatModelMeta(modelId)
 
-        val allAttIds = msgs.asSequence().flatMap { it.attachmentIds.asSequence() }.distinct().toList()
+        val activeMsgs = TimelineReconciler.activeMessages(msgs)
+        val allAttIds = activeMsgs.asSequence().flatMap { it.attachmentIds.asSequence() }.distinct().toList()
         val attMap: Map<String, ChatAttachmentMeta> = if (allAttIds.isNotEmpty()) {
             attachmentStore.loadAttachmentsMap(allAttIds)
+        } else {
+            emptyMap()
+        }
+        val activeFileMetas = allAttIds.mapNotNull { attMap[it]?.takeIf { m -> m.isFile } }
+        val preloadedFileChunks: Map<String, IndexedDocument> = if (activeFileMetas.isNotEmpty()) {
+            attachmentStore.preloadDocumentIndexes(activeFileMetas)
         } else {
             emptyMap()
         }
@@ -183,13 +194,16 @@ class ChatContextAssembler(
             episodes = episodeList,
             userMemories = userMemList,
             mountedWorldbooks = v4Assets.mountedWorldbooks,
+            preloadedFileChunks = preloadedFileChunks,
         )
         val mountedWbIds = v4Assets.mountedWorldbooks.map { it.worldbook.id }.distinct()
+        val fileScopeIds = preloadedFileChunks.keys.toList()
         val (semanticScores, minCosineFloor) = retrievalCoordinator.prepareSendSemanticScores(
             conversationId = conv.id,
             queryText = queryText,
             candidateIds = candidateIds,
             mountedWorldbookIds = mountedWbIds,
+            fileScopeIds = fileScopeIds,
         )
 
         val extCal = lookupExternalCalibration(settings, groupId, modelId)
@@ -212,6 +226,7 @@ class ChatContextAssembler(
             attachmentsById = attMap,
             resolveAttachmentDataUrl = { attId -> attachmentStore.resolveDataUrl(attId) },
             resolveAttachmentText = { attId -> attachmentStore.readExtractedText(attId) },
+            preloadedFileChunks = preloadedFileChunks,
             precomputedSemanticScores = semanticScores.ifEmpty { null },
             mutedRecallKeys = mutedRecallKeys,
             modelId = modelId,
@@ -260,6 +275,25 @@ class ChatContextAssembler(
             estimatedRawTokens = estimatedRawTokens,
             hasUndecayedImages = hasUndecayedImages,
         )
+        val lastUserText = draftText.trim().ifBlank {
+            activeMsgs.lastOrNull { it.role == "user" }?.content.orEmpty()
+        }
+        val effectiveWindow = maxOf(
+            4096,
+            conv.params.contextWindowOverride?.takeIf { it >= 4096 } ?: modelMeta.context_window,
+        )
+        val effectiveMaxTokens = OutputLengthPolicy.computeEffectiveMaxTokens(
+            params = conv.params,
+            mode = conv.mode,
+            modelId = modelId,
+            modelMeta = modelMeta,
+            protocol = protocol,
+            windowLimit = effectiveWindow,
+            isEnglish = OutputLengthPolicy.isEnglishPreference(
+                recentUserText = lastUserText,
+                appLanguageIsEnglish = settings.language == AppLanguage.EN,
+            ),
+        )
         val request = OnlineChatCompletionRequestDto(
             group_id = groupId,
             model = modelId,
@@ -267,7 +301,7 @@ class ChatContextAssembler(
             stream = true,
             temperature = conv.params.temperature,
             top_p = conv.params.topP,
-            max_tokens = conv.params.maxTokens,
+            max_tokens = effectiveMaxTokens,
             reasoning_effort = if (conv.params.enableReasoning) conv.params.reasoningEffort else null,
             frequency_penalty = conv.params.frequencyPenalty,
             presence_penalty = conv.params.presencePenalty,
@@ -332,6 +366,7 @@ class ChatContextAssembler(
         episodes: List<MemoryEpisode>,
         userMemories: List<UserMemory>,
         mountedWorldbooks: List<WorldbookMountedBook> = emptyList(),
+        preloadedFileChunks: Map<String, IndexedDocument> = emptyMap(),
     ): Set<String> {
         val ids = LinkedHashSet<String>()
         if (conv.mode == ConversationMode.novel || conv.mode == ConversationMode.rp) {
@@ -367,6 +402,11 @@ class ChatContextAssembler(
                 }
             }
         }
+        for ((attId, doc) in preloadedFileChunks) {
+            for (ch in doc.chunks) {
+                ids.add(FileContextBudgeter.chunkOwnerId(attId, ch.index))
+            }
+        }
         return ids
     }
 
@@ -397,6 +437,13 @@ class ChatContextAssembler(
         val ledgerById = ledgerList.associateBy { it.id }
         val epById = episodeList.associateBy { it.id }
         val memById = userMemList.associateBy { it.id }
+        val fileChunkById = HashMap<String, String>()
+        for ((attId, doc) in baseInput.preloadedFileChunks) {
+            for (ch in doc.chunks) {
+                fileChunkById[FileContextBudgeter.chunkOwnerId(attId, ch.index)] =
+                    FileContextBudgeter.formatContextualChunkText(doc.fileName, ch)
+            }
+        }
         val rerankPairs = dynamicItems.map { item ->
             val key = "${item.source}:${item.id}"
             val docText = when (item.source) {
@@ -405,6 +452,7 @@ class ChatContextAssembler(
                 "rp_ledger" -> ledgerById[item.id]?.let { RetrievalCoordinator.formatCanonicalTargetText(it.title, it.content) }
                 "episode_archived" -> epById[item.id]?.let { RetrievalCoordinator.formatCanonicalTargetText(it.title, it.summary) }
                 "user_memory_archival" -> memById[item.id]?.content
+                FileContextBudgeter.FILE_CHUNK_SOURCE -> fileChunkById[item.id]
                 else -> null
             }?.takeIf { it.isNotBlank() } ?: "${item.title}: ${item.contentPreview}"
             key to docText

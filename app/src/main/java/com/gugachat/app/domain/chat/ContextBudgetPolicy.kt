@@ -64,11 +64,60 @@ internal object ContextBudgetPolicy {
         return out
     }
 
+    fun resolveFileRetentionModes(
+        allActiveMessages: List<ChatMessage>,
+        activeWindowMessages: List<ChatMessage>,
+        attachmentsById: Map<String, ChatAttachmentMeta>,
+        effectiveLimitTokens: Int,
+    ): Map<String, FileRetentionTier> {
+        if (allActiveMessages.isEmpty() || attachmentsById.isEmpty()) return emptyMap()
+        val activeMsgIds = activeWindowMessages.map { it.id }.toSet()
+        val fullInlineThreshold = FileContextBudgeter.computeFullInlineThreshold(effectiveLimitTokens)
+        val hardFullCap = min(
+            FileContextBudgeter.HARD_MAX_FILE_TURN_TOKENS,
+            (max(4096, effectiveLimitTokens) * FileContextBudgeter.MAX_FILE_WINDOW_SHARE).toInt(),
+        )
+
+        val retention = LinkedHashMap<String, FileRetentionTier>()
+        for (msg in allActiveMessages) {
+            if (msg.role != "user" || msg.attachmentIds.isEmpty()) continue
+            val inActiveWindow = msg.id in activeMsgIds
+            for (attId in msg.attachmentIds) {
+                val meta = attachmentsById[attId]?.takeIf { it.isFile } ?: continue
+                val tier = if (!inActiveWindow) {
+                    // Compacted or slid-out upload turn -> keep dynamically recallable in Tier 2
+                    FileRetentionTier.INDEX_RECALL
+                } else {
+                    when (meta.injectMode) {
+                        FileInjectMode.retrieve, FileInjectMode.head_tail -> FileRetentionTier.INDEX_RECALL
+                        FileInjectMode.full -> {
+                            if (meta.estimatedTokens <= hardFullCap) {
+                                FileRetentionTier.FULL
+                            } else {
+                                FileRetentionTier.INDEX_RECALL
+                            }
+                        }
+                        FileInjectMode.auto -> {
+                            if (meta.estimatedTokens <= fullInlineThreshold) {
+                                FileRetentionTier.FULL
+                            } else {
+                                FileRetentionTier.INDEX_RECALL
+                            }
+                        }
+                    }
+                }
+                retention[attId] = tier
+            }
+        }
+        return retention
+    }
+
     fun sliceActiveWindow(
         conversation: ChatConversation,
         messages: List<ChatMessage>,
         novelChapters: List<NovelChapter>,
         attachmentsById: Map<String, ChatAttachmentMeta> = emptyMap(),
+        effectiveLimitTokens: Int = 100_000,
     ): ActiveWindowSlice {
         val allActive = TimelineReconciler.activeMessages(messages)
         val tipSeq = allActive.maxOfOrNull { it.seq } ?: 0
@@ -85,7 +134,6 @@ internal object ContextBudgetPolicy {
         val uncompactedExcludedCount = max(0, uncompacted.size - active.size)
 
         val maxImgTurns = max(0, conversation.params.maxImageTurns)
-        val maxFileTurns = max(0, conversation.params.maxFileTurns)
 
         val imgMsgIds = active
             .filter { msg ->
@@ -99,19 +147,21 @@ internal object ContextBudgetPolicy {
             emptySet()
         }
 
-        val recentUserIdsForFiles = if (maxFileTurns > 0) {
-            active.filter { it.role == "user" }.takeLast(maxFileTurns).map { it.id }.toSet()
-        } else {
-            emptySet()
-        }
+        val fileRetention = resolveFileRetentionModes(
+            allActiveMessages = allActive,
+            activeWindowMessages = active,
+            attachmentsById = attachmentsById,
+            effectiveLimitTokens = effectiveLimitTokens,
+        )
 
-        val fileMsgIds = active
+        val decayedFiles = active
             .filter { msg ->
-                msg.role == "user" && msg.attachmentIds.any { id -> attachmentsById[id]?.isFile == true }
+                msg.role == "user" && msg.attachmentIds.any { id ->
+                    attachmentsById[id]?.isFile == true && fileRetention[id] == FileRetentionTier.INDEX_RECALL
+                }
             }
             .map { it.id }
-
-        val decayedFiles = fileMsgIds.filter { it !in recentUserIdsForFiles }.toSet()
+            .toSet()
 
         val activeChapter = if (conversation.mode == ConversationMode.novel && conversation.novel != null) {
             val id = conversation.novel.activeChapterId
@@ -128,6 +178,7 @@ internal object ContextBudgetPolicy {
             activeChapter = activeChapter,
             allActiveMessages = allActive,
             uncompactedExcludedCount = uncompactedExcludedCount,
+            fileRetentionByAttachmentId = fileRetention,
         )
     }
 
@@ -153,13 +204,23 @@ internal object ContextBudgetPolicy {
         fileDecayed: Boolean,
         attachmentsById: Map<String, ChatAttachmentMeta>,
         perTurnFileBudget: Int,
+        fileRetentionByAttachmentId: Map<String, FileRetentionTier> = emptyMap(),
     ): Int {
         if (msg.role != "user" || msg.attachmentIds.isEmpty()) return 0
         val files = msg.attachmentIds.mapNotNull { attachmentsById[it]?.takeIf { a -> a.isFile } }
         if (files.isEmpty()) return 0
-        if (fileDecayed) return files.size * FileContextBudgeter.DECAYED_STUB_TOKENS
-        val rawSum = files.sumOf { max(32, it.estimatedTokens) + 48 }
-        return min(rawSum, perTurnFileBudget)
+        var fullRawSum = 0
+        var anchorSum = 0
+        for (f in files) {
+            val tier = fileRetentionByAttachmentId[f.id]
+                ?: if (fileDecayed) FileRetentionTier.INDEX_RECALL else FileRetentionTier.FULL
+            if (tier == FileRetentionTier.INDEX_RECALL) {
+                anchorSum += FileContextBudgeter.INDEX_ANCHOR_ESTIMATED_TOKENS
+            } else {
+                fullRawSum += max(32, f.estimatedTokens) + 48
+            }
+        }
+        return min(fullRawSum, perTurnFileBudget) + anchorSum
     }
 
     fun cleanAssistantHistoryText(msg: ChatMessage, conversation: ChatConversation): String {

@@ -283,4 +283,53 @@ class DirectProtocolCodecTest {
         assertEquals("model", appendedContents[1].jsonObject["role"]?.jsonPrimitive?.content)
         assertEquals("Sure,", appendedContents[1].jsonObject["parts"]!!.jsonArray[0].jsonObject["text"]?.jsonPrimitive?.content)
     }
+
+    @Test
+    fun thinkingWithMaxTokens_respectsVisibleHeadroomFloorAcrossAnthropicAndGemini() {
+        // Anthropic: max_tokens slightly above thinkingBudget (4500 vs 4096) still gets floored to 4096 + 1024 = 5120
+        val tightReq = OnlineChatCompletionRequestDto(
+            group_id = -1_000_000_001L,
+            model = "claude-sonnet-4-20250514",
+            messages = listOf(WireChatMessageDto.text("user", "Write deeply")),
+            max_tokens = 4500,
+            reasoning_effort = "medium",
+        )
+        val tightClaude = AppJson.parseToJsonElement(DirectProtocolCodec.buildAnthropicRequestJson(tightReq, true)).jsonObject
+        assertEquals(5120, tightClaude["max_tokens"]?.jsonPrimitive?.content?.toInt())
+
+        // Gemini: maxOutputTokens below thinkingBudget (2048 vs 4096) gets floored to 5120 so thinking never starves visible text
+        val tightGemini = AppJson.parseToJsonElement(DirectProtocolCodec.buildGeminiRequestJson(tightReq.copy(max_tokens = 2048))).jsonObject
+        assertEquals(
+            5120,
+            tightGemini["generationConfig"]?.jsonObject?.get("maxOutputTokens")?.jsonPrimitive?.content?.toInt(),
+        )
+
+        // Larger floored max_tokens (e.g. from OutputLengthPolicy for minOutputChars + thinking) is preserved cleanly
+        val largeFloorReq = OnlineChatCompletionRequestDto(
+            group_id = -1_000_000_001L,
+            model = "claude-sonnet-4-20250514",
+            messages = listOf(WireChatMessageDto.text("user", "Write 3000 chars")),
+            max_tokens = 12_800,
+            reasoning_effort = "high",
+        )
+        val largeClaude = AppJson.parseToJsonElement(DirectProtocolCodec.buildAnthropicRequestJson(largeFloorReq, true)).jsonObject
+        assertEquals(12_800, largeClaude["max_tokens"]?.jsonPrimitive?.content?.toInt())
+        assertEquals(8192, largeClaude["thinking"]?.jsonObject?.get("budget_tokens")?.jsonPrimitive?.content?.toInt())
+
+        val largeGemini = AppJson.parseToJsonElement(DirectProtocolCodec.buildGeminiRequestJson(largeFloorReq)).jsonObject
+        assertEquals(
+            12_800,
+            largeGemini["generationConfig"]?.jsonObject?.get("maxOutputTokens")?.jsonPrimitive?.content?.toInt(),
+        )
+        assertEquals(
+            8192,
+            largeGemini["generationConfig"]?.jsonObject?.get("thinkingConfig")?.jsonObject?.get("thinkingBudget")?.jsonPrimitive?.content?.toInt(),
+        )
+
+        // Gemini with max_tokens = null still omits maxOutputTokens to preserve native model limit
+        val autoGemini = AppJson.parseToJsonElement(
+            DirectProtocolCodec.buildGeminiRequestJson(largeFloorReq.copy(max_tokens = null)),
+        ).jsonObject
+        assertFalse(autoGemini["generationConfig"]!!.jsonObject.containsKey("maxOutputTokens"))
+    }
 }

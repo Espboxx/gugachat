@@ -18,6 +18,8 @@ import com.gugachat.app.core.util.CoreAppJson
 import com.gugachat.app.core.util.ServerUrlUtils
 import com.gugachat.app.data.api.SseRetryPolicy
 import com.gugachat.app.data.api.UpdateChannel
+import com.gugachat.app.domain.chat.ConversationMode
+import com.gugachat.app.domain.chat.OutputLengthPolicy
 import com.gugachat.app.domain.chat.RetrievalSettings
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -65,11 +67,21 @@ data class AppSettings(
     val defaultContextWindowOverride: Int? = null,
     val defaultMaxHistoryMessages: Int? = null,
     val defaultMaxOutputTokens: Int? = null,
+    val defaultMinOutputChat: Int? = null,
+    val defaultMinOutputRp: Int? = null,
+    val defaultMinOutputNovel: Int? = null,
+    val defaultAutoContinueShort: Boolean = false,
     val retrievalSettings: RetrievalSettings = RetrievalSettings(),
     val tokenCalibrationMap: Map<String, Double> = emptyMap(),
     val lastStudioSubtab: Int? = null,
     val webDavConfig: WebDavSyncConfig = WebDavSyncConfig(),
-)
+) {
+    fun defaultMinOutputFor(mode: ConversationMode): Int? = when (mode) {
+        ConversationMode.chat -> defaultMinOutputChat
+        ConversationMode.rp -> defaultMinOutputRp
+        ConversationMode.novel -> defaultMinOutputNovel
+    }
+}
 
 class SettingsStore(private val context: Context) {
     private object Keys {
@@ -96,6 +108,10 @@ class SettingsStore(private val context: Context) {
         val DEFAULT_CONTEXT_WINDOW_OVERRIDE = intPreferencesKey("default_context_window_override")
         val DEFAULT_MAX_HISTORY_MESSAGES = intPreferencesKey("default_max_history_messages")
         val DEFAULT_MAX_OUTPUT_TOKENS = intPreferencesKey("default_max_output_tokens")
+        val DEFAULT_MIN_OUTPUT_CHAT = intPreferencesKey("default_min_output_chat")
+        val DEFAULT_MIN_OUTPUT_RP = intPreferencesKey("default_min_output_rp")
+        val DEFAULT_MIN_OUTPUT_NOVEL = intPreferencesKey("default_min_output_novel")
+        val DEFAULT_AUTO_CONTINUE_SHORT = booleanPreferencesKey("default_auto_continue_short")
         val RETRIEVAL_SETTINGS_JSON = stringPreferencesKey("retrieval_settings_json")
         val TOKEN_CALIBRATION_MAP_JSON = stringPreferencesKey("token_calibration_map_json")
         val LAST_STUDIO_SUBTAB = intPreferencesKey("last_studio_subtab")
@@ -129,6 +145,10 @@ class SettingsStore(private val context: Context) {
             defaultContextWindowOverride = prefs[Keys.DEFAULT_CONTEXT_WINDOW_OVERRIDE]?.takeIf { it >= 4096 },
             defaultMaxHistoryMessages = prefs[Keys.DEFAULT_MAX_HISTORY_MESSAGES]?.takeIf { it > 0 },
             defaultMaxOutputTokens = prefs[Keys.DEFAULT_MAX_OUTPUT_TOKENS]?.takeIf { it >= 256 },
+            defaultMinOutputChat = OutputLengthPolicy.normalizeMinOutputChars(prefs[Keys.DEFAULT_MIN_OUTPUT_CHAT]),
+            defaultMinOutputRp = OutputLengthPolicy.normalizeMinOutputChars(prefs[Keys.DEFAULT_MIN_OUTPUT_RP]),
+            defaultMinOutputNovel = OutputLengthPolicy.normalizeMinOutputChars(prefs[Keys.DEFAULT_MIN_OUTPUT_NOVEL]),
+            defaultAutoContinueShort = prefs[Keys.DEFAULT_AUTO_CONTINUE_SHORT] ?: false,
             retrievalSettings = decodeRetrievalSettings(prefs[Keys.RETRIEVAL_SETTINGS_JSON]),
             tokenCalibrationMap = decodeTokenCalibrationMap(prefs[Keys.TOKEN_CALIBRATION_MAP_JSON]),
             lastStudioSubtab = prefs[Keys.LAST_STUDIO_SUBTAB]?.takeIf { it >= 0 },
@@ -226,6 +246,41 @@ class SettingsStore(private val context: Context) {
             prefs[Keys.DEFAULT_CONTEXT_WINDOW_OVERRIDE] = cleanWin
             prefs[Keys.DEFAULT_MAX_HISTORY_MESSAGES] = cleanHist
             prefs[Keys.DEFAULT_MAX_OUTPUT_TOKENS] = cleanOut
+        }
+    }
+
+    suspend fun defaultMinOutputFor(mode: ConversationMode): Int? =
+        currentSettings().defaultMinOutputFor(mode)
+
+    suspend fun setDefaultMinOutputPrefs(
+        mode: ConversationMode,
+        minOutputChars: Int?,
+        autoContinueShortReply: Boolean? = null,
+    ) {
+        context.settingsDataStore.edit { prefs ->
+            val clean = OutputLengthPolicy.normalizeMinOutputChars(minOutputChars) ?: 0
+            when (mode) {
+                ConversationMode.chat -> prefs[Keys.DEFAULT_MIN_OUTPUT_CHAT] = clean
+                ConversationMode.rp -> prefs[Keys.DEFAULT_MIN_OUTPUT_RP] = clean
+                ConversationMode.novel -> prefs[Keys.DEFAULT_MIN_OUTPUT_NOVEL] = clean
+            }
+            if (autoContinueShortReply != null) {
+                prefs[Keys.DEFAULT_AUTO_CONTINUE_SHORT] = autoContinueShortReply
+            }
+        }
+    }
+
+    suspend fun setAllDefaultMinOutputPrefs(
+        chatMinOutput: Int?,
+        rpMinOutput: Int?,
+        novelMinOutput: Int?,
+        autoContinueShort: Boolean,
+    ) {
+        context.settingsDataStore.edit { prefs ->
+            prefs[Keys.DEFAULT_MIN_OUTPUT_CHAT] = OutputLengthPolicy.normalizeMinOutputChars(chatMinOutput) ?: 0
+            prefs[Keys.DEFAULT_MIN_OUTPUT_RP] = OutputLengthPolicy.normalizeMinOutputChars(rpMinOutput) ?: 0
+            prefs[Keys.DEFAULT_MIN_OUTPUT_NOVEL] = OutputLengthPolicy.normalizeMinOutputChars(novelMinOutput) ?: 0
+            prefs[Keys.DEFAULT_AUTO_CONTINUE_SHORT] = autoContinueShort
         }
     }
 

@@ -14,7 +14,10 @@ import com.gugachat.app.data.local.LocalEmbeddingModelManager
 import com.gugachat.app.data.local.LocalOnnxEmbeddingEngine
 import com.gugachat.app.data.local.WorldbookEntryEntity
 import com.gugachat.app.data.local.toDomain
+import com.gugachat.app.domain.chat.AttachmentKind
+import com.gugachat.app.domain.chat.DocumentChunk
 import com.gugachat.app.domain.chat.EmbeddingEngine
+import com.gugachat.app.domain.chat.FileContextBudgeter
 import com.gugachat.app.domain.chat.MemoryEpisode
 import com.gugachat.app.domain.chat.MemoryLedgerItem
 import com.gugachat.app.domain.chat.NovelLoreEntry
@@ -22,6 +25,7 @@ import com.gugachat.app.domain.chat.RemoteEmbeddingConfig
 import com.gugachat.app.domain.chat.RerankEngine
 import com.gugachat.app.domain.chat.RetrievalMode
 import com.gugachat.app.domain.chat.RetrievalSettings
+import com.gugachat.app.domain.chat.TimelineReconciler
 import com.gugachat.app.domain.chat.UserMemory
 import com.gugachat.app.domain.chat.VectorIndexProgress
 import com.gugachat.app.domain.chat.VectorIndexTarget
@@ -34,6 +38,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -91,6 +98,7 @@ class RetrievalCoordinator internal constructor(
     val indexProgress: StateFlow<VectorIndexProgress> = _indexProgress.asStateFlow()
 
     private val activeIndexJobs = ConcurrentHashMap<String, Job>()
+    private val fileIndexMutex = Mutex()
 
     fun currentRetrievalSettings(): RetrievalSettings = retrievalSettingsProvider()
 
@@ -175,6 +183,7 @@ class RetrievalCoordinator internal constructor(
         candidateIds: Set<String>,
         timeoutMs: Long = DEFAULT_SEND_TIMEOUT_MS,
         mountedWorldbookIds: List<String> = emptyList(),
+        fileScopeIds: List<String> = emptyList(),
     ): Pair<Map<String, Double>, Double> {
         val settings = currentRetrievalSettings()
         val engine = resolveActiveEmbeddingEngine(settings)
@@ -183,11 +192,17 @@ class RetrievalCoordinator internal constructor(
             return emptyMap<String, Double>() to fallbackFloor
         }
         val effectiveFloor = (settings.minCosineOverride ?: engine.minCosineFloor).coerceIn(0.0, 1.0)
-        val extraScopes = mountedWorldbookIds
+        val wbScopes = mountedWorldbookIds
             .map { it.trim() }
             .filter { it.isNotEmpty() }
-            .distinct()
             .map { VectorMemoryIndex.worldbookScopeId(it) }
+        val normalizedFileScopes = fileScopeIds
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .map { raw ->
+                if (raw.startsWith(VectorMemoryIndex.FILE_CONV_PREFIX)) raw else VectorMemoryIndex.fileScopeId(raw)
+            }
+        val extraScopes = (wbScopes + normalizedFileScopes).distinct()
         val scores = try {
             vectorMemoryIndex.scoreCandidates(
                 conversationId = conversationId,
@@ -295,6 +310,7 @@ class RetrievalCoordinator internal constructor(
         return scope.launch(Dispatchers.IO) {
             val chatDao = database.chatDao()
             val userMemDao = database.userMemoryDao()
+            val attachmentDao = database.attachmentDao()
             scheduleConversationIndexing(
                 scope = scope,
                 conversationId = conversationId,
@@ -304,6 +320,116 @@ class RetrievalCoordinator internal constructor(
                 userMemories = userMemDao.getAll().map { it.toDomain() },
                 batchSize = batchSize,
             )
+
+            // Also index active uploaded document attachments in this conversation under file:$attId
+            val activeMsgs = TimelineReconciler.activeMessages(
+                chatDao.getMessagesForConversation(conversationId).map { it.toDomain() },
+            )
+            val attIds = activeMsgs.asSequence()
+                .filter { it.role == "user" }
+                .flatMap { it.attachmentIds.asSequence() }
+                .distinct()
+                .toList()
+            if (attIds.isNotEmpty()) {
+                val attEntities = attIds.chunked(200).flatMap { chunk -> attachmentDao.getByIds(chunk) }
+                for (entity in attEntities) {
+                    if (!entity.kind.equals(AttachmentKind.file.name, ignoreCase = true)) continue
+                    val path = entity.textPath.ifBlank { entity.localPath }
+                    if (path.isBlank()) continue
+                    val file = File(path)
+                    if (!file.isFile) continue
+                    val text = runCatching { file.readText(Charsets.UTF_8) }.getOrNull()
+                    if (!text.isNullOrBlank()) {
+                        scheduleAttachmentIndexing(
+                            scope = scope,
+                            attachmentId = entity.id,
+                            fileName = entity.fileName,
+                            extractedText = text,
+                            batchSize = batchSize,
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Indexes a document attachment's overlapping chunks ONCE under `conversationId = "file:$attachmentId"`
+     * (`ownerType = "file_chunk"`). Serialized through [fileIndexMutex] so multi-file uploads never
+     * contend on ONNX or trigger API 429s, and never cancels conversation memory/worldbook jobs.
+     */
+    fun scheduleAttachmentIndexing(
+        scope: CoroutineScope,
+        attachmentId: String,
+        fileName: String,
+        extractedText: String,
+        chunksOverride: List<DocumentChunk>? = null,
+        batchSize: Int = DEFAULT_INDEX_BATCH_SIZE,
+    ): Job? {
+        val cleanId = attachmentId.trim()
+        if (cleanId.isEmpty() || (extractedText.isBlank() && chunksOverride.isNullOrEmpty())) return null
+        val scopeKey = VectorMemoryIndex.fileScopeId(cleanId)
+        val settings = currentRetrievalSettings()
+        val engine = resolveActiveEmbeddingEngine(settings)
+        if (engine == null) {
+            activeIndexJobs.remove(scopeKey)?.cancel()
+            if (activeIndexJobs.isEmpty() && _indexProgress.value.running) {
+                _indexProgress.value = VectorIndexProgress()
+            }
+            return null
+        }
+
+        lateinit var launched: Job
+        launched = scope.launch(Dispatchers.Default, start = CoroutineStart.LAZY) {
+            try {
+                val chunks = chunksOverride ?: FileContextBudgeter.chunkDocument(extractedText, fileName)
+                val targets = buildFileChunkIndexTargets(
+                    attachmentId = cleanId,
+                    fileName = fileName,
+                    chunks = chunks,
+                )
+                if (targets.isEmpty()) return@launch
+                fileIndexMutex.withLock {
+                    vectorMemoryIndex.ensureIndexed(
+                        targets = targets,
+                        engine = engine,
+                        batchSize = batchSize,
+                        pruneStale = true,
+                        onProgress = { progress -> _indexProgress.value = progress },
+                    )
+                }
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (t: Throwable) {
+                _indexProgress.value = _indexProgress.value.copy(
+                    running = false,
+                    lastError = t.message ?: "File vector indexing failed",
+                )
+            } finally {
+                activeIndexJobs.remove(scopeKey, launched)
+            }
+        }
+        val prev = activeIndexJobs.put(scopeKey, launched)
+        if (prev != null && prev !== launched) {
+            prev.cancel()
+        }
+        launched.invokeOnCompletion {
+            activeIndexJobs.remove(scopeKey, launched)
+        }
+        launched.start()
+        return launched
+    }
+
+    suspend fun deleteFileVectors(attachmentId: String) {
+        val cleanId = attachmentId.trim()
+        if (cleanId.isEmpty()) return
+        val scopeKey = VectorMemoryIndex.fileScopeId(cleanId)
+        activeIndexJobs.remove(scopeKey)?.cancel()
+        try {
+            vectorMemoryIndex.deleteScope(scopeKey)
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (_: Throwable) {
         }
     }
 
@@ -485,12 +611,38 @@ class RetrievalCoordinator internal constructor(
         const val OWNER_EPISODE = "episode_archived"
         const val OWNER_USER_MEMORY = "user_memory"
         const val OWNER_WORLDBOOK_ENTRY = "worldbook_entry"
+        const val OWNER_FILE_CHUNK = "file_chunk"
 
         const val SCOPE_GLOBAL = "global"
 
         const val DEFAULT_SEND_TIMEOUT_MS = 1500L
         const val DEFAULT_INDEX_BATCH_SIZE = 16
         const val DEFAULT_MIN_COSINE_FLOOR = 0.50
+
+        internal fun buildFileChunkIndexTargets(
+            attachmentId: String,
+            fileName: String,
+            chunks: List<DocumentChunk>,
+        ): List<VectorIndexTarget> {
+            val cleanId = attachmentId.trim()
+            if (cleanId.isEmpty() || chunks.isEmpty()) return emptyList()
+            val scopeConvId = VectorMemoryIndex.fileScopeId(cleanId)
+            val targets = ArrayList<VectorIndexTarget>(chunks.size)
+            for (ch in chunks) {
+                val canonical = FileContextBudgeter.formatContextualChunkText(fileName, ch).trim()
+                if (canonical.isNotEmpty()) {
+                    targets.add(
+                        VectorIndexTarget(
+                            ownerType = OWNER_FILE_CHUNK,
+                            ownerId = FileContextBudgeter.chunkOwnerId(cleanId, ch.index),
+                            conversationId = scopeConvId,
+                            canonicalText = canonical,
+                        ),
+                    )
+                }
+            }
+            return targets
+        }
 
         internal fun buildWorldbookIndexTargets(
             worldbookId: String,

@@ -17,6 +17,7 @@ import com.gugachat.app.data.api.DirectProtocolCodec
 import com.gugachat.app.data.api.OnlineChatGroupDto
 import com.gugachat.app.data.api.OnlineChatModelDto
 import com.gugachat.app.data.api.WireChatMessageDto
+import com.gugachat.app.data.chat.CampaignLaunchUseCase
 import com.gugachat.app.data.chat.RetrievalCoordinator
 import com.gugachat.app.data.chat.StreamLaunchRequest
 import com.gugachat.app.data.chat.V4ConversationAssets
@@ -48,6 +49,7 @@ import com.gugachat.app.domain.chat.NovelConfig
 import com.gugachat.app.domain.chat.NovelDraftOption
 import com.gugachat.app.domain.chat.NovelInputKind
 import com.gugachat.app.domain.chat.NovelLoreEntry
+import com.gugachat.app.domain.chat.OutputLengthPolicy
 import com.gugachat.app.domain.chat.RetrievalMode
 import com.gugachat.app.domain.chat.RpCgRecord
 import com.gugachat.app.domain.chat.RpCharacter
@@ -153,6 +155,8 @@ data class ChatUiState(
     val defaultContextWindowOverride: Int? = null,
     val defaultMaxHistoryMessages: Int? = null,
     val defaultMaxOutputTokens: Int? = null,
+    val defaultMinOutputChat: Int? = null,
+    val defaultAutoContinueShort: Boolean = false,
     val waterline: ContextWaterlineSummary = ContextWaterlineSummary(),
     val mutedRecallKeys: Set<String> = emptySet(),
     val vectorIndexProgress: VectorIndexProgress = VectorIndexProgress(),
@@ -173,6 +177,8 @@ data class ChatUiState(
             maxTokens = defaultMaxOutputTokens,
             contextWindowOverride = defaultContextWindowOverride,
             maxHistoryMessages = defaultMaxHistoryMessages,
+            minOutputChars = defaultMinOutputChat,
+            autoContinueShortReply = defaultAutoContinueShort,
         )
 
     internal fun withDerivedBindings(): ChatUiState {
@@ -483,6 +489,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                         val loaded = container.attachmentStore.loadAttachmentsMap(missingAttIds)
                         if (loaded.isNotEmpty()) {
                             _ui.update { st -> st.copy(attachmentsById = st.attachmentsById + loaded) }
+                            attachmentDelegate.preloadChunkCache(loaded.values)
                             recomputeWaterline()
                         }
                     }
@@ -558,6 +565,8 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                         defaultContextWindowOverride = s.defaultContextWindowOverride,
                         defaultMaxHistoryMessages = s.defaultMaxHistoryMessages,
                         defaultMaxOutputTokens = s.defaultMaxOutputTokens,
+                        defaultMinOutputChat = s.defaultMinOutputChat,
+                        defaultAutoContinueShort = s.defaultAutoContinueShort,
                         activeRetrievalMode = s.retrievalSettings.mode,
                     )
                 }
@@ -746,6 +755,9 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     fun updateDraftAttachmentInjectMode(id: String, mode: FileInjectMode) =
         attachmentDelegate.updateDraftAttachmentInjectMode(id, mode)
 
+    fun updateAttachmentInjectMode(id: String, mode: FileInjectMode) =
+        attachmentDelegate.updateSentAttachmentInjectMode(id, mode)
+
     fun dismissPendingScannedPdf() = attachmentDelegate.dismissPendingScannedPdf()
     fun convertPendingScannedPdfToImages(maxPages: Int = 4) =
         attachmentDelegate.convertPendingScannedPdfToImages(maxPages)
@@ -797,14 +809,8 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    private fun defaultChatParams(): ChatParams {
-        val st = _ui.value
-        return ChatParams(
-            maxTokens = st.defaultMaxOutputTokens,
-            contextWindowOverride = st.defaultContextWindowOverride,
-            maxHistoryMessages = st.defaultMaxHistoryMessages,
-        )
-    }
+    private fun defaultChatParams(mode: ConversationMode = ConversationMode.chat): ChatParams =
+        CampaignLaunchUseCase.defaultChatParams(container.settingsState.value, mode)
 
     fun createNewChatSession(title: String = "新对话") {
         viewModelScope.launch {
@@ -846,7 +852,26 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     fun deleteConversation(convId: String) {
         viewModelScope.launch {
             chatStreamManager.cancelStreamAndWait(convId)
+            val fileAttIds = withContext(Dispatchers.IO) {
+                val msgs = chatDao.getMessagesForConversation(convId)
+                val attIds = msgs.asSequence()
+                    .flatMap { it.toDomain().attachmentIds.asSequence() }
+                    .filter { it.isNotBlank() }
+                    .distinct()
+                    .toList()
+                if (attIds.isEmpty()) {
+                    emptyList()
+                } else {
+                    container.attachmentStore.loadAttachmentsMap(attIds)
+                        .values
+                        .filter { it.isFile }
+                        .map { it.id }
+                }
+            }
             chatDao.deleteConversationCascade(convId)
+            if (fileAttIds.isNotEmpty()) {
+                attachmentDelegate.cleanupOrphanFileVectors(fileAttIds, excludingConversationId = convId)
+            }
             if (_activeConvId.value == convId) {
                 _activeConvId.value = _ui.value.conversations.firstOrNull { it.id != convId }?.id
             }
@@ -856,10 +881,14 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     fun updateConversationParams(systemPrompt: String, params: ChatParams) {
         viewModelScope.launch {
             val conv = _ui.value.activeConversation ?: ensureActiveConversation()
+            val cleanMinOutput = OutputLengthPolicy.normalizeMinOutputChars(params.minOutputChars)
+            val cleanAutoContinue = if (cleanMinOutput == null) false else params.autoContinueShortReply
             val sanitized = params.copy(
                 contextWindowOverride = params.contextWindowOverride?.coerceIn(4096, 2_000_000),
                 maxHistoryMessages = params.maxHistoryMessages?.coerceIn(1, 500),
                 maxTokens = params.maxTokens?.coerceIn(256, 131_072),
+                minOutputChars = cleanMinOutput,
+                autoContinueShortReply = cleanAutoContinue,
             )
             chatDao.upsertConversation(
                 conv.copy(
@@ -873,7 +902,54 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                 maxHistoryMessages = sanitized.maxHistoryMessages,
                 maxOutputTokens = sanitized.maxTokens,
             )
+            if (sanitized.minOutputChars != conv.params.minOutputChars ||
+                sanitized.autoContinueShortReply != conv.params.autoContinueShortReply
+            ) {
+                container.settingsStore.setDefaultMinOutputPrefs(
+                    mode = conv.mode,
+                    minOutputChars = sanitized.minOutputChars,
+                    autoContinueShortReply = sanitized.autoContinueShortReply,
+                )
+            }
             recomputeWaterline()
+        }
+    }
+
+    fun updateMinOutputSettings(minChars: Int?, autoContinue: Boolean) {
+        val cleanMin = OutputLengthPolicy.normalizeMinOutputChars(minChars)
+        val cleanAuto = if (cleanMin == null) false else autoContinue
+        val existingConv = _ui.value.activeConversation
+        val targetMode = existingConv?.mode ?: ConversationMode.chat
+        if (existingConv != null) {
+            val optimistic = existingConv.copy(
+                params = existingConv.params.copy(
+                    minOutputChars = cleanMin,
+                    autoContinueShortReply = cleanAuto,
+                ),
+                updatedAt = System.currentTimeMillis(),
+            )
+            _ui.update { it.copy(activeConversation = optimistic).withDerivedBindings() }
+        }
+        viewModelScope.launch {
+            container.settingsStore.setDefaultMinOutputPrefs(
+                mode = targetMode,
+                minOutputChars = cleanMin,
+                autoContinueShortReply = cleanAuto,
+            )
+            val conv = _ui.value.activeConversation
+            if (conv != null) {
+                val fresh = chatDao.getConversationById(conv.id)?.toDomain() ?: conv
+                val updated = fresh.copy(
+                    params = fresh.params.copy(
+                        minOutputChars = cleanMin,
+                        autoContinueShortReply = cleanAuto,
+                    ),
+                    updatedAt = System.currentTimeMillis(),
+                )
+                chatDao.upsertConversation(updated.toEntity())
+                _ui.update { it.copy(activeConversation = updated).withDerivedBindings() }
+                scheduleWaterlineRecompute(debounceMs = 0L)
+            }
         }
     }
 
@@ -1451,6 +1527,15 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     fun togglePromptPresetBlockEnabled(presetId: String, identifier: String, index: Int) =
         assetsAndMemoryDelegate.togglePromptPresetBlockEnabled(presetId, identifier, index)
 
+    fun setPromptPresetBlocksEnabled(presetId: String, indices: List<Int>, enabled: Boolean) =
+        assetsAndMemoryDelegate.setPromptPresetBlocksEnabled(presetId, indices, enabled)
+
+    fun movePromptPresetBlock(presetId: String, index: Int, delta: Int) =
+        assetsAndMemoryDelegate.movePromptPresetBlock(presetId, index, delta)
+
+    fun togglePromptPresetRegexEnabled(presetId: String, scriptId: String, enabled: Boolean) =
+        assetsAndMemoryDelegate.togglePromptPresetRegexEnabled(presetId, scriptId, enabled)
+
     fun mountWorldbook(worldbookId: String, convId: String? = null) =
         assetsAndMemoryDelegate.mountWorldbook(worldbookId, convId)
 
@@ -1640,6 +1725,9 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                 draftImageCount = st.draftAttachments.count { it.isImage },
                 draftAttachments = st.draftAttachments,
                 attachmentsById = st.attachmentsById + st.draftAttachments.associateBy { it.id },
+                preloadedFileChunks = container.attachmentStore.getCachedDocumentIndexes(
+                    st.attachmentsById.keys + st.draftAttachments.map { it.id },
+                ),
                 mutedRecallKeys = st.mutedRecallKeys,
                 modelId = effectiveModelId,
                 externalCalibration = extCal,

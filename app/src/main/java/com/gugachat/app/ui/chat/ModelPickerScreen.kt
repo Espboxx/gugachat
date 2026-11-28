@@ -94,6 +94,7 @@ import com.gugachat.app.data.api.OnlineChatGroupDto
 import com.gugachat.app.data.api.OnlineChatModelDto
 import com.gugachat.app.domain.chat.ChatParams
 import com.gugachat.app.domain.chat.ContextWaterlineSummary
+import com.gugachat.app.domain.chat.ConversationMode
 import com.gugachat.app.domain.chat.FreeQuotaUtils
 import java.util.Locale
 
@@ -139,6 +140,8 @@ fun ModelPickerScreen(
     onSelectModel: (String) -> Unit,
     onSelectCustomModel: (String) -> Unit = onSelectModel,
     onUpdateContextSettings: ((contextWindowOverride: Int?, maxHistoryMessages: Int?, maxTokens: Int?) -> Unit)? = null,
+    mode: ConversationMode = ConversationMode.chat,
+    onUpdateMinOutput: ((minChars: Int?, autoContinue: Boolean) -> Unit)? = null,
     onBack: () -> Unit,
 ) {
     BackHandler(onBack = onBack)
@@ -218,7 +221,8 @@ fun ModelPickerScreen(
 
     val hasCustomContext = params.contextWindowOverride != null ||
         params.maxHistoryMessages != null ||
-        params.maxTokens != null
+        params.maxTokens != null ||
+        params.minOutputChars != null
 
     val canScrollGroupsForward by remember {
         derivedStateOf { groupListState.canScrollForward }
@@ -367,19 +371,23 @@ fun ModelPickerScreen(
             GuHairlineDivider(alpha = 0.55f)
 
             // Collapsible context settings drawer
-            if (onUpdateContextSettings != null) {
-                val activeModelWindow = remember(models, selectedModelId) {
-                    models.firstOrNull { it.id == selectedModelId }?.context_window ?: 128_000
+            if (onUpdateContextSettings != null || onUpdateMinOutput != null) {
+                val activeModelMeta = remember(models, selectedModelId) {
+                    models.firstOrNull { it.id == selectedModelId }
                 }
+                val activeModelWindow = activeModelMeta?.context_window ?: 128_000
                 AnimatedVisibility(visible = showContextSettings) {
                     Column {
                         ModelContextSettingsDrawer(
                             activeModelId = selectedModelId,
+                            activeModelMeta = activeModelMeta,
                             nativeModelWindow = activeModelWindow,
                             params = params,
                             waterline = waterline,
+                            mode = mode,
                             isZh = isZh,
-                            onUpdate = onUpdateContextSettings,
+                            onUpdate = onUpdateContextSettings ?: { _, _, _ -> },
+                            onUpdateMinOutput = onUpdateMinOutput,
                         )
                         GuHairlineDivider(alpha = 0.45f)
                     }
@@ -831,16 +839,20 @@ private fun GroupChipPill(
 @Composable
 private fun ModelContextSettingsDrawer(
     activeModelId: String?,
+    activeModelMeta: OnlineChatModelDto?,
     nativeModelWindow: Int,
     params: ChatParams,
     waterline: ContextWaterlineSummary,
+    mode: ConversationMode,
     isZh: Boolean,
     onUpdate: (contextWindowOverride: Int?, maxHistoryMessages: Int?, maxTokens: Int?) -> Unit,
+    onUpdateMinOutput: ((minChars: Int?, autoContinue: Boolean) -> Unit)? = null,
 ) {
     val c = LocalAppTheme.current.colors
     val hasAnyCustom = params.contextWindowOverride != null ||
         params.maxHistoryMessages != null ||
-        params.maxTokens != null
+        params.maxTokens != null ||
+        params.minOutputChars != null
     val effectiveWindow = params.contextWindowOverride ?: nativeModelWindow
 
     var customWindowKText by remember {
@@ -894,7 +906,10 @@ private fun ModelContextSettingsDrawer(
                 Row(
                     modifier = Modifier
                         .clip(RoundedCornerShape(999.dp))
-                        .clickable { onUpdate(null, null, null) }
+                        .clickable {
+                            onUpdate(null, null, null)
+                            onUpdateMinOutput?.invoke(null, false)
+                        }
                         .padding(horizontal = 6.dp, vertical = 2.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(3.dp),
@@ -1001,6 +1016,18 @@ private fun ModelContextSettingsDrawer(
                     onClick = { onUpdate(params.contextWindowOverride, params.maxHistoryMessages, tokens) },
                 )
             }
+        }
+
+        if (onUpdateMinOutput != null) {
+            CompactOutputLengthControl(
+                params = params,
+                mode = mode,
+                isZh = isZh,
+                modelId = activeModelId,
+                modelMeta = activeModelMeta,
+                windowLimit = effectiveWindow,
+                onUpdateMinOutput = onUpdateMinOutput,
+            )
         }
 
         // Compact custom inputs

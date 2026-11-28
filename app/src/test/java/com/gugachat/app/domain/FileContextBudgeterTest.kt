@@ -134,4 +134,119 @@ class FileContextBudgeterTest {
         assertTrue(FileContextBudgeter.messageMentionsFile("再帮我查一下 Q3_Financial_Report 里的现金流", meta))
         assertFalse(FileContextBudgeter.messageMentionsFile("今天天气真好", meta))
     }
+
+    @Test
+    fun chunkDocument_preserves15PercentOverlapAndCapsHugeDocsAt600Chunks() {
+        // 1) Overlap continuity across mid-section split
+        val sectionLines = (1..80).map { i ->
+            "第${i}条记录：角色属性与互动规则编号 R-${i}，包含完整数值说明与背景线索。"
+        }
+        val doc = "# 核心规则\n" + sectionLines.joinToString("\n")
+        val chunks = FileContextBudgeter.chunkDocument(doc, "rules.md", targetChunkTokens = 240)
+        assertTrue("Expected at least 3 chunks, got ${chunks.size}", chunks.size >= 3)
+        // Verify trailing line of chunk[0] overlaps into chunk[1]
+        val tailLine0 = chunks[0].text.lines().last().trim()
+        assertTrue(
+            "Expected overlap line '$tailLine0' from chunk 0 to appear in chunk 1",
+            chunks[1].text.contains(tailLine0),
+        )
+
+        // 2) >100K token giant document caps <= 600 chunks via adaptive chunk sizing
+        val giantLine = "这是一段用于测试超大文档自适应分块上限的标准中文长文本记录，涵盖世界观设定与角色时间线事件。".repeat(3)
+        val hugeText = (1..1500).joinToString("\n") { idx -> "条目$idx：$giantLine" }
+        val hugeTokens = ContextBuilder.estimateTextTokens(hugeText)
+        assertTrue("Expected >100K tokens fixture, got $hugeTokens", hugeTokens > 100_000)
+        val hugeChunks = FileContextBudgeter.chunkDocument(hugeText, "huge_novel.txt")
+        assertTrue(
+            "Huge doc chunks (${hugeChunks.size}) must be capped <= ${FileContextBudgeter.MAX_ADAPTIVE_CHUNKS}",
+            hugeChunks.size in 10..FileContextBudgeter.MAX_ADAPTIVE_CHUNKS,
+        )
+    }
+
+    @Test
+    fun broadenedChineseHeadingsAndImmutableIndexAnchor() {
+        val text = """
+            一、节目背景与规则
+            本节目采用封闭式海岛录制。
+            【男嘉宾资料】
+            崔晨浩，建筑设计师，28岁。
+            Day 1 初遇与破冰晚餐
+            全体嘉宾于傍晚六点在玻璃花房集合。
+        """.trimIndent()
+        val outline = FileContextBudgeter.extractDocumentOutline(text, maxTokens = 260)
+        assertTrue(outline.contains("一、节目背景与规则"))
+        assertTrue(outline.contains("【男嘉宾资料】"))
+        assertTrue(outline.contains("Day 1 初遇与破冰晚餐"))
+
+        val meta = makeFileMeta("doc-1", "恋综2.0后会有期.docx", 19_800)
+        val anchor = FileContextBudgeter.buildDocumentIndexAnchor(meta, outline, chunkCount = 48)
+        assertTrue(anchor.contains("<attached_file_index name=\"恋综2.0后会有期.docx\""))
+        assertTrue(anchor.contains("chunks=\"48\""))
+        assertTrue(anchor.contains("Day 1 初遇与破冰晚餐"))
+        assertTrue(anchor.contains("严禁编造"))
+        assertTrue(ContextBuilder.estimateTextTokens(anchor) <= 360)
+    }
+
+    @Test
+    fun fileRecallEngine_recallsSingleProperNounAndExpandsNeighborAndGroupsAcrossFiles() {
+        val doc1Text = buildString {
+            appendLine("# 恋综设定")
+            for (i in 1..20) {
+                appendLine("## 第 $i 节 常规录制安排")
+                if (i == 12) {
+                    appendLine("男三号崔晨浩是海归建筑设计师，随身携带一枚银色指南针，性格表面冷静实则温柔。")
+                    appendLine("他的秘密任务是在第一晚晚宴前找到遗落在露台的明信片。")
+                } else {
+                    appendLine("节目组日常机位调度、灯光测试与场地安全检查说明。".repeat(12))
+                }
+            }
+        }
+        val doc2Text = buildString {
+            appendLine("# 别墅地图与规则")
+            for (i in 1..12) {
+                appendLine("## 区域 $i")
+                if (i == 7) {
+                    appendLine("二楼露台设有星空望远镜，崔晨浩常在夜间独自在此画草图。")
+                } else {
+                    appendLine("房间基础设施、空调开关与公共厨房使用规范。".repeat(12))
+                }
+            }
+        }
+        val indexed1 = FileContextBudgeter.buildIndexedDocument("att-1", "恋综2.0后会有期.docx", doc1Text)
+        val indexed2 = FileContextBudgeter.buildIndexedDocument("att-2", "别墅地图.md", doc2Text)
+        val conv = ChatConversation(
+            id = "conv-recall",
+            title = "恋综",
+            mode = ConversationMode.chat,
+            createdAt = 1L,
+            updatedAt = 2L,
+        )
+
+        // Single proper noun query ("崔晨浩") should pass relaxed minCleanTermsOverride = 1
+        val bundle = FileRecallEngine.recall(
+            tier2Docs = listOf(indexed1, indexed2),
+            fileMetasById = mapOf(
+                "att-1" to makeFileMeta("att-1", "恋综2.0后会有期.docx", indexed1.totalTokens, FileInjectMode.retrieve),
+                "att-2" to makeFileMeta("att-2", "别墅地图.md", indexed2.totalTokens, FileInjectMode.retrieve),
+            ),
+            uploadTurnFileIds = emptySet(),
+            conversation = conv,
+            recentMessages = emptyList(),
+            latestUserQuery = "崔晨浩",
+            budgetTokens = 4_000,
+        )
+        assertTrue(bundle.recalledBlock.contains("<recalled_file_context>"))
+        assertTrue("Should recall single proper noun chunk from doc1", bundle.recalledBlock.contains("海归建筑设计师"))
+        assertTrue("Should recall cross-file chunk from doc2", bundle.recalledBlock.contains("星空望远镜"))
+        assertTrue(bundle.recalledItems.all { it.source == FileContextBudgeter.FILE_CHUNK_SOURCE })
+        // Neighbor expansion (i + 1) should pull adjacent chunk after the hit
+        assertTrue(
+            "Expected neighbor chunk to be expanded when budget permits",
+            bundle.recalledItems.any { it.triggerKind == "neighbor" },
+        )
+        // Document-order grouping: doc1 excerpts appear before doc2 excerpts
+        val doc1Pos = bundle.recalledBlock.indexOf("恋综2.0后会有期.docx")
+        val doc2Pos = bundle.recalledBlock.indexOf("别墅地图.md")
+        assertTrue("Expected doc1 before doc2 in recalled block", doc1Pos in 0 until doc2Pos)
+    }
 }

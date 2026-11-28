@@ -18,6 +18,7 @@ import com.gugachat.app.data.api.DirectProtocolCodec
 import com.gugachat.app.data.api.OnlineChatApi
 import com.gugachat.app.data.api.OnlineChatCompletionRequestDto
 import com.gugachat.app.data.api.OnlineChatModelDto
+import com.gugachat.app.data.api.WireChatMessageDto
 import com.gugachat.app.data.local.AppDatabase
 import com.gugachat.app.data.local.toDomain
 import com.gugachat.app.data.local.toEntity
@@ -35,6 +36,7 @@ import com.gugachat.app.domain.chat.MessageVariant
 import com.gugachat.app.domain.chat.NovelChapter
 import com.gugachat.app.domain.chat.NovelEngine
 import com.gugachat.app.domain.chat.NovelLoreEntry
+import com.gugachat.app.domain.chat.OutputLengthPolicy
 import com.gugachat.app.domain.chat.RpChoice
 import com.gugachat.app.domain.chat.RpEngine
 import com.gugachat.app.domain.chat.TimelineReconciler
@@ -60,6 +62,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.coroutines.coroutineContext
 
 data class ActiveStreamSession(
     val conversationId: String,
@@ -169,6 +172,10 @@ class ChatStreamManager internal constructor(
     private val compactingNoticeProvider: () -> String = { "Context compacted automatically, retrying..." },
     private val endingBannerProvider: () -> String = { "Ending unlocked" },
     private val clearTransientMutes: () -> Unit = {},
+    private val isAppEnglish: () -> Boolean = { false },
+    private val autoContinueHintFormatter: (actual: Int, target: Int, pass: Int, maxPasses: Int) -> String = { actual, target, pass, maxPasses ->
+        "Short reply ($actual/$target), auto-continuing ($pass/$maxPasses)..."
+    },
 ) {
     constructor(
         appContext: Context,
@@ -330,6 +337,14 @@ class ChatStreamManager internal constructor(
             val s = if (settingsState.value.language == AppLanguage.EN) EnStrings else ZhStrings
             s.rp.endingUnlockedBanner
         },
+        isAppEnglish = { settingsState.value.language == AppLanguage.EN },
+        autoContinueHintFormatter = { actual, target, pass, maxPasses ->
+            if (settingsState.value.language == AppLanguage.EN) {
+                "Short reply ($actual/$target), auto-continuing ($pass/$maxPasses)..."
+            } else {
+                "字数不足 ($actual/$target)，自动续写中 ($pass/$maxPasses)…"
+            }
+        },
     )
 
     private val jobsLock = Any()
@@ -458,6 +473,8 @@ class ChatStreamManager internal constructor(
         var uiDirty = false
         var finalized = false
         var activeResolvedPrefill: String? = null
+        var autoContinuePrefix: String? = null
+        var activeAutoContinueHint: String? = null
 
         fun isFinalized(): Boolean = synchronized(streamLock) { finalized }
 
@@ -475,10 +492,10 @@ class ChatStreamManager internal constructor(
             } else {
                 baseUsage
             }
-            val merged = if (isContinue) {
-                combineContinueText(request.continuePrefixText, contentBuf.toString())
-            } else {
-                mergeWithPrefill(contentBuf.toString())
+            val merged = when {
+                isContinue -> combineContinueText(request.continuePrefixText, contentBuf.toString())
+                autoContinuePrefix != null -> combineContinueText(autoContinuePrefix, contentBuf.toString())
+                else -> mergeWithPrefill(contentBuf.toString())
             }
             return assistantStart.copy(
                 content = merged,
@@ -497,7 +514,7 @@ class ChatStreamManager internal constructor(
             val isBufEmpty = synchronized(streamLock) {
                 if (contentBuf.isEmpty() && bestPartialContent.isNotEmpty()) contentBuf.append(bestPartialContent)
                 if (reasoningBuf.isEmpty() && bestPartialReasoning.isNotEmpty()) reasoningBuf.append(bestPartialReasoning)
-                contentBuf.isEmpty()
+                contentBuf.isEmpty() && autoContinuePrefix.isNullOrEmpty()
             }
             val msg = if (isContinue && request.existingMessageForVariant != null && isBufEmpty) {
                 request.existingMessageForVariant
@@ -551,6 +568,7 @@ class ChatStreamManager internal constructor(
 
         fun onChunkAppended(deltaText: String? = null, deltaReasoning: String? = null) {
             var charTotal = 0
+            var keepAutoContinueHint = false
             val immediateSnap: ChatMessage? = synchronized(streamLock) {
                 val now = System.currentTimeMillis()
                 if (!deltaReasoning.isNullOrEmpty()) {
@@ -563,7 +581,8 @@ class ChatStreamManager internal constructor(
                     }
                     contentBuf.append(deltaText)
                 }
-                charTotal = contentBuf.length + reasoningBuf.length
+                keepAutoContinueHint = activeAutoContinueHint != null
+                charTotal = (autoContinuePrefix?.length ?: 0) + contentBuf.length + reasoningBuf.length
                 if (lastUiEmitMs == 0L || now - lastUiEmitMs >= UI_EMIT_INTERVAL_MS) {
                     lastUiEmitMs = now
                     uiDirty = false
@@ -575,7 +594,7 @@ class ChatStreamManager internal constructor(
             }
             maybeUpdateKeepAliveProgress(charTotal)
             if (immediateSnap != null) {
-                publishSessionSnapshot(immediateSnap, clearHint = true)
+                publishSessionSnapshot(immediateSnap, clearHint = !keepAutoContinueHint)
             }
         }
 
@@ -651,7 +670,15 @@ class ChatStreamManager internal constructor(
                     stream = true,
                     temperature = activeConv.params.temperature,
                     top_p = activeConv.params.topP,
-                    max_tokens = activeConv.params.maxTokens,
+                    max_tokens = OutputLengthPolicy.computeEffectiveMaxTokens(
+                        params = activeConv.params,
+                        mode = activeConv.mode,
+                        modelId = request.modelId,
+                        modelMeta = request.modelMetaOverride,
+                        windowLimit = activeConv.params.contextWindowOverride
+                            ?: request.modelMetaOverride?.context_window
+                            ?: DirectProtocolCodec.inferChatModelMeta(request.modelId).context_window,
+                    ),
                     reasoning_effort = if (activeConv.params.enableReasoning) activeConv.params.reasoningEffort else null,
                     frequency_penalty = activeConv.params.frequencyPenalty,
                     presence_penalty = activeConv.params.presencePenalty,
@@ -733,6 +760,130 @@ class ChatStreamManager internal constructor(
                     )
                 } else {
                     throw e
+                }
+            }
+
+            // Opt-in silent auto-continue (up to 2 passes) when reply stops below 85% of minOutputChars
+            val minOutputChars = OutputLengthPolicy.normalizeMinOutputChars(activeConv.params.minOutputChars)
+            if (minOutputChars != null && activeConv.params.autoContinueShortReply && !isContinue) {
+                var accumulatedRaw = synchronized(streamLock) { mergeWithPrefill(contentBuf.toString()) }
+                var accumulatedReasoning = synchronized(streamLock) { reasoningBuf.toString() }
+                var accumulatedUsage = synchronized(streamLock) { latestUsage }
+                var actualLen = OutputLengthPolicy.countEffectiveLength(accumulatedRaw, activeConv.mode)
+                val triggerThreshold = OutputLengthPolicy.shortReplyThreshold(minOutputChars)
+                if (actualLen > 0 && actualLen < triggerThreshold) {
+                    val lastUserText = allMsgs.lastOrNull { it.role == "user" && it.deletedAt == null }?.content
+                    val isEnglish = OutputLengthPolicy.isEnglishPreference(lastUserText, isAppEnglish())
+                    val baseMessages = wireRequest.messages
+                    for (pass in 1..OutputLengthPolicy.MAX_AUTO_CONTINUE_PASSES) {
+                        if (!coroutineContext.isActive) break
+                        val strippedBase = OutputLengthPolicy.stripInternalTagsForMode(accumulatedRaw, activeConv.mode)
+                        if (strippedBase.isEmpty()) break
+                        val hint = autoContinueHintFormatter(
+                            actualLen,
+                            minOutputChars,
+                            pass,
+                            OutputLengthPolicy.MAX_AUTO_CONTINUE_PASSES,
+                        )
+                        val continueSnap = synchronized(streamLock) {
+                            activeResolvedPrefill = null
+                            autoContinuePrefix = strippedBase
+                            activeAutoContinueHint = hint
+                            contentBuf.clear()
+                            reasoningBuf.clear()
+                            bestPartialContent = ""
+                            bestPartialReasoning = ""
+                            latestUsage = null
+                            buildSnapshotLocked()
+                        }
+                        _activeSessions.update { map ->
+                            val existing = map[convId]
+                            val updated = (existing ?: ActiveStreamSession(convId, continueSnap)).copy(
+                                streamingMessage = continueSnap,
+                                charsGenerated = continueSnap.content.length + continueSnap.reasoning.length,
+                                statusHint = hint,
+                            )
+                            map + (convId to updated)
+                        }
+
+                        val nudgeText = OutputLengthPolicy.buildContinueNudge(
+                            mode = activeConv.mode,
+                            actual = actualLen,
+                            target = minOutputChars,
+                            isEnglish = isEnglish,
+                        )
+                        val continueReq = wireRequest.copy(
+                            messages = baseMessages + listOf(
+                                WireChatMessageDto.text("assistant", strippedBase),
+                                WireChatMessageDto.text("user", nudgeText),
+                            ),
+                            assistantPrefill = null,
+                        )
+                        try {
+                            completionGateway.streamOnce(
+                                request = continueReq,
+                                onTextDelta = { delta -> onChunkAppended(deltaText = delta) },
+                                onReasoningDelta = { r -> onChunkAppended(deltaReasoning = r) },
+                                onUsageSet = { u -> synchronized(streamLock) { latestUsage = u } },
+                                onRetryAttempt = { attempt, maxRetries, _ -> onRetryScheduled(attempt, maxRetries) },
+                                onResetForRetry = ::onResetBuffersForRetry,
+                            )
+                        } catch (ce: CancellationException) {
+                            throw ce
+                        } catch (_: Throwable) {
+                            synchronized(streamLock) {
+                                autoContinuePrefix = null
+                                activeAutoContinueHint = null
+                                contentBuf.clear()
+                                contentBuf.append(accumulatedRaw)
+                                reasoningBuf.clear()
+                                reasoningBuf.append(accumulatedReasoning)
+                                latestUsage = accumulatedUsage
+                            }
+                            break
+                        }
+
+                        val (passRaw, passReasoning, passUsage) = synchronized(streamLock) {
+                            Triple(contentBuf.toString(), reasoningBuf.toString(), latestUsage)
+                        }
+                        if (passRaw.isBlank()) {
+                            synchronized(streamLock) {
+                                autoContinuePrefix = null
+                                activeAutoContinueHint = null
+                                contentBuf.clear()
+                                contentBuf.append(accumulatedRaw)
+                                reasoningBuf.clear()
+                                reasoningBuf.append(accumulatedReasoning)
+                                latestUsage = accumulatedUsage
+                            }
+                            break
+                        }
+
+                        val passDeltaLen = OutputLengthPolicy.countEffectiveLength(passRaw, activeConv.mode)
+                        accumulatedRaw = combineContinueText(strippedBase, passRaw)
+                        if (passReasoning.isNotBlank()) {
+                            accumulatedReasoning = if (accumulatedReasoning.isBlank()) {
+                                passReasoning
+                            } else {
+                                "$accumulatedReasoning\n\n$passReasoning"
+                            }
+                        }
+                        accumulatedUsage = mergePassUsage(accumulatedUsage, passUsage)
+                        actualLen = OutputLengthPolicy.countEffectiveLength(accumulatedRaw, activeConv.mode)
+
+                        synchronized(streamLock) {
+                            autoContinuePrefix = null
+                            activeAutoContinueHint = null
+                            contentBuf.clear()
+                            contentBuf.append(accumulatedRaw)
+                            reasoningBuf.clear()
+                            reasoningBuf.append(accumulatedReasoning)
+                            latestUsage = accumulatedUsage
+                        }
+                        if (passDeltaLen < OutputLengthPolicy.MIN_AUTO_CONTINUE_DELTA || actualLen >= triggerThreshold) {
+                            break
+                        }
+                    }
                 }
             }
 
@@ -843,6 +994,31 @@ class ChatStreamManager internal constructor(
                 else -> "$cleanPrefix\n\n$cleanStream"
             }
         }
+
+        internal fun mergePassUsage(first: MessageUsage?, second: MessageUsage?): MessageUsage? {
+            if (first == null) return second
+            if (second == null) return first
+            val prompt = second.promptTokens ?: first.promptTokens
+            val completion = when {
+                first.completionTokens != null && second.completionTokens != null ->
+                    first.completionTokens + second.completionTokens
+                else -> second.completionTokens ?: first.completionTokens
+            }
+            val total = when {
+                prompt != null && completion != null -> prompt + completion
+                first.totalTokens != null && second.totalTokens != null ->
+                    first.totalTokens + second.totalTokens
+                else -> second.totalTokens ?: first.totalTokens
+            }
+            val cacheRead = second.cacheReadInputTokens ?: first.cacheReadInputTokens
+            return MessageUsage(
+                promptTokens = prompt,
+                completionTokens = completion,
+                totalTokens = total,
+                cacheReadInputTokens = cacheRead,
+                reasoningDurationMs = second.reasoningDurationMs ?: first.reasoningDurationMs,
+            )
+        }
     }
 }
 
@@ -907,7 +1083,11 @@ private class RoomStreamPersistenceGateway(
                 calibratedConv
             }
 
-            var finalContent = rawContent
+            var finalContent = if (continuePrefixText != null) {
+                ChatStreamManager.combineContinueText(continuePrefixText, rawContent)
+            } else {
+                rawContent
+            }
             var rpChoices: List<RpChoice> = emptyList()
             var novelChoices: List<String> = emptyList()
             var updatedVariants = assistantTemplate.variants

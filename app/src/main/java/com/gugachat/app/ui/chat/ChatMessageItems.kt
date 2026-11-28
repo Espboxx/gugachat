@@ -65,6 +65,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.rememberAsyncImagePainter
 import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.i18n.LocalAppStrings
+import com.gugachat.app.core.i18n.fmt
 import com.gugachat.app.core.theme.GuBadge
 import com.gugachat.app.core.theme.GuBadgeVariant
 import com.gugachat.app.core.theme.GuMetaText
@@ -75,10 +76,12 @@ import com.gugachat.app.domain.chat.ChatAttachmentMeta
 import com.gugachat.app.domain.chat.ChatMessage
 import com.gugachat.app.domain.chat.ConversationMode
 import com.gugachat.app.domain.chat.FileContextBudgeter
+import com.gugachat.app.domain.chat.FileInjectMode
 import com.gugachat.app.domain.chat.NovelChapter
 import com.gugachat.app.domain.chat.NovelConfig
 import com.gugachat.app.domain.chat.NovelExport
 import com.gugachat.app.domain.chat.NovelInputKind
+import com.gugachat.app.domain.chat.OutputLengthPolicy
 import com.gugachat.app.domain.chat.RpChoice
 import com.gugachat.app.domain.chat.RpConfig
 import com.gugachat.app.domain.chat.RpEngine
@@ -345,18 +348,43 @@ internal fun UserMessageBody(
         }
 
         if (fileMetas.isNotEmpty()) {
+            val fullThreshold = remember(effectiveLimitTokens) {
+                FileContextBudgeter.computeFullInlineThreshold(effectiveLimitTokens)
+            }
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 fileMetas.forEach { meta ->
+                    val isTier2Recall = isFileDecayed ||
+                        meta.injectMode == FileInjectMode.retrieve ||
+                        meta.injectMode == FileInjectMode.head_tail ||
+                        (meta.injectMode == FileInjectMode.auto && (meta.estimatedTokens > fullThreshold || meta.estimatedTokens > turnBudget))
+                    val isPinnedFull = !isTier2Recall && meta.injectMode == FileInjectMode.full
+                    val cardBadge = when {
+                        isTier2Recall -> strings.attachments.fileSmartGuardBadge
+                        isPinnedFull -> strings.attachments.filePinnedFullBadge
+                        else -> strings.attachments.fileFullBadge
+                    }
                     FileAttachmentCard(
                         meta = meta,
-                        isSmartGuarded = meta.estimatedTokens > turnBudget,
+                        isSmartGuarded = isTier2Recall,
+                        retentionBadgeOverride = cardBadge,
+                        isPinnedFull = isPinnedFull,
                         onClick = { onOpenFilePreview(meta) },
                         compact = true,
                     )
                 }
             }
             if (isFileDecayed) {
-                GuBadge(strings.attachments.decayedFileNotice, variant = GuBadgeVariant.AMBER)
+                val estChunks = remember(fileMetas) {
+                    fileMetas.sumOf { meta ->
+                        val tok = meta.estimatedTokens.coerceAtLeast(1)
+                        val chunkTarget = if (tok > FileContextBudgeter.ADAPTIVE_LARGE_DOC_TOKENS) 600 else FileContextBudgeter.DEFAULT_CHUNK_TOKENS
+                        ((tok + chunkTarget - 1) / chunkTarget).coerceIn(1, FileContextBudgeter.MAX_ADAPTIVE_CHUNKS)
+                    }.coerceAtLeast(1)
+                }
+                GuBadge(
+                    text = strings.attachments.fileSmartRecallBadge.fmt("chunks" to estChunks),
+                    variant = GuBadgeVariant.BLUE,
+                )
             }
         }
     }
@@ -537,6 +565,9 @@ internal fun AssistantMessageBlock(
     onSelectRpChoice: (RpChoice, Boolean) -> Unit,
     onRefreshRpChoices: () -> Unit,
     onContinueRp: () -> Unit,
+    onContinueChat: () -> Unit = {},
+    minOutputChars: Int? = null,
+    autoContinueShortReply: Boolean = false,
     onEditAssistant: (String) -> Unit,
     onRegenerate: () -> Unit,
     onBranch: () -> Unit,
@@ -559,6 +590,30 @@ internal fun AssistantMessageBlock(
     val isThisMsgStreaming = isStreaming && msg.status == "streaming"
     val showFooterActions = !isThisMsgStreaming && (isLatestAssistant || isActionsRevealed)
     val showTopVariantMicroBadge = !isThisMsgStreaming && !isLatestAssistant && !isActionsRevealed && msg.variants.size > 1
+    val normalizedMinOutput = OutputLengthPolicy.normalizeMinOutputChars(minOutputChars)
+    val shortReplyActualChars = remember(
+        msg.content,
+        mode,
+        normalizedMinOutput,
+        autoContinueShortReply,
+        isLatestAssistant,
+        isStreaming,
+        msg.status,
+    ) {
+        if (
+            isLatestAssistant &&
+            !isStreaming &&
+            msg.status != "streaming" &&
+            msg.status != "error" &&
+            !autoContinueShortReply &&
+            normalizedMinOutput != null &&
+            OutputLengthPolicy.isShortReply(msg.content, mode, normalizedMinOutput)
+        ) {
+            OutputLengthPolicy.countEffectiveLength(msg.content, mode)
+        } else {
+            null
+        }
+    }
     val tapInteraction = remember { MutableInteractionSource() }
 
     when (mode) {
@@ -690,6 +745,14 @@ internal fun AssistantMessageBlock(
                     }
 
                     if (isLatestAssistant) {
+                        if (shortReplyActualChars != null && normalizedMinOutput != null) {
+                            ShortReplyContinuePill(
+                                actualChars = shortReplyActualChars,
+                                minChars = normalizedMinOutput,
+                                isZh = isZh,
+                                onClick = onContinueRp,
+                            )
+                        }
                         if (showFooterActions) {
                             AssistantFooterRow(
                                 msg = msg,
@@ -861,6 +924,14 @@ internal fun AssistantMessageBlock(
                 }
 
                 if (isLatestAssistant) {
+                    if (shortReplyActualChars != null && normalizedMinOutput != null) {
+                        ShortReplyContinuePill(
+                            actualChars = shortReplyActualChars,
+                            minChars = normalizedMinOutput,
+                            isZh = isZh,
+                            onClick = onContinueNovel,
+                        )
+                    }
                     if (showFooterActions) {
                         AssistantFooterRow(
                             msg = msg,
@@ -964,6 +1035,14 @@ internal fun AssistantMessageBlock(
                 )
 
                 if (isLatestAssistant) {
+                    if (shortReplyActualChars != null && normalizedMinOutput != null) {
+                        ShortReplyContinuePill(
+                            actualChars = shortReplyActualChars,
+                            minChars = normalizedMinOutput,
+                            isZh = isZh,
+                            onClick = onContinueChat,
+                        )
+                    }
                     if (showFooterActions) {
                         AssistantFooterRow(
                             msg = msg,
@@ -997,6 +1076,42 @@ internal fun AssistantMessageBlock(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ShortReplyContinuePill(
+    actualChars: Int,
+    minChars: Int,
+    isZh: Boolean,
+    onClick: () -> Unit,
+) {
+    val theme = LocalAppTheme.current
+    val c = theme.colors
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(999.dp),
+        color = c.warningBg,
+        border = BorderStroke(theme.borderWidth, c.warning.copy(alpha = 0.42f)),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Icon(
+                imageVector = Icons.Default.PlayArrow,
+                contentDescription = null,
+                tint = c.warning,
+                modifier = Modifier.size(13.dp),
+            )
+            Text(
+                text = if (isZh) "${actualChars}/${minChars}字 · 续写" else "${actualChars}/${minChars}w · Continue",
+                color = c.warning,
+                fontSize = 11.5.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
         }
     }
 }

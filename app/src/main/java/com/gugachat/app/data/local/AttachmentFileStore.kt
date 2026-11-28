@@ -11,8 +11,10 @@ import android.util.Base64
 import androidx.core.content.FileProvider
 import com.gugachat.app.domain.chat.AttachmentKind
 import com.gugachat.app.domain.chat.ChatAttachmentMeta
+import com.gugachat.app.domain.chat.FileContextBudgeter
 import com.gugachat.app.domain.chat.FileInjectMode
 import com.gugachat.app.domain.chat.FileTextExtractor
+import com.gugachat.app.domain.chat.IndexedDocument
 import com.gugachat.app.domain.chat.PdfExtractionResult
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.text.PDFTextStripper
@@ -34,10 +36,59 @@ sealed interface AttachmentSaveResult {
     data class Error(val message: String) : AttachmentSaveResult
 }
 
+/**
+ * Thread-safe bounded LRU cache (default 8 documents) for parsed document outlines & overlapping
+ * chunks so live waterline/Recall Inspector and send-time context assembly run identically with
+ * zero disk I/O inside pure-domain code.
+ */
+class AttachmentChunkCache(private val maxEntries: Int = DEFAULT_MAX_DOCS) {
+    private val lock = Any()
+    private val cache = object : LinkedHashMap<String, IndexedDocument>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, IndexedDocument>?): Boolean =
+            size > maxEntries
+    }
+
+    fun get(attachmentId: String): IndexedDocument? = synchronized(lock) { cache[attachmentId] }
+
+    fun put(doc: IndexedDocument) {
+        synchronized(lock) {
+            cache[doc.attachmentId] = doc
+        }
+    }
+
+    fun evict(attachmentId: String) {
+        synchronized(lock) {
+            cache.remove(attachmentId)
+        }
+    }
+
+    fun snapshotForIds(ids: Collection<String>): Map<String, IndexedDocument> {
+        if (ids.isEmpty()) return emptyMap()
+        return synchronized(lock) {
+            val out = LinkedHashMap<String, IndexedDocument>()
+            for (id in ids) {
+                cache[id]?.let { out[id] = it }
+            }
+            out
+        }
+    }
+
+    fun clear() {
+        synchronized(lock) {
+            cache.clear()
+        }
+    }
+
+    companion object {
+        const val DEFAULT_MAX_DOCS = 8
+    }
+}
+
 class AttachmentFileStore(
     private val context: Context,
     private val attachmentDao: AttachmentDao,
 ) {
+    val chunkCache: AttachmentChunkCache = AttachmentChunkCache()
     private val dir: File by lazy {
         File(context.applicationContext.filesDir, "chat_attachments").apply { mkdirs() }
     }
@@ -135,6 +186,13 @@ class AttachmentFileStore(
                 injectMode = FileInjectMode.auto.name,
             )
             attachmentDao.upsert(entity)
+            chunkCache.put(
+                FileContextBudgeter.buildIndexedDocument(
+                    attachmentId = id,
+                    fileName = fileName,
+                    text = extracted.text,
+                ),
+            )
             AttachmentSaveResult.Success(entity.toDomain())
         } catch (ce: CancellationException) {
             throw ce
@@ -309,7 +367,35 @@ class AttachmentFileStore(
         attachmentDao.updateInjectMode(attachmentId, mode.name)
     }
 
+    suspend fun loadOrBuildDocumentIndex(meta: ChatAttachmentMeta): IndexedDocument? {
+        if (!meta.isFile) return null
+        chunkCache.get(meta.id)?.let { return it }
+        val text = readExtractedText(meta.id)?.takeIf { it.isNotBlank() } ?: return null
+        val indexed = withContext(Dispatchers.Default) {
+            FileContextBudgeter.buildIndexedDocument(
+                attachmentId = meta.id,
+                fileName = meta.fileName,
+                text = text,
+            )
+        }
+        chunkCache.put(indexed)
+        return indexed
+    }
+
+    suspend fun preloadDocumentIndexes(metas: Collection<ChatAttachmentMeta>): Map<String, IndexedDocument> {
+        val out = LinkedHashMap<String, IndexedDocument>()
+        for (meta in metas) {
+            if (!meta.isFile || out.containsKey(meta.id)) continue
+            loadOrBuildDocumentIndex(meta)?.let { out[meta.id] = it }
+        }
+        return out
+    }
+
+    fun getCachedDocumentIndexes(ids: Collection<String>): Map<String, IndexedDocument> =
+        chunkCache.snapshotForIds(ids)
+
     suspend fun deleteAttachment(attachmentId: String) = withContext(Dispatchers.IO) {
+        chunkCache.evict(attachmentId)
         val meta = attachmentDao.getById(attachmentId)
         if (meta != null) {
             runCatching { File(meta.localPath).delete() }

@@ -412,6 +412,51 @@ class RetrievalCoordinatorAndSettingsTest {
         assertEquals(1.042, updated, 1e-3)
     }
 
+    @Test
+    fun scheduleAttachmentIndexing_scoresWithFileScopeIdsAndCleansUpOnDelete() = runBlocking {
+        val (manager, engine) = createLocalEngineFixture(installModel = true)
+        val coordinator = RetrievalCoordinator(
+            retrievalSettingsProvider = {
+                RetrievalSettings(
+                    mode = RetrievalMode.LOCAL_SMALL_MODEL,
+                    localModelId = TEST_LOCAL_MODEL_ID,
+                )
+            },
+            providerLookup = { null },
+            directApiClient = directClient,
+            localModelManager = manager,
+            localOnnxEngine = engine,
+            vectorMemoryIndex = VectorMemoryIndex(fakeDao),
+        )
+
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            val docText = "# 剑宗残碑\n古风玉佩藏于后山石窟，剑宗残碑记载了失传心法。"
+            val job = coordinator.scheduleAttachmentIndexing(
+                scope = scope,
+                attachmentId = "att-sword",
+                fileName = "sword_lore.md",
+                extractedText = docText,
+            )
+            assertNotNull(job)
+            job!!.join()
+            assertTrue("Expected file chunk vector to be indexed", coordinator.countIndexedVectors() >= 1)
+
+            val (scores, _) = coordinator.prepareSendSemanticScores(
+                conversationId = "conv-branch-2",
+                queryText = "剑宗残碑与玉佩",
+                candidateIds = setOf("fc:att-sword:0"),
+                fileScopeIds = listOf("att-sword"),
+            )
+            assertTrue("Expected file chunk semantic score via file:att-sword scope", (scores["fc:att-sword:0"] ?: 0.0) > 0.5)
+
+            coordinator.deleteFileVectors("att-sword")
+            assertEquals(0, coordinator.countIndexedVectors())
+        } finally {
+            scope.cancel()
+        }
+    }
+
     private fun createLocalEngineFixture(installModel: Boolean): Pair<LocalEmbeddingModelManager, LocalOnnxEmbeddingEngine> {
         val spec = LocalModelSpec(
             id = TEST_LOCAL_MODEL_ID,
@@ -505,6 +550,15 @@ class RetrievalCoordinatorAndSettingsTest {
                 while (iter.hasNext()) {
                     val k = iter.next().key
                     if (k.first == ownerType && k.second == ownerId) iter.remove()
+                }
+            }
+        }
+
+        override suspend fun deleteByConversationId(conversationId: String) {
+            synchronized(lock) {
+                val iter = rows.entries.iterator()
+                while (iter.hasNext()) {
+                    if (iter.next().value.conversationId == conversationId) iter.remove()
                 }
             }
         }

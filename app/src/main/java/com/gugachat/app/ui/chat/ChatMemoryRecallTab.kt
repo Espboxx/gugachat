@@ -141,6 +141,10 @@ internal fun ColumnScope.ChatMemoryRecallInspectorTab(
                 "user_memory_archival" -> userMemories.firstOrNull { it.id == id }?.content?.take(18)
                 "rp_ledger" -> ledgerItems.firstOrNull { it.id == id }?.title
                 "episode_archived" -> episodes.firstOrNull { it.id == id }?.title
+                "file_chunk" -> {
+                    val idxSuffix = id.substringAfterLast(':', "")
+                    if (idxSuffix.isNotBlank()) "${localizeRecallSource(src, strings)} #$idxSuffix" else null
+                }
                 else -> null
             }?.takeIf { it.isNotBlank() } ?: "${localizeRecallSource(src, strings)} #${id.take(6)}"
         }
@@ -632,12 +636,15 @@ internal fun buildHighlightedRecallPreview(
 
 internal fun resolveTriggerBadge(triggerKind: String, strings: AppStrings): Pair<String, GuBadgeVariant> {
     val ctxUi = strings.contextUi
+    val isZh = strings.language == AppLanguage.ZH
     return when (triggerKind.lowercase()) {
         "constant" -> ctxUi.triggerConstant to GuBadgeVariant.BLUE
         "pinned_ledger" -> ctxUi.triggerPinnedLedger to GuBadgeVariant.BLUE
         "keyword" -> ctxUi.triggerKeyword to GuBadgeVariant.EMERALD
         "semantic" -> ctxUi.triggerSemantic to GuBadgeVariant.HONEY
         "recursion_1hop" -> ctxUi.triggerRecursion to GuBadgeVariant.AMBER
+        "neighbor" -> (if (isZh) "邻接片段" else "Adjacent") to GuBadgeVariant.AMBER
+        "summary_sample" -> (if (isZh) "概览采样" else "Overview") to GuBadgeVariant.BLUE
         else -> ctxUi.triggerLexical to GuBadgeVariant.NEUTRAL
     }
 }
@@ -661,6 +668,7 @@ internal fun localizeRecallSource(source: String, strings: AppStrings): String {
         "episode_archived", "episode" -> strings.chat.recallSourceEpisode
         "user_memory_archival", "user_memory" -> strings.chat.recallSourceUserMemory
         "novel_lore" -> strings.chat.recallSourceNovelLore
+        "file_chunk" -> if (isZh) "文档片段" else "File Chunk"
         "pinned" -> strings.chat.recallSourcePinned
         "open_promise" -> strings.chat.recallSourceOpenPromise
         else -> source

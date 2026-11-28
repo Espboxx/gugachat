@@ -52,6 +52,7 @@ import com.gugachat.app.domain.chat.ChatMessage
 import com.gugachat.app.domain.chat.ContextWaterlineSummary
 import com.gugachat.app.domain.chat.ConversationMode
 import com.gugachat.app.domain.chat.FileContextBudgeter
+import com.gugachat.app.domain.chat.FileInjectMode
 import com.gugachat.app.domain.chat.NovelChapter
 import com.gugachat.app.domain.chat.NovelConfig
 import com.gugachat.app.domain.chat.NovelExport
@@ -106,6 +107,10 @@ fun ChatMessageList(
     onOpenRpWizard: () -> Unit = {},
     onOpenNovelWizard: () -> Unit = {},
     onStartNormalChat: () -> Unit = {},
+    onUpdateSentAttachmentInjectMode: ((String, FileInjectMode) -> Unit)? = null,
+    minOutputChars: Int? = null,
+    autoContinueShortReply: Boolean = false,
+    onContinueChat: () -> Unit = {},
 ) {
     val strings = LocalAppStrings.current
     val theme = LocalAppTheme.current
@@ -123,12 +128,23 @@ fun ChatMessageList(
     var previewImageTarget by remember { mutableStateOf<Pair<File, String>?>(null) }
 
     previewFileTarget?.let { target ->
-        val turnBudget = FileContextBudgeter.computeFileTurnBudget(waterline.effectiveLimitTokens, 2000)
+        val latestTarget = attachmentsById[target.id] ?: target
+        val isGuarded = FileContextBudgeter.willCompressFile(
+            meta = latestTarget,
+            allDraftFiles = listOf(latestTarget),
+            effectiveLimitTokens = waterline.effectiveLimitTokens,
+            reservedFixedTokens = 2000,
+        )
         FilePreviewAndStrategyDialog(
-            meta = target,
-            isSmartGuarded = target.estimatedTokens > turnBudget,
+            meta = latestTarget,
+            isSmartGuarded = isGuarded,
             onReadText = { id -> onReadAttachmentText?.invoke(id) },
-            onSelectInjectMode = null,
+            onSelectInjectMode = onUpdateSentAttachmentInjectMode?.let { updater ->
+                { newMode ->
+                    updater(latestTarget.id, newMode)
+                    previewFileTarget = latestTarget.copy(injectMode = newMode)
+                }
+            },
             onDismiss = { previewFileTarget = null },
             onCopiedToast = { onToast(strings.common.copied) },
         )
@@ -386,6 +402,9 @@ fun ChatMessageList(
                             onSelectRpChoice = onSelectRpChoice,
                             onRefreshRpChoices = onRefreshRpChoices,
                             onContinueRp = onContinueRp,
+                            onContinueChat = onContinueChat,
+                            minOutputChars = minOutputChars,
+                            autoContinueShortReply = autoContinueShortReply,
                             onEditAssistant = { clean ->
                                 editAssistantBuffer = clean
                                 editAssistantTarget = msg

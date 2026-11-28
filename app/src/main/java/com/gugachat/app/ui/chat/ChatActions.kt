@@ -20,6 +20,9 @@ data class ChatSessionActions(
 data class ChatParamsActions(
     val onSelectPreset: (String?) -> Unit,
     val onTogglePresetBlock: (presetId: String, identifier: String, index: Int) -> Unit,
+    val onBatchSetPresetBlocksEnabled: (presetId: String, indices: List<Int>, enabled: Boolean) -> Unit = { _, _, _ -> },
+    val onMovePresetBlock: (presetId: String, index: Int, delta: Int) -> Unit = { _, _, _ -> },
+    val onTogglePresetRegex: (presetId: String, scriptId: String, enabled: Boolean) -> Unit = { _, _, _ -> },
 )
 
 @Immutable
@@ -83,6 +86,9 @@ fun rememberChatWorkspaceActions(
         params = ChatParamsActions(
             onSelectPreset = viewModel::selectConversationPreset,
             onTogglePresetBlock = viewModel::togglePromptPresetBlockEnabled,
+            onBatchSetPresetBlocksEnabled = viewModel::setPromptPresetBlocksEnabled,
+            onMovePresetBlock = viewModel::movePromptPresetBlock,
+            onTogglePresetRegex = viewModel::togglePromptPresetRegexEnabled,
         ),
         novelStudio = NovelStudioExtraActions(
             onExportEpub = { uri, includeLore ->

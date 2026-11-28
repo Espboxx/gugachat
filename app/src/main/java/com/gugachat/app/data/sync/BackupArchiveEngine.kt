@@ -119,6 +119,10 @@ data class VaultSettingsSnapshot(
     val defaultContextWindowOverride: Int? = null,
     val defaultMaxHistoryMessages: Int? = null,
     val defaultMaxOutputTokens: Int? = null,
+    val defaultMinOutputChat: Int? = null,
+    val defaultMinOutputRp: Int? = null,
+    val defaultMinOutputNovel: Int? = null,
+    val defaultAutoContinueShort: Boolean = false,
     val retrievalSettings: RetrievalSettings = RetrievalSettings(),
     val tokenCalibrationMap: Map<String, Double> = emptyMap(),
     val lastStudioSubtab: Int? = null,
@@ -149,6 +153,10 @@ data class VaultSettingsSnapshot(
             defaultContextWindowOverride = settings.defaultContextWindowOverride,
             defaultMaxHistoryMessages = settings.defaultMaxHistoryMessages,
             defaultMaxOutputTokens = settings.defaultMaxOutputTokens,
+            defaultMinOutputChat = settings.defaultMinOutputChat,
+            defaultMinOutputRp = settings.defaultMinOutputRp,
+            defaultMinOutputNovel = settings.defaultMinOutputNovel,
+            defaultAutoContinueShort = settings.defaultAutoContinueShort,
             retrievalSettings = settings.retrievalSettings.sanitizedForPlaintextStorage(),
             tokenCalibrationMap = settings.tokenCalibrationMap,
             lastStudioSubtab = settings.lastStudioSubtab,
@@ -319,6 +327,12 @@ private class StoreBackedVaultAdapter(
             contextWindowOverride = snap.defaultContextWindowOverride,
             maxHistoryMessages = snap.defaultMaxHistoryMessages,
             maxOutputTokens = snap.defaultMaxOutputTokens,
+        )
+        settingsStore.setAllDefaultMinOutputPrefs(
+            chatMinOutput = snap.defaultMinOutputChat,
+            rpMinOutput = snap.defaultMinOutputRp,
+            novelMinOutput = snap.defaultMinOutputNovel,
+            autoContinueShort = snap.defaultAutoContinueShort,
         )
         settingsStore.setRetrievalSettings(
             settings = snap.retrievalSettings.sanitizedForPlaintextStorage(),

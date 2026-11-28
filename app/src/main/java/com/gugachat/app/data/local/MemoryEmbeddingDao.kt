@@ -37,6 +37,9 @@ interface MemoryEmbeddingDao {
     @Query("DELETE FROM memory_embeddings WHERE ownerType = :ownerType AND ownerId = :ownerId")
     suspend fun deleteByOwner(ownerType: String, ownerId: String)
 
+    @Query("DELETE FROM memory_embeddings WHERE conversationId = :conversationId")
+    suspend fun deleteByConversationId(conversationId: String)
+
     @Query("DELETE FROM memory_embeddings WHERE profileKey != :activeProfileKey")
     suspend fun deleteStaleProfiles(activeProfileKey: String)
 

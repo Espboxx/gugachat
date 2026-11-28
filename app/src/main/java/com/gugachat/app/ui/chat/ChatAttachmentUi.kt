@@ -150,6 +150,8 @@ fun FileAttachmentCard(
     onClick: () -> Unit,
     onRemove: (() -> Unit)? = null,
     compact: Boolean = false,
+    retentionBadgeOverride: String? = null,
+    isPinnedFull: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val strings = LocalAppStrings.current
@@ -224,13 +226,19 @@ fun FileAttachmentCard(
                                 modifier = Modifier.weight(1f, fill = false),
                             )
                         }
-                        val badgeText = if (isSmartGuarded) {
-                            strings.attachments.fileSmartGuardBadge
-                        } else {
-                            strings.attachments.fileFullBadge
+                        val badgeText = retentionBadgeOverride ?: when {
+                            isSmartGuarded -> strings.attachments.fileSmartGuardBadge
+                            isPinnedFull || meta.injectMode == FileInjectMode.full -> strings.attachments.filePinnedFullBadge
+                            else -> strings.attachments.fileFullBadge
                         }
-                        val badgeBg = if (isSmartGuarded) c.warningBg else c.successBg
-                        val badgeFg = if (isSmartGuarded) c.warning else c.success
+                        val badgeBg = when {
+                            isSmartGuarded -> c.primarySoft
+                            else -> c.successBg
+                        }
+                        val badgeFg = when {
+                            isSmartGuarded -> c.primarySoftInk
+                            else -> c.success
+                        }
                         Box(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(999.dp))

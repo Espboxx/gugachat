@@ -6,8 +6,10 @@ import com.gugachat.app.data.local.AttachmentSaveResult
 import com.gugachat.app.data.local.toDomain
 import com.gugachat.app.domain.chat.ChatAttachmentMeta
 import com.gugachat.app.domain.chat.FileInjectMode
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Handles draft image/document attachments, scanned PDF rendering fallback, and injection mode
@@ -105,6 +107,7 @@ internal class ChatAttachmentDelegate(private val host: ChatViewModelHost) {
                 }
                 if (added.isNotEmpty()) {
                     appendDraftAttachments(added)
+                    scheduleFileAttachmentIndexing(added.filter { it.isFile })
                 }
                 if (firstError != null) {
                     host.container.toastController.show(firstError, isError = true)
@@ -117,7 +120,14 @@ internal class ChatAttachmentDelegate(private val host: ChatViewModelHost) {
         }
     }
 
-    fun updateDraftAttachmentInjectMode(id: String, mode: FileInjectMode) {
+    fun updateDraftAttachmentInjectMode(id: String, mode: FileInjectMode) =
+        updateSentAttachmentInjectMode(id, mode)
+
+    /**
+     * Updates a file attachment's injection mode both for draft and already-sent attachments,
+     * persists to Room (`attachment_meta.injectMode`), and triggers live waterline recalculation.
+     */
+    fun updateSentAttachmentInjectMode(id: String, mode: FileInjectMode) {
         host.uiFlow.update { st ->
             val updatedDraft = st.draftAttachments.map { if (it.id == id) it.copy(injectMode = mode) else it }
             val existing = st.attachmentsById[id]
@@ -130,7 +140,81 @@ internal class ChatAttachmentDelegate(private val host: ChatViewModelHost) {
         }
         host.scope.launch {
             host.container.attachmentStore.updateInjectMode(id, mode)
+            val meta = host.uiFlow.value.attachmentsById[id]
+                ?: host.uiFlow.value.draftAttachments.firstOrNull { it.id == id }
+            if (meta != null && meta.isFile) {
+                host.container.attachmentStore.loadOrBuildDocumentIndex(meta)
+                if (mode == FileInjectMode.retrieve || mode == FileInjectMode.auto) {
+                    scheduleFileAttachmentIndexing(listOf(meta))
+                }
+            }
             host.scheduleWaterline()
+        }
+    }
+
+    /**
+     * Preloads overlapping chunk indexes into [AttachmentFileStore.chunkCache] for active files
+     * so live waterline & Recall Inspector match send-time file recall 1:1 with zero UI jank.
+     */
+    fun preloadChunkCache(attachments: Collection<ChatAttachmentMeta>) {
+        val fileMetas = attachments.filter { it.isFile }
+        if (fileMetas.isEmpty()) return
+        host.scope.launch {
+            val loaded = host.container.attachmentStore.preloadDocumentIndexes(fileMetas)
+            if (loaded.isNotEmpty()) {
+                host.scheduleWaterline()
+                scheduleFileAttachmentIndexing(fileMetas)
+            }
+        }
+    }
+
+    /**
+     * Deletes `"file:$attId"` vectors (and evicts chunk cache) only for attachment IDs no longer
+     * referenced by any remaining conversation message (protecting forked/branched chats).
+     */
+    suspend fun cleanupOrphanFileVectors(
+        candidateAttachmentIds: Collection<String>,
+        excludingConversationId: String? = null,
+    ) {
+        val candidates = candidateAttachmentIds.map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+        if (candidates.isEmpty()) return
+        val referencedElsewhere = withContext(Dispatchers.IO) {
+            val allMsgs = host.database.chatDao().getAllMessages()
+            val refs = HashSet<String>()
+            for (entity in allMsgs) {
+                if (excludingConversationId != null && entity.conversationId == excludingConversationId) continue
+                val domain = entity.toDomain()
+                if (domain.deletedAt != null) continue
+                for (attId in domain.attachmentIds) {
+                    if (attId in candidates) refs.add(attId)
+                }
+            }
+            refs
+        }
+        for (attId in candidates) {
+            if (attId !in referencedElsewhere) {
+                host.container.retrievalCoordinator.deleteFileVectors(attId)
+                host.container.attachmentStore.chunkCache.evict(attId)
+            }
+        }
+    }
+
+    private fun scheduleFileAttachmentIndexing(files: List<ChatAttachmentMeta>) {
+        if (files.isEmpty()) return
+        host.scope.launch {
+            for (meta in files) {
+                if (!meta.isFile) continue
+                val indexed = host.container.attachmentStore.loadOrBuildDocumentIndex(meta)
+                if (indexed != null && indexed.chunks.isNotEmpty()) {
+                    host.container.retrievalCoordinator.scheduleAttachmentIndexing(
+                        scope = host.scope,
+                        attachmentId = meta.id,
+                        fileName = meta.fileName,
+                        extractedText = "",
+                        chunksOverride = indexed.chunks,
+                    )
+                }
+            }
         }
     }
 

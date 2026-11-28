@@ -5,10 +5,13 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -47,6 +50,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -82,10 +86,15 @@ import com.gugachat.app.core.theme.GuPill
 import com.gugachat.app.core.theme.GuPopupMenu
 import com.gugachat.app.core.theme.LocalAppShellController
 import com.gugachat.app.core.theme.LocalAppTheme
+import com.gugachat.app.data.local.PromptPresetEntity
+import com.gugachat.app.data.local.WorldbookEntity
 import com.gugachat.app.ui.studio.AssetHubViewModel
 import com.gugachat.app.ui.studio.CharactersHubTab
 import com.gugachat.app.ui.studio.LoreSettingsHubTab
+import com.gugachat.app.ui.studio.PromptPresetEditorMode
+import com.gugachat.app.ui.studio.PromptPresetEditorScreen
 import com.gugachat.app.ui.studio.StudioRoutingPolicy
+import com.gugachat.app.ui.studio.WorldbookDetailScreen
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
@@ -244,6 +253,27 @@ fun CreativeStudioScreen(
     val navigateToConversation: (String) -> Unit = { convId ->
         onOpenConversation(convId)
         shellController.selectMainTab(0)
+    }
+
+    val activeWorldbook = remember(assetState.activeWorldbookId, assetState.worldbooks) {
+        assetState.activeWorldbookId?.let { id -> assetState.worldbooks.firstOrNull { it.id == id } }
+    }
+    val activePreset = remember(assetState.activePresetId, assetState.promptPresets) {
+        assetState.activePresetId?.let { id -> assetState.promptPresets.firstOrNull { it.id == id } }
+    }
+    val hasFullscreenSubpage = activeWorldbook != null || activePreset != null
+    var lastWorldbook by remember { mutableStateOf<WorldbookEntity?>(null) }
+    var lastPreset by remember { mutableStateOf<PromptPresetEntity?>(null) }
+    if (activeWorldbook != null) lastWorldbook = activeWorldbook
+    if (activePreset != null) lastPreset = activePreset
+
+    LaunchedEffect(hasFullscreenSubpage) {
+        shellController.setFullscreenSubpageOpen(hasFullscreenSubpage)
+    }
+    DisposableEffect(Unit) {
+        onDispose {
+            shellController.setFullscreenSubpageOpen(false)
+        }
     }
 
     Box(
@@ -496,6 +526,7 @@ fun CreativeStudioScreen(
             HorizontalPager(
                 state = pagerState,
                 beyondViewportPageCount = 1,
+                userScrollEnabled = !hasFullscreenSubpage,
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f),
@@ -663,7 +694,8 @@ fun CreativeStudioScreen(
         }
 
         // Smart context-sensitive FAB
-        val showFab = !(pagerState.currentPage == StudioRoutingPolicy.TAB_ATELIER && atelierSubtab == 0 && state.batchMode)
+        val showFab = !hasFullscreenSubpage &&
+            !(pagerState.currentPage == StudioRoutingPolicy.TAB_ATELIER && atelierSubtab == 0 && state.batchMode)
         AnimatedVisibility(
             visible = showFab,
             enter = fadeIn() + scaleIn(initialScale = 0.9f),
@@ -715,6 +747,98 @@ fun CreativeStudioScreen(
                         fontWeight = FontWeight.SemiBold,
                     )
                 }
+            }
+        }
+
+        // Root-level fullscreen subpage overlays (above Studio header, HorizontalPager & FAB)
+        AnimatedVisibility(
+            visible = activeWorldbook != null,
+            enter = slideInHorizontally(tween(220)) { it / 3 } + fadeIn(tween(180)),
+            exit = slideOutHorizontally(tween(200)) { it / 3 } + fadeOut(tween(150)),
+        ) {
+            val wb = activeWorldbook ?: lastWorldbook
+            if (wb != null) {
+                WorldbookDetailScreen(
+                    worldbook = wb,
+                    entries = assetState.activeWorldbookEntries,
+                    vectorReady = assetState.worldbookVectorReady[wb.id] == true,
+                    isIndexing = assetState.vectorIndexProgress.running,
+                    onToggleGlobal = { resolvedAssetHubVm.toggleWorldbookGlobalEnabled(wb.id, it) },
+                    onUpdateMeta = { name, desc, scanDepth, tokenBudget, recursive ->
+                        resolvedAssetHubVm.updateWorldbookMeta(
+                            wb.id,
+                            name,
+                            desc,
+                            scanDepth,
+                            tokenBudget,
+                            recursive,
+                        )
+                    },
+                    onReindex = { resolvedAssetHubVm.reindexWorldbook(wb.id) },
+                    onDeleteBook = { resolvedAssetHubVm.deleteWorldbook(wb.id) },
+                    onToggleEntryEnabled = { entry, enabled ->
+                        resolvedAssetHubVm.toggleWorldbookEntryEnabled(entry, enabled)
+                    },
+                    onBatchSetEntriesEnabled = { entryIds, enabled ->
+                        resolvedAssetHubVm.setWorldbookEntriesEnabled(wb.id, entryIds, enabled)
+                    },
+                    onMoveEntryOrder = { entryId, delta ->
+                        resolvedAssetHubVm.moveWorldbookEntryOrder(wb.id, entryId, delta)
+                    },
+                    onSaveEntry = { entryId, title, content, keys, secKeys, logic, constant, enabled, pos, depth, sticky, cooldown ->
+                        resolvedAssetHubVm.saveWorldbookEntry(
+                            worldbookId = wb.id,
+                            entryId = entryId,
+                            title = title,
+                            content = content,
+                            primaryKeys = keys,
+                            secondaryKeys = secKeys,
+                            selectiveLogic = logic,
+                            constant = constant,
+                            enabled = enabled,
+                            position = pos,
+                            depth = depth,
+                            sticky = sticky,
+                            cooldown = cooldown,
+                        )
+                    },
+                    onDeleteEntry = { resolvedAssetHubVm.deleteWorldbookEntry(it) },
+                    onBack = { resolvedAssetHubVm.openWorldbookDetail(null) },
+                )
+            }
+        }
+
+        AnimatedVisibility(
+            visible = activePreset != null,
+            enter = slideInHorizontally(tween(220)) { it / 3 } + fadeIn(tween(180)),
+            exit = slideOutHorizontally(tween(200)) { it / 3 } + fadeOut(tween(150)),
+        ) {
+            val preset = activePreset ?: lastPreset
+            if (preset != null) {
+                PromptPresetEditorScreen(
+                    mode = PromptPresetEditorMode.STUDIO,
+                    activePreset = preset,
+                    onToggleDefaultRp = { id, enabled -> resolvedAssetHubVm.setDefaultRpPreset(id, enabled) },
+                    onDeletePreset = { id -> resolvedAssetHubVm.deletePromptPreset(id) },
+                    onToggleBlock = { id, identifier, index, enabled ->
+                        resolvedAssetHubVm.togglePresetBlockEnabled(
+                            presetId = id,
+                            identifier = identifier,
+                            enabled = enabled,
+                            index = index,
+                        )
+                    },
+                    onBatchSetBlocksEnabled = { id, indices, enabled ->
+                        resolvedAssetHubVm.setPresetBlocksEnabled(id, indices, enabled)
+                    },
+                    onMoveBlock = { id, index, delta ->
+                        resolvedAssetHubVm.movePresetBlock(id, index, delta)
+                    },
+                    onToggleRegex = { id, scriptId, enabled ->
+                        resolvedAssetHubVm.togglePresetRegexEnabled(id, scriptId, enabled)
+                    },
+                    onBack = { resolvedAssetHubVm.openPresetDetail(null) },
+                )
             }
         }
     }

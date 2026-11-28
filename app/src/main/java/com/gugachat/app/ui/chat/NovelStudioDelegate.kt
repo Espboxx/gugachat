@@ -6,6 +6,7 @@ import androidx.room.withTransaction
 import com.gugachat.app.core.i18n.AppLanguage
 import com.gugachat.app.core.i18n.fmt
 import com.gugachat.app.core.storage.LocalMediaPathResolver
+import com.gugachat.app.data.chat.CampaignLaunchUseCase
 import com.gugachat.app.data.local.toDomain
 import com.gugachat.app.data.local.toEntity
 import com.gugachat.app.domain.chat.ChatConversation
@@ -80,12 +81,14 @@ internal class NovelStudioDelegate(private val host: ChatViewModelHost) {
                 enableChoices = resolvedPlayStyle != "author",
                 activeChapterId = ch1Id,
             )
+            val settings = host.container.settingsState.value
             val conv = ChatConversation(
                 id = convId,
                 title = "《$bookTitle》",
                 mode = ConversationMode.novel,
                 groupId = host.uiFlow.value.selectedGroupId,
                 model = host.uiFlow.value.selectedModelId,
+                params = CampaignLaunchUseCase.defaultChatParams(settings, ConversationMode.novel),
                 novel = cfg,
                 createdAt = now,
                 updatedAt = now,
@@ -175,12 +178,14 @@ internal class NovelStudioDelegate(private val host: ChatViewModelHost) {
                 enableChoices = resolvedPlayStyle != "author",
                 activeChapterId = ch1Id,
             )
+            val settings = host.container.settingsState.value
             val conv = ChatConversation(
                 id = convId,
                 title = "《$bookTitle》",
                 mode = ConversationMode.novel,
                 groupId = gid,
                 model = model,
+                params = CampaignLaunchUseCase.defaultChatParams(settings, ConversationMode.novel),
                 novel = cfg,
                 createdAt = now,
                 updatedAt = now,

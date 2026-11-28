@@ -34,6 +34,7 @@ object FileTextExtractor {
     private const val MAX_XLSX_SHEETS = 20
 
     private val SCRIPT_STYLE_RE = Regex("(?is)<(script|style|noscript|svg)[^>]*>.*?</\\1>")
+    private val HTML_HEADING_RE = Regex("(?is)<h([1-4])\\b[^>]*>(.*?)</h\\1>")
     private val BLOCK_TAG_RE = Regex("(?i)</?(p|div|br|li|tr|h[1-6]|section|article|blockquote|hr|pre)[^>]*>")
     private val ANY_TAG_RE = Regex("<[^>]+>")
     private val MULTI_BLANK_LINES_RE = Regex("\\n{3,}")
@@ -41,6 +42,7 @@ object FileTextExtractor {
     private val HEX_ENTITY_RE = Regex("&#[xX]([0-9a-fA-F]+);")
     private val WHITESPACE_COLLAPSE_RE = Regex("\\s+")
     private val TRAILING_XML_NUMBER_RE = Regex("(\\d+)\\.xml$", RegexOption.IGNORE_CASE)
+    private val DOCX_HEADING_STYLE_RE = Regex("^(?:heading|标题)\\s*[_-]?\\s*([1-6])$", RegexOption.IGNORE_CASE)
 
     private val KNOWN_TEXT_EXTENSIONS = setOf(
         "txt", "md", "markdown", "json", "jsonl", "ndjson", "yaml", "yml", "xml", "csv", "tsv",
@@ -180,6 +182,17 @@ object FileTextExtractor {
     fun extractHtml(rawHtml: String): String {
         if (rawHtml.isBlank()) return ""
         var s = SCRIPT_STYLE_RE.replace(rawHtml, " ")
+        s = HTML_HEADING_RE.replace(s) { m ->
+            val level = m.groupValues[1].toIntOrNull()?.coerceIn(1, 4) ?: 2
+            val inner = decodeHtmlEntities(ANY_TAG_RE.replace(m.groupValues[2], " "))
+                .replace(WHITESPACE_COLLAPSE_RE, " ")
+                .trim()
+            when {
+                inner.isEmpty() -> "\n"
+                inner.startsWith("#") -> "\n$inner\n"
+                else -> "\n${"#".repeat(level)} $inner\n"
+            }
+        }
         s = BLOCK_TAG_RE.replace(s, "\n")
         s = ANY_TAG_RE.replace(s, "")
         s = decodeHtmlEntities(s)
@@ -188,12 +201,16 @@ object FileTextExtractor {
 
     fun extractDocx(bytes: ByteArray): ExtractedFileContent {
         val entries = readZipEntries(bytes) { name ->
-            name == "word/document.xml" || name.startsWith("word/header") || name.startsWith("word/footer")
+            name == "word/document.xml" ||
+                name == "word/styles.xml" ||
+                name.startsWith("word/header") ||
+                name.startsWith("word/footer")
         }
         val docBytes = entries["word/document.xml"]
             ?: throw IllegalArgumentException("无效的 DOCX 文件（缺少 document.xml）")
         val doc = parseXmlSafely(docBytes)
             ?: throw IllegalArgumentException("无法解析 DOCX XML 结构")
+        val styleHeadingLevels = entries["word/styles.xml"]?.let(::parseDocxStyleHeadingLevels).orEmpty()
 
         val out = StringBuilder()
         val bodyList = doc.getElementsByTagNameNS("*", "body")
@@ -207,7 +224,15 @@ object FileTextExtractor {
                 "p" -> {
                     val line = collectDocxParagraphText(node).trim()
                     if (line.isNotEmpty()) {
-                        out.appendLine(line)
+                        val headingLevel = resolveDocxHeadingLevel(node, styleHeadingLevels)
+                        if (headingLevel != null && !line.startsWith("#")) {
+                            if (out.isNotEmpty() && !out.endsWith("\n\n")) {
+                                out.appendLine()
+                            }
+                            out.appendLine("${"#".repeat(headingLevel)} $line")
+                        } else {
+                            out.appendLine(line)
+                        }
                     }
                 }
                 "tbl" -> {
@@ -439,6 +464,109 @@ object FileTextExtractor {
 
     private fun localTagName(node: Node): String =
         (node.localName ?: node.nodeName).substringAfter(':')
+
+    private fun xmlAttrValue(el: Element, localAttrName: String): String? {
+        val direct = el.getAttribute(localAttrName)
+        if (direct.isNotBlank()) return direct.trim()
+        val attrs = el.attributes ?: return null
+        for (i in 0 until attrs.length) {
+            val attr = attrs.item(i) ?: continue
+            val name = (attr.localName ?: attr.nodeName).substringAfter(':')
+            if (name == localAttrName) {
+                val v = attr.nodeValue?.trim().orEmpty()
+                if (v.isNotEmpty()) return v
+            }
+        }
+        return null
+    }
+
+    private fun parseDocxHeadingStyleName(raw: String): Int? {
+        val clean = raw.trim()
+        if (clean.isEmpty()) return null
+        val lower = clean.lowercase(Locale.ROOT)
+        if (lower == "title" || clean == "标题") return 1
+        if (lower == "subtitle" || clean == "副标题") return 2
+        val match = DOCX_HEADING_STYLE_RE.matchEntire(clean) ?: return null
+        return match.groupValues[1].toIntOrNull()?.coerceIn(1, 4)
+    }
+
+    private fun parseDocxStyleHeadingLevels(stylesBytes: ByteArray): Map<String, Int> {
+        val doc = parseXmlSafely(stylesBytes) ?: return emptyMap()
+        val styles = doc.getElementsByTagNameNS("*", "style")
+        val out = HashMap<String, Int>()
+        for (i in 0 until styles.length) {
+            val styleEl = styles.item(i) as? Element ?: continue
+            val styleId = xmlAttrValue(styleEl, "styleId") ?: continue
+            var level = parseDocxHeadingStyleName(styleId)
+            val children = styleEl.childNodes
+            for (j in 0 until children.length) {
+                val child = children.item(j) as? Element ?: continue
+                when (localTagName(child)) {
+                    "name" -> {
+                        if (level == null) {
+                            level = xmlAttrValue(child, "val")?.let(::parseDocxHeadingStyleName)
+                        }
+                    }
+                    "pPr" -> {
+                        if (level == null) {
+                            level = extractDocxOutlineLevelFromPPr(child)
+                        }
+                    }
+                }
+            }
+            if (level != null) {
+                out[styleId] = level
+                out[styleId.lowercase(Locale.ROOT)] = level
+            }
+        }
+        return out
+    }
+
+    private fun extractDocxOutlineLevelFromPPr(pPrNode: Node): Int? {
+        val children = pPrNode.childNodes
+        for (i in 0 until children.length) {
+            val child = children.item(i) as? Element ?: continue
+            if (localTagName(child) == "outlineLvl") {
+                val raw = xmlAttrValue(child, "val")?.toIntOrNull()
+                if (raw != null && raw in 0..3) {
+                    return raw + 1
+                }
+            }
+        }
+        return null
+    }
+
+    private fun resolveDocxHeadingLevel(pNode: Node, styleHeadingLevels: Map<String, Int>): Int? {
+        val children = pNode.childNodes
+        for (i in 0 until children.length) {
+            val child = children.item(i)
+            if (localTagName(child) != "pPr") continue
+            val pPrChildren = child.childNodes
+            var styleLevel: Int? = null
+            var outlineLevel: Int? = null
+            for (j in 0 until pPrChildren.length) {
+                val prop = pPrChildren.item(j) as? Element ?: continue
+                when (localTagName(prop)) {
+                    "pStyle" -> {
+                        val rawVal = xmlAttrValue(prop, "val")
+                        if (rawVal != null) {
+                            styleLevel = styleHeadingLevels[rawVal]
+                                ?: styleHeadingLevels[rawVal.lowercase(Locale.ROOT)]
+                                ?: parseDocxHeadingStyleName(rawVal)
+                        }
+                    }
+                    "outlineLvl" -> {
+                        val raw = xmlAttrValue(prop, "val")?.toIntOrNull()
+                        if (raw != null && raw in 0..3) {
+                            outlineLevel = raw + 1
+                        }
+                    }
+                }
+            }
+            return styleLevel ?: outlineLevel
+        }
+        return null
+    }
 
     private fun collectDocxParagraphText(node: Node): String {
         val sb = StringBuilder()

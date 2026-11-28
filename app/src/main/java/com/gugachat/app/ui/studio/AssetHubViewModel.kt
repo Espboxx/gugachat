@@ -22,6 +22,7 @@ import com.gugachat.app.data.local.toDomain
 import com.gugachat.app.domain.chat.LegacyAssetHarvester
 import com.gugachat.app.domain.chat.ParsedWorldbookV4
 import com.gugachat.app.domain.chat.PromptPresetBlock
+import com.gugachat.app.domain.chat.PromptPresetBlockOps
 import com.gugachat.app.domain.chat.RpCardCodec
 import com.gugachat.app.domain.chat.RpCharacter
 import com.gugachat.app.domain.chat.RpPlayStyle
@@ -30,6 +31,7 @@ import com.gugachat.app.domain.chat.RpRegexScript
 import com.gugachat.app.domain.chat.TokenEstimator
 import com.gugachat.app.domain.chat.VectorIndexProgress
 import com.gugachat.app.domain.chat.WorldbookEngine
+import com.gugachat.app.domain.chat.WorldbookEntryOps
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -741,6 +743,65 @@ class AssetHubViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
+    fun setWorldbookEntriesEnabled(
+        worldbookId: String,
+        entryIds: List<String>,
+        enabled: Boolean,
+    ) {
+        if (entryIds.isEmpty()) return
+        val idSet = entryIds.toHashSet()
+        viewModelScope.launch {
+            val refreshed = withContext(Dispatchers.IO) {
+                val now = System.currentTimeMillis()
+                var changedCount = 0
+                database.withTransaction {
+                    val existing = assetDao.getWorldbookEntries(worldbookId)
+                    val changed = existing.mapNotNull { entry ->
+                        if (entry.id in idSet && entry.enabled != enabled) {
+                            entry.copy(enabled = enabled, updatedAt = now)
+                        } else {
+                            null
+                        }
+                    }
+                    changedCount = changed.size
+                    if (changed.isNotEmpty()) {
+                        assetDao.upsertWorldbookEntries(changed)
+                        recalculateWorldbookSummary(worldbookId, now)
+                    }
+                }
+                if (changedCount > 0) assetDao.getWorldbookEntries(worldbookId) else null
+            }
+            if (refreshed != null) {
+                container.retrievalCoordinator.scheduleWorldbookIndexing(
+                    scope = viewModelScope,
+                    worldbookId = worldbookId,
+                    entries = refreshed,
+                )
+            }
+        }
+    }
+
+    fun moveWorldbookEntryOrder(
+        worldbookId: String,
+        entryId: String,
+        delta: Int,
+    ) {
+        if (delta == 0) return
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                val now = System.currentTimeMillis()
+                database.withTransaction {
+                    val entries = assetDao.getWorldbookEntries(worldbookId)
+                    val index = entries.indexOfFirst { it.id == entryId }
+                    val updates = WorldbookEntryOps.computeReorderedUpdates(entries, index, delta, now)
+                    if (updates.isNotEmpty()) {
+                        assetDao.upsertWorldbookEntries(updates)
+                    }
+                }
+            }
+        }
+    }
+
     fun deleteWorldbookEntry(entry: WorldbookEntryEntity) {
         viewModelScope.launch {
             val refreshed = withContext(Dispatchers.IO) {
@@ -800,14 +861,59 @@ class AssetHubViewModel(private val container: AppContainer) : ViewModel() {
                 if (blocks.isEmpty()) return@withContext
                 val targetIdx = index ?: blocks.indexOfFirst { it.identifier == identifier }
                 if (targetIdx !in blocks.indices) return@withContext
-                val updated = blocks.mapIndexed { idx, b ->
-                    if (idx == targetIdx && (identifier.isBlank() || b.identifier == identifier)) {
-                        b.copy(enabled = enabled)
-                    } else {
-                        b
-                    }
-                }
-                if (updated == blocks) return@withContext
+                if (identifier.isNotBlank() && blocks[targetIdx].identifier != identifier) return@withContext
+                val updated = PromptPresetBlockOps.toggleBlock(blocks, targetIdx, enabled = enabled)
+                if (updated === blocks || updated == blocks) return@withContext
+                assetDao.upsertPromptPreset(
+                    preset.copy(
+                        blocksJson = AppJson.encodeToString(updated),
+                        updatedAt = System.currentTimeMillis(),
+                    ),
+                )
+            }
+        }
+    }
+
+    fun setPresetBlocksEnabled(
+        presetId: String,
+        indices: List<Int>,
+        enabled: Boolean,
+    ) {
+        if (indices.isEmpty()) return
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                val preset = assetDao.getPromptPresetById(presetId) ?: return@withContext
+                val blocks = com.gugachat.app.core.util.JsonUtils.decodeOrDefault<List<PromptPresetBlock>>(
+                    preset.blocksJson,
+                    emptyList(),
+                )
+                val updated = PromptPresetBlockOps.batchSetEnabled(blocks, indices, enabled)
+                if (updated === blocks || updated == blocks) return@withContext
+                assetDao.upsertPromptPreset(
+                    preset.copy(
+                        blocksJson = AppJson.encodeToString(updated),
+                        updatedAt = System.currentTimeMillis(),
+                    ),
+                )
+            }
+        }
+    }
+
+    fun movePresetBlock(
+        presetId: String,
+        index: Int,
+        delta: Int,
+    ) {
+        if (delta == 0) return
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                val preset = assetDao.getPromptPresetById(presetId) ?: return@withContext
+                val blocks = com.gugachat.app.core.util.JsonUtils.decodeOrDefault<List<PromptPresetBlock>>(
+                    preset.blocksJson,
+                    emptyList(),
+                )
+                val updated = PromptPresetBlockOps.moveBlock(blocks, index, delta)
+                if (updated === blocks || updated == blocks) return@withContext
                 assetDao.upsertPromptPreset(
                     preset.copy(
                         blocksJson = AppJson.encodeToString(updated),

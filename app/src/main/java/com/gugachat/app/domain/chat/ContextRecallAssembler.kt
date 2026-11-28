@@ -30,6 +30,9 @@ internal data class ComputedPipeline(
     val resolvedAssistantPrefill: String?,
     val prefix: SystemPrefixResult,
     val tailBundle: TailRecallBundle,
+    val fileRecallBundle: FileRecallBundle = FileRecallBundle(),
+    val fileRetentionByAttachmentId: Map<String, FileRetentionTier> = emptyMap(),
+    val resolvedSemanticScores: Map<String, Double>? = null,
     val dynamicOverhead: Int,
     val waterline: ContextWaterlineSummary,
     val messageCacheById: Map<String, MemoizedMessageCost> = emptyMap(),
@@ -56,6 +59,7 @@ internal object ContextRecallAssembler {
         modelId: String?,
         conversation: ChatConversation,
         cache: Map<String, MemoizedMessageCost>,
+        fileRetentionByAttachmentId: Map<String, FileRetentionTier> = emptyMap(),
     ): Int {
         val baseTextTokens = cache[msg.id]?.baseTextTokens ?: run {
             val cleaned = ContextBudgetPolicy.cleanAssistantHistoryText(msg, conversation)
@@ -67,7 +71,13 @@ internal object ContextRecallAssembler {
             emptyList()
         }
         val imgCount = if (!imageDecayed) imageIds.size else 0
-        val fileTok = ContextBudgetPolicy.resolveMsgFileTokens(msg, fileDecayed, attachmentsById, perTurnFileBudget)
+        val fileTok = ContextBudgetPolicy.resolveMsgFileTokens(
+            msg = msg,
+            fileDecayed = fileDecayed,
+            attachmentsById = attachmentsById,
+            perTurnFileBudget = perTurnFileBudget,
+            fileRetentionByAttachmentId = fileRetentionByAttachmentId,
+        )
         val base = baseTextTokens + max(0, imgCount) * 765 + 8 + fileTok
         return if (imageDecayed && imageIds.isNotEmpty()) base + 12 else base
     }
@@ -415,6 +425,19 @@ internal object ContextRecallAssembler {
                     .filter { it.enabled && it.content.isNotBlank() }
                     .forEach { add(CjkSearch.chatMemoryToSearchCandidate(it)) }
             }
+            for ((attId, doc) in input.preloadedFileChunks) {
+                for (ch in doc.chunks) {
+                    add(
+                        MemorySearchCandidate(
+                            id = FileContextBudgeter.chunkOwnerId(attId, ch.index),
+                            title = "${doc.fileName} · ${ch.label}",
+                            content = ch.text,
+                            estimatedTokens = ch.estimatedTokens,
+                            enabled = true,
+                        ),
+                    )
+                }
+            }
         }
         if (allCandidates.isEmpty()) return emptyMap()
         return scorer.score(budgetedQuery.rawQueryText, allCandidates)
@@ -422,16 +445,27 @@ internal object ContextRecallAssembler {
 
     fun runSharedPipeline(input: ContextBuildInput, allowScorer: Boolean): ComputedPipeline {
         val conv = input.conversation
-        val slice = ContextBudgetPolicy.sliceActiveWindow(conv, input.messages, input.novelChapters, input.attachmentsById)
         val requestedWindow = conv.params.contextWindowOverride?.takeIf { it >= 4096 } ?: input.modelContextWindow
         val windowLimit = max(4096, requestedWindow)
-        val budgetTokens = max(2048, (windowLimit * 0.80).toInt())
-        val maxReserve = max(512, min(32768, budgetTokens / 2))
-        val outputReserve = (conv.params.maxTokens ?: 2048).coerceIn(512, maxReserve)
-        val effectiveLimitTokens = max(1024, budgetTokens - outputReserve)
-
         val effectiveModelId = input.modelId?.takeIf { it.isNotBlank() }
             ?: conv.model?.takeIf { it.isNotBlank() }
+        val budgetTokens = max(2048, (windowLimit * 0.80).toInt())
+        val maxReserve = max(512, min(32768, budgetTokens / 2))
+        val minLenFloor = OutputLengthPolicy.computeRequiredMaxTokensFloor(
+            params = conv.params,
+            mode = conv.mode,
+            modelId = effectiveModelId,
+            windowLimit = windowLimit,
+        )
+        val outputReserve = maxOf(conv.params.maxTokens ?: 2048, minLenFloor ?: 0).coerceIn(512, maxReserve)
+        val effectiveLimitTokens = max(1024, budgetTokens - outputReserve)
+        val slice = ContextBudgetPolicy.sliceActiveWindow(
+            conversation = conv,
+            messages = input.messages,
+            novelChapters = input.novelChapters,
+            attachmentsById = input.attachmentsById,
+            effectiveLimitTokens = effectiveLimitTokens,
+        )
         val calibration = when {
             input.externalCalibration != null && input.externalCalibration in 0.4..2.5 -> input.externalCalibration
             conv.tokenCalibration in 0.4..2.5 -> conv.tokenCalibration
@@ -593,7 +627,25 @@ internal object ContextRecallAssembler {
             0
         }
 
-        val dynamicOverhead = when {
+        val lastUserTextForLength = if (input.draftText.isNotBlank()) {
+            input.draftText
+        } else {
+            slice.active.lastOrNull { it.role == "user" }?.content.orEmpty()
+        }
+        val lengthDirectiveText = OutputLengthPolicy.buildLengthDirective(
+            mode = conv.mode,
+            minOutputChars = conv.params.minOutputChars,
+            novelConfig = conv.novel,
+            activeChapter = slice.activeChapter,
+            isEnglish = OutputLengthPolicy.isEnglishPreference(lastUserTextForLength),
+        )
+        val lengthDirectiveTokens = if (lengthDirectiveText.isNotBlank()) {
+            TokenEstimator.estimateText(lengthDirectiveText, effectiveModelId)
+        } else {
+            0
+        }
+
+        val dynamicOverhead = lengthDirectiveTokens + when {
             isNovel -> {
                 val novelCfg = conv.novel!!
                 (if (isV4Mode) v4ExtraDynamicTokens else loreMatch.triggeredTokens) +
@@ -654,9 +706,10 @@ internal object ContextRecallAssembler {
             input.draftImageCount
         }
         val effectiveDraftFiles = input.draftAttachments.filter { it.isFile }
+        val baseDynamicOverhead = dynamicOverhead
         val fileTurnBudget = FileContextBudgeter.computeFileTurnBudget(
             effectiveLimitTokens = effectiveLimitTokens,
-            reservedFixedTokens = prefix.systemTokens + dynamicOverhead,
+            reservedFixedTokens = prefix.systemTokens + baseDynamicOverhead,
         )
 
         val messageCacheById = HashMap<String, MemoizedMessageCost>(slice.allActiveMessages.size * 2)
@@ -664,30 +717,24 @@ internal object ContextRecallAssembler {
             memoizedMessageCost(msg, conv, effectiveModelId, messageCacheById)
         }
 
-        val msgCosts = slice.active.map { msg ->
-            resolveMemoizedMsgTokenCost(
-                msg = msg,
-                imageDecayed = msg.id in slice.decayedImageMessageIds,
-                fileDecayed = msg.id in slice.decayedFileMessageIds,
-                attachmentsById = input.attachmentsById,
-                perTurnFileBudget = fileTurnBudget,
-                modelId = effectiveModelId,
-                conversation = conv,
-                cache = messageCacheById,
-            )
+        val retentionByAttId = slice.fileRetentionByAttachmentId.toMutableMap()
+        val fullInlineThreshold = FileContextBudgeter.computeFullInlineThreshold(effectiveLimitTokens)
+        val hardFullCap = min(
+            FileContextBudgeter.HARD_MAX_FILE_TURN_TOKENS,
+            (max(4096, effectiveLimitTokens) * FileContextBudgeter.MAX_FILE_WINDOW_SHARE).toInt(),
+        )
+        for (df in effectiveDraftFiles) {
+            retentionByAttId[df.id] = when (df.injectMode) {
+                FileInjectMode.retrieve, FileInjectMode.head_tail -> FileRetentionTier.INDEX_RECALL
+                FileInjectMode.full -> if (df.estimatedTokens <= hardFullCap) FileRetentionTier.FULL else FileRetentionTier.INDEX_RECALL
+                FileInjectMode.auto -> if (df.estimatedTokens <= fullInlineThreshold) FileRetentionTier.FULL else FileRetentionTier.INDEX_RECALL
+            }
         }
-        val msgFileCosts = slice.active.map { msg ->
-            ContextBudgetPolicy.resolveMsgFileTokens(
-                msg = msg,
-                fileDecayed = msg.id in slice.decayedFileMessageIds,
-                attachmentsById = input.attachmentsById,
-                perTurnFileBudget = fileTurnBudget,
-            )
-        }
+
         val draftFileTokens = FileContextBudgeter.estimateDraftFilesInjectedTokens(
             files = effectiveDraftFiles,
             effectiveLimitTokens = effectiveLimitTokens,
-            reservedFixedTokens = prefix.systemTokens + dynamicOverhead,
+            reservedFixedTokens = prefix.systemTokens + baseDynamicOverhead,
         )
         val draftTokens = if (input.draftText.isNotBlank() || effectiveDraftImages > 0 || effectiveDraftFiles.isNotEmpty()) {
             ContextBudgetPolicy.estimateMessageTokens(input.draftText, effectiveDraftImages, effectiveModelId) + draftFileTokens
@@ -696,7 +743,156 @@ internal object ContextRecallAssembler {
         }
 
         val maxHistoryLimit = conv.params.maxHistoryMessages?.takeIf { it > 0 }
-        var running = ((prefix.systemTokens + draftTokens + dynamicOverhead) * calibration).roundToInt()
+        val pressureWindow = if (maxHistoryLimit != null && slice.active.size > maxHistoryLimit) {
+            slice.active.takeLast(maxHistoryLimit)
+        } else {
+            slice.active
+        }
+
+        fun computeActiveCost(msg: ChatMessage): Int = resolveMemoizedMsgTokenCost(
+            msg = msg,
+            imageDecayed = msg.id in slice.decayedImageMessageIds,
+            fileDecayed = false,
+            attachmentsById = input.attachmentsById,
+            perTurnFileBudget = fileTurnBudget,
+            modelId = effectiveModelId,
+            conversation = conv,
+            cache = messageCacheById,
+            fileRetentionByAttachmentId = retentionByAttId,
+        )
+
+        // Under context pressure, demote oldest `auto` Tier-1 files to Tier-2 INDEX_RECALL before sliding messages
+        if (pressureWindow.isNotEmpty()) {
+            val pressureCosts = IntArray(pressureWindow.size) { computeActiveCost(pressureWindow[it]) }
+            var totalPressureRaw = prefix.systemTokens + draftTokens + baseDynamicOverhead + pressureCosts.sum()
+            if ((totalPressureRaw * calibration).roundToInt() > effectiveLimitTokens) {
+                for (i in pressureWindow.indices) {
+                    val msg = pressureWindow[i]
+                    if (msg.role != "user" || msg.attachmentIds.isEmpty()) continue
+                    var demotedThisMsg = false
+                    for (attId in msg.attachmentIds) {
+                        val meta = input.attachmentsById[attId]?.takeIf { it.isFile } ?: continue
+                        if (meta.injectMode == FileInjectMode.auto && retentionByAttId[attId] == FileRetentionTier.FULL) {
+                            retentionByAttId[attId] = FileRetentionTier.INDEX_RECALL
+                            demotedThisMsg = true
+                        }
+                    }
+                    if (demotedThisMsg) {
+                        val updated = computeActiveCost(msg)
+                        totalPressureRaw += updated - pressureCosts[i]
+                        pressureCosts[i] = updated
+                        if ((totalPressureRaw * calibration).roundToInt() <= effectiveLimitTokens) break
+                    }
+                }
+            }
+        }
+
+        val msgCosts = slice.active.map { computeActiveCost(it) }
+        val msgFileCosts = slice.active.map { msg ->
+            ContextBudgetPolicy.resolveMsgFileTokens(
+                msg = msg,
+                fileDecayed = false,
+                attachmentsById = input.attachmentsById,
+                perTurnFileBudget = fileTurnBudget,
+                fileRetentionByAttachmentId = retentionByAttId,
+            )
+        }
+
+        // First sliding pass to identify any slid-out file upload turns so they stay recallable in Tier 2
+        var preRunning = ((prefix.systemTokens + draftTokens + baseDynamicOverhead) * calibration).roundToInt()
+        var preRawKept = 0
+        for (i in slice.active.indices.reversed()) {
+            if (maxHistoryLimit != null && preRawKept >= maxHistoryLimit) break
+            val msgTok = (msgCosts[i] * calibration).roundToInt()
+            if (preRawKept > 0 && preRunning + msgTok > effectiveLimitTokens) break
+            preRunning += msgTok
+            preRawKept++
+        }
+        val preKept = ContextBudgetPolicy.computeSlidingWindowKeepCount(
+            activeSize = slice.active.size,
+            rawKeptCount = preRawKept,
+            maxHistoryLimit = maxHistoryLimit,
+        )
+        val preStartIdx = max(0, slice.active.size - preKept)
+        for (i in 0 until preStartIdx) {
+            val slidMsg = slice.active[i]
+            if (slidMsg.role != "user") continue
+            for (attId in slidMsg.attachmentIds) {
+                if (input.attachmentsById[attId]?.isFile == true) {
+                    retentionByAttId[attId] = FileRetentionTier.INDEX_RECALL
+                }
+            }
+        }
+
+        // Discover all Tier-2 files across allActiveMessages (including compacted/slid-out turns, excluding soft-deleted)
+        val allFileMetasById = LinkedHashMap<String, ChatAttachmentMeta>(input.attachmentsById)
+        for (df in effectiveDraftFiles) {
+            allFileMetasById[df.id] = df
+        }
+        val orderedTier2Ids = LinkedHashSet<String>()
+        for (msg in slice.allActiveMessages) {
+            if (msg.role != "user" || msg.attachmentIds.isEmpty()) continue
+            for (attId in msg.attachmentIds) {
+                if (allFileMetasById[attId]?.isFile == true && retentionByAttId[attId] == FileRetentionTier.INDEX_RECALL) {
+                    orderedTier2Ids.add(attId)
+                }
+            }
+        }
+        for (df in effectiveDraftFiles) {
+            if (retentionByAttId[df.id] == FileRetentionTier.INDEX_RECALL) {
+                orderedTier2Ids.add(df.id)
+            }
+        }
+
+        val lastActiveUserMsg = slice.active.lastOrNull { it.role == "user" }
+        val latestFileQuery = if (input.draftText.isNotBlank()) input.draftText else lastActiveUserMsg?.content.orEmpty()
+        val uploadTurnFileIds = if (effectiveDraftFiles.isNotEmpty()) {
+            effectiveDraftFiles.map { it.id }.toSet()
+        } else {
+            lastActiveUserMsg?.attachmentIds
+                ?.filter { allFileMetasById[it]?.isFile == true }
+                ?.toSet()
+                .orEmpty()
+        }
+        val recentForFileRecall = if (input.draftText.isNotBlank() || lastActiveUserMsg == null) {
+            slice.active
+        } else {
+            slice.active.filter { it.id != lastActiveUserMsg.id }
+        }
+        val tier2Docs = orderedTier2Ids.mapNotNull { input.preloadedFileChunks[it] }
+        val remainingAfterSystem = max(0, effectiveLimitTokens - prefix.systemTokens - baseDynamicOverhead)
+        val fileRecallBudget = if (orderedTier2Ids.isNotEmpty()) {
+            FileContextBudgeter.computeFileRecallBudget(
+                remainingAfterSystem = remainingAfterSystem,
+                memoryBudget = input.memoryBudget,
+                isUploadTurn = uploadTurnFileIds.any { it in orderedTier2Ids },
+            )
+        } else {
+            0
+        }
+        val fileRecallBundle = if (tier2Docs.isNotEmpty() && fileRecallBudget > 0) {
+            FileRecallEngine.recall(
+                tier2Docs = tier2Docs,
+                fileMetasById = allFileMetasById,
+                uploadTurnFileIds = uploadTurnFileIds,
+                conversation = conv,
+                recentMessages = recentForFileRecall,
+                latestUserQuery = latestFileQuery,
+                activeChapter = slice.activeChapter,
+                budgetTokens = fileRecallBudget,
+                semanticScores = resolvedSemanticScores,
+                semanticScorer = null,
+                minSemanticCosine = input.minSemanticCosine,
+                mutedRecallKeys = input.mutedRecallKeys,
+                modelId = effectiveModelId,
+            )
+        } else {
+            FileRecallBundle(budgetTokens = fileRecallBudget, tier2FileIds = orderedTier2Ids)
+        }
+
+        val totalDynamicOverhead = baseDynamicOverhead + fileRecallBundle.recalledTokens
+
+        var running = ((prefix.systemTokens + draftTokens + totalDynamicOverhead) * calibration).roundToInt()
         var rawKept = 0
         for (i in slice.active.indices.reversed()) {
             if (maxHistoryLimit != null && rawKept >= maxHistoryLimit) break
@@ -719,7 +915,16 @@ internal object ContextRecallAssembler {
             keptFileTokensRaw += msgFileCosts[i]
         }
 
-        val sentRaw = prefix.systemTokens + draftTokens + dynamicOverhead + keptHistoryRaw
+        val effectiveDecayedFiles = slice.active
+            .filter { msg ->
+                msg.role == "user" && msg.attachmentIds.any { id ->
+                    allFileMetasById[id]?.isFile == true && retentionByAttId[id] == FileRetentionTier.INDEX_RECALL
+                }
+            }
+            .map { it.id }
+            .toSet()
+
+        val sentRaw = prefix.systemTokens + draftTokens + totalDynamicOverhead + keptHistoryRaw
         val sentTokens = (sentRaw * calibration).roundToInt()
         val sentPct = min(100, ((sentTokens.toDouble() / max(1, effectiveLimitTokens)) * 100.0).roundToInt())
 
@@ -727,15 +932,16 @@ internal object ContextRecallAssembler {
             resolveMemoizedMsgTokenCost(
                 msg = msg,
                 imageDecayed = msg.id in slice.decayedImageMessageIds,
-                fileDecayed = msg.id in slice.decayedFileMessageIds,
+                fileDecayed = msg.id in effectiveDecayedFiles,
                 attachmentsById = input.attachmentsById,
                 perTurnFileBudget = fileTurnBudget,
                 modelId = effectiveModelId,
                 conversation = conv,
                 cache = messageCacheById,
+                fileRetentionByAttachmentId = retentionByAttId,
             )
         }
-        val archiveTotalTokens = ((prefix.systemTokens + draftTokens + dynamicOverhead + allArchiveHistoryRaw) * calibration).roundToInt()
+        val archiveTotalTokens = ((prefix.systemTokens + draftTokens + totalDynamicOverhead + allArchiveHistoryRaw) * calibration).roundToInt()
 
         val trimmedCount = slice.uncompactedExcludedCount + max(0, slice.active.size - kept)
         val isSliding = trimmedCount > 0
@@ -772,17 +978,26 @@ internal object ContextRecallAssembler {
             }
             constantLoreInspect + triggeredLoreInspect
         }
-        val allRecalled = loreInspect + tailBundle.recalledItems
+        val allRecalled = loreInspect + tailBundle.recalledItems + fileRecallBundle.recalledItems
         val recalledTotalTokens = allRecalled.sumOf { it.estimatedTokens }
 
-        val recallBudgetTokens = when {
+        val baseRecallBudgetTokens = when {
             isNovel -> conv.novel!!.loreTokenBudget + tailBundle.recallBudgetTokens
             isRp -> conv.rp!!.loreTokenBudget + tailBundle.recallBudgetTokens
             worldbookResult != null -> (input.mountedWorldbooks.firstOrNull()?.worldbook?.tokenBudget ?: 1600) + tailBundle.recallBudgetTokens
             else -> tailBundle.recallBudgetTokens
         }
+        val recallBudgetTokens = baseRecallBudgetTokens + if (tier2Docs.isNotEmpty()) fileRecallBundle.budgetTokens else 0
         val loreHybrid = worldbookResult?.retrievalModeUsed == "hybrid" || loreMatch.retrievalModeUsed == "hybrid"
-        val retrievalModeUsed = if (loreHybrid || tailBundle.retrievalModeUsed == "hybrid") "hybrid" else "lexical"
+        val retrievalModeUsed = if (
+            loreHybrid ||
+            tailBundle.retrievalModeUsed == "hybrid" ||
+            fileRecallBundle.retrievalModeUsed == "hybrid"
+        ) {
+            "hybrid"
+        } else {
+            "lexical"
+        }
 
         fun cal(raw: Int): Int = (raw * calibration).roundToInt()
 
@@ -805,15 +1020,15 @@ internal object ContextRecallAssembler {
             activeMessageCount = slice.allActiveMessages.size,
             trimmedMessageCount = trimmedCount,
             decayedImageMessageIds = slice.decayedImageMessageIds,
-            decayedFileMessageIds = slice.decayedFileMessageIds,
-            fileTokens = cal(keptFileTokensRaw + draftFileTokens),
+            decayedFileMessageIds = effectiveDecayedFiles,
+            fileTokens = cal(keptFileTokensRaw + draftFileTokens + fileRecallBundle.recalledTokens),
             memoryTokens = cal(prefix.memoryTokens),
             summaryTokens = cal(prefix.summaryTokens),
             triggeredLoreIds = triggeredIds,
             triggeredLoreTitles = triggeredTitles,
             novelLoreTokens = cal(totalLoreTokensRaw),
             retrievedMemoryCount = allRecalled.size,
-            recalledMemoryTokens = cal(tailBundle.tailRecallTokens),
+            recalledMemoryTokens = cal(tailBundle.tailRecallTokens + fileRecallBundle.recalledTokens),
             recalledItems = allRecalled,
             sentTokens = sentTokens,
             sentPercentage = sentPct,
@@ -825,7 +1040,7 @@ internal object ContextRecallAssembler {
             recallBudgetTokens = recallBudgetTokens,
             recalledTotalTokens = recalledTotalTokens,
             retrievalModeUsed = retrievalModeUsed,
-            droppedRecallCount = droppedLoreCount + tailBundle.droppedRecallCount,
+            droppedRecallCount = droppedLoreCount + tailBundle.droppedRecallCount + fileRecallBundle.droppedCount,
         )
 
         return ComputedPipeline(
@@ -848,7 +1063,10 @@ internal object ContextRecallAssembler {
             resolvedAssistantPrefill = resolvedPrefill,
             prefix = prefix,
             tailBundle = tailBundle,
-            dynamicOverhead = dynamicOverhead,
+            fileRecallBundle = fileRecallBundle,
+            fileRetentionByAttachmentId = retentionByAttId,
+            resolvedSemanticScores = resolvedSemanticScores,
+            dynamicOverhead = totalDynamicOverhead,
             waterline = waterline,
             messageCacheById = messageCacheById,
         )

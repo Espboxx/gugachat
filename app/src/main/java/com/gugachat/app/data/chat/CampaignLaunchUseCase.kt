@@ -399,10 +399,15 @@ class CampaignLaunchUseCase(
             )
         }
 
-        fun defaultChatParams(settings: AppSettings): ChatParams = ChatParams(
+        fun defaultChatParams(
+            settings: AppSettings,
+            mode: ConversationMode = ConversationMode.rp,
+        ): ChatParams = ChatParams(
             maxTokens = settings.defaultMaxOutputTokens.takeIf { it in 256..131_072 },
             contextWindowOverride = settings.defaultContextWindowOverride.takeIf { it in 4096..2_000_000 },
             maxHistoryMessages = settings.defaultMaxHistoryMessages.takeIf { it in 1..500 },
+            minOutputChars = settings.defaultMinOutputFor(mode),
+            autoContinueShortReply = settings.defaultAutoContinueShort,
         )
 
         fun buildStarterLoreEntries(

@@ -347,7 +347,7 @@ object DirectProtocolCodec {
 
         val thinkingBudget = effortToBudgetTokens(request.reasoning_effort)
         val maxTokens = (request.max_tokens ?: 4096).let { reqMax ->
-            if (thinkingBudget != null && reqMax <= thinkingBudget) thinkingBudget + 1024 else reqMax
+            if (thinkingBudget != null) maxOf(reqMax, thinkingBudget + MIN_THINKING_VISIBLE_HEADROOM) else reqMax
         }
 
         // Prompt Caching Breakpoint 2: pin stable conversation history strictly before the earliest @D depth splice
@@ -496,6 +496,9 @@ object DirectProtocolCodec {
         }
 
         val thinkingBudget = effortToBudgetTokens(request.reasoning_effort)
+        val effectiveMaxOutputTokens = request.max_tokens?.let { reqMax ->
+            if (thinkingBudget != null) maxOf(reqMax, thinkingBudget + MIN_THINKING_VISIBLE_HEADROOM) else reqMax
+        }
         val obj = buildJsonObject {
             if (systemTexts.isNotEmpty()) {
                 putJsonObject("systemInstruction") {
@@ -509,7 +512,7 @@ object DirectProtocolCodec {
                 request.temperature?.let { put("temperature", it) }
                 request.top_p?.let { put("topP", it) }
                 request.top_k?.let { put("topK", it) }
-                request.max_tokens?.let { put("maxOutputTokens", it) }
+                effectiveMaxOutputTokens?.let { put("maxOutputTokens", it) }
                 request.frequency_penalty?.let { put("frequencyPenalty", it) }
                 request.presence_penalty?.let { put("presencePenalty", it) }
                 request.stop?.map { it.trim() }?.filter { it.isNotEmpty() }?.take(4)?.takeIf { it.isNotEmpty() }?.let { stops ->
@@ -1289,7 +1292,9 @@ object DirectProtocolCodec {
         else -> emptyList()
     }
 
-    private fun effortToBudgetTokens(effort: String?): Int? = when (effort?.lowercase()) {
+    internal const val MIN_THINKING_VISIBLE_HEADROOM = 1024
+
+    internal fun effortToBudgetTokens(effort: String?): Int? = when (effort?.lowercase()) {
         "low" -> 1024
         "medium" -> 4096
         "high" -> 8192
